@@ -1,8 +1,7 @@
 //! Presentation logic for subscription responses.
 //!
-//! Handles stripping of system attributes, runtime notification fields,
-//! and JSON-LD context from subscription and CSR subscription payloads
-//! before they are sent as HTTP responses.
+//! Handles stripping of system attributes and JSON-LD context from
+//! subscription and CSR subscription payloads before HTTP responses.
 
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
@@ -26,8 +25,8 @@ pub enum SubscriptionFlavor {
 /// `sysAttrs` was requested. Independently of `sysAttrs`, it always hides
 /// defaulted fields (`isActive` when `true`, `localOnly` when `false`) and, for
 /// the [`SubscriptionFlavor::ContextSource`] flavor, always removes the internal
-/// `jsonldContext` and the notification runtime fields — none of which
-/// `sysAttrs` governs.
+/// `jsonldContext`. Clause 5.2.14.2 notification runtime members remain in
+/// query and retrieve representations regardless of `sysAttrs`.
 #[derive(Debug)]
 pub struct SubscriptionRenderer {
     /// The subscription payload to scrub.
@@ -88,14 +87,6 @@ impl SubscriptionRenderer {
             }
             SubscriptionFlavor::ContextSource => {
                 obj.remove("jsonldContext");
-                if let Some(notification) = obj.get_mut("notification")
-                    && let Some(notif_obj) = notification.as_object_mut()
-                {
-                    notif_obj.remove("timesSent");
-                    notif_obj.remove("lastNotification");
-                    notif_obj.remove("lastSuccess");
-                    notif_obj.remove("lastFailure");
-                }
             }
         }
         payload
@@ -216,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn render_csource_subscription_strips_sys_attrs_and_notification_runtime() {
+    fn render_csource_subscription_strips_sys_attrs_and_keeps_notification_runtime() {
         let value = json!({
             "id": "urn:ngsi-ld:Subscription:1",
             "type": "Subscription",
@@ -239,18 +230,14 @@ mod tests {
         assert!(rendered.get("isActive").is_none());
         let notif = rendered.get("notification").expect("notification");
         assert!(notif.get("endpoint").is_some());
-        assert!(notif.get("timesSent").is_none());
-        assert!(notif.get("lastNotification").is_none());
-        assert!(notif.get("lastSuccess").is_none());
-        assert!(notif.get("lastFailure").is_none());
+        pretty_assertions::assert_eq!(notif.get("timesSent").and_then(Value::as_i64), Some(42));
+        assert!(notif.get("lastNotification").is_some());
+        assert!(notif.get("lastSuccess").is_some());
+        assert!(notif.get("lastFailure").is_some());
     }
 
     #[test]
-    fn render_csource_subscription_keeps_timestamps_but_still_scrubs_context_and_runtime_when_sys_attrs_included() {
-        // Clause 4.8: `sysAttrs` keeps createdAt/modifiedAt, but it does not
-        // govern the internal `jsonldContext` or the notification runtime
-        // fields, which are scrubbed regardless. `GET ...?options=sysAttrs`
-        // used to short-circuit and leak all three.
+    fn render_csource_subscription_keeps_system_and_notification_timestamps_when_sys_attrs_included() {
         let value = json!({
             "id": "urn:ngsi-ld:Subscription:1",
             "type": "Subscription",
@@ -269,13 +256,10 @@ mod tests {
         assert!(rendered.get("jsonldContext").is_none(), "jsonldContext must never leak in the body: {rendered}");
         let notif = rendered.get("notification").expect("notification");
         assert!(notif.get("endpoint").is_some(), "the endpoint stays: {rendered}");
+        pretty_assertions::assert_eq!(notif.get("timesSent").and_then(Value::as_i64), Some(42));
         assert!(
-            notif.get("timesSent").is_none(),
-            "runtime fields are scrubbed regardless of sysAttrs: {rendered}"
-        );
-        assert!(
-            notif.get("lastNotification").is_none(),
-            "runtime fields are scrubbed regardless of sysAttrs: {rendered}"
+            notif.get("lastNotification").is_some(),
+            "notification runtime is output-only, not internal: {rendered}"
         );
     }
 

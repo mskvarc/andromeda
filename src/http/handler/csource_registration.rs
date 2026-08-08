@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
-    core::error::ResultInstanceExt,
+    error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},

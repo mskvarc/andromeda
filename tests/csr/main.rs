@@ -75,7 +75,7 @@ fn csr_basic_jsonld(id: &str) -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -86,7 +86,7 @@ fn csr_basic_json(id: &str) -> Value {
         "id": id,
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
-        "endpoint": "http://my.csource.org:1026"
+        "endpoint": "http://my.csource.org:1026/"
     })
 }
 
@@ -112,7 +112,7 @@ fn csr_with_mode_and_operations(id: &str) -> Value {
         ],
         "mode": "exclusive",
         "operations": ["queryEntity", "queryTemporal", "updateOps"],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -124,7 +124,7 @@ fn csr_with_location(id: &str) -> Value {
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
         "location": {"type": "Point", "coordinates": [-8.521, 41.2]},
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -149,7 +149,7 @@ fn csr_with_expiration(id: &str) -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "expiresAt": "2035-11-29T14:53:15Z",
         "@context": [COMPOUND_CONTEXT_URL]
     })
@@ -174,7 +174,7 @@ fn csr_no_id() -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -218,7 +218,7 @@ fn csr_past_expiration(id: &str) -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "expiresAt": " 2018-11-29T14:53:15Z",
         "@context": [COMPOUND_CONTEXT_URL]
     })
@@ -236,7 +236,7 @@ fn csr_detailed_information(id: &str) -> Value {
                 "relationshipNames": ["locatedAt"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -247,7 +247,7 @@ fn csr_only_properties(id: &str) -> Value {
         "id": id,
         "type": "ContextSourceRegistration",
         "information": [{"propertyNames": ["name", "subCategory"]}],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -258,7 +258,7 @@ fn csr_with_csource_properties(id: &str) -> Value {
         "id": id,
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "csourceProperty1": "aValue",
         "csourceProperty2": "anotherValue",
         "@context": [COMPOUND_CONTEXT_URL]
@@ -275,7 +275,7 @@ fn csr_with_observation_interval(id: &str) -> Value {
             "startAt": "2020-08-01T22:07:00Z",
             "endAt": "2021-08-01T21:07:00Z"
         },
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -290,7 +290,7 @@ fn csr_with_management_interval(id: &str) -> Value {
             "startAt": "2020-08-01T22:07:00Z",
             "endAt": "2021-08-01T21:07:00Z"
         },
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "@context": [COMPOUND_CONTEXT_URL]
     })
 }
@@ -325,7 +325,7 @@ fn fragment_different_type(id: &str) -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "location": {
             "type": "Polygon",
             "coordinates": [[[100.0, 0.0], [101.0, 0.0], [101.0, 1.0], [100.0, 1.0], [100.0, 0.0]]]
@@ -344,12 +344,12 @@ fn expected_csr_expanded(id: &str) -> Value {
     json!({
         "id": id,
         "type": "ContextSourceRegistration",
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "information": [
             {
                 "entities": [{"id": "urn:ngsi-ld:Vehicle:A456", "type": "https://ngsi-ld-test-suite/context#Vehicle"}],
                 "propertyNames": ["https://ngsi-ld-test-suite/context#brandName", "https://ngsi-ld-test-suite/context#speed"],
-                "relationshipNames": ["isParked"]
+                "relationshipNames": ["https://ngsi-ld-test-suite/context#isParked"]
             },
             {
                 "entities": [
@@ -385,7 +385,7 @@ fn expected_csr_compacted(id: &str) -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     })
@@ -403,7 +403,7 @@ fn expected_query_detailed(id: &str) -> Value {
                 "relationshipNames": ["locatedAt"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -429,7 +429,7 @@ fn expected_query_basic_expanded(id: &str) -> Value {
                 "relationshipNames": ["isNextToBuilding"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -441,7 +441,7 @@ fn expected_query_only_properties(id: &str) -> Value {
         "id": id,
         "type": "ContextSourceRegistration",
         "information": [{"propertyNames": ["name", "subCategory"]}],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -454,7 +454,7 @@ fn expected_query_with_location(id: &str) -> Value {
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
         "location": {"type": "Point", "coordinates": [-8.521, 41.2]},
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -467,7 +467,7 @@ fn expected_query_with_observation_interval(id: &str) -> Value {
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
         "observationInterval": {"startAt": "2020-08-01T22:07:00Z", "endAt": "2021-08-01T21:07:00Z"},
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -480,7 +480,7 @@ fn expected_query_with_management_interval(id: &str) -> Value {
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
         "managementInterval": {"startAt": "2020-08-01T22:07:00Z", "endAt": "2021-08-01T21:07:00Z"},
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -492,7 +492,7 @@ fn expected_query_with_csource_properties(id: &str) -> Value {
         "id": id,
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Building"}]}],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"],
         "csourceProperty1": "aValue",
@@ -521,7 +521,7 @@ fn expected_query_multi_ids(id1: &str, id3: &str) -> Value {
                     "relationshipNames": ["isNextToBuilding"]
                 }
             ],
-            "endpoint": "http://my.csource.org:1026",
+            "endpoint": "http://my.csource.org:1026/",
             "mode": "inclusive",
             "operations": ["federationOps"]
         },
@@ -529,7 +529,7 @@ fn expected_query_multi_ids(id1: &str, id3: &str) -> Value {
             "id": id3,
             "type": "ContextSourceRegistration",
             "information": [{"entities": [{"type": "Building"}]}],
-            "endpoint": "http://my.csource.org:1026",
+            "endpoint": "http://my.csource.org:1026/",
             "mode": "inclusive",
             "operations": ["federationOps"],
             "csourceProperty1": "aValue",
@@ -550,7 +550,7 @@ fn expected_query_detailed_expanded(id: &str) -> Value {
                 "relationshipNames": ["locatedAt"]
             }
         ],
-        "endpoint": "http://my.csource.org:1026",
+        "endpoint": "http://my.csource.org:1026/",
         "mode": "inclusive",
         "operations": ["federationOps"]
     }])
@@ -563,6 +563,9 @@ fn expected_query_detailed_expanded(id: &str) -> Value {
 fn strip_ignored_keys(val: &mut Value, keys: &[&str]) {
     match val {
         Value::Object(map) => {
+            for read_only in ["status", "timesSent", "timesFailed", "lastSuccess", "lastFailure"] {
+                map.remove(read_only);
+            }
             for key in keys {
                 map.remove(*key);
             }

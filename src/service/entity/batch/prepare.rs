@@ -7,7 +7,7 @@
 //! caller's order regardless of which pool produced them.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         attribute_envelope::validate_attribute_envelopes,

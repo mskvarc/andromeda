@@ -1,6 +1,7 @@
 //! ICU collation identifiers for `orderBy` string sorting (clause 4.23).
 
 use langtag::LangTagBuf;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// ICU collation identifier for `orderBy` string sorting (NGSI-LD S4.23).
@@ -9,7 +10,8 @@ use thiserror::Error;
 /// collation identifier is a language tag carrying a Unicode `-u-` extension,
 /// and keeping the parsed form is what stops the tag being re-derived wherever
 /// the identifier is used.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct IcuCollation(LangTagBuf);
 
 impl IcuCollation {
@@ -35,6 +37,20 @@ impl IcuCollation {
     /// The collation identifier (a BCP47 language tag).
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl TryFrom<String> for IcuCollation {
+    type Error = IcuCollationError;
+
+    fn try_from(value: String) -> Result<IcuCollation, IcuCollationError> {
+        IcuCollation::parse(&value)
+    }
+}
+
+impl From<IcuCollation> for String {
+    fn from(value: IcuCollation) -> String {
+        value.0.into_string()
     }
 }
 

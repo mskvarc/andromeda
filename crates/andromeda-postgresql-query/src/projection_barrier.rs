@@ -20,5 +20,6 @@ use std::fmt::Debug;
 #[async_trait::async_trait]
 pub trait ProjectionBarrier: Send + Sync + Debug {
     /// Wait until every batch queued before this call has been applied.
+    #[must_use = "projection barriers must be awaited"]
     async fn wait_for_pending_writes(&self);
 }

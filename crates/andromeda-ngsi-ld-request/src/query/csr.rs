@@ -3,16 +3,25 @@
 use crate::{
     error::ParameterError,
     impl_shared_query_params,
-    query::deserialization::{
-        OptionalGeoQuery,
-        deserialize_optional_attribute_names,
-        deserialize_optional_filter_expr,
-        deserialize_optional_pattern,
-        deserialize_optional_uri_csv,
+    query::{
+        SharedQueryParams,
+        deserialization::{
+            OptionalGeoQuery,
+            deserialize_optional_attribute_names,
+            deserialize_optional_filter_expr,
+            deserialize_optional_pattern,
+            deserialize_optional_uri_csv,
+        },
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
-use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, temporal::window::TimeInterval, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
+    filter::expression::Expr,
+    pattern::Pattern,
+    temporal::window::TimeInterval,
+    type_selection::grammar::TypeExprRaw,
+};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;

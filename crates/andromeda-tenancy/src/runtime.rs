@@ -110,6 +110,19 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         self.database.registered_tenants().await
     }
 
+    /// Remove and orderly shut down every cached tenant runtime.
+    ///
+    /// Called after the HTTP server stops accepting traffic, so no new runtime
+    /// can be resolved while the cache is drained.
+    pub async fn shutdown_all(&self) {
+        let tenants = self.runtimes.iter().map(|entry| entry.key().clone()).collect::<Vec<_>>();
+        for tenant in tenants {
+            if let Some((_tenant, cached)) = self.runtimes.remove(&tenant) {
+                cached.runtime.shutdown().await;
+            }
+        }
+    }
+
     /// The state for one tenant, building its runtime if none is open.
     pub async fn resolve_state(&self, tenant: &TenantRef, policy: TenantCreationPolicy) -> Result<Arc<F::State>, TenancyError> {
         if !self.config.enabled && !tenant.is_unnamed_default() {

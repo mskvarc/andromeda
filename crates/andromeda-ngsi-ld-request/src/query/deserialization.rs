@@ -2,13 +2,13 @@
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
     filter::{expression::Expr, parser},
     geo::input::GeoQueryInput,
     pattern::Pattern,
 };
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer};
-use urn_rs::Urn;
 
 /// A complete optional geo-query decoded from URL parameters.
 #[derive(Debug, Clone, Default)]
@@ -145,11 +145,11 @@ where
     .transpose()
 }
 
-/// Deserialize an optional comma-separated list of dataset URNs.
+/// Deserialize an optional comma-separated list of dataset selectors.
 ///
 /// Clause 4.5.5 defines `datasetId` as a list of URNs. Empty entries and
 /// non-URN values are malformed request data at the extraction boundary.
-pub fn deserialize_optional_dataset_urns<'de, D>(deserializer: D) -> Result<Option<Vec<Urn>>, D::Error>
+pub fn deserialize_optional_dataset_selectors<'de, D>(deserializer: D) -> Result<Option<Vec<DatasetSelector>>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -169,12 +169,12 @@ where
     .transpose()
 }
 
-/// Deserialize one dataset URN for a mutation endpoint.
+/// Deserialize one dataset selector for a mutation endpoint.
 ///
 /// Unlike query filtering, mutation `datasetId` is singleton-valued. Keeping
 /// the whole wire value in the parser means a comma-separated list cannot be
 /// accidentally accepted as one opaque identifier.
-pub fn deserialize_optional_dataset_urn<'de, D>(deserializer: D) -> Result<Option<Urn>, D::Error>
+pub fn deserialize_optional_dataset_selector<'de, D>(deserializer: D) -> Result<Option<DatasetSelector>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -182,7 +182,10 @@ where
     raw.map(|value| {
         let value = value.trim();
         if value.contains(',') {
-            return Err(serde::de::Error::custom("datasetId must contain one URN"));
+            return Err(serde::de::Error::custom("datasetId must contain one URI or @none selector"));
+        }
+        if value.is_empty() {
+            return Err(serde::de::Error::custom("datasetId must not be empty"));
         }
         value.parse().map_err(serde::de::Error::custom)
     })

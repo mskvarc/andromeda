@@ -1,5 +1,5 @@
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::{
         entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
         subscription::store::SubscriptionStore,
@@ -31,8 +31,13 @@ use tracing::{debug, error, info};
 use url::Url;
 use uuid::Uuid;
 
-use super::notification::payload::{context_for_subscription_raw, filter_entity_attributes, normalize_compacted_entity};
-use crate::service::{geo_filter::matches_geo_query, subscription_cache::compile_geo_q, subscription_matching::matches_scope_query};
+use crate::{
+    service::{geo_filter::matches_geo_query, subscription_cache::compile_geo_q, subscription_matching::matches_scope_query},
+    worker::notification::payload::{
+        context::{context_for_subscription_raw, normalize_compacted_entity},
+        filtering::filter_entity_attributes,
+    },
+};
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -197,7 +202,7 @@ impl IntervalWorker {
         }
     }
 
-    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
+    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::AndromedaError> {
         let Some(selectors) = sub.selection.entities.as_ref() else {
             // No entity selectors — every entity qualifies.
             return self.collect_pages(None, |_| true).await;
@@ -236,7 +241,7 @@ impl IntervalWorker {
     /// `type_iri` narrows the read to one entity type when the selector names
     /// exactly one; otherwise every entity is a candidate and the predicate is
     /// the only filter. See [`INTERVAL_ENTITY_PAGE`] for why this pages.
-    async fn collect_pages(&self, type_iri: Option<&str>, mut keep: impl FnMut(&Value) -> bool) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
+    async fn collect_pages(&self, type_iri: Option<&str>, mut keep: impl FnMut(&Value) -> bool) -> Result<Vec<Value>, crate::error::AndromedaError> {
         let limit = i64::from(INTERVAL_ENTITY_PAGE);
         let mut kept = Vec::new();
         let mut offset = 0_i64;
@@ -259,7 +264,7 @@ impl IntervalWorker {
         }
     }
 
-    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::core::error::AndromedaError> {
+    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::error::AndromedaError> {
         let mut results = Vec::new();
         for mut entity in entities {
             if sub.notification.sys_attrs.unwrap_or(false)
@@ -305,7 +310,7 @@ impl IntervalWorker {
                             },
                         )
                         .await
-                        .map_err(|e| crate::core::error::AndromedaError::internal(format!("Compaction failed: {}", e)))?
+                        .map_err(|e| crate::error::AndromedaError::internal(format!("Compaction failed: {}", e)))?
                 }
             };
 

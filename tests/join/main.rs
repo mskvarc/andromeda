@@ -210,17 +210,18 @@ async fn join_single_entity_get_with_contained_by_excludes_linked_entity() {
 }
 
 #[tokio::test]
-async fn join_join_level_zero_returns_only_root_entity_without_linked() {
+async fn join_join_level_zero_returns_bad_request_data() {
     let scope = TestScope::new("join");
     let client = NgsiLdClient::new(&scope).await;
-    let id_b = scope.id("Building:jl0-B");
-    let id_a = scope.id("Building:jl0-A");
-    create(&client, &minimal_building(&id_b)).await;
-    create(&client, &linked_building(&id_a, &id_b)).await;
-
-    let body = query(&client, &format!("id={id_a}&type=Building&join=flat&joinLevel=0")).await;
-    let ids = ids_from_array(&body);
-    assert!(ids.contains(&id_a));
-    assert!(!ids.contains(&id_b), "linked entity must be absent when joinLevel=0");
+    let response = client
+        .query_entities("type=Building&join=flat&joinLevel=0", "application/ld+json", Some(TEST_SUITE_CONTEXT))
+        .await
+        .expect("query_entities failed");
+    assert_eq!(response.status, StatusCode::BAD_REQUEST);
+    assert!(
+        response.body["type"]
+            .as_str()
+            .is_some_and(|problem_type| problem_type.ends_with("BadRequestData"))
+    );
     scope.cleanup().await.expect("cleanup failed");
 }

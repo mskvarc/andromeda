@@ -2,14 +2,14 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::ResultInstanceExt,
+    error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, snapshot::SnapshotHeader, via::IncomingVia},
         response::{render::start_rendering, single::NgsiLdResponse},
         validation::validate_name_or_iri,
     },
-    service::csource_forwarding::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
+    service::csource_forwarding::discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

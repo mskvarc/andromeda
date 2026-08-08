@@ -1,4 +1,4 @@
-use crate::{core::error::AndromedaError, service::entity::store::EntityStore};
+use crate::{error::AndromedaError, service::entity::store::EntityStore};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{

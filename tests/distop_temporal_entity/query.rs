@@ -201,7 +201,7 @@ fn vehicle_registration_temporal(reg_id: &str, endpoint: &str, mode: &str) -> Va
         ],
         "endpoint": endpoint,
         "mode": mode,
-        "operations": ["queryTemporalEntity"],
+        "operations": ["queryTemporal"],
         "@context": TEST_SUITE_CONTEXT
     })
 }
@@ -293,7 +293,7 @@ fn vehicle_registration_with_mode(reg_id: &str, entity_id: &str, endpoint: &str,
             }
         ],
         "endpoint": endpoint,
-        "operations": ["retrieveEntity", "queryEntity", "retrieveTemporalEntity", "queryTemporalEntity"],
+        "operations": ["retrieveEntity", "queryEntity", "retrieveTemporal", "queryTemporal"],
         "@context": TEST_SUITE_CONTEXT
     });
     if let Some(m) = mode {

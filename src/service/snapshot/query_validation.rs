@@ -1,36 +1,31 @@
 //! Ingest-time validation of a snapshot's stored queries (clause 5.2.23).
 //!
-//! A `Snapshot` persists its queries as raw JSON and the executor parses them at
-//! run time. Without an ingest check a malformed `q`, `timerel` or geometry is
-//! accepted with 201 and only surfaces later as an execution `failure` detail.
-//! Clause 5.16.1 has the broker reject a request it cannot act on, so the query
-//! shapes are parsed here -- into the same typed [`SnapshotQuery`] the executor
-//! demands -- before persistence, and a malformed one is a 400.
+//! The canonical query resource validates member syntax while this module
+//! enforces which query family may occur in each snapshot collection.
 
-use crate::core::error::AndromedaError;
-use andromeda_ngsi_ld_model::snapshot_query::SnapshotQuery;
+use crate::error::AndromedaError;
+use andromeda_ngsi_ld_model::query::body::Query;
 
-/// Reject a snapshot whose stored queries do not parse into the typed shapes the
-/// executor will later demand.
-///
-/// Each element of `snapshotQueries` and `snapshotTemporalQueries` is parsed as
-/// a [`SnapshotQuery`], exactly as the executor parses it at run time. That
-/// deserialisation is where the `q` filter (clause 4.9), the geometry
-/// (clause 4.10) and the temporal relation (clause 4.11) are validated, so a
-/// success here means the executor can act on the query.
-pub fn validate_snapshot_query_shapes(
-    snapshot_queries: Option<&[SnapshotQuery]>,
-    snapshot_temporal_queries: Option<&[SnapshotQuery]>,
-) -> Result<(), AndromedaError> {
-    let _ = snapshot_queries;
-    if let Some(queries) = snapshot_temporal_queries {
-        for (index, query) in queries.iter().enumerate() {
-            if query.temporal_q.is_none() {
-                return Err(AndromedaError::snapshot_validation(format!(
-                    "Invalid snapshotTemporalQueries[{index}]: missing temporalQ"
-                )));
-            }
-        }
+/// Rejects empty snapshot requests and queries placed in the wrong collection.
+pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapshot_temporal_queries: Option<&[Query]>) -> Result<(), AndromedaError> {
+    if snapshot_queries.is_none_or(<[Query]>::is_empty) && snapshot_temporal_queries.is_none_or(<[Query]>::is_empty) {
+        return Err(AndromedaError::snapshot_validation(
+            "At least one non-empty snapshot query collection is required",
+        ));
+    }
+    if let Some(queries) = snapshot_queries
+        && let Some(index) = queries.iter().position(|query| query.temporal_q.is_some())
+    {
+        return Err(AndromedaError::snapshot_validation(format!(
+            "Invalid snapshotQueries[{index}]: temporalQ is not applicable"
+        )));
+    }
+    if let Some(queries) = snapshot_temporal_queries
+        && let Some(index) = queries.iter().position(|query| query.temporal_q.is_none())
+    {
+        return Err(AndromedaError::snapshot_validation(format!(
+            "Invalid snapshotTemporalQueries[{index}]: missing temporalQ"
+        )));
     }
     Ok(())
 }
@@ -45,33 +40,47 @@ mod tests {
         // Clause 5.2.23: snapshotQueries carry a clause-4.9 `q`. A malformed one
         // must be a 400 at ingest, not a snapshot created 201 whose execution
         // later records a failure detail.
-        let query = serde_json::from_value::<SnapshotQuery>(json!({"entities": [{"type": "Vehicle"}], "q": "=="}));
+        let query = serde_json::from_value::<Query>(json!({"type": "Query", "entities": [{"type": "Vehicle"}], "q": "=="}));
         assert!(query.is_err());
     }
 
     #[test]
     fn a_malformed_geometry_is_rejected_at_ingest() {
-        let query = serde_json::from_value::<SnapshotQuery>(
-            json!({"geoQ": {"georel": "within", "geometry": "Hexagon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}),
+        let query = serde_json::from_value::<Query>(
+            json!({"type": "Query", "geoQ": {"georel": "within", "geometry": "Hexagon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}}),
         );
         assert!(query.is_err());
     }
 
     #[test]
     fn a_malformed_temporal_relation_is_rejected_at_ingest() {
-        let query = serde_json::from_value::<SnapshotQuery>(
-            json!({"entities": [{"type": "Vehicle"}], "temporalQ": {"timerel": "during", "timeAt": "2024-01-01T00:00:00Z"}}),
+        let query = serde_json::from_value::<Query>(
+            json!({"type": "Query", "entities": [{"type": "Vehicle"}], "temporalQ": {"timerel": "during", "timeAt": "2024-01-01T00:00:00Z"}}),
         );
         assert!(query.is_err());
     }
 
     #[test]
     fn well_formed_queries_pass_ingest_validation() {
-        let entity = [serde_json::from_value::<SnapshotQuery>(json!({"entities": [{"type": "Vehicle"}], "q": "speed>50"})).expect("valid entity query")];
-        let temporal = [serde_json::from_value::<SnapshotQuery>(
-            json!({"entities": [{"type": "Vehicle"}], "temporalQ": {"timerel": "after", "timeAt": "2024-01-01T00:00:00Z"}}),
+        let entity =
+            [serde_json::from_value::<Query>(json!({"type": "Query", "entities": [{"type": "Vehicle"}], "q": "speed>50"})).expect("valid entity query")];
+        let temporal = [serde_json::from_value::<Query>(
+            json!({"type": "Query", "entities": [{"type": "Vehicle"}], "temporalQ": {"timerel": "after", "timeAt": "2024-01-01T00:00:00Z"}}),
         )
         .expect("valid temporal query")];
         assert!(validate_snapshot_query_shapes(Some(&entity), Some(&temporal)).is_ok());
+    }
+
+    #[test]
+    fn empty_query_collections_are_rejected() {
+        assert!(validate_snapshot_query_shapes(None, None).is_err());
+        assert!(validate_snapshot_query_shapes(Some(&[]), Some(&[])).is_err());
+    }
+
+    #[test]
+    fn temporal_members_are_rejected_in_entity_collection() {
+        let query = serde_json::from_value::<Query>(json!({"type": "Query", "temporalQ": {"timerel": "after", "timeAt": "2024-01-01T00:00:00Z"}}))
+            .expect("valid temporal query");
+        assert!(validate_snapshot_query_shapes(Some(&[query]), None).is_err());
     }
 }

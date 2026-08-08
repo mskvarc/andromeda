@@ -1,7 +1,7 @@
 //! Replacing one attribute wholesale (clause 5.6.19).
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         attribute_envelope::validate_attribute_envelopes,
@@ -31,7 +31,7 @@ impl EntityService {
         &self,
         id: &Urn,
         attr_name: &str,
-        dataset_id: Option<&Urn>,
+        dataset_id: Option<&Uri>,
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {

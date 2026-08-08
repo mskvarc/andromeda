@@ -2,7 +2,8 @@
 //! (clause 4.22).
 
 use crate::{
-    core::{batch_activity::BatchActivityTracker, error::AndromedaError},
+    batch_activity::BatchActivityTracker,
+    error::AndromedaError,
     event::change_event::ChangeEvent,
     service::entity::{
         atomic_write::AtomicWrite,

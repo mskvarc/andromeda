@@ -173,7 +173,7 @@ async fn notification_query_filter_matching_entity_delivers_notification() {
     let subscription_id = unique_subscription_id("046_05");
     let mut subscription = with_query_filter(
         with_watched_attributes(subscription_with_endpoint(&subscription_id, &receiver.endpoint_url()), &["airQualityLevel"]),
-        "name==\"Eiffel%20Tower\"",
+        "name==\"Eiffel Tower\"",
     );
     set_endpoint_uri(&mut subscription, &receiver.endpoint_url());
 

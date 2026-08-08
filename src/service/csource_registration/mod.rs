@@ -1,13 +1,13 @@
-/// The registration store port, and the parameter shapes it takes.
-pub mod store;
-
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::csr_change_event::CsrChangeEvent,
     service::{
         csource_extract::unwrap_geo_property_to_geometry,
         csource_merge::apply_fragment,
-        csource_registration::store::{CreateCsrParams, CsrUpdateFragment, RegistrationStore},
+        csource_registration::{
+            payload::{extract_create_params, extract_update_fragment},
+            store::{CreateCsrParams, CsrUpdateFragment, RegistrationStore},
+        },
     },
 };
 use andromeda_jsonld::{
@@ -39,209 +39,9 @@ use tracing::debug;
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
-fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, AndromedaError> {
-    Ok(CreateCsrParams {
-        registration_name: payload.get("registrationName").and_then(|v| v.as_str()),
-        description: payload.get("description").and_then(|v| v.as_str()),
-        information: payload.get("information"),
-        tenant: payload.get("tenant").and_then(|v| v.as_str()),
-        observation_interval: payload.get("observationInterval"),
-        management_interval: payload.get("managementInterval"),
-        location: payload
-            .get("location")
-            .map(crate::service::csource_extract::unwrap_geo_property_to_geometry)
-            .transpose()?,
-        observation_space: payload
-            .get("observationSpace")
-            .map(crate::service::csource_extract::unwrap_geo_property_to_geometry)
-            .transpose()?,
-        operation_space: payload
-            .get("operationSpace")
-            .map(crate::service::csource_extract::unwrap_geo_property_to_geometry)
-            .transpose()?,
-        expires_at: payload
-            .get("expiresAt")
-            .and_then(|v| v.as_str())
-            .map(|s| {
-                DateTime::parse_from_rfc3339(s)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
-            })
-            .transpose()?,
-        endpoint: payload.get("endpoint").and_then(|v| v.as_str()),
-        accept: payload.get("accept").and_then(|v| v.as_str()),
-        mode: payload
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .map(|s| s.parse::<ForwardingMode>())
-            .transpose()
-            .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'mode' value: {}", e)))?
-            .unwrap_or_default(),
-        operations: payload
-            .get("operations")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'operations' value: {}", e)))) // clone: serde_json::from_value consumes the Value
-            .transpose()?,
-        scope: payload
-            .get("scope")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'scope' value: {}", e)))) // clone: serde_json::from_value consumes the Value
-            .transpose()?,
-        refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
-        management: payload.get("management"),
-        context_source_info: payload.get("contextSourceInfo"),
-        jsonld_context: payload.get("jsonldContext").and_then(|v| v.as_str()),
-        context_source_alias: payload.get("contextSourceAlias").and_then(|v| v.as_str()),
-        additional_properties: extract_additional_properties(payload),
-    })
-}
-
-fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, AndromedaError> {
-    Ok(CsrUpdateFragment {
-        registration_name: extract_optional_string(fragment, "registrationName"),
-        description: extract_optional_string(fragment, "description"),
-        information: fragment.get("information").cloned(), // clone: need owned Value for update fragment struct
-        tenant: extract_optional_tenant_name(fragment, "tenant")?,
-        observation_interval: extract_optional_value(fragment, "observationInterval"),
-        management_interval: extract_optional_value(fragment, "managementInterval"),
-        location: fragment
-            .get("location")
-            .map(|v| {
-                if v.is_null() {
-                    Ok(None)
-                } else {
-                    unwrap_geo_property_to_geometry(v).map(Some)
-                }
-            })
-            .transpose()?,
-        observation_space: fragment
-            .get("observationSpace")
-            .map(|v| {
-                if v.is_null() {
-                    Ok(None)
-                } else {
-                    unwrap_geo_property_to_geometry(v).map(Some)
-                }
-            })
-            .transpose()?,
-        operation_space: fragment
-            .get("operationSpace")
-            .map(|v| {
-                if v.is_null() {
-                    Ok(None)
-                } else {
-                    unwrap_geo_property_to_geometry(v).map(Some)
-                }
-            })
-            .transpose()?,
-        expires_at: fragment
-            .get("expiresAt")
-            .map(|v| {
-                if v.is_null() {
-                    Ok(None)
-                } else {
-                    v.as_str()
-                        .ok_or_else(|| AndromedaError::csr_validation("'expiresAt' must be a string"))
-                        .and_then(|s| {
-                            DateTime::parse_from_rfc3339(s)
-                                .map(|dt| Some(dt.with_timezone(&Utc)))
-                                .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
-                        })
-                }
-            })
-            .transpose()?,
-        endpoint: fragment.get("endpoint").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        accept: extract_optional_string(fragment, "accept"),
-        mode: fragment
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .map(|s| s.parse::<ForwardingMode>())
-            .transpose()
-            .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'mode' value: {}", e)))?,
-        operations: fragment
-            .get("operations")
-            .map(|v| {
-                if v.is_null() {
-                    Ok(None)
-                } else {
-                    serde_json::from_value(v.clone()) // clone: serde_json::from_value consumes the Value
-                        .map(Some)
-                        .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'operations' value: {}", e)))
-                }
-            })
-            .transpose()?,
-        scope: fragment
-            .get("scope")
-            .map(|v| {
-                if v.is_null() {
-                    Ok(None)
-                } else {
-                    serde_json::from_value(v.clone()) // clone: serde_json::from_value consumes the Value
-                        .map(Some)
-                        .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'scope' value: {}", e)))
-                }
-            })
-            .transpose()?,
-        refresh_rate: extract_optional_duration(fragment, "refreshRate")?,
-        management: extract_optional_value(fragment, "management"),
-        context_source_info: extract_optional_value(fragment, "contextSourceInfo"),
-        jsonld_context: extract_optional_string(fragment, "jsonldContext"),
-        context_source_alias: extract_optional_string(fragment, "contextSourceAlias"),
-        additional_properties: extract_additional_properties(fragment),
-    })
-}
-
-/// For nullable string fields: absent -> None, null -> Some(None), value -> Some(Some(s))
-fn extract_optional_string(payload: &Value, key: &str) -> Option<Option<String>> {
-    payload.get(key).map(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
-}
-
-fn parse_duration_value(value: &Value, key: &str) -> Result<Iso8601Duration, AndromedaError> {
-    let raw = value
-        .as_str()
-        .ok_or_else(|| AndromedaError::csr_validation(format!("'{key}' must be a string")))?;
-    raw.parse::<Iso8601Duration>()
-        .map_err(|error| AndromedaError::csr_validation(format!("Invalid '{key}' value '{raw}': {error:?}")))
-}
-
-fn extract_optional_duration(payload: &Value, key: &str) -> Result<Option<Option<Iso8601Duration>>, AndromedaError> {
-    match payload.get(key) {
-        None => Ok(None),
-        Some(value) if value.is_null() => Ok(Some(None)),
-        Some(value) => Ok(Some(Some(parse_duration_value(value, key)?))),
-    }
-}
-
-/// For nullable Value fields: absent -> None, null -> Some(None), value -> Some(Some(v))
-fn extract_optional_value(payload: &Value, key: &str) -> Option<Option<Value>> {
-    payload.get(key).map(|v| if v.is_null() { None } else { Some(v.clone()) }) // clone: need owned Value; v is borrowed from payload
-}
-
-fn extract_optional_tenant_name(payload: &Value, key: &str) -> Result<Option<Option<TenantName>>, AndromedaError> {
-    let value = payload.get(key);
-    let result = match value {
-        None => None,
-        Some(raw) if raw.is_null() => Some(None),
-        Some(raw) => {
-            let tenant = raw
-                .as_str()
-                .ok_or_else(|| AndromedaError::csr_validation(format!("'{key}' must be a string")))?;
-            let tenant_name =
-                TenantName::try_from(tenant.to_string()).map_err(|_| AndromedaError::csr_validation(format!("'{key}' must be a non-empty string")))?;
-            Some(Some(tenant_name))
-        }
-    };
-    Ok(result)
-}
-
-fn extract_additional_properties(payload: &Value) -> Option<Value> {
-    let obj = payload.as_object()?;
-    let mut additional = serde_json::Map::new();
-    for (key, value) in obj {
-        if !CreateCsrParams::STANDARD_KEYS.contains(&key.as_str()) {
-            additional.insert(key.clone(), value.clone()); // clone: owned key-value pairs for new additional properties Map
-        }
-    }
-    if additional.is_empty() { None } else { Some(Value::Object(additional)) }
-}
+mod payload;
+/// The registration store port, and the parameter shapes it takes.
+pub mod store;
 
 /// Service for managing NGSI-LD context source registrations.
 pub struct CsourceRegistrationService {

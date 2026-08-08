@@ -2,8 +2,8 @@
 //!
 //! Carries one or more dataset identifiers as URNs, equivalent to `datasetId`.
 
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use http::{HeaderName, HeaderValue};
-use urn_rs::Urn;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_DATASET_ID: HeaderName = HeaderName::from_static("ngsild-dataset-id");
@@ -12,11 +12,11 @@ static NGSILD_DATASET_ID: HeaderName = HeaderName::from_static("ngsild-dataset-i
 ///
 /// Values are parsed as a non-empty CSV list of URNs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdDatasetId(Vec<Urn>);
+pub struct NgsiLdDatasetId(Vec<DatasetSelector>);
 
 impl NgsiLdDatasetId {
-    /// Return dataset identifiers as parsed URNs.
-    pub fn as_slice(&self) -> &[Urn] {
+    /// Return dataset identifiers as parsed URI/default selectors.
+    pub fn as_slice(&self) -> &[DatasetSelector] {
         &self.0
     }
 }
@@ -40,11 +40,11 @@ impl headers::Header for NgsiLdDatasetId {
                 if segment.is_empty() {
                     return Err(headers::Error::invalid());
                 }
-                let urn = match segment.parse::<Urn>() {
+                let selector = match segment.parse::<DatasetSelector>() {
                     Ok(value) => value,
                     Err(_) => return Err(headers::Error::invalid()),
                 };
-                datasets.push(urn);
+                datasets.push(selector);
             }
         }
         if datasets.is_empty() {
@@ -83,8 +83,8 @@ mod tests {
     fn decode_csv_urns() {
         let header = decode_from("urn:ngsi-ld:Dataset:one, urn:ngsi-ld:Dataset:two").expect("valid");
         pretty_assertions::assert_eq!(header.as_slice().len(), 2);
-        pretty_assertions::assert_eq!(header.as_slice()[0].as_str(), "urn:ngsi-ld:Dataset:one");
-        pretty_assertions::assert_eq!(header.as_slice()[1].as_str(), "urn:ngsi-ld:Dataset:two");
+        pretty_assertions::assert_eq!(header.as_slice()[0].to_string(), "urn:ngsi-ld:Dataset:one");
+        pretty_assertions::assert_eq!(header.as_slice()[1].to_string(), "urn:ngsi-ld:Dataset:two");
     }
 
     #[test]

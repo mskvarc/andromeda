@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
-    core::error::ResultInstanceExt,
+    error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
@@ -12,10 +12,10 @@ use crate::{
             render::start_rendering,
             single::NgsiLdResponse,
         },
-        validation::parse_list_options,
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
     subscription::{SubscriptionFlavor, SubscriptionRenderer},
@@ -58,7 +58,7 @@ pub async fn get(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.csr_subscriptions;
     let context: ContextSpec = context.into_inner();
-    let options = parse_list_options(params.options.as_deref(), &uri)?;
+    let options = params.options.unwrap_or_default();
 
     let subscription = service.get_for_response(&subscription_id, &context).await.with_instance(&uri)?;
 
@@ -83,10 +83,15 @@ pub async fn query(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.csr_subscriptions;
     let context: ContextSpec = context.into_inner();
-    let options = parse_list_options(params.options.as_deref(), &uri)?;
+    let options = params.options.unwrap_or_default();
 
     let limit = params.limit.unwrap_or(100);
     let offset = params.offset.unwrap_or(0);
+    if limit == 0 && options.count == CountPolicy::Omit {
+        return Err(AndromedaError::entity_validation("limit=0 requires the count option (clause 6.3.10)")
+            .with_instance(&uri)
+            .into());
+    }
 
     let (subscriptions, total) = service
         .list_for_response(Some(i64::from(limit)), Some(i64::from(offset)), &context)
@@ -107,7 +112,7 @@ pub async fn query(
         .render()?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
-    if options.count {
+    if options.count == CountPolicy::Emit {
         response = response.with_total_count(total as usize);
     }
 

@@ -76,7 +76,7 @@ impl SubscriptionCache {
     ///
     /// Clears existing entries and replaces them with all currently active
     /// subscriptions. Failed compilations are logged and skipped.
-    pub async fn reload(&self, repo: &impl SubscriptionStore) -> Result<(), crate::core::error::AndromedaError> {
+    pub async fn reload(&self, repo: &impl SubscriptionStore) -> Result<(), crate::error::AndromedaError> {
         let subscriptions = repo.list_active().await?;
         self.inner.clear();
         self.by_type.clear();

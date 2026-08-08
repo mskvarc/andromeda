@@ -1,8 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR creation tests (NGSI-LD 5.9.2, 6.3.5)
 
-use reqwest::StatusCode;
-
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     COMPOUND_CONTEXT_URL,
@@ -23,6 +21,8 @@ use crate::{
     strip_ignored_keys,
     unique_id,
 };
+use reqwest::StatusCode;
+use serde_json::json;
 
 // ---------------------------------------------------------------------------
 // 5.9.2 -- Basic creation
@@ -164,6 +164,19 @@ async fn create_with_invalid_structure_returns_400() {
 
     let (status, _, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+/// Create CSR with a non-clause-4.20 operation name -- 400 (5.9.2).
+#[tokio::test]
+async fn create_with_unknown_operation_returns_400() {
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:create-invalid-operation");
+    let mut reg = csr_basic_jsonld(&id);
+    reg["operations"] = json!(["partialAttrUpdate"]);
+
+    let (status, _, body) = create_registration(&c, &reg).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 /// Create CSR with expiration date in the past -- 400 (5.9.2).

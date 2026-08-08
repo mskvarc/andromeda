@@ -1,139 +1,117 @@
-//! Conversion from the entity query POST body to parameter form.
+//! Conversion of the canonical clause-5.2.23 body into entity-query parameters.
 
-use super::parameters::EntityQueryParameters;
 use crate::{
-    body::{
-        entity_map::{EntitySelector, QueryRequestBody},
-        query::QueryRequest,
-    },
-    query::{deserialization::OptionalGeoQuery, entity_selector::EntitySelectorParams},
+    attribute_selection::validate_attrs,
+    error::ParameterError,
+    query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams},
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_ngsi_ld_model::query::body::Query;
 
-impl From<QueryRequest> for EntityQueryParameters {
-    fn from(request: QueryRequest) -> EntityQueryParameters {
-        let mut ids = Vec::new();
-        let mut id_pattern = None;
-        let mut entity_selectors = Vec::new();
+impl TryFrom<Query> for EntityQueryParameters {
+    type Error = ParameterError;
 
-        if let Some(entities) = &request.entities {
-            for selection in entities {
-                if let Some(id) = selection.id() {
-                    ids.push(id.clone());
-                }
-                if let Some(pattern) = selection.id_pattern() {
-                    id_pattern = Some(pattern.clone());
-                }
-                entity_selectors.push(EntitySelectorParams {
-                    id: selection.id().map(|id| vec![id.clone()]),
-                    id_pattern: selection.id_pattern().cloned(),
-                    type_: selection.type_().cloned(),
-                });
-            }
+    fn try_from(query: Query) -> Result<EntityQueryParameters, ParameterError> {
+        if query.temporal_q.is_some() || query.aggr_params.is_some() {
+            return Err(ParameterError::EntityQueryTemporalMembers);
         }
 
-        EntityQueryParameters {
-            id: if ids.is_empty() { None } else { Some(ids) },
+        let entity_selectors = query
+            .entities
+            .unwrap_or_default()
+            .into_iter()
+            .map(|selector| EntitySelectorParams {
+                id: selector.id,
+                id_pattern: selector.id_pattern,
+                type_: Some(selector.type_),
+            })
+            .collect();
+
+        let parameters = EntityQueryParameters {
+            id: None,
             entity_type: None,
-            id_pattern,
+            id_pattern: None,
             entity_selectors,
-            attrs: request.attrs,
-            q: request.q,
-            geo: OptionalGeoQuery(request.geo_q.map(|geo| geo.0)),
-            limit: request.limit,
-            offset: request.offset,
-            count: request.count,
+            attrs: query.attrs,
+            q: query.q,
+            geo: OptionalGeoQuery(query.geo_q),
+            limit: None,
+            offset: None,
+            count: None,
             options: None,
             local: None,
-            pick: None,
-            omit: None,
-            order_by: None,
-            scope_q: None,
-            lang: None,
-            dataset_id: None,
-            expand_values: None,
-            json_keys: None,
+            pick: query.pick,
+            omit: query.omit,
+            ordering: query.ordering.unwrap_or_default(),
+            scope_q: query.scope_q,
+            lang: query.lang.map(LanguageFilter::from_tag),
+            dataset_id: query.dataset_id,
+            expand_values: query.expand_values,
+            json_keys: query.json_keys,
             format: None,
-            join: None,
-            join_level: None,
-            contained_by: None,
-            entity_map: None,
-            entity_map_lifetime: None,
-            split_entities: None,
+            join: query.join,
+            join_level: query.join_level,
+            contained_by: query.contained_by,
+            entity_map: query.entity_map,
+            entity_map_lifetime: query.entity_map_lifetime,
+            split_entities: query.split_entities,
             geometry_property: None,
-            collation: None,
-            order_from: None,
-            order_geometry: None,
-            csf: None,
+            csf: query.csf,
             drop: None,
             keep: None,
-        }
+        };
+        validate_attrs(parameters.attrs.as_deref())?;
+        Ok(parameters)
     }
 }
 
-/// Convert an entity-map POST body into entity-query parameters without a
-/// lossy URL round trip.
-pub fn query_body_to_params(body: &QueryRequestBody) -> EntityQueryParameters {
-    let (id, entity_type, id_pattern) = if let Some(entities) = &body.entities {
-        let ids: Vec<Uri> = entities.iter().flat_map(|entity| entity.id.iter().flatten().cloned()).collect();
-        (
-            if ids.is_empty() { None } else { Some(ids) },
-            None,
-            entities.iter().find_map(|entity| entity.id_pattern.clone()),
-        )
-    } else {
-        (None, None, None)
-    };
+#[cfg(test)]
+mod tests {
+    use crate::query::entity::parameters::EntityQueryParameters;
+    use andromeda_ngsi_ld_model::query::body::Query;
 
-    let entity_selectors = body
-        .entities
-        .as_ref()
-        .map(|entities| {
-            entities
-                .iter()
-                .map(|selector: &EntitySelector| EntitySelectorParams {
-                    id: selector.id.clone(),
-                    id_pattern: selector.id_pattern.clone(),
-                    type_: selector.type_.clone(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    #[test]
+    fn every_applicable_query_member_survives_body_conversion() {
+        let query: Query = serde_json::from_value(serde_json::json!({
+            "type": "Query",
+            "entities": [{"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1"]}],
+            "q": "speed>50",
+            "scopeQ": "/Madrid",
+            "attrs": ["speed"],
+            "pick": ["id", "speed"],
+            "omit": ["scope"],
+            "csf": "location==Madrid",
+            "containedBy": ["urn:ngsi-ld:Building:1"],
+            "datasetId": ["https://example.com/datasets/one", "@none"],
+            "expandValues": "speed",
+            "entityMap": true,
+            "entityMapLifetime": "PT1H",
+            "jsonKeys": "payload",
+            "join": "inline",
+            "joinLevel": 2,
+            "lang": "de-DE",
+            "ordering": {"orderBy": ["speed;desc"]},
+            "splitEntities": true
+        }))
+        .expect("valid Query");
 
-    EntityQueryParameters {
-        id,
-        entity_type,
-        id_pattern,
-        entity_selectors,
-        attrs: body.attrs.clone(),
-        q: body.q.clone(),
-        geo: body.geo.clone(),
-        limit: None,
-        offset: None,
-        count: None,
-        options: None,
-        local: Some(true),
-        pick: None,
-        omit: None,
-        order_by: None,
-        scope_q: body.scope_q.clone(),
-        lang: None,
-        dataset_id: None,
-        expand_values: None,
-        json_keys: None,
-        format: None,
-        join: None,
-        join_level: None,
-        contained_by: None,
-        entity_map: None,
-        entity_map_lifetime: body.entity_map_lifetime,
-        split_entities: None,
-        geometry_property: None,
-        collation: None,
-        order_from: None,
-        order_geometry: None,
-        csf: None,
-        drop: None,
-        keep: None,
+        let parameters = EntityQueryParameters::try_from(query).expect("entity-applicable query");
+        pretty_assertions::assert_eq!(parameters.entity_selectors.len(), 1);
+        pretty_assertions::assert_eq!(parameters.ordering.order_by.len(), 1);
+        pretty_assertions::assert_eq!(parameters.dataset_id.as_ref().map(Vec::len), Some(2));
+        assert!(parameters.scope_q.is_some());
+        assert!(parameters.csf.is_some());
+        assert!(parameters.entity_map_lifetime.is_some());
+        assert!(parameters.lang.is_some());
+    }
+
+    #[test]
+    fn temporal_members_are_rejected_for_an_entity_query() {
+        let query: Query = serde_json::from_value(serde_json::json!({
+            "type": "Query",
+            "temporalQ": {"timerel": "after", "timeAt": "2024-01-01T00:00:00Z"}
+        }))
+        .expect("valid canonical Query");
+        assert!(EntityQueryParameters::try_from(query).is_err());
     }
 }

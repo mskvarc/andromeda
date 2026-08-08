@@ -31,33 +31,22 @@ pub enum ForwardingMode {
 
 /// CSR operation type (ETSI GS CIM 009 clause 4.20 / 5.2.9).
 ///
-/// Known operations get typed variants; unknown/future operations are preserved
-/// via `Other(String)` so the broker never silently drops unrecognised values.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Display, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
+#[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum CsrOperation {
-    /// Retrieve one entity (clause 5.7.1).
-    RetrieveEntity,
-    /// Query entities (clause 5.7.2).
-    QueryEntity,
-    /// Query entities via the batch endpoint (clause 5.6.10).
-    QueryBatch,
     /// Create an entity (clause 5.6.1).
     CreateEntity,
-    /// Delete an entity (clause 5.6.6).
-    DeleteEntity,
-    /// Merge-patch an entity (clause 5.6.17).
-    MergeEntity,
-    /// Replace an entity (clause 5.6.18).
-    ReplaceEntity,
+    /// Update an entity's attribute collection (clause 5.6.2).
+    UpdateEntity,
     /// Append entity attributes (clause 5.6.3).
     AppendAttrs,
-    /// Update entity attributes (clause 5.6.2).
-    UpdateAttrs,
     /// Partially update one attribute (clause 5.6.4).
-    PartialAttrUpdate,
-    /// Delete entity attributes (clause 5.6.5).
+    UpdateAttrs,
+    /// Delete an entity attribute (clause 5.6.5).
     DeleteAttrs,
+    /// Delete an entity (clause 5.6.6).
+    DeleteEntity,
     /// Batch entity creation (clause 5.6.7).
     CreateBatch,
     /// Batch entity upsert (clause 5.6.8).
@@ -66,42 +55,82 @@ pub enum CsrOperation {
     UpdateBatch,
     /// Batch entity deletion (clause 5.6.10).
     DeleteBatch,
+    /// Create or update temporal evolution (clause 5.6.11).
+    UpsertTemporal,
+    /// Add attributes to temporal evolution (clause 5.6.12).
+    AppendAttrsTemporal,
+    /// Delete attributes from temporal evolution (clause 5.6.13).
+    DeleteAttrsTemporal,
+    /// Partially update a temporal attribute instance (clause 5.6.14).
+    UpdateAttrInstanceTemporal,
+    /// Delete a temporal attribute instance (clause 5.6.15).
+    DeleteAttrInstanceTemporal,
+    /// Delete temporal evolution (clause 5.6.16).
+    DeleteTemporal,
+    /// Merge-patch an entity (clause 5.6.17).
+    MergeEntity,
+    /// Replace an entity (clause 5.6.18).
+    ReplaceEntity,
+    /// Replace an attribute (clause 5.6.19).
+    ReplaceAttrs,
     /// Batch entity merge (clause 5.6.20).
     MergeBatch,
+    /// Purge entities (clause 5.6.21).
+    PurgeEntity,
+    /// Retrieve one entity (clause 5.7.1).
+    RetrieveEntity,
+    /// Query entities, excluding the batch endpoint (clause 5.7.2).
+    QueryEntity,
+    /// Query entities through the batch endpoint (clause 5.7.2).
+    QueryBatch,
     /// Retrieve one temporal entity (clause 5.7.3).
-    RetrieveTemporalEntity,
+    RetrieveTemporal,
     /// Query temporal entities (clause 5.7.4).
-    QueryTemporalEntity,
-    /// Every read operation, as a group (clause 4.20).
+    QueryTemporal,
+    /// Retrieve available entity types (clause 5.7.5).
+    RetrieveEntityTypes,
+    /// Retrieve details of available entity types (clause 5.7.6).
+    RetrieveEntityTypeDetails,
+    /// Retrieve available entity type information (clause 5.7.7).
+    RetrieveEntityTypeInfo,
+    /// Retrieve available attributes (clause 5.7.8).
+    RetrieveAttrTypes,
+    /// Retrieve details of available attributes (clause 5.7.9).
+    RetrieveAttrTypeDetails,
+    /// Retrieve available attribute information (clause 5.7.10).
+    RetrieveAttrTypeInfo,
+    /// Create a subscription (clause 5.8.1).
+    CreateSubscription,
+    /// Update a subscription (clause 5.8.2).
+    UpdateSubscription,
+    /// Retrieve a subscription (clause 5.8.3).
+    RetrieveSubscription,
+    /// Query subscriptions (clause 5.8.4).
+    QuerySubscription,
+    /// Delete a subscription (clause 5.8.5).
+    DeleteSubscription,
+    /// Retrieve an entity map (clause 5.14.1).
+    RetrieveEntityMap,
+    /// Update an entity map (clause 5.14.2).
+    UpdateEntityMap,
+    /// Delete an entity map (clause 5.14.3).
+    DeleteEntityMap,
+    /// Create an entity map for an entity query (clause 5.14.4).
+    CreateEntityMapQueryEntity,
+    /// Create an entity map for a temporal query (clause 5.14.5).
+    CreateEntityMapQueryTemporal,
+    /// Retrieve context-source identity information (clause 5.15.1).
+    RetrieveContextSourceIdentity,
+    /// The federation operation group from Table 4.20-2.
     FederationOps,
-    /// Every operation, redirected to the context source (clause 4.20).
+    /// The association operation group from Table 4.20-2.
+    AssociationOps,
+    /// The update operation group from Table 4.20-2.
+    UpdateOps,
+    /// The retrieve operation group from Table 4.20-2.
+    RetrieveOps,
+    /// The redirection operation group from Table 4.20-2.
     RedirectionOps,
-    /// Any operation string not covered by a known variant.
-    #[strum(default)]
-    Other(String),
-}
-
-// Hand-written rather than `#[serde(rename_all = "camelCase")]`: a derived
-// enum representation cannot funnel an unrecognised token into `Other(String)`,
-// and dropping unknown operations would silently discard part of a
-// registration. The wire casing comes from the `strum(serialize_all)` above, so
-// there is still exactly one place that decides it.
-impl Serialize for CsrOperation {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-impl<'de> Deserialize<'de> for CsrOperation {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<CsrOperation, D::Error> {
-        let raw = String::deserialize(deserializer)?;
-        // `#[strum(default)]` on `Other` makes the parse total, so the fallback
-        // is unreachable rather than a swallowed failure.
-        match raw.parse::<CsrOperation>() {
-            Ok(operation) => Ok(operation),
-            Err(_) => Ok(CsrOperation::Other(raw)),
-        }
-    }
 }
 
 /// Health status of a context source registration (ETSI GS CIM 009 clause 5.2.9, status member).
@@ -362,7 +391,7 @@ mod tests {
             "endpoint": "https://source.example.com/",
             "accept": "application/ld+json",
             "mode": "inclusive",
-            "operations": ["retrieveEntity", "customOp"],
+            "operations": ["retrieveEntity", "updateEntity"],
             "refreshRate": "PT1H",
             "management": {"localOnly": false},
             "contextSourceInfo": [{"key": "Authorization", "value": "Bearer x"}],
@@ -426,22 +455,21 @@ mod tests {
 
     #[test]
     fn csr_operation_retrieve_temporal_entity_round_trip() {
-        let op = CsrOperation::RetrieveTemporalEntity;
-        pretty_assertions::assert_eq!(op.to_string(), "retrieveTemporalEntity");
-        pretty_assertions::assert_eq!("retrieveTemporalEntity".parse::<CsrOperation>().unwrap(), op);
+        let op = CsrOperation::RetrieveTemporal;
+        pretty_assertions::assert_eq!(op.to_string(), "retrieveTemporal");
+        pretty_assertions::assert_eq!("retrieveTemporal".parse::<CsrOperation>().unwrap(), op);
     }
 
     #[test]
     fn csr_operation_query_temporal_entity_round_trip() {
-        let op = CsrOperation::QueryTemporalEntity;
-        pretty_assertions::assert_eq!(op.to_string(), "queryTemporalEntity");
-        pretty_assertions::assert_eq!("queryTemporalEntity".parse::<CsrOperation>().unwrap(), op);
+        let op = CsrOperation::QueryTemporal;
+        pretty_assertions::assert_eq!(op.to_string(), "queryTemporal");
+        pretty_assertions::assert_eq!("queryTemporal".parse::<CsrOperation>().unwrap(), op);
     }
 
     #[test]
-    fn csr_operation_other_preserved() {
-        let op: CsrOperation = "customOp".parse().unwrap();
-        pretty_assertions::assert_eq!(op, CsrOperation::Other("customOp".to_string()));
-        pretty_assertions::assert_eq!(op.to_string(), "customOp");
+    fn csr_operation_unknown_token_is_rejected() {
+        assert!("customOp".parse::<CsrOperation>().is_err());
+        assert!(serde_json::from_str::<CsrOperation>(r#""customOp""#).is_err());
     }
 }

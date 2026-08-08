@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::{AndromedaError, ResultInstanceExt},
+    error::{AndromedaError, ResultInstanceExt},
     http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery},
 };
 use andromeda_jsonld::core_context::is_ngsi_ld_core_context_url;

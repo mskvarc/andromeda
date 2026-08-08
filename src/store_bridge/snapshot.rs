@@ -1,7 +1,7 @@
 //! `SnapshotStore` trait implementation for `SnapshotRepository`.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::snapshot::store::{InsertSnapshotParams, SnapshotEntityInput, SnapshotStore},
 };
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};

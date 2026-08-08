@@ -1,7 +1,7 @@
 //! Appending attributes to an entity (clause 5.6.3).
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,

@@ -14,20 +14,19 @@ use jsonld::{CompactError, ContextLoadError, ExpandError, compaction, context_pr
 use reqwest::StatusCode;
 use thiserror::Error;
 
-/// The typed [`ExpandError`] the processor yields when driven by this crate's
-/// loader.
-pub type ExpandErrorTyped = ExpandError<LoaderError>;
-
-/// The typed [`CompactError`] the processor yields when driven by this crate's
-/// loader.
-pub type CompactErrorTyped = CompactError<LoaderError>;
-
 /// A JSON-LD processing failure.
 ///
 /// Carries enough detail for a caller to produce an NGSI-LD Problem Detail
 /// without inspecting error chains.
 #[derive(Debug, Error)]
 pub enum JsonLdError {
+    /// Configuration attempted to replace an embedded NGSI-LD core context.
+    #[error("Preloading protected NGSI-LD core context {url} is forbidden")]
+    ProtectedContextPreload {
+        /// The protected core-context URL supplied by configuration.
+        url: IriBuf,
+    },
+
     /// Remote context fetch is disabled by configuration.
     #[error("Remote context fetch disabled for {url}")]
     ContextFetchDisabled {
@@ -87,11 +86,11 @@ pub enum JsonLdError {
 
     /// JSON-LD expansion failed.
     #[error("Failed to expand document")]
-    Expansion(#[source] Box<ExpandErrorTyped>),
+    Expansion(#[source] Box<ExpandError<LoaderError>>),
 
     /// JSON-LD compaction failed.
     #[error("Failed to compact document")]
-    Compaction(#[source] Box<CompactErrorTyped>),
+    Compaction(#[source] Box<CompactError<LoaderError>>),
 
     /// An IRI could not be parsed or resolved.
     #[error("Invalid IRI: {0}")]
@@ -106,8 +105,8 @@ pub enum JsonLdError {
     Json(#[from] serde_json::Error),
 }
 
-impl From<ExpandErrorTyped> for JsonLdError {
-    fn from(error: ExpandErrorTyped) -> JsonLdError {
+impl From<ExpandError<LoaderError>> for JsonLdError {
+    fn from(error: ExpandError<LoaderError>) -> JsonLdError {
         match context_error_of_expansion(&error) {
             Some(context_error) => context_error,
             None => JsonLdError::Expansion(Box::new(error)),
@@ -115,8 +114,8 @@ impl From<ExpandErrorTyped> for JsonLdError {
     }
 }
 
-impl From<CompactErrorTyped> for JsonLdError {
-    fn from(error: CompactErrorTyped) -> JsonLdError {
+impl From<CompactError<LoaderError>> for JsonLdError {
+    fn from(error: CompactError<LoaderError>) -> JsonLdError {
         match context_error_of_compaction(&error) {
             Some(context_error) => context_error,
             None => JsonLdError::Compaction(Box::new(error)),
@@ -143,11 +142,7 @@ impl JsonLdError {
     pub const fn is_context_not_available(&self) -> bool {
         matches!(
             self,
-            JsonLdError::ContextFetchDisabled { .. }
-                | JsonLdError::ContextHttp { .. }
-                | JsonLdError::ContextLoad { .. }
-                | JsonLdError::ContextTooLarge { .. }
-                | JsonLdError::ContextInvalid { .. }
+            JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextTooLarge { .. }
         )
     }
 
@@ -156,7 +151,7 @@ impl JsonLdError {
     /// Decides whether falling back to core-only compaction is appropriate:
     /// a user context that redefines a protected core term is the one failure
     /// a retry without that context can fix.
-    pub const fn is_protected_term_error(error: &CompactErrorTyped) -> bool {
+    pub const fn is_protected_term_error(error: &CompactError<LoaderError>) -> bool {
         match error {
             CompactError::ContextProcessing(processing) | CompactError::Expand(ExpandError::ContextProcessing(processing)) => {
                 is_protected_term_redefinition(processing)
@@ -193,7 +188,7 @@ const fn is_protected_term_redefinition(error: &context_processing::Error<Loader
 ///
 /// The typed `LoadError<LoaderError>` exposes its source directly, so this is
 /// a match rather than a chain of `Box<dyn Error>` downcasts.
-fn context_error_of_expansion(error: &ExpandErrorTyped) -> Option<JsonLdError> {
+fn context_error_of_expansion(error: &ExpandError<LoaderError>) -> Option<JsonLdError> {
     match error {
         ExpandError::Loading(load) => Some(JsonLdError::from(&load.source)),
         ExpandError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
@@ -210,7 +205,7 @@ fn context_error_of_expansion(error: &ExpandErrorTyped) -> Option<JsonLdError> {
 }
 
 /// The [`context_error_of_expansion`] rule, over a typed [`CompactError`].
-fn context_error_of_compaction(error: &CompactErrorTyped) -> Option<JsonLdError> {
+fn context_error_of_compaction(error: &CompactError<LoaderError>) -> Option<JsonLdError> {
     match error {
         CompactError::Loading(load) => Some(JsonLdError::from(&load.source)),
         CompactError::ContextLoading(ContextLoadError::LoadingDocumentFailed(load)) => Some(JsonLdError::from(&load.source)),
@@ -252,7 +247,7 @@ mod tests {
     fn loader_error() -> LoaderError {
         LoaderError {
             url: url(),
-            kind: LoaderErrorKind::Invalid("not valid JSON-LD".to_string()),
+            kind: LoaderErrorKind::Request("connection refused".to_string()),
         }
     }
 
@@ -261,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_five_loading_variants_are_reportable_as_context_not_available() {
+    fn only_unavailable_remote_contexts_are_reportable_as_context_not_available() {
         let available = [
             JsonLdError::ContextFetchDisabled { url: url() },
             JsonLdError::ContextHttp {
@@ -273,16 +268,16 @@ mod tests {
                 message: "boom".to_string(),
             },
             JsonLdError::ContextTooLarge { url: url(), size: 10, max: 5 },
-            JsonLdError::ContextInvalid {
-                url: url(),
-                message: "boom".to_string(),
-            },
         ];
         for error in &available {
             assert!(error.is_context_not_available(), "{error} must report as LdContextNotAvailable");
         }
 
         let internal = [
+            JsonLdError::ContextInvalid {
+                url: url(),
+                message: "boom".to_string(),
+            },
             JsonLdError::EmbeddedContextInvalid("boom".to_string()),
             JsonLdError::InlineContextInvalid("boom".to_string()),
             JsonLdError::InvalidIri("boom".to_string()),

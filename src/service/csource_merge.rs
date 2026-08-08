@@ -4,10 +4,10 @@
 //! Pure service-layer logic: no I/O, no SQL. The repository applies the
 //! produced [`ResolvedCsrUpdate`] as an unconditional UPDATE.
 
-use crate::{core::error::AndromedaError, service::csource_registration::store::CsrUpdateFragment};
+use crate::{error::AndromedaError, service::csource_registration::store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
@@ -38,7 +38,7 @@ pub struct ResolvedCsrUpdate {
     /// New forwarding mode.
     pub mode: ForwardingMode,
     /// New supported operations list.
-    pub operations: Option<Vec<String>>,
+    pub operations: Option<Vec<CsrOperation>>,
     /// New scope strings.
     pub scope: Option<Vec<String>>,
     /// New refresh-rate duration string.
@@ -89,16 +89,13 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
     let operations = fragment
         .operations
-        .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
-        .unwrap_or_else(|| existing.access.operations.map(|ops| ops.into_iter().map(|op| op.to_string()).collect()));
+        .clone() // clone: own fragment side; existing path moves the typed operations
+        .unwrap_or(existing.access.operations);
     let scope = fragment
         .scope
         .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
         .unwrap_or_else(|| existing.coverage.scope.map(|v| v.into_iter().map(|s| s.to_string()).collect()));
-    let refresh_rate = fragment
-        .refresh_rate
-        .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or(existing.access.refresh_rate);
+    let refresh_rate = fragment.refresh_rate.unwrap_or(existing.access.refresh_rate);
     let management = fragment.management.clone().unwrap_or(existing.access.management); // clone: own fragment side
     let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.access.context_source_info); // clone: own fragment side
     let jsonld_context = fragment

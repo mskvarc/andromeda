@@ -1,7 +1,7 @@
 //! Batch entity creation (clause 5.6.7).
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         batch::{BatchResult, chunk::ChunkWrite},

@@ -7,7 +7,7 @@
 //! mapper live in the context-store crate.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::subscription::store::{SubscriptionFields, SubscriptionStore},
 };
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};

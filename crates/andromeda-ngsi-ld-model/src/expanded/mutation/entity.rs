@@ -6,7 +6,7 @@ use crate::expanded::{
     merge::{deep_merge_attribute, remove_instances_by_dataset},
     mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
     node::{expanded_object_mut, expanded_object_ref},
-    null_sentinel::instance_is_null_sentinel,
+    null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::{Map, Value};
@@ -49,6 +49,11 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEnt
                 continue;
             }
         };
+
+        if patch_instances.len() == 1 && member_is_null_sentinel(&patch_instances[0]) {
+            entity_obj.remove(key);
+            continue;
+        }
 
         apply_instance_patch(entity_obj, key, patch_instances);
     }
@@ -327,6 +332,21 @@ mod tests {
         pretty_assertions::assert_eq!(instances.len(), 1, "the default instance is gone, B is kept");
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/datasetId"][0]["@id"], json!("urn:ngsi-ld:Dataset:B"));
         pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(20));
+    }
+
+    #[test]
+    fn a_bare_member_null_sentinel_deletes_every_attribute_instance() {
+        let mut entity = entity_with_speed(vec![
+            property_instance(json!(10), None),
+            property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B")),
+        ]);
+        let patch = json!([{
+            "https://example.com/speed": [{"@value": "urn:ngsi-ld:null"}]
+        }]);
+
+        merge_entity(&mut entity, &patch).expect("merge succeeds");
+
+        assert!(entity[0].get("https://example.com/speed").is_none());
     }
 
     #[test]

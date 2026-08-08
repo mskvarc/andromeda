@@ -2,24 +2,22 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::{AndromedaError, ResultInstanceExt},
+    error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, prefer::PreferHeader},
+        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, json_body::invalid_json_body, prefer::PreferHeader},
         response::{render::start_rendering, single::NgsiLdResponse},
         validation::parse_entity_map_id,
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
-use andromeda_ngsi_ld_request::{
-    body::entity_map::{QueryRequestBody, UpdateEntityMapBody},
-    query::entity::body_conversion::query_body_to_params,
-};
+use andromeda_ngsi_ld_request::{body::entity_map::UpdateEntityMapBody, query::entity::parameters::EntityQueryParameters};
 use axum::{
     Json,
-    extract::{OriginalUri, Path},
+    extract::{OriginalUri, Path, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -50,8 +48,9 @@ pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     Path(entity_map_id): Path<String>,
-    Json(body): Json<UpdateEntityMapBody>,
+    body: Result<Json<UpdateEntityMapBody>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
+    let Json(body) = body.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::entity_map_validation))?;
     let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
 
     let expires_at = body
@@ -123,25 +122,26 @@ pub async fn create_from_query_post(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    Json(body): Json<QueryRequestBody>,
+    body: Result<Json<Query>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
+    let Json(body) = body.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::entity_map_validation))?;
     let context_spec: ContextSpec = context.into_inner();
 
-    let query = query_body_to_params(&body);
+    let lifetime = body.entity_map_lifetime;
+    let query = EntityQueryParameters::try_from(body).map_err(AndromedaError::from)?;
     query.validate().map_err(|e| NgsiLdError::from(AndromedaError::from(e)))?;
     crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let lifetime = body.entity_map_lifetime.as_ref();
     let typed_ids: Vec<Uri> = ids
         .iter()
         .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)
         .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
     let map_uri = map.id.clone();
@@ -201,25 +201,26 @@ pub async fn create_temporal_from_query_post(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    Json(body): Json<QueryRequestBody>,
+    body: Result<Json<Query>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
+    let Json(body) = body.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::entity_map_validation))?;
     let context_spec: ContextSpec = context.into_inner();
 
-    let query = query_body_to_params(&body);
+    let lifetime = body.entity_map_lifetime;
+    let query = EntityQueryParameters::try_from(body).map_err(AndromedaError::from)?;
     query.validate().map_err(|e| NgsiLdError::from(AndromedaError::from(e)))?;
     crate::http::validation::validate_entity_map_has_filter(&query, &uri)?;
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let lifetime = body.entity_map_lifetime.as_ref();
     let typed_ids: Vec<Uri> = ids
         .iter()
         .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)
         .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
     let map_uri = map.id.clone();

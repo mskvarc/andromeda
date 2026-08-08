@@ -9,8 +9,11 @@
 #![deny(missing_docs)]
 
 mod api;
-mod core;
+mod batch_activity;
+mod cli;
+mod config;
 mod enforcement;
+mod error;
 mod event;
 mod http;
 mod repository;
@@ -21,12 +24,12 @@ mod temporal_render;
 mod version;
 mod worker;
 
-use clap::Parser;
-use core::{
+use crate::{
     cli::{Cli, Command, ConfigCommand, OutputFormat},
     config::{RuntimeConfig, ServerOverrides},
     error::AndromedaError,
 };
+use clap::Parser;
 use mimalloc::MiMalloc;
 use tracing::info;
 use tracing_subscriber::fmt;

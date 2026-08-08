@@ -1,7 +1,7 @@
 //! Reading entities: clause 5.6.3 retrieval and clause 5.7.2 query.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         compiled_cache::LimitCap,
         expanded_member::unwrap_expanded_ref,

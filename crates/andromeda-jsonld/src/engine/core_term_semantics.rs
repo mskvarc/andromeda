@@ -14,7 +14,7 @@
 
 use crate::{
     core_context::{ANDROMEDA_CORE_CONTEXT, NGSI_LD_CORE_CONTEXT_MAP},
-    engine::term_map::{TermCoercion, TermContainer},
+    engine::term_map::coercion::{TermCoercion, TermContainer},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes;
 use dashmap::DashMap;
@@ -131,7 +131,7 @@ mod tests {
         core_context::NGSI_LD_CORE_CONTEXT_V19_URL,
         engine::{
             core_term_semantics::core_term_semantics,
-            term_map::{TermCoercion, TermContainer},
+            term_map::coercion::{TermCoercion, TermContainer},
         },
     };
     use iri_rs::IriBuf;

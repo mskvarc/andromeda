@@ -1,6 +1,6 @@
 //! Handler for the `/health` endpoint.
 
-use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
 use andromeda_health::{
     aggregate::Health,
     report::{HealthCheckResponse, HealthCheckType},

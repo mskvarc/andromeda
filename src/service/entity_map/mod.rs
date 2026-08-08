@@ -1,7 +1,7 @@
 /// The entity map store port.
 pub mod store;
 
-use crate::{core::error::AndromedaError, service::entity_map::store::EntityMapStore};
+use crate::{error::AndromedaError, service::entity_map::store::EntityMapStore};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::EntityMapId, uri::Uri};
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};

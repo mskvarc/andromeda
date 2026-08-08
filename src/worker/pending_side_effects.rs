@@ -10,7 +10,7 @@
 //! exceeds the configured maximum.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::change_event::ChangeEvent,
     service::entity::{
         atomic_write::AtomicWrite,

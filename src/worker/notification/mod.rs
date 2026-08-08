@@ -39,6 +39,7 @@ use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
 use std::collections::{HashMap, HashSet};
+use tokio::sync::broadcast::error::TryRecvError;
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -98,6 +99,7 @@ impl NotificationWorker {
                 result = self.change_rx.recv() => {
                     match result {
                         Ok(event) => {
+                            self.drain_subscription_changes().await;
                             self.handle_change_event(event).await;
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -130,8 +132,29 @@ impl NotificationWorker {
         }
     }
 
-    async fn reload_cache(&self) -> Result<(), crate::core::error::AndromedaError> {
+    async fn reload_cache(&self) -> Result<(), crate::error::AndromedaError> {
         self.cache.reload(&self.sub_repo).await
+    }
+
+    /// Apply every already-published subscription change before matching an entity change.
+    ///
+    /// Subscription and entity mutations use separate broadcast channels. A later entity
+    /// event can therefore win `select!` while an earlier committed subscription mutation
+    /// is still queued. Draining the subscription queue restores request order at the
+    /// matching seam.
+    async fn drain_subscription_changes(&mut self) {
+        loop {
+            match self.sub_change_rx.try_recv() {
+                Ok(change) => self.handle_subscription_change(change).await,
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    debug!(skipped, "NotificationWorker lagged while ordering subscription changes before an entity event");
+                    if let Err(error) = self.reload_cache().await {
+                        error!(%error, "Failed to reload subscription cache after lag");
+                    }
+                }
+            }
+        }
     }
 
     async fn handle_subscription_change(&self, change: SubscriptionChange) {
@@ -187,7 +210,7 @@ impl NotificationWorker {
                 Ok(Some(data)) => Some(data),
                 _ => {
                     if let Some(ref snapshot) = event.entity_snapshot {
-                        let mut bare = payload::strip_to_structural_keys(
+                        let mut bare = payload::context::strip_to_structural_keys(
                             &match snapshot.as_ref() {
                                 Value::Array(arr) => arr.first().cloned().unwrap_or_else(|| snapshot.as_ref().clone()),
                                 other => other.clone(),
@@ -442,11 +465,14 @@ impl NotificationWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{event::change_event::ChangeOrigin, service::subscription_matching::matches_subscription};
+    use crate::{
+        event::change_event::ChangeOrigin,
+        service::subscription_matching::matches_subscription,
+        worker::notification::payload::filtering::filter_entity_attributes,
+    };
     use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
-    use payload::filter_entity_attributes;
     use url::Url;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: NotificationTrigger, attrs: Vec<&str>) -> ChangeEvent {

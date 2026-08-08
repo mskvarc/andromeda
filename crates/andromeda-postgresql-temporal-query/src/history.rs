@@ -16,7 +16,6 @@ use andromeda_postgresql_query::{
     error::RenderError,
 };
 use std::borrow::Cow;
-use urn_rs::Urn;
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -66,11 +65,11 @@ pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporal
         DatasetFilter::Unfiltered => {}
         DatasetFilter::DefaultOnly => conditions.push("\"tea\".\"dataset_id\" IS NULL".to_string()),
         DatasetFilter::NamedOnly(named) => {
-            let marker = binds.bind(BindValue::StringVec(Cow::Owned(named.iter().map(Urn::to_string).collect())));
+            let marker = binds.bind(BindValue::StringVec(Cow::Owned(named.iter().map(ToString::to_string).collect())));
             conditions.push(format!("\"tea\".\"dataset_id\" = ANY({marker})"));
         }
         DatasetFilter::DefaultOrNamed(named) => {
-            let marker = binds.bind(BindValue::StringVec(Cow::Owned(named.iter().map(Urn::to_string).collect())));
+            let marker = binds.bind(BindValue::StringVec(Cow::Owned(named.iter().map(ToString::to_string).collect())));
             conditions.push(format!("(\"tea\".\"dataset_id\" = ANY({marker}) OR \"tea\".\"dataset_id\" IS NULL)"));
         }
     }

@@ -2,11 +2,14 @@
 
 use crate::{
     impl_shared_query_params,
+    language_filter::deserialize_optional_language_filter,
+    options::{EntityRepresentationOptions, deserialize_entity_representation_options},
     query::{
+        SharedQueryParams,
         deserialization::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
-            deserialize_optional_dataset_urns,
+            deserialize_optional_dataset_selectors,
             deserialize_optional_filter_expr,
             deserialize_optional_iso8601_duration,
             deserialize_optional_pattern,
@@ -16,10 +19,12 @@ use crate::{
     },
     representation_params::deserialize_option_response_format,
 };
+use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
     filter::expression::Expr,
-    ordering::{collation::IcuCollation, term::OrderTerm},
+    ordering::parameters::OrderingParameters,
     pattern::Pattern,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
@@ -28,7 +33,6 @@ use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::Res
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::Deserialize;
 use std::num::NonZeroU32;
-use urn_rs::Urn;
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
 ///
@@ -74,8 +78,9 @@ pub struct EntityQueryParameters {
     pub offset: Option<u32>,
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
-    /// The legacy representation selector, comma-separated (`options`).
-    pub options: Option<String>,
+    /// Typed representation and system-attribute options (`options`).
+    #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
+    pub options: Option<EntityRepresentationOptions>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(rename = "local")]
     pub local: Option<bool>,
@@ -85,21 +90,19 @@ pub struct EntityQueryParameters {
     /// Members the response drops (clause 6.3.15 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
     pub omit: Option<Vec<AttributeName>>,
-    /// The ordering terms, comma-separated (clause 4.23 `orderBy`).
-    #[serde(rename = "orderBy")]
-    #[serde(default, deserialize_with = "super::deserializer::deserialize_optional_order_by")]
-    pub order_by: Option<Vec<OrderTerm>>,
+    /// Typed ordering semantics shared by GET and POST query bindings.
+    #[serde(flatten)]
+    pub ordering: OrderingParameters,
     /// The scope query expression (clause 4.18 `scopeQ`).
     #[serde(rename = "scopeQ")]
     pub scope_q: Option<ScopeQuery>,
-    /// Parsed by the language-negotiation extractor at the HTTP layer; retained
-    /// here so `deny_unknown_fields` accepts `?lang=...` in the query string.
-    #[allow(dead_code)]
-    pub lang: Option<String>,
+    /// Clause-4.15 natural-language selection preferences.
+    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    pub lang: Option<LanguageFilter>,
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_urns")]
-    pub dataset_id: Option<Vec<Urn>>,
+    #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Attributes whose `q` values are expanded against the context (`expandValues`).
     #[serde(rename = "expandValues")]
     #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
@@ -133,15 +136,6 @@ pub struct EntityQueryParameters {
     /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.8 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
-    /// ICU collation identifier for orderBy string sorting (S4.23).
-    #[serde(default, deserialize_with = "super::deserializer::deserialize_option_collation")]
-    pub collation: Option<IcuCollation>,
-    /// Reference coordinates for distance-based ordering (S5.2.43).
-    #[serde(rename = "orderFrom")]
-    pub order_from: Option<String>,
-    /// Geometry type for orderFrom coordinates (S5.2.43). Defaults to "Point".
-    #[serde(rename = "orderGeometry")]
-    pub order_geometry: Option<String>,
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
     /// are contacted during distributed operations. Uses the q-expression grammar.
     #[serde(default, deserialize_with = "deserialize_optional_filter_expr")]
@@ -180,7 +174,8 @@ pub struct EntityQueryParametersOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{body::query::QueryRequest, error::ParameterError, params_from_query, query::SharedQueryParams};
+    use crate::{error::ParameterError, params_from_query, query::SharedQueryParams};
+    use andromeda_ngsi_ld_model::query::body::Query;
     use andromeda_ngsi_ld_query::ordering::term::OrderDirection;
 
     fn params_from_query(query: &str) -> EntityQueryParameters {
@@ -222,25 +217,25 @@ mod tests {
     #[test]
     fn parse_order_by_asc_default() {
         let p = params_from_query("orderBy=temperature");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
     #[test]
     fn parse_order_by_desc_with_bang() {
         let p = params_from_query("orderBy=!temperature");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
     }
 
     #[test]
     fn parse_order_by_multiple() {
         let p = params_from_query("orderBy=speed,!temperature");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 2);
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
         pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
@@ -249,27 +244,27 @@ mod tests {
     #[test]
     fn parse_order_by_semicolon_asc() {
         let p = params_from_query("orderBy=temperature;asc");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
     }
 
     #[test]
     fn parse_order_by_semicolon_desc() {
         let p = params_from_query("orderBy=temperature;desc");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr, "temperature");
+        pretty_assertions::assert_eq!(order[0].attr.as_str(), "temperature");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Desc);
     }
 
     #[test]
     fn parse_order_by_dist_asc() {
         let p = params_from_query("orderBy=location;dist-asc");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr, "location");
+        pretty_assertions::assert_eq!(order[0].attr.as_str(), "location");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistAsc);
         assert!(order[0].direction.is_distance());
     }
@@ -277,9 +272,9 @@ mod tests {
     #[test]
     fn parse_order_by_dist_desc() {
         let p = params_from_query("orderBy=location;dist-desc");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 1);
-        pretty_assertions::assert_eq!(order[0].attr, "location");
+        pretty_assertions::assert_eq!(order[0].attr.as_str(), "location");
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::DistDesc);
         assert!(order[0].direction.is_distance());
     }
@@ -287,7 +282,7 @@ mod tests {
     #[test]
     fn parse_order_by_mixed_directions() {
         let p = params_from_query("orderBy=name,age;desc,location;dist-asc");
-        let order = p.order_by.as_deref().unwrap();
+        let order = &p.ordering.order_by;
         pretty_assertions::assert_eq!(order.len(), 3);
         pretty_assertions::assert_eq!(order[0].direction, OrderDirection::Asc);
         pretty_assertions::assert_eq!(order[1].direction, OrderDirection::Desc);
@@ -319,8 +314,7 @@ mod tests {
     fn parse_options_matches_whole_tokens_not_substrings() {
         // `options` carries whole comma-separated tokens; a value that merely
         // contains `keyValues` as a substring is not the keyValues option.
-        let p = params_from_query("options=mykeyValues");
-        pretty_assertions::assert_eq!(p.parse_options().render_mode, ResponseFormat::Normalized);
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("options=mykeyValues").is_err());
     }
 
     #[test]
@@ -367,40 +361,38 @@ mod tests {
     #[test]
     fn parse_order_from_accepted() {
         let p = params_from_query("orderFrom=%5B13.3986%2C52.5547%5D");
-        pretty_assertions::assert_eq!(p.order_from.as_deref(), Some("[13.3986,52.5547]"));
+        let geometry = p.ordering.geometry.as_ref().expect("typed ordering geometry");
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(geometry.geometry.to_geojson()).expect("geometry serializes"),
+            serde_json::json!({"type": "Point", "coordinates": [13.3986, 52.5547]})
+        );
         assert!(p.validate().is_ok());
     }
 
     #[test]
     fn parse_order_from_with_geometry() {
         let p = params_from_query("orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString");
-        pretty_assertions::assert_eq!(p.order_from.as_deref(), Some("[[2.3,48.8],[2.4,48.9]]"));
-        pretty_assertions::assert_eq!(p.order_geometry.as_deref(), Some("LineString"));
+        let geometry = p.ordering.geometry.as_ref().expect("typed ordering geometry");
+        pretty_assertions::assert_eq!(
+            serde_json::to_value(geometry.geometry.to_geojson()).expect("geometry serializes"),
+            serde_json::json!({"type": "LineString", "coordinates": [[2.3, 48.8], [2.4, 48.9]]})
+        );
         assert!(p.validate().is_ok());
     }
 
     #[test]
     fn validate_rejects_geometry_collection() {
-        let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection");
-        let err = p.validate().expect_err("expected GeometryCollection rejection");
-        assert!(matches!(err, ParameterError::OrderGeometryCollection));
-        assert!(err.to_string().contains("GeometryCollection"));
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection").is_err());
     }
 
     #[test]
     fn validate_rejects_invalid_order_geometry() {
-        let p = params_from_query("orderFrom=%5B8%2C40%5D&orderGeometry=Hexagon");
-        let err = p.validate().expect_err("expected invalid geometry rejection");
-        assert!(matches!(err, ParameterError::OrderGeometryInvalid(_)));
-        assert!(err.to_string().contains("Hexagon"));
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("orderFrom=%5B8%2C40%5D&orderGeometry=Hexagon").is_err());
     }
 
     #[test]
     fn validate_rejects_invalid_order_from_json() {
-        let p = params_from_query("orderFrom=notjson");
-        let err = p.validate().expect_err("expected invalid JSON rejection");
-        assert!(matches!(err, ParameterError::OrderFromInvalid { .. }));
-        assert!(err.to_string().contains("orderFrom"));
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("orderFrom=notjson").is_err());
     }
 
     #[test]
@@ -440,135 +432,26 @@ mod tests {
     }
 
     #[test]
-    fn from_query_request_empty_entities() {
-        let request = QueryRequest {
-            type_: None,
-            entities: None,
-            attrs: None,
-            q: None,
-            geo_q: None,
-            limit: None,
-            offset: None,
-            count: None,
-        };
-        let params: EntityQueryParameters = request.into();
-        assert!(params.id.is_none());
-        assert!(params.entity_type.is_none());
-        assert!(params.id_pattern.is_none());
-        assert!(params.attrs.is_none());
-    }
-
-    #[test]
-    fn from_query_request_single_entity_with_id_and_type() {
-        use crate::body::query::EntitySelection;
-
-        let request = QueryRequest {
-            type_: None,
-            entities: Some(vec![EntitySelection::Object {
-                id: Some("urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")),
-                id_pattern: None,
-                type_: Some("Vehicle".parse().unwrap()),
-            }]),
-            attrs: Some(vec!["speed".parse().unwrap()]),
-            q: Some("speed>50".parse().unwrap()),
-            geo_q: None,
-            limit: Some(10),
-            offset: Some(5),
-            count: Some(true),
-        };
-        let params: EntityQueryParameters = request.into();
-        pretty_assertions::assert_eq!(params.id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:Vehicle:1"));
-        assert!(params.entity_type.is_none());
-        pretty_assertions::assert_eq!(params.attrs.as_deref().map(|names| names[0].as_str()), Some("speed"));
-        pretty_assertions::assert_eq!(params.q.as_ref().map(ToString::to_string).as_deref(), Some("speed>50"));
-        pretty_assertions::assert_eq!(params.limit, Some(10));
-        pretty_assertions::assert_eq!(params.offset, Some(5));
-        pretty_assertions::assert_eq!(params.count, Some(true));
-    }
-
-    #[test]
-    fn from_query_request_multiple_entities() {
-        use crate::body::query::EntitySelection;
-
-        let request = QueryRequest {
-            type_: None,
-            entities: Some(vec![
-                EntitySelection::Id("urn:ngsi-ld:Vehicle:1".parse().expect("valid URI")),
-                EntitySelection::Id("urn:ngsi-ld:Vehicle:2".parse().expect("valid URI")),
-            ]),
-            attrs: None,
-            q: None,
-            geo_q: None,
-            limit: None,
-            offset: None,
-            count: None,
-        };
-        let params: EntityQueryParameters = request.into();
-        let ids = params.id.expect("ids present");
-        assert!(ids.iter().any(|id| id.as_str() == "urn:ngsi-ld:Vehicle:1"));
-        assert!(ids.iter().any(|id| id.as_str() == "urn:ngsi-ld:Vehicle:2"));
-        // (flattened summary; the per-selector grouping is asserted below)
-        pretty_assertions::assert_eq!(params.entity_selectors.len(), 2, "each selector is preserved, not flattened");
-        pretty_assertions::assert_eq!(
-            params.entity_selectors[0].id.as_deref().map(|ids| ids[0].as_str()),
-            Some("urn:ngsi-ld:Vehicle:1")
-        );
-        pretty_assertions::assert_eq!(
-            params.entity_selectors[1].id.as_deref().map(|ids| ids[0].as_str()),
-            Some("urn:ngsi-ld:Vehicle:2")
-        );
-    }
-
-    #[test]
-    fn from_query_request_keeps_each_selectors_id_and_type_paired() {
-        // Clause 5.2.11: `{id:A,type:T1}` and `{id:B,type:T2}` are a union, so
-        // the per-selector pairing must survive into `entity_selectors` rather
-        // than flatten into an `id=A,B`/`type=T1,T2` cross product.
-        use crate::body::query::EntitySelection;
-
-        let request = QueryRequest {
-            type_: None,
-            entities: Some(vec![
-                EntitySelection::Object {
-                    id: Some("urn:ngsi-ld:A".parse().expect("valid URI")),
-                    id_pattern: None,
-                    type_: Some("T1".parse().unwrap()),
-                },
-                EntitySelection::Object {
-                    id: Some("urn:ngsi-ld:B".parse().expect("valid URI")),
-                    id_pattern: None,
-                    type_: Some("T2".parse().unwrap()),
-                },
-            ]),
-            attrs: None,
-            q: None,
-            geo_q: None,
-            limit: None,
-            offset: None,
-            count: None,
-        };
-        let params: EntityQueryParameters = request.into();
+    fn canonical_query_preserves_selector_pairing_and_geo_query() {
+        let request = serde_json::from_str::<Query>(
+            r#"{"type":"Query","entities":[{"id":"urn:ngsi-ld:A","type":"T1"},{"id":"urn:ngsi-ld:B","type":"T2"}],"geoQ":{"georel":"near;maxDistance==2000","geometry":"Point","coordinates":[13.4,52.5],"geoproperty":"location"}}"#,
+        )
+        .expect("valid canonical query");
+        let params = EntityQueryParameters::try_from(request).expect("applicable entity query");
         pretty_assertions::assert_eq!(params.entity_selectors.len(), 2);
         pretty_assertions::assert_eq!(params.entity_selectors[0].id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:A"));
         pretty_assertions::assert_eq!(params.entity_selectors[0].type_.as_ref().map(ToString::to_string).as_deref(), Some("T1"));
         pretty_assertions::assert_eq!(params.entity_selectors[1].id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ngsi-ld:B"));
         pretty_assertions::assert_eq!(params.entity_selectors[1].type_.as_ref().map(ToString::to_string).as_deref(), Some("T2"));
+        pretty_assertions::assert_eq!(
+            params.geo.0.and_then(|geo| geo.geoproperty).as_ref().map(AsRef::<str>::as_ref),
+            Some("location")
+        );
     }
 
     #[test]
-    fn deserialization_rejects_malformed_per_selector_type_expressions() {
-        let parsed = serde_json::from_str::<QueryRequest>(r#"{"type":"Query","entities":[{"id":"urn:ngsi-ld:A","type":"(Vehicle"}]}"#);
-        assert!(parsed.is_err());
-    }
-
-    #[test]
-    fn from_query_request_with_geo_q() {
-        let request: QueryRequest =
-            serde_json::from_str(r#"{"geoQ":{"georel":"near;maxDistance==2000","geometry":"Point","coordinates":[13.4,52.5],"geoproperty":"location"}}"#)
-                .expect("valid body");
-        let params: EntityQueryParameters = request.into();
-        let geo = params.geo.0.expect("geo query");
-        pretty_assertions::assert_eq!(geo.geoproperty.as_ref().map(AsRef::<str>::as_ref), Some("location"));
+    fn canonical_query_rejects_malformed_per_selector_type_expressions() {
+        assert!(serde_json::from_str::<Query>(r#"{"type":"Query","entities":[{"id":"urn:ngsi-ld:A","type":"(Vehicle"}]}"#).is_err());
     }
 
     #[test]
@@ -586,18 +469,9 @@ mod tests {
     }
 
     #[test]
-    fn from_query_request_optional_fields_default_to_none() {
-        let request = QueryRequest {
-            type_: None,
-            entities: None,
-            attrs: None,
-            q: None,
-            geo_q: None,
-            limit: None,
-            offset: None,
-            count: None,
-        };
-        let params: EntityQueryParameters = request.into();
+    fn canonical_query_optional_fields_default_to_none() {
+        let request = serde_json::from_str::<Query>(r#"{"type":"Query"}"#).expect("valid canonical query");
+        let params = EntityQueryParameters::try_from(request).expect("applicable entity query");
         assert!(params.options.is_none());
         assert!(params.local.is_none());
         assert!(params.format.is_none());

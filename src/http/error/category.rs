@@ -5,7 +5,7 @@
 //! categories are fixed by ETSI GS CIM 009, but which of Andromeda's internal
 //! failures falls into which of them is a decision this broker makes.
 
-use crate::core::error::ErrorKind;
+use crate::error::ErrorKind;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_tenancy::error::TenancyError;
 
@@ -27,6 +27,8 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         | ErrorKind::DatabaseUniqueViolation(_) => NgsiLdErrorType::AlreadyExists,
 
         ErrorKind::OperationNotSupported(_) => NgsiLdErrorType::OperationNotSupported,
+        ErrorKind::Conflict(_) => NgsiLdErrorType::Conflict,
+        ErrorKind::ContextSourceGateway(_) => NgsiLdErrorType::InternalError,
         ErrorKind::ContextNotAvailable(_) => NgsiLdErrorType::LdContextNotAvailable,
 
         // The one category this function does not decide alone. Whether a
@@ -81,7 +83,7 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::error::ErrorKind, http::error::category};
+    use crate::{error::ErrorKind, http::error::category};
     use andromeda_jsonld::error::JsonLdError;
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

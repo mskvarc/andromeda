@@ -4,13 +4,13 @@
 //! 5.10.4 defines a registration update as a merge against the stored
 //! registration, and that merge is policy. The store applies a decided row.
 
-use crate::{core::error::AndromedaError, service::csource_merge::ResolvedCsrUpdate};
+use crate::{error::AndromedaError, service::csource_merge::ResolvedCsrUpdate};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode};
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 
@@ -44,7 +44,7 @@ pub struct CreateCsrParams<'a> {
     /// Forwarding mode for distributed operations.
     pub mode: ForwardingMode,
     /// NGSI-LD operations supported by the context source.
-    pub operations: Option<Vec<String>>,
+    pub operations: Option<Vec<CsrOperation>>,
     /// Scope values for the registration.
     pub scope: Option<Vec<String>>,
     /// ISO 8601 duration between context source refreshes.
@@ -128,7 +128,7 @@ pub struct CsrUpdateFragment {
     /// Updated forwarding mode.
     pub mode: Option<ForwardingMode>,
     /// Updated supported operations.
-    pub operations: Option<Option<Vec<String>>>,
+    pub operations: Option<Option<Vec<CsrOperation>>>,
     /// Updated scope values.
     pub scope: Option<Option<Vec<String>>>,
     /// Updated refresh rate duration.
@@ -146,35 +146,96 @@ pub struct CsrUpdateFragment {
 }
 
 /// Storing context source registrations (clause 5.10).
-#[async_trait]
 pub trait RegistrationStore: Send + Sync + 'static {
     /// Whether a registration with this identifier exists.
-    async fn exists(&self, id: &str) -> Result<bool, AndromedaError>;
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Persist a new registration.
-    async fn create(&self, id: &str, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError>;
+    fn create<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        id: &'life1 str,
+        params: &'life2 CreateCsrParams<'life3>,
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Retrieve a registration by identifier.
-    async fn get(&self, id: &str) -> Result<Option<ContextSourceRegistration>, AndromedaError>;
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// List registrations with pagination, returning the entries and total count.
-    async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError>;
+    fn list<'life0, 'async_trait>(
+        &'life0 self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> BoxFuture<'async_trait, Result<(Vec<ContextSourceRegistration>, i64), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Run a compiled registration query, returning matches and the total count.
-    async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<(Vec<ContextSourceRegistration>, i64), AndromedaError>;
+    fn query_compiled<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        compiled: &'life1 CompiledCsrQuery,
+    ) -> BoxFuture<'async_trait, Result<(Vec<ContextSourceRegistration>, i64), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Replace a registration with a fully resolved value set. Returns rows affected.
-    async fn update(&self, id: &str, values: &ResolvedCsrUpdate) -> Result<u64, AndromedaError>;
+    fn update<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        id: &'life1 str,
+        values: &'life2 ResolvedCsrUpdate,
+    ) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Registrations that may serve an entity type and/or identifier, excluding
     /// expired ones (clause 5.10.2).
-    async fn find_matching(&self, entity_type: Option<&str>, entity_id: Option<&str>) -> Result<Vec<ContextSourceRegistration>, AndromedaError>;
+    fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        entity_type: Option<&'life1 str>,
+        entity_id: Option<&'life2 str>,
+    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// One page of non-expired registrations, keyset-paginated on the identifier.
     ///
     /// `after` is the last identifier of the previous page, exclusive.
-    async fn find_all_active(&self, after: Option<&str>, limit: u32) -> Result<Vec<ContextSourceRegistration>, AndromedaError>;
+    fn find_all_active<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        after: Option<&'life1 str>,
+        limit: u32,
+    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Delete a registration by identifier. Returns rows affected.
-    async fn delete(&self, id: &str) -> Result<u64, AndromedaError>;
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 }

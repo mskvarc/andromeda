@@ -2,7 +2,7 @@
 pub mod store;
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::subscription_change::SubscriptionChange,
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
@@ -37,8 +37,6 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         if payload.get("jsonldContext").is_none()
             && let Some(ctx_val) = context.body_context()
         {
-            self.ensure_context_urls_cached(ctx_val).await;
-
             let stored = match ctx_val {
                 Value::String(s) => Some(Value::String(s.clone())), // clone: need owned String for new Value; s is borrowed from ctx_val
                 Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()), // clone: extracting single element from array as owned Value
@@ -68,23 +66,23 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
             }
         }
 
-        subscription_core::expand_common_subscription_terms(&self.engine, payload, context).await
+        subscription_core::validation::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let mut value = serde_json::to_value(subscription).map_err(|e| AndromedaError::subscription_validation(format!("Serialization failed: {}", e)))?;
 
-        subscription_core::compact_subscription_iris(&self.engine, &mut value, context).await;
-        subscription_core::fixup_integer_fields(&mut value);
-        subscription_core::fixup_default_notification_trigger(&mut value);
-        subscription_core::fixup_jsonld_context(&mut value);
+        subscription_core::normalization::compact_subscription_iris(&self.engine, &mut value, context).await;
+        subscription_core::normalization::fixup_integer_fields(&mut value);
+        subscription_core::normalization::fixup_default_notification_trigger(&mut value);
+        subscription_core::normalization::fixup_jsonld_context(&mut value);
 
         Ok(value)
     }
 
     fn validate_update_extra(&self, payload: &Value) -> Result<(), AndromedaError> {
         // Per spec 5.8.2.4: past expiresAt must be rejected for entity subscription updates
-        subscription_core::validate_expires_at_not_in_past(payload)
+        subscription_core::validation::validate_expires_at_not_in_past(payload)
     }
 
     fn use_dataset_id(&self) -> bool {
@@ -104,46 +102,17 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
     }
 }
 
-impl EntitySubscriptionVariant {
-    async fn ensure_context_urls_cached(&self, ctx_val: &Value) {
-        let urls: Vec<&str> = match ctx_val {
-            Value::String(s) => vec![s.as_str()],
-            Value::Array(arr) => arr.iter().filter_map(|v| v.as_str()).collect(),
-            _other => vec![],
-        };
-
-        for url in urls {
-            if andromeda_jsonld::core_context::is_ngsi_ld_core_context_url(url) {
-                continue;
-            }
-            match self.engine.resolve_context(url).await {
-                Ok(payload) => {
-                    if let Err(e) = self.context_repo.ensure_cached(url, payload).await {
-                        warn!("Failed to cache context URL {}: {}", url, e);
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to resolve context URL {} for caching: {}", url, e);
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Public type alias — callers continue to use `SubscriptionService`
-// ---------------------------------------------------------------------------
-
-/// Entity subscription service combining shared CRUD logic with entity-specific behaviour.
-pub type SubscriptionService = SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant>;
-
-impl SubscriptionService {
+impl SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant> {
     /// Create a new entity subscription service backed by the given database pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, sub_change_tx: Option<broadcast::Sender<SubscriptionChange>>) -> SubscriptionService {
+    pub fn new(
+        pool: &PgPool,
+        engine: JsonLdEngine,
+        sub_change_tx: Option<broadcast::Sender<SubscriptionChange>>,
+    ) -> SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant> {
         let repo = SubscriptionRepository::new(pool);
         let context_repo = JsonLdContextRepository::new(pool);
         debug!("Subscription service created!");
-        SubscriptionService {
+        SubscriptionServiceCore {
             repo,
             engine: engine.clone(), // clone: engine is shared between service and variant
             variant: EntitySubscriptionVariant { engine, context_repo },

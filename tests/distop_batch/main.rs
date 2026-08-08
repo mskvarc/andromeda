@@ -137,7 +137,7 @@ async fn clean_database() {
 }
 
 fn link_header() -> String {
-    format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
+    format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
 /// Vehicle entity with brandName=Mercedes and isParked relationship.
@@ -153,7 +153,7 @@ fn vehicle_entity_mercedes(id: &str) -> Value {
             "type": "Relationship",
             "object": "urn:ngsi-ld:OffStreetParking:Downtown1"
         },
-        "@context": [COMPOUND_CONTEXT]
+        "@context": [TEST_SUITE_CONTEXT]
     })
 }
 
@@ -170,7 +170,7 @@ fn vehicle_entity_bmw(id: &str) -> Value {
             "type": "Relationship",
             "object": "urn:ngsi-ld:OffStreetParking:Downtown2"
         },
-        "@context": [COMPOUND_CONTEXT]
+        "@context": [TEST_SUITE_CONTEXT]
     })
 }
 
@@ -188,7 +188,7 @@ fn vehicle_entity_speed_different(id: &str) -> Value {
             "type": "Relationship",
             "object": "urn:ngsi-ld:OffStreetParking:Downtown2"
         },
-        "@context": [COMPOUND_CONTEXT]
+        "@context": [TEST_SUITE_CONTEXT]
     })
 }
 
@@ -209,7 +209,7 @@ fn batch_ops_registration(reg_id: &str, endpoint: &str) -> Value {
         ],
         "operations": ["redirectionOps", "createBatch", "upsertBatch", "updateBatch", "deleteBatch", "mergeBatch"],
         "endpoint": endpoint,
-        "@context": [COMPOUND_CONTEXT]
+        "@context": [TEST_SUITE_CONTEXT]
     })
 }
 
@@ -231,7 +231,7 @@ fn batch_ops_redirect_registration(reg_id: &str, endpoint: &str) -> Value {
         "operations": ["redirectionOps", "createBatch", "upsertBatch", "updateBatch", "deleteBatch", "mergeBatch"],
         "mode": "redirect",
         "endpoint": endpoint,
-        "@context": [COMPOUND_CONTEXT]
+        "@context": [TEST_SUITE_CONTEXT]
     })
 }
 
@@ -254,7 +254,7 @@ fn batch_ops_exclusive_speed_registration(reg_id: &str, endpoint: &str) -> Value
         "operations": ["redirectionOps", "createBatch", "upsertBatch", "updateBatch", "deleteBatch", "mergeBatch"],
         "mode": "exclusive",
         "endpoint": endpoint,
-        "@context": [COMPOUND_CONTEXT]
+        "@context": [TEST_SUITE_CONTEXT]
     })
 }
 
@@ -326,7 +326,7 @@ async fn batch_delete(client: &Client, ids: &Value) -> StatusCode {
 
 async fn query_vehicle_entities(client: &Client) -> Vec<Value> {
     let resp = client
-        .get(format!("{BASE_URL}/entities?type=Vehicle"))
+        .get(format!("{BASE_URL}/entities?type=*&local=true"))
         .header("Accept", "application/json")
         .header("Link", link_header())
         .send()

@@ -1,7 +1,7 @@
 //! Updating the attributes an entity already has (clause 5.6.2).
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         attribute_envelope::validate_attribute_envelopes,

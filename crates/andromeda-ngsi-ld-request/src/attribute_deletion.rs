@@ -1,6 +1,7 @@
 //! The parameters of the attribute-deletion endpoints.
 
-use crate::{case_insensitive_bool::deserialize_option_bool_case_insensitive, query::deserialization::deserialize_optional_dataset_urn};
+use crate::{case_insensitive_bool::deserialize_option_bool_case_insensitive, query::deserialization::deserialize_optional_dataset_selector};
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use serde::Deserialize;
 
 /// Query parameters for `DELETE /entities/{id}/attrs/{attrId}` and its temporal
@@ -10,8 +11,8 @@ use serde::Deserialize;
 pub struct DeleteAttrParams {
     /// The dataset instance to delete, if only one is meant.
     #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_urn")]
-    pub dataset_id: Option<urn_rs::Urn>,
+    #[serde(default, deserialize_with = "deserialize_optional_dataset_selector")]
+    pub dataset_id: Option<DatasetSelector>,
     /// Whether every instance of the attribute is deleted.
     #[serde(rename = "deleteAll", default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub delete_all: Option<bool>,

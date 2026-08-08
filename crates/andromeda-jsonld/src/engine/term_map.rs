@@ -17,16 +17,23 @@ use crate::{
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     engine::{
         context_url::{is_absolute_iri, is_full_iri},
-        core_term_semantics::{coercion_of, container_of, core_term_semantics},
+        core_term_semantics::core_term_semantics,
+        term_map::{
+            coercion::TermCoercion,
+            user_term::{ResolvedTerm, UserTermTable, UserTermTableCache, parse_user_context},
+        },
     },
-    error::JsonLdError,
     loader::http::HttpContextLoader,
 };
-use andromeda_ngsi_ld_vocabulary::COMPACT_TO_EXPANDED;
-use dashmap::DashMap;
 use iri_rs::{IriBuf, iri};
 use serde_json::Value;
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap};
+
+pub(crate) mod coercion;
+pub(crate) mod user_term;
+pub(crate) mod vocabulary;
+
+use crate::engine::term_map::vocabulary::CoreVocabulary;
 
 /// The XSD namespace, available as `xsd:` without any context declaring it.
 const XSD_PREFIX: &str = "http://www.w3.org/2001/XMLSchema#";
@@ -77,82 +84,6 @@ enum IneligibilityReason {
     /// not model but the processor honours (`@language`, `@base`, `@import`,
     /// `@reverse`, `@prefix`, …).
     UnsupportedContextFeature,
-}
-
-/// One term's resolution.
-#[derive(Debug, Clone)]
-struct ResolvedTerm {
-    /// The IRI the term expands to.
-    iri: IriBuf,
-    /// The `@type` coercion declared for it, if any.
-    coercion: Option<TermCoercion>,
-    /// The `@container` declared for it, if any.
-    container: Option<TermContainer>,
-    /// Whether it carries a scoped `@context`.
-    has_scoped_context: bool,
-    /// Whether it came from a *simple* `term: "iri"` definition, which JSON-LD
-    /// 1.1 clause 4.4 makes usable as a prefix — an expanded (object) definition
-    /// is one only with `@prefix: true`, which the fastpath does not model.
-    simple: bool,
-}
-
-/// A request context, parsed down to what the fastpath can honour.
-///
-/// Only IRI expansions and the two refusal flags survive: any context keyword
-/// or term-definition key the walker does not model sets
-/// [`has_unsupported_feature`](UserTermTable::has_unsupported_feature) and the
-/// whole batch falls back to the processor rather than being approximated. A
-/// user `@vocab` is deliberately not carried — the core `@vocab` has absolute
-/// precedence (clause 5.5.7), so a user one never changes the fallback IRI.
-#[derive(Debug, Clone)]
-struct UserTermTable {
-    /// The terms the context defines.
-    terms: HashMap<Box<str>, ResolvedTerm>,
-    /// Whether any of its terms carries a scoped `@context`.
-    has_scoped_contexts: bool,
-    /// Whether it uses a context keyword or term-definition key the fastpath
-    /// does not model but the processor honours.
-    has_unsupported_feature: bool,
-}
-
-/// The `@type` coercion a term declares.
-///
-/// The core context's fixed shapes are their own variants because they need no
-/// resolution; a user-declared datatype is kept as written and resolved
-/// through [`BatchTermMap::expand_iri`] at emit time, so a prefix the same
-/// context declared applies to it too.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TermCoercion {
-    /// `@type: DateTime`: emitted as `{"@type": "<NGSI-LD DateTime IRI>", "@value": "<ISO>"}`.
-    DateTime,
-    /// `@type: @id`: emitted as `{"@id": "<value>"}`.
-    Id,
-    /// `@type: @vocab`: the value is a term, expanded against the active
-    /// `@vocab` and emitted as `{"@id": "<expanded>"}`.
-    Vocab,
-    /// `@type: @json`: the value is kept verbatim as a JSON literal, emitted as
-    /// `{"@type": "@json", "@value": <value>}`.
-    Json,
-    /// A user datatype: emitted as `{"@type": "<the expanded user IRI>", "@value": "<s>"}`.
-    TypeIri(IriBuf),
-}
-
-/// The `@container` a term declares.
-///
-/// The fastpath models none of these on a metadata member — each reshapes the
-/// value in a way the flat walker does not unfold — so a term carrying one is
-/// refused rather than mis-expanded. The variants are named after the JSON-LD
-/// keywords so the derivation reads exactly what the context wrote.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TermContainer {
-    /// `@container: @list`.
-    List,
-    /// `@container: @language`.
-    Language,
-    /// `@container: @index`.
-    Index,
-    /// `@container: @set`.
-    Set,
 }
 
 impl BatchTermMap {
@@ -225,51 +156,6 @@ fn builtin_prefix(prefix: &str) -> Option<&'static str> {
     }
 }
 
-/// Parsed request contexts, kept per URL for the life of the engine.
-///
-/// The first batch naming a URL pays the resolution; every later one pays a
-/// map read.
-#[derive(Debug, Default)]
-pub(crate) struct UserTermTableCache {
-    /// Context URL to its parsed table.
-    tables: DashMap<IriBuf, Arc<UserTermTable>>,
-}
-
-impl UserTermTableCache {
-    /// The parsed table for a context URL, resolving it if this is the first
-    /// time it has been seen.
-    ///
-    /// # Errors
-    ///
-    /// Returns the loader's failure when the URL does not resolve.
-    async fn get_or_load(&self, loader: &HttpContextLoader, url: &IriBuf) -> Result<Arc<UserTermTable>, JsonLdError> {
-        if let Some(cached) = self.tables.get(url) {
-            return Ok(Arc::clone(cached.value()));
-        }
-        let value = loader.load_value(url).await?;
-        let serde_value = jsonld_syntax::Value::into_serde_json((*value).clone()); // clone: the loader's copy stays in its cache
-        let table = Arc::new(parse_user_context(&serde_value));
-        self.tables.insert(url.clone(), Arc::clone(&table));
-        Ok(table)
-    }
-
-    /// Drop the parsed table for a context URL.
-    ///
-    /// Called when the context behind that URL is deleted or reloaded, so the
-    /// next batch that names it re-resolves it instead of serving a table parsed
-    /// from a document that no longer exists (clause 5.13.3).
-    pub(crate) fn remove(&self, url: &IriBuf) {
-        self.tables.remove(url);
-    }
-
-    /// How many context URLs have been parsed, for the test that asserts a
-    /// second batch over the same URL parses nothing.
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.tables.len()
-    }
-}
-
 /// Build the term table for one [`ContextSpec`].
 ///
 /// `default_core_url` is the released core context this engine expands a
@@ -281,6 +167,7 @@ pub(crate) async fn build_batch_term_map(
     loader: &HttpContextLoader,
     cache: &UserTermTableCache,
     default_core_url: &IriBuf,
+    core_vocabulary: &CoreVocabulary,
 ) -> BatchTermMap {
     // The IRI of every core term comes from the compile-time table the vocab
     // macro derived from the core context; its coercion, container and
@@ -290,14 +177,14 @@ pub(crate) async fn build_batch_term_map(
     // what the processor does.
     let core_url = default_core_url;
     let semantics = core_term_semantics(core_url);
-    let mut terms: HashMap<Box<str>, ResolvedTerm> = COMPACT_TO_EXPANDED
+    let mut terms: HashMap<Box<str>, ResolvedTerm> = core_vocabulary
         .iter()
         .map(|(compact, expanded)| {
-            let declared = semantics.get(*compact);
+            let declared = semantics.get(compact);
             (
-                Box::<str>::from(*compact),
+                Box::<str>::from(compact),
                 ResolvedTerm {
-                    iri: required_iri(expanded),
+                    iri: expanded.clone(), // clone: each batch owns its resolved term table
                     coercion: declared.and_then(|term| term.coercion.clone()),
                     container: declared.and_then(|term| term.container),
                     has_scoped_context: declared.is_some_and(|term| term.has_scoped_context),
@@ -337,8 +224,40 @@ pub(crate) async fn build_batch_term_map(
     }
 
     if let Some(body) = spec.body_context() {
-        let table = parse_user_context(body);
-        merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility);
+        let mut body_items = Vec::new();
+        collect_context_items(body, &mut body_items);
+        for item in body_items {
+            match item {
+                Value::String(url) => {
+                    let Ok(url) = IriBuf::new(url.to_owned()) else {
+                        eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
+                        break;
+                    };
+                    if is_ngsi_ld_core_context_url(url.as_str()) || url.as_str() == ANDROMEDA_CORE_CONTEXT_URL {
+                        continue;
+                    }
+                    match cache.get_or_load(loader, &url).await {
+                        Ok(table) => merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility),
+                        Err(_unresolved) => {
+                            eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
+                            break;
+                        }
+                    }
+                }
+                Value::Object(_) => {
+                    let table = parse_user_context(item);
+                    merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility);
+                }
+                Value::Null | Value::Bool(_) | Value::Number(_) => {
+                    eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
+                    break;
+                }
+                Value::Array(_) => {
+                    eligibility = FastpathEligibility::Ineligible(IneligibilityReason::UnsupportedContextFeature);
+                    break;
+                }
+            }
+        }
     }
 
     // Longest first, then alphabetically, so the order is total and the
@@ -354,126 +273,11 @@ pub(crate) async fn build_batch_term_map(
     }
 }
 
-/// Parse a request-supplied `@context` value into the shape the fastpath uses.
-fn parse_user_context(value: &Value) -> UserTermTable {
-    let mut table = UserTermTable {
-        terms: HashMap::new(),
-        has_scoped_contexts: false,
-        has_unsupported_feature: false,
-    };
-    parse_user_context_into(value, &mut table);
-    table
-}
-
-/// Accumulate one `@context` node into a table, recursing through arrays and
-/// through the wrapping `@context` key of a fetched context document.
-fn parse_user_context_into(value: &Value, table: &mut UserTermTable) {
+/// Flatten a body `@context` while preserving JSON-LD declaration order.
+fn collect_context_items<'a>(value: &'a Value, items: &mut Vec<&'a Value>) {
     match value {
-        Value::Array(items) => {
-            for item in items {
-                parse_user_context_into(item, table);
-            }
-        }
-        Value::Object(map) => {
-            if let Some(inner) = map.get("@context") {
-                parse_user_context_into(inner, table);
-                return;
-            }
-            for (key, declaration) in map {
-                match key.as_str() {
-                    // The core `@vocab` has absolute precedence (clause 5.5.7), so
-                    // a user `@vocab` is recognised and deliberately ignored — it
-                    // never overrides the seeded default-context `@vocab` the
-                    // undefined-member fallback uses.
-                    "@vocab" => {}
-                    // Every other JSON-LD keyword — `@language`, `@direction`,
-                    // `@base`, `@import`, `@propagate`, `@version` — is one the
-                    // processor honours and the walker does not model, so the
-                    // batch falls back rather than expanding differently.
-                    other if other.starts_with('@') => table.has_unsupported_feature = true,
-                    _term => parse_term_declaration(key, declaration, table),
-                }
-            }
-        }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
-    }
-}
-
-/// Read one `term: declaration` pair of a `@context` object.
-fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermTable) {
-    match declaration {
-        Value::String(iri) => {
-            let Some(iri) = iri_from_context(iri) else {
-                table.has_unsupported_feature = true;
-                return;
-            };
-            table.terms.insert(
-                Box::<str>::from(term),
-                ResolvedTerm {
-                    iri,
-                    coercion: None,
-                    container: None,
-                    has_scoped_context: false,
-                    simple: true,
-                },
-            );
-        }
-        Value::Object(definition) => {
-            // Any key beyond the three the walker models — a `@reverse`,
-            // `@language`, `@prefix`, `@protected`, `@nest` — is a feature the
-            // processor honours, so the batch falls back. A scoped `@context` is
-            // one of the modelled keys here but is refused separately below.
-            const MODELED: &[&str] = &["@id", "@type", "@container", "@context"];
-            if definition.keys().any(|key| !MODELED.contains(&key.as_str())) {
-                table.has_unsupported_feature = true;
-            }
-            let has_scoped_context = definition.contains_key("@context");
-            if has_scoped_context {
-                table.has_scoped_contexts = true;
-            }
-            let Some(iri) = definition.get("@id").and_then(Value::as_str) else {
-                return;
-            };
-            let Some(iri) = iri_from_context(iri) else {
-                table.has_unsupported_feature = true;
-                return;
-            };
-            table.terms.insert(
-                Box::<str>::from(term),
-                ResolvedTerm {
-                    iri,
-                    coercion: declared_coercion(definition.get("@type").and_then(Value::as_str)),
-                    container: container_of(definition.get("@container").and_then(Value::as_str)),
-                    has_scoped_context,
-                    simple: false,
-                },
-            );
-        }
-        // Null, booleans, numbers and arrays are not term declarations in the
-        // JSON-LD context grammar; the processor decides what they mean.
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => {}
-    }
-}
-
-/// The coercion a term's `@type` declaration asks for.
-///
-/// The four JSON-LD coercions the core context also uses are read by
-/// [`coercion_of`]; anything else a request context names is an arbitrary
-/// datatype IRI, kept as a [`TermCoercion::TypeIri`] and resolved at emit time.
-fn declared_coercion(declared_type: Option<&str>) -> Option<TermCoercion> {
-    coercion_of(declared_type).or_else(|| declared_type.and_then(iri_from_context).map(TermCoercion::TypeIri))
-}
-
-/// Parse an IRI from a JSON context before storing it in the fastpath table.
-fn iri_from_context(value: &str) -> Option<IriBuf> {
-    IriBuf::new(value.to_owned()).ok()
-}
-
-/// Convert a generated vocabulary IRI, aborting only if the compiled vocabulary is corrupt.
-fn required_iri(value: &str) -> IriBuf {
-    match IriBuf::new(value.to_owned()) {
-        Ok(iri) => iri,
-        Err(_) => std::process::abort(),
+        Value::Array(values) => values.iter().for_each(|value| collect_context_items(value, items)),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => items.push(value),
     }
 }
 
@@ -618,7 +422,30 @@ mod tests {
         let slow = engine.expand(document, &spec).await.expect("the processor expands");
 
         assert_canonically_equal(&fast, &slow);
-        let _ = fs::remove_file(path);
+        fs::remove_file(path).expect("the temporary context is removable");
+    }
+
+    #[tokio::test]
+    async fn a_custom_term_in_a_body_context_named_by_url_reaches_the_fastpath_output() {
+        let (path, url) = preloaded_context("body-user-context", r#"{"@context":{"mySpeed":"http://ex.com/speed"}}"#);
+        let mut preloads = HashMap::new();
+        preloads.insert(url.clone(), path.clone()); // clone: the URL also builds the body context
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .preload_contexts(preloads)
+            .build()
+            .expect("engine builds");
+
+        let spec = body_spec(Value::String(url.to_string()));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(handle.fast_eligible(), "a resolvable body context URL stays eligible");
+
+        let document = json!({ "id": "urn:ngsi-ld:Device:gen-body", "type": "X", "mySpeed": { "type": "Property", "value": 42 } });
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath expands");
+        let slow = engine.expand(document, &spec).await.expect("the processor expands");
+
+        assert_canonically_equal(&fast, &slow);
+        fs::remove_file(path).expect("the temporary context is removable");
     }
 
     #[tokio::test]

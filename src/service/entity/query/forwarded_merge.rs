@@ -2,7 +2,7 @@
 //! (clause 5.7.2).
 
 use crate::service::{
-    csource_forwarding::{ForwardedEntities, merge_query_results},
+    csource_forwarding::{entity_result::merge_query_results, outcome::ForwardedEntities},
     entity::query::EntityQueryService,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

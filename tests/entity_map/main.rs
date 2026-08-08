@@ -17,7 +17,6 @@ use sqlx::PgPool;
 use urlencoding::encode;
 use uuid::Uuid;
 
-const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
 const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
 const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
 
@@ -523,10 +522,11 @@ async fn entity_map_create_from_post_with_entities_filter_returns_201() {
     setup_single_vehicle(&c, &id).await;
 
     let body = json!({
+        "type": "Query",
         "entities": [{ "type": "Vehicle" }]
     });
     let (status, _, body) = create_entity_map_from_post(&c, &body).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{body}");
 
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
     pretty_assertions::assert_eq!(body["type"], "EntityMap");
@@ -541,7 +541,7 @@ async fn entity_map_create_from_post_without_filters_returns_400() {
     clean_database().await;
     let c = client();
 
-    let body = json!({ "local": true });
+    let body = json!({ "type": "Query" });
     let (status, _, body) = create_entity_map_from_post(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
     pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
@@ -616,10 +616,11 @@ async fn entity_map_temporal_create_from_post_returns_201() {
     setup_single_vehicle(&c, &id).await;
 
     let body = json!({
+        "type": "Query",
         "entities": [{ "type": "Vehicle" }]
     });
     let (status, _, body) = create_temporal_entity_map_from_post(&c, &body).await;
-    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED, "{body}");
 
     let map_id = body["id"].as_str().expect("map id missing").to_owned();
     pretty_assertions::assert_eq!(body["type"], "EntityMap");
@@ -888,7 +889,7 @@ async fn entity_map_api_rejects_unknown_query_parameter_with_400() {
 
     pretty_assertions::assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap_or_default();
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
 }
 
 #[tokio::test]

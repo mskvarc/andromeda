@@ -4,7 +4,7 @@
 //! the same decision [`crate::http::error::category`] makes for a
 //! single response, applied per entity.
 
-use crate::{core::error::AndromedaError, http::error::category, service::entity::batch::BatchResult};
+use crate::{error::AndromedaError, http::error::category, service::entity::batch::BatchResult};
 use andromeda_ngsi_ld_problem_details::batch_operation::{BatchEntityError, BatchOperationResult};
 
 /// Report a broker failure against one entity of a batch.
@@ -39,7 +39,7 @@ pub fn operation_result(result: BatchResult) -> BatchOperationResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::error::AndromedaError, http::error::batch::entity_error};
+    use crate::{error::AndromedaError, http::error::batch::entity_error};
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType};
 
     #[test]

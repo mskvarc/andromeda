@@ -1,8 +1,8 @@
 //! Failures raised by the entity- and attribute-level mutation operations.
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriBuf;
 use thiserror::Error;
-use urn_rs::Urn;
 
 /// Failures of the entity-level mutation operations.
 ///
@@ -45,7 +45,7 @@ pub enum ExpandedEntityError {
         /// Expanded IRI of the attribute that was looked up.
         attribute: IriBuf,
         /// The `datasetId` that selected no instance.
-        dataset_id: Urn,
+        dataset_id: Uri,
     },
     /// The attribute exists but has no default (no-`datasetId`) instance.
     #[error("attribute {attribute} default instance not found")]

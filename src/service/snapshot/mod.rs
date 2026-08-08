@@ -4,7 +4,7 @@ pub mod query_validation;
 pub mod store;
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     http::error::batch::entity_error,
     service::{
         csource_forwarding::CsourceForwardingService,
@@ -115,7 +115,7 @@ impl SnapshotService {
                     Ok(p) => p,
                     Err(_) => return,
                 };
-                executor.execute(&snapshot_for_exec).await;
+                executor.execute(snapshot_for_exec).await;
             });
         }
 

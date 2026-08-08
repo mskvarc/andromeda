@@ -35,6 +35,9 @@ pub enum LoaderErrorKind {
     /// Network or transport-level request failure.
     #[error("Request failed: {0}")]
     Request(String),
+    /// The attached durable cache failed while remote loading was unavailable.
+    #[error("Context cache failed: {0}")]
+    Cache(String),
     /// The response body exceeds the configured size limit.
     #[error("Context too large ({size} > {max} bytes)")]
     TooLarge {
@@ -71,6 +74,10 @@ impl From<&LoaderError> for JsonLdError {
                 url,
                 message: message.clone(), // clone: the caller keeps the LoaderError
             },
+            LoaderErrorKind::Cache(message) => JsonLdError::ContextLoad {
+                url,
+                message: message.clone(), // clone: the caller keeps the LoaderError
+            },
             LoaderErrorKind::TooLarge { size, max } => JsonLdError::ContextTooLarge { url, size: *size, max: *max },
             LoaderErrorKind::Invalid(message) => JsonLdError::ContextInvalid {
                 url,
@@ -90,13 +97,13 @@ mod tests {
     use reqwest::StatusCode;
 
     #[test]
-    fn every_loader_failure_reaches_the_caller_as_a_context_not_available_error() {
+    fn unavailable_loader_failures_reach_the_caller_as_context_not_available() {
         let kinds = [
             LoaderErrorKind::FetchDisabled,
             LoaderErrorKind::Http(StatusCode::NOT_FOUND),
             LoaderErrorKind::Request("connection refused".to_string()),
+            LoaderErrorKind::Cache("database unavailable".to_string()),
             LoaderErrorKind::TooLarge { size: 10, max: 5 },
-            LoaderErrorKind::Invalid("trailing comma".to_string()),
         ];
         for kind in kinds {
             let error = JsonLdError::from(&LoaderError {
@@ -108,6 +115,11 @@ mod tests {
                 "a loading failure must stay reportable as LdContextNotAvailable: {error}"
             );
         }
+        let invalid = JsonLdError::from(&LoaderError {
+            url: IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid URL"),
+            kind: LoaderErrorKind::Invalid("missing @context".to_string()),
+        });
+        assert!(!invalid.is_context_not_available(), "a retrieved invalid document is BadRequestData");
     }
 
     #[test]

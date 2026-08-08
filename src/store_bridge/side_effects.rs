@@ -1,7 +1,7 @@
 //! `SideEffectQueue` trait implementation for `PendingSideEffectsRepository`.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         side_effect::BatchSideEffectJob,

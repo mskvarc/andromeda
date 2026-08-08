@@ -19,6 +19,7 @@ use url::Url;
 use uuid::Uuid;
 
 constant_string!(SnapshotNotificationType, "SnapshotNotification");
+constant_string!(SnapshotType, "Snapshot");
 
 /// Status of a snapshot operation (ETSI GS CIM 009 clause 5.2.41, `snapshotStatus`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, StrumDisplay, EnumString, EnumIter, IntoStaticStr)]
@@ -108,14 +109,18 @@ pub enum SnapshotPriorityParseError {
 #[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    /// Fixed resource discriminator.
+    #[serde(rename = "type")]
+    #[builder(default)]
+    pub type_: SnapshotType,
     /// Generated identifier of this snapshot.
     pub id: SnapshotId,
     /// Entity queries the snapshot materialises.
     #[builder(default)]
-    pub snapshot_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
+    pub snapshot_queries: Option<Vec<crate::query::body::Query>>,
     /// Temporal queries the snapshot materialises.
     #[builder(default)]
-    pub snapshot_temporal_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
+    pub snapshot_temporal_queries: Option<Vec<crate::query::body::Query>>,
     /// How long the snapshot stays usable after its last use.
     #[builder(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
@@ -229,17 +234,20 @@ impl Snapshot {
 
 /// Input for `POST /snapshots`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotInput {
+    /// Required fixed resource discriminator.
+    #[serde(rename = "type")]
+    pub type_: SnapshotType,
     /// Client-supplied identifier; the broker generates one when absent.
     #[serde(default)]
     pub id: Option<SnapshotId>,
     /// Entity queries to materialise.
     #[serde(default)]
-    pub snapshot_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
+    pub snapshot_queries: Option<Vec<crate::query::body::Query>>,
     /// Temporal queries to materialise.
     #[serde(default)]
-    pub snapshot_temporal_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
+    pub snapshot_temporal_queries: Option<Vec<crate::query::body::Query>>,
     /// How long the snapshot should stay usable.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
@@ -258,7 +266,7 @@ pub struct SnapshotInput {
 
 /// Input for `PATCH /snapshots/{id}`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SnapshotPatch {
     /// New lifetime, when the patch changes it.
     #[serde(default)]
@@ -272,10 +280,10 @@ pub struct SnapshotPatch {
 #[cfg(test)]
 mod tests {
     use crate::{
+        query::{body::Query, temporal_query::TemporalQuery},
         snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
-        snapshot_query::{SnapshotQuery, SnapshotTemporalQuery},
     };
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::GeometryType};
+    use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, ngsi_ld_urn::SnapshotId, time_prop::TimeProp, time_rel::TimeRel};
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
@@ -341,12 +349,12 @@ mod tests {
 
     #[test]
     fn parse_snapshot_query_minimal() {
-        let json = r#"{"entities": [{"type": "Vehicle"}]}"#;
-        let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
+        let json = r#"{"type":"Query","entities": [{"type": "Vehicle"}]}"#;
+        let query: Query = serde_json::from_str(json).expect("parse");
         assert!(query.entities.is_some());
         let entities = query.entities.unwrap();
         pretty_assertions::assert_eq!(entities.len(), 1);
-        pretty_assertions::assert_eq!(entities[0].type_.as_ref().map(ToString::to_string).as_deref(), Some("Vehicle"));
+        pretty_assertions::assert_eq!(entities[0].type_.to_string(), "Vehicle");
         assert!(query.q.is_none());
         assert!(query.temporal_q.is_none());
     }
@@ -354,6 +362,7 @@ mod tests {
     #[test]
     fn parse_snapshot_query_full() {
         let json = r#"{
+            "type": "Query",
             "entities": [{"type": "Vehicle", "id": ["urn:ngsi-ld:Vehicle:1"], "idPattern": "urn:.*"}],
             "q": "speed>50",
             "geoQ": {"georel": "within", "geometry": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]], "geoproperty": "location"},
@@ -361,22 +370,24 @@ mod tests {
             "attrs": ["speed", "fuel"],
             "omit": ["name"]
         }"#;
-        let query: SnapshotQuery = serde_json::from_str(json).expect("parse");
+        let query: Query = serde_json::from_str(json).expect("parse");
         assert!(query.entities.is_some());
         pretty_assertions::assert_eq!(query.q.as_ref().map(ToString::to_string).as_deref(), Some("speed>50"));
         assert!(query.geo_q.is_some());
         let geo = query.geo_q.unwrap();
         pretty_assertions::assert_eq!(geo.georel, GeoRel::Within);
-        pretty_assertions::assert_eq!(geo.geometry, GeometryType::Polygon);
+        pretty_assertions::assert_eq!(serde_json::to_value(geo.geometry.to_geojson()).expect("geometry serializes")["type"], "Polygon");
         pretty_assertions::assert_eq!(query.scope_q.as_ref().map(ToString::to_string).as_deref(), Some("/Madrid"));
         pretty_assertions::assert_eq!(query.attrs.unwrap().len(), 2);
         pretty_assertions::assert_eq!(query.omit.unwrap().len(), 1);
     }
 
     /// Build a `temporalQ` payload with the given members spliced in.
-    fn temporal_q(members: &str) -> Result<SnapshotTemporalQuery, serde_json::Error> {
-        serde_json::from_str::<SnapshotQuery>(&format!(r#"{{"entities": [{{"type": "Vehicle"}}], "temporalQ": {{{members}}}}}"#))
-            .map(|query| query.temporal_q.expect("temporalQ present"))
+    fn temporal_q(members: &str) -> Result<TemporalQuery, serde_json::Error> {
+        serde_json::from_str::<Query>(&format!(
+            r#"{{"type":"Query","entities": [{{"type": "Vehicle"}}], "temporalQ": {{{members}}}}}"#
+        ))
+        .map(|query| query.temporal_q.expect("temporalQ present"))
     }
 
     /// The instant `2024-01-01T00:00:00Z`, as a `DateTime<Utc>`.
@@ -458,7 +469,7 @@ mod tests {
 
     #[test]
     fn parse_snapshot_query_rejects_invalid() {
-        let result = serde_json::from_str::<SnapshotQuery>("not valid json");
+        let result = serde_json::from_str::<Query>("not valid json");
         assert!(result.is_err());
     }
 

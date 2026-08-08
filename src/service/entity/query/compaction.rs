@@ -2,7 +2,7 @@
 //!
 //! [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
 
-use crate::{core::error::AndromedaError, service::entity::query::EntityQueryService};
+use crate::{error::AndromedaError, service::entity::query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::term_expander::TermExpander;

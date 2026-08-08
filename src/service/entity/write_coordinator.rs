@@ -6,21 +6,24 @@
 //! the anchor and the profile is data.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{anchor_store::AnchorStore, atomic_write::AtomicWrite, write_outcome::WriteOutcome},
 };
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use std::collections::HashSet;
 
 /// Committing a set of independent single-entity writes.
-#[async_trait]
 pub trait WriteCoordinator: Send + Sync + 'static {
     /// Commit every write, returning one outcome per write in the order given.
     ///
     /// The writes are independent: clauses 5.6.7 through 5.6.10 permit a batch
     /// to succeed partially, so a write whose precondition does not hold
     /// reports that and leaves the rest alone.
-    async fn commit(&self, writes: Vec<AtomicWrite>) -> Result<Vec<WriteOutcome>, AndromedaError>;
+    fn commit<'life0, 'async_trait>(&'life0 self, writes: Vec<AtomicWrite>) -> BoxFuture<'async_trait, Result<Vec<WriteOutcome>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 }
 
 /// The generic coordinator: apply what the anchor owns, in one of its
@@ -62,19 +65,21 @@ fn validate<A: AnchorStore>(anchor: &A, writes: &[AtomicWrite]) -> Result<(), An
     Ok(())
 }
 
-/// The writes whose entity mutation actually happened.
+/// The writes whose effect parts are permitted to happen.
 ///
 /// A write whose precondition did not hold contributes no history, no outbox
-/// entries and no side effects: the batch paths have always followed the
-/// identifiers that landed rather than the ones they submitted, and this is
-/// that rule in one place.
+/// entries and no side effects. An unconditional insert that meets an existing
+/// row is different: the row is intentionally left untouched, while its
+/// independent history still belongs to that entity. Temporal creation relies
+/// on this to remain correct when a placeholder already exists or two first
+/// observations race.
 fn landed<'a>(writes: &'a [AtomicWrite], outcomes: &[WriteOutcome]) -> Vec<&'a AtomicWrite> {
     writes
         .iter()
         .zip(outcomes)
         .filter(|(_, outcome)| match outcome {
-            WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange => true,
-            WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded | WriteOutcome::Skipped => false,
+            WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => true,
+            WriteOutcome::AlreadyExists | WriteOutcome::NotFound | WriteOutcome::Superseded => false,
         })
         .map(|(write, _)| write)
         .collect()
@@ -112,7 +117,7 @@ impl<A: AnchorStore> WriteCoordinator for AnchoredWriteCoordinator<A> {
 mod tests {
     use super::{AnchoredWriteCoordinator, WriteCoordinator};
     use crate::{
-        core::error::AndromedaError,
+        error::AndromedaError,
         service::entity::{
             anchor_store::AnchorStore,
             atomic_write::{ALL_WRITE_PARTS, AtomicWrite, WritePart},
@@ -279,6 +284,20 @@ mod tests {
                 vec!["urn:ngsi-ld:A".to_string(), "urn:ngsi-ld:C".to_string()],
                 "{part} must only see the writes whose entity mutation landed"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unconditional_insert_conflict_still_applies_its_independent_effects() {
+        let anchor = Arc::new(RecordingAnchor::new(vec![WriteOutcome::Skipped]));
+
+        coordinator(&anchor)
+            .commit(vec![write("urn:ngsi-ld:A")])
+            .await
+            .expect("unconditional effects commit");
+
+        for part in ["history", "outbox", "side_effects"] {
+            pretty_assertions::assert_eq!(anchor.landed_for(part), vec!["urn:ngsi-ld:A".to_string()]);
         }
     }
 

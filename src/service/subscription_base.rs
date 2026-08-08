@@ -5,7 +5,7 @@
 //! delegated to the [`SubscriptionVariant`] trait.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::{
         subscription::store::{StatusUpdateFields, SubscriptionStore},
         subscription_core,
@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{Subscription, SubscriptionStatus},
 };
 use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
-use async_trait::async_trait;
+use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -56,16 +56,35 @@ fn validate_endpoint(payload: &Value) -> Result<(), AndromedaError> {
 // ---------------------------------------------------------------------------
 
 /// Trait for variant-specific subscription behaviour (entity vs. CSR subscriptions).
-#[async_trait]
 pub trait SubscriptionVariant: Send + Sync {
     /// The change-event type emitted over the broadcast channel.
     type Change: Clone + Send + 'static;
 
     /// Expand subscription terms in-place (context hosting, IRI expansion).
-    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError>;
+    fn expand_terms<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        payload: &'life1 mut Value,
+        context: &'life2 ContextSpec,
+        base_url: Option<&'life3 str>,
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Serialize a subscription for an HTTP response (compaction, fixups).
-    async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, AndromedaError>;
+    fn serialize_for_response<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        subscription: &'life1 Subscription,
+        context: &'life2 ContextSpec,
+    ) -> BoxFuture<'async_trait, Result<Value, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Additional update-specific validation (e.g. expiresAt future check).
     fn validate_update_extra(&self, payload: &Value) -> Result<(), AndromedaError>;
@@ -112,7 +131,7 @@ where
 
     /// Create a new subscription from the given JSON payload.
     pub async fn create(&self, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<String, AndromedaError> {
-        subscription_core::validate_create_payload(&payload)?;
+        subscription_core::validation::validate_create_payload(&payload)?;
 
         validate_endpoint(&payload)?;
 
@@ -156,8 +175,8 @@ where
             None
         };
 
-        let fields = subscription_core::extract_create_fields(&payload, &watched_attributes_vec, &notification_trigger_vec, &dataset_id_vec);
-        subscription_core::validate_persisted_shape(&fields)?;
+        let fields = subscription_core::fields::extract_create_fields(&payload, &watched_attributes_vec, &notification_trigger_vec, &dataset_id_vec);
+        subscription_core::fields::validate_persisted_shape(&fields)?;
 
         let status = compute_updated_status(
             SubscriptionStatus::Active,
@@ -209,9 +228,9 @@ where
 
         validate_endpoint(&payload)?;
 
-        subscription_core::validate_common_fields(&payload)?;
+        subscription_core::validation::validate_common_fields(&payload)?;
         self.variant.validate_update_extra(&payload)?;
-        subscription_core::validate_notification_fragment(&payload)?;
+        subscription_core::validation::validate_notification_fragment(&payload)?;
 
         if let Some(ctx_value) = payload.get("jsonldContext") {
             validate_jsonld_context_value(&self.engine, ctx_value).await?;
@@ -223,9 +242,9 @@ where
         let existing_value =
             serde_json::to_value(&existing).map_err(|e| AndromedaError::internal(format!("Failed to serialize existing subscription: {}", e)))?;
 
-        let merged = subscription_core::merge_update_fields(&payload, &existing, &existing_value, self.variant.use_entity_sub_merge_mode())?;
+        let merged = subscription_core::fields::merge_update_fields(&payload, &existing, &existing_value, self.variant.use_entity_sub_merge_mode())?;
         let fields = merged.to_fields();
-        subscription_core::validate_persisted_shape(&fields)?;
+        subscription_core::fields::validate_persisted_shape(&fields)?;
 
         let status = compute_updated_status(
             existing.lifecycle.status,

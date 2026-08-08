@@ -2,6 +2,13 @@
 
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
+use serde::{
+    Deserialize,
+    Deserializer,
+    Serialize,
+    Serializer,
+    ser::{Error as SerializeError, SerializeStruct},
+};
 use thiserror::Error;
 
 /// A complete clause-4.10 geo-query with a validated reference geometry.
@@ -13,6 +20,20 @@ pub struct GeoQueryInput {
     pub geometry: Geometry,
     /// Compact GeoProperty identifier, or `location` when absent.
     pub geoproperty: Option<NgsiLdReference>,
+}
+
+/// The spec-facing members used to assemble one validated geo-query.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GeoQueryInputWire {
+    /// Spatial relationship.
+    georel: GeoRel,
+    /// GeoJSON geometry type.
+    geometry: String,
+    /// GeoJSON coordinates.
+    coordinates: serde_json::Value,
+    /// Optional GeoProperty reference.
+    geoproperty: Option<NgsiLdReference>,
 }
 
 impl GeoQueryInput {
@@ -36,6 +57,46 @@ impl GeoQueryInput {
         let value = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
         let geometry = Geometry::from_geojson_value(&value).map_err(GeoQueryInputError::Geometry)?;
         Ok(GeoQueryInput::new(georel, geometry, geoproperty))
+    }
+}
+
+// A derive cannot combine the `geometry` and `coordinates` wire members into
+// the single validated `Geometry` held by the domain type.
+impl<'de> Deserialize<'de> for GeoQueryInput {
+    fn deserialize<D>(deserializer: D) -> Result<GeoQueryInput, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = GeoQueryInputWire::deserialize(deserializer)?;
+        GeoQueryInput::from_wire(wire.georel.to_string(), wire.geometry, wire.coordinates, wire.geoproperty).map_err(serde::de::Error::custom)
+    }
+}
+
+// The domain invariant stores one validated geometry, while Table 5.2.13-1
+// exposes its RFC 7946 type and coordinates as two sibling members.
+impl Serialize for GeoQueryInput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let geometry = serde_json::to_value(&self.geometry).map_err(S::Error::custom)?;
+        let object = geometry
+            .as_object()
+            .ok_or_else(|| S::Error::custom("validated geometry did not serialize as an object"))?;
+        let geometry_type = object
+            .get("type")
+            .ok_or_else(|| S::Error::custom("validated geometry serialized without a type"))?;
+        let coordinates = object
+            .get("coordinates")
+            .ok_or_else(|| S::Error::custom("validated geometry serialized without coordinates"))?;
+        let mut state = serializer.serialize_struct("GeoQuery", if self.geoproperty.is_some() { 4 } else { 3 })?;
+        state.serialize_field("georel", &self.georel)?;
+        state.serialize_field("geometry", geometry_type)?;
+        state.serialize_field("coordinates", coordinates)?;
+        if let Some(geoproperty) = &self.geoproperty {
+            state.serialize_field("geoproperty", geoproperty)?;
+        }
+        state.end()
     }
 }
 

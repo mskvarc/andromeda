@@ -4,9 +4,9 @@
 //! not know the broker's transport-aware error type, and attribute mutation is
 //! what raises these failures.
 //!
-//! [`AndromedaError`]: crate::core::error::AndromedaError
+//! [`AndromedaError`]: crate::error::AndromedaError
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_model::expanded::mutation::error::ExpandedEntityError;
 
 impl From<ExpandedEntityError> for AndromedaError {

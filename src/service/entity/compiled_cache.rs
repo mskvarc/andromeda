@@ -13,12 +13,16 @@
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
     entity::compiled::CompiledEntityQuery,
+    geo::input::GeoQueryInput,
     ordering::{
         collation::IcuCollation,
+        geometry::OrderingGeometry,
         term::{OrderDirection, OrderTerm},
     },
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use moka::future::Cache;
 use std::{
@@ -75,6 +79,11 @@ impl CompiledQueryKey {
         let id_pattern = params.id_pattern.as_ref().map(ToString::to_string);
         let q = params.q.as_ref().map(ToString::to_string);
         let entity_type = params.entity_type.as_ref().map(ToString::to_string);
+        let option_format = params.options.and_then(|options| options.format).map(|format| format.to_string());
+        let option_sys_attrs = params.options.map(|options| match options.sys_attrs {
+            SysAttrsInclusion::Include => "include",
+            SysAttrsInclusion::Strip => "strip",
+        });
         push_uri_list(&mut parameters, params.id.as_deref());
         push_attribute_list(&mut parameters, params.attrs.as_deref());
         push_attribute_list(&mut parameters, params.pick.as_deref());
@@ -88,14 +97,14 @@ impl CompiledQueryKey {
             id_pattern.as_deref(),
             q.as_deref(),
             params.scope_q.as_ref().map(ToString::to_string).as_deref(),
-            params.order_from.as_deref(),
-            params.order_geometry.as_deref(),
-            params.collation.as_ref().map(IcuCollation::as_str),
-            params.options.as_deref(),
+            params.ordering.collation.as_ref().map(IcuCollation::as_str),
+            option_format.as_deref(),
+            option_sys_attrs,
         ] {
             push_field(&mut parameters, field);
         }
-        push_order_terms(&mut parameters, params.order_by.as_deref());
+        push_ordering_geometry(&mut parameters, params.ordering.geometry.as_ref());
+        push_order_terms(&mut parameters, &params.ordering.order_by);
         for field in [params.limit, params.offset] {
             push_field(&mut parameters, field.map(|value| value.to_string()).as_deref());
         }
@@ -144,8 +153,8 @@ fn push_uri_list(buffer: &mut String, value: Option<&[Uri]>) {
     }
 }
 
-/// Append an ordered dataset-URN list in canonical rendering.
-fn push_dataset_list(buffer: &mut String, value: Option<&[urn_rs::Urn]>) {
+/// Append an ordered dataset-selector list in canonical rendering.
+fn push_dataset_list(buffer: &mut String, value: Option<&[DatasetSelector]>) {
     match value {
         Some(values) => {
             let rendered = values.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
@@ -156,7 +165,7 @@ fn push_dataset_list(buffer: &mut String, value: Option<&[urn_rs::Urn]>) {
 }
 
 /// Append a parsed geo-query without retaining URL component strings.
-fn push_geo_query(buffer: &mut String, value: Option<&andromeda_ngsi_ld_query::geo::input::GeoQueryInput>) {
+fn push_geo_query(buffer: &mut String, value: Option<&GeoQueryInput>) {
     match value {
         Some(value) => {
             push_field(buffer, Some(&value.georel.to_string()));
@@ -173,23 +182,24 @@ fn push_geo_query(buffer: &mut String, value: Option<&andromeda_ngsi_ld_query::g
 }
 
 /// Append parsed ordering terms without reconstructing a request query string.
-fn push_order_terms(buffer: &mut String, terms: Option<&[OrderTerm]>) {
-    match terms {
-        Some(terms) => {
-            push_field(buffer, Some(&terms.len().to_string()));
-            for term in terms {
-                push_field(buffer, Some(&term.attr));
-                let direction = match term.direction {
-                    OrderDirection::Asc => "asc",
-                    OrderDirection::Desc => "desc",
-                    OrderDirection::DistAsc => "dist-asc",
-                    OrderDirection::DistDesc => "dist-desc",
-                };
-                push_field(buffer, Some(direction));
-            }
-        }
-        None => push_field(buffer, None),
+fn push_order_terms(buffer: &mut String, terms: &[OrderTerm]) {
+    push_field(buffer, Some(&terms.len().to_string()));
+    for term in terms {
+        push_field(buffer, Some(term.attr.as_str()));
+        let direction = match term.direction {
+            OrderDirection::Asc => "asc",
+            OrderDirection::Desc => "desc",
+            OrderDirection::DistAsc => "dist-asc",
+            OrderDirection::DistDesc => "dist-desc",
+        };
+        push_field(buffer, Some(direction));
     }
+}
+
+/// Append the typed ordering reference geometry.
+fn push_ordering_geometry(buffer: &mut String, geometry: Option<&OrderingGeometry>) {
+    let rendered = geometry.map(|value| value.geometry.to_geojson().to_string());
+    push_field(buffer, rendered.as_deref());
 }
 
 /// Append one parameter to the canonical rendering.
@@ -217,6 +227,7 @@ fn context_digest(context: &ContextSpec) -> u64 {
     if let Some(body) = context.body_context() {
         body.to_string().hash(&mut hasher);
     }
+    context.core_policy().hash(&mut hasher);
     hasher.finish()
 }
 

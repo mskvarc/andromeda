@@ -46,7 +46,7 @@ async fn update_endpoint_returns_204() {
 
     let (status, body) = retrieve_registration(&c, &id, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
-    pretty_assertions::assert_eq!(body["endpoint"], "http://my.new.csource.org:1026");
+    pretty_assertions::assert_eq!(body["endpoint"], "http://my.new.csource.org:1026/");
 
     cleanup_registration(&c, &id).await;
 }

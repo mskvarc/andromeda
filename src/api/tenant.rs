@@ -10,8 +10,8 @@ use axum::{
 use headers::{Header, HeaderMapExt};
 
 use crate::{
-    api::state::{AndromedaState, AppState},
-    core::error::{AndromedaError, ResultInstanceExt},
+    api::state::{AndromedaState, BrokerState},
+    error::{AndromedaError, ResultInstanceExt},
     http::error::problem::NgsiLdError,
 };
 
@@ -21,12 +21,12 @@ pub struct TenantState(pub AndromedaState);
 /// Extracts tenant state, creating the tenant database on demand if it does not exist.
 pub struct TenantStateOrCreate(pub AndromedaState);
 
-async fn resolve(parts: &mut Parts, app: &AppState, policy: TenantCreationPolicy) -> Result<AndromedaState, NgsiLdError> {
-    let tenant = TenantHeader::from_request_parts(parts, app)
+async fn resolve(parts: &mut Parts, broker: &BrokerState, policy: TenantCreationPolicy) -> Result<AndromedaState, NgsiLdError> {
+    let tenant = TenantHeader::from_request_parts(parts, broker)
         .await
         .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid NGSILD-Tenant header").with_instance(&parts.uri)))?;
     let tenant_ref = TenantRef::from_header(tenant.into_inner());
-    let runtime = app
+    let runtime = broker
         .tenants
         .resolve_state(&tenant_ref, policy)
         .await
@@ -35,20 +35,20 @@ async fn resolve(parts: &mut Parts, app: &AppState, policy: TenantCreationPolicy
     Ok((*runtime).clone())
 }
 
-impl FromRequestParts<AppState> for TenantState {
+impl FromRequestParts<BrokerState> for TenantState {
     type Rejection = NgsiLdError;
 
-    async fn from_request_parts(parts: &mut Parts, app: &AppState) -> Result<Self, Self::Rejection> {
-        let state = resolve(parts, app, TenantCreationPolicy::MustExist).await?;
+    async fn from_request_parts(parts: &mut Parts, broker: &BrokerState) -> Result<Self, Self::Rejection> {
+        let state = resolve(parts, broker, TenantCreationPolicy::MustExist).await?;
         Ok(Self(state))
     }
 }
 
-impl FromRequestParts<AppState> for TenantStateOrCreate {
+impl FromRequestParts<BrokerState> for TenantStateOrCreate {
     type Rejection = NgsiLdError;
 
-    async fn from_request_parts(parts: &mut Parts, app: &AppState) -> Result<Self, Self::Rejection> {
-        let state = resolve(parts, app, TenantCreationPolicy::CreateOnDemand).await?;
+    async fn from_request_parts(parts: &mut Parts, broker: &BrokerState) -> Result<Self, Self::Rejection> {
+        let state = resolve(parts, broker, TenantCreationPolicy::CreateOnDemand).await?;
         Ok(Self(state))
     }
 }

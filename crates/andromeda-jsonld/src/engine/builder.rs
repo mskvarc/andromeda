@@ -8,8 +8,8 @@
 use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
-    core_context::{ANDROMEDA_CORE_CONTEXT, ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_MAP, NGSI_LD_CORE_CONTEXT_URL_LIST},
-    engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache},
+    core_context::{ANDROMEDA_CORE_CONTEXT, ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_MAP, NGSI_LD_CORE_CONTEXT_URL_LIST, is_ngsi_ld_core_context_url},
+    engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache, term_map::vocabulary::CoreVocabulary},
     error::JsonLdError,
     hit_counter::HitCounter,
     loader::http::HttpContextLoader,
@@ -198,11 +198,13 @@ impl JsonLdEngineBuilder {
         let default_core_url = self
             .default_core_url
             .unwrap_or_else(|| IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld")));
+        let core_vocabulary = CoreVocabulary::try_from_generated()?;
         Ok(JsonLdEngine::assembled(
             loader,
             TermCache::new(self.cache_capacity, self.cache_ttl_seconds),
             hit_counter,
             default_core_url,
+            core_vocabulary,
         ))
     }
 }
@@ -241,6 +243,9 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
     let mut loaded = Vec::with_capacity(entries.len());
     for (url, file) in entries {
         let typed_url = iri_buf(url.as_str())?;
+        if is_ngsi_ld_core_context_url(url.as_str()) {
+            return Err(JsonLdError::ProtectedContextPreload { url: typed_url });
+        }
         let raw = fs::read_to_string(file).map_err(|error| JsonLdError::ContextLoad {
             url: typed_url.clone(),
             message: format!("Failed reading preloaded context file '{}': {error}", file.display()),
@@ -438,6 +443,18 @@ mod tests {
         let built = JsonLdEngine::builder().preload_contexts(preloads).build();
 
         assert!(matches!(built, Err(JsonLdError::ContextInvalid { .. })));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_preload_cannot_replace_an_embedded_core_context() {
+        let path = preloaded_file("protected-core", r#"{"@context":{"overridden":"https://example.com/override"}}"#);
+        let mut preloads = HashMap::new();
+        preloads.insert(context_url(NGSI_LD_CORE_CONTEXT_V19_URL), path.clone());
+
+        let built = JsonLdEngine::builder().preload_contexts(preloads).build();
+
+        assert!(matches!(built, Err(JsonLdError::ProtectedContextPreload { .. })));
         let _ = fs::remove_file(path);
     }
 

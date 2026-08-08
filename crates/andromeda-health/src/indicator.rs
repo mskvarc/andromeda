@@ -22,5 +22,6 @@ pub trait HealthIndicator: Send + Sync + 'static {
     fn name(&self) -> ComponentName;
 
     /// Perform the health check and return component details.
+    #[must_use = "health checks must be awaited"]
     async fn check(&self) -> ComponentDetail;
 }

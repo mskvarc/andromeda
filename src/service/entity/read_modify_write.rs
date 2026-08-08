@@ -14,7 +14,7 @@
 //! disagree permanently, because nothing sweeps the difference away.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,

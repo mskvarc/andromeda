@@ -7,7 +7,10 @@ use crate::{
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
 };
-use andromeda_jsonld::{context_cache::ContextCache, hit_counter::HitDelta};
+use andromeda_jsonld::{
+    context_cache::{ContextCache, ContextCacheError},
+    hit_counter::HitDelta,
+};
 use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use async_trait::async_trait;
@@ -237,7 +240,7 @@ impl JsonLdContextRepository {
                     .parse::<ContextKind>()
                     .map_err(|e| ContextStoreError::Internal(format!("Invalid JSON-LD context kind '{kind_label}': {e}")))?;
                 let url = url
-                    .map(|raw| IriBuf::new(raw.clone()).map_err(|error| ContextStoreError::Internal(format!("stored context URL is invalid: {}", error.0))))
+                    .map(|raw| IriBuf::new(raw).map_err(|error| ContextStoreError::Internal(format!("stored context URL is invalid: {}", error.0))))
                     .transpose()?;
                 Ok((id, kind, url))
             })
@@ -293,25 +296,22 @@ impl JsonLdContextRepository {
 
 #[async_trait]
 impl ContextCache for JsonLdContextRepository {
-    async fn get(&self, url: &IriBuf) -> Option<Value> {
+    async fn get(&self, url: &IriBuf) -> Result<Option<Value>, ContextCacheError> {
         let row_opt: Option<(sqlx::types::Json<Value>,)> = sqlx::query_as("SELECT payload FROM jsonld_contexts WHERE url = $1 OR id = $1")
             .bind(url.as_str())
             .fetch_optional(&self.pool)
             .await
-            .ok()?;
+            .map_err(|error| ContextCacheError::Read(error.to_string()))?;
 
-        row_opt.map(|r| r.0.0)
+        Ok(row_opt.map(|row| row.0.0))
     }
 
-    async fn put(&self, url: &IriBuf, payload: Value) {
-        let local_id = match UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4())).build() {
-            Ok(urn) => urn.to_string(),
-            Err(e) => {
-                tracing::trace!("Failed to mint local id for cached context {}: {}", url, e);
-                return;
-            }
-        };
-        let result = sqlx::query(
+    async fn put(&self, url: &IriBuf, payload: &Value) -> Result<(), ContextCacheError> {
+        let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4()))
+            .build()
+            .map_err(|error| ContextCacheError::Write(error.to_string()))?
+            .to_string();
+        sqlx::query(
             "INSERT INTO jsonld_contexts (id, url, kind, payload, created_at, last_usage, number_of_hits) \
              VALUES ($1, $2, 'Cached', $3, NOW(), NOW(), 0) \
              ON CONFLICT (url) DO NOTHING",
@@ -320,9 +320,8 @@ impl ContextCache for JsonLdContextRepository {
         .bind(url.as_str())
         .bind(payload)
         .execute(&self.pool)
-        .await;
-        if let Err(e) = result {
-            tracing::trace!("Failed to persist context {} to DB cache: {}", url, e);
-        }
+        .await
+        .map_err(|error| ContextCacheError::Write(error.to_string()))?;
+        Ok(())
     }
 }

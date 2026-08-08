@@ -1,7 +1,7 @@
 //! Filtering an entity's attributes down to what the client asked for
 //! (clause 6.3.15 `pick` and `omit`, clause 5.7.2 `attrs`).
 
-use crate::{core::error::AndromedaError, service::entity::query::EntityQueryService};
+use crate::{error::AndromedaError, service::entity::query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;

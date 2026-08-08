@@ -14,7 +14,7 @@
 
 use crate::engine::{
     expanded_key,
-    term_map::{BatchTermMap, TermCoercion},
+    term_map::{BatchTermMap, coercion::TermCoercion},
 };
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use andromeda_ngsi_ld_vocabulary::compact_to_expanded;

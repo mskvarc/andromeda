@@ -1,7 +1,7 @@
 //! Handler for the `/version` endpoint.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     http::error::problem::NgsiLdError,
     version::{
         report::{VersionResponse, VersionType},

@@ -52,7 +52,7 @@ pub mod write_coordinator;
 pub mod write_outcome;
 
 use crate::{
-    core::batch_activity::BatchActivityTracker,
+    batch_activity::BatchActivityTracker,
     event::change_event::{ChangeEvent, ChangeOrigin},
     service::{
         entity::{

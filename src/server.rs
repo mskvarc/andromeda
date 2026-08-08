@@ -1,9 +1,10 @@
 use crate::{
-    api::{router::create_router, tenant::echo_tenant_header_middleware},
-    core::{
-        config::{CorsMode, HttpFeatureMode, RuntimeConfig},
-        error::AndromedaError,
+    api::{
+        router::{BrokerHttp, create_router},
+        tenant::echo_tenant_header_middleware,
     },
+    config::{CorsMode, HttpFeatureMode, RuntimeConfig},
+    error::AndromedaError,
 };
 use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
 use axum::{
@@ -97,9 +98,8 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
             Duration::from_secs(http.request_timeout_secs),
         ));
 
-    let mut router = create_router(Arc::clone(&config))
-        .await?
-        .layer(middleware::from_fn(echo_tenant_header_middleware));
+    let BrokerHttp { router, tenants } = create_router(Arc::clone(&config)).await?;
+    let mut router = router.layer(middleware::from_fn(echo_tenant_header_middleware));
 
     if let HttpFeatureMode::Enabled = http.response_compression {
         router = router.layer(CompressionLayer::new());
@@ -118,7 +118,47 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
 
     info!("Listening on {}", listener.local_addr()?);
 
-    axum::serve(listener, ServiceExt::<axum::extract::Request>::into_make_service(app)).await?;
+    axum::serve(listener, ServiceExt::<axum::extract::Request>::into_make_service(app))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tenants.shutdown_all().await;
 
     Ok(())
+}
+
+/// Wait for Ctrl-C or SIGTERM, whichever arrives first.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let terminate = signal(SignalKind::terminate());
+        match terminate {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        if let Err(error) = result {
+                            tracing::error!(error = %error, "Ctrl-C signal listener failed");
+                        }
+                    }
+                    received = terminate.recv() => {
+                        if received.is_none() {
+                            tracing::error!("SIGTERM signal stream ended before receiving a signal");
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "SIGTERM signal listener failed; waiting for Ctrl-C");
+                if let Err(error) = tokio::signal::ctrl_c().await {
+                    tracing::error!(error = %error, "Ctrl-C signal listener failed");
+                }
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        tracing::error!(error = %error, "Ctrl-C signal listener failed");
+    }
 }

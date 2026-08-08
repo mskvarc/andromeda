@@ -7,7 +7,7 @@
 //! recomputed against a fresh read if a concurrent writer got in first.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,

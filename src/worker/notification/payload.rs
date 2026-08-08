@@ -1,11 +1,18 @@
 //! Notification payload building: showChanges, previous values, datasetId
 //! filtering, nullification, and format simplification.
 
-use crate::service::{
-    compiled_subscription::CompiledSubscription,
-    entity::{
-        query::EntityQueryService,
-        sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
+use crate::{
+    service::{
+        compiled_subscription::CompiledSubscription,
+        entity::{
+            query::EntityQueryService,
+            sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
+        },
+    },
+    worker::notification::payload::{
+        context::{context_for_subscription, normalize_compacted_entity, strip_to_structural_keys},
+        deletion::{fix_null_language_maps, inject_deleted_attributes, nullify_entity_attributes},
+        filtering::{filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
     },
 };
 use andromeda_delivery::request::notification_media_type;
@@ -16,7 +23,7 @@ use andromeda_jsonld::{
         processor::JsonLdEngine,
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339::whole_seconds};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
 use andromeda_ngsi_ld_representation::{response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
@@ -320,7 +327,7 @@ async fn resolve_linked_cached(
     sys_attrs: SysAttrsInclusion,
     context: &ContextSpec,
     cache: Option<&NotificationCompactionCache>,
-) -> Result<ResolvedLinkedEntities, crate::core::error::AndromedaError> {
+) -> Result<ResolvedLinkedEntities, crate::error::AndromedaError> {
     // Compute cache key even when no cache is provided -- cheap and keeps the
     // code path uniform with the cached branch.
     let key = linked_resolution_cache_key(main_entity, join_level, sys_attrs, context);
@@ -462,359 +469,9 @@ fn hash_json_value(value: &Value, hasher: &mut impl Hasher) {
     }
 }
 
-pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {
-    context_for_subscription_raw(sub.jsonld_context.as_ref().map(Url::as_str))
-}
-
-/// Build a ContextSpec from an optional jsonldContext string.
-/// Shared by both notification_worker and interval_worker.
-pub fn context_for_subscription_raw(jsonld_context: Option<&str>) -> ContextSpec {
-    let Some(url) = jsonld_context else {
-        return ContextSpec::none().with_core_policy(CoreContextPolicy::Append);
-    };
-    let trimmed = url.trim();
-    if ((trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')))
-        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
-    {
-        return ContextSpec::none().with_body_context(Some(value)).with_core_policy(CoreContextPolicy::Append);
-    }
-    // A jsonldContext that parses as an IRI reference is a context URL; an inline
-    // object or array is a body context, handled above.
-    if let Ok(iri) = IriRefBuf::new(url.to_string()) {
-        return ContextSpec::from_links(vec![iri]).with_core_policy(CoreContextPolicy::Append);
-    }
-    ContextSpec::none().with_core_policy(CoreContextPolicy::Append)
-}
-
-pub fn normalize_compacted_entity(mut entity: Value) -> Value {
-    if let Value::Object(obj) = &mut entity {
-        if !obj.contains_key("id")
-            && let Some(id) = obj.remove("@id")
-        {
-            obj.insert("id".to_string(), id);
-        }
-        if !obj.contains_key("type")
-            && let Some(t) = obj.remove("@type")
-        {
-            let normalized = match t {
-                Value::Array(arr) if arr.len() == 1 => arr.into_iter().next().unwrap_or(Value::Null),
-                other => other,
-            };
-            obj.insert("type".to_string(), normalized);
-        }
-    }
-    entity
-}
-
-pub fn strip_to_structural_keys(entity: &Value, sys_attrs: SysAttrsInclusion) -> Value {
-    let Some(obj) = entity.as_object() else {
-        return entity.clone();
-    };
-    let mut stripped = serde_json::Map::new();
-    for (key, value) in obj {
-        let keep = key == "@id"
-            || key == "@type"
-            || key == expanded_properties::DELETED_AT.as_str()
-            || (sys_attrs == SysAttrsInclusion::Include
-                && (key == expanded_properties::CREATED_AT.as_str() || key == expanded_properties::MODIFIED_AT.as_str()));
-        if keep {
-            stripped.insert(key.clone(), value.clone());
-        }
-    }
-    Value::Object(stripped)
-}
-
-fn nullify_entity_attributes(entity: &mut Value) {
-    let Some(obj) = entity.as_object_mut() else { return };
-    let attr_keys: Vec<String> = obj
-        .keys()
-        .filter(|k| {
-            !k.starts_with('@')
-                && *k != expanded_properties::CREATED_AT.as_str()
-                && *k != expanded_properties::MODIFIED_AT.as_str()
-                && *k != expanded_properties::DELETED_AT.as_str()
-                && *k != expanded_properties::SCOPE.as_str()
-        })
-        .cloned()
-        .collect();
-    for key in attr_keys {
-        if let Some(attr_arr) = obj.get_mut(&key).and_then(|v| v.as_array_mut()) {
-            for instance in attr_arr.iter_mut() {
-                nullify_attribute_instance(instance);
-            }
-        }
-    }
-}
-
-fn nullify_attribute_instance(instance: &mut Value) {
-    let Some(obj) = instance.as_object_mut() else { return };
-
-    let null_value = serde_json::json!([{"@value": expanded_properties::NULL_URI}]);
-    let null_object = serde_json::json!([{"@id": expanded_properties::NULL_URI}]);
-    let null_json = serde_json::json!([{"@value": expanded_properties::NULL_URI, "@type": "@json"}]);
-    let null_vocab = serde_json::json!([{"@id": expanded_properties::NULL_URI}]);
-
-    if obj.contains_key(expanded_properties::OBJECT.as_str()) {
-        obj.insert(expanded_properties::OBJECT.as_str().to_string(), null_object);
-    } else if obj.contains_key(expanded_properties::LANGUAGE_MAP.as_str()) {
-        obj.insert(expanded_properties::LANGUAGE_MAP.as_str().to_string(), null_value);
-    } else if obj.contains_key(expanded_properties::JSON.as_str()) {
-        obj.insert(expanded_properties::JSON.as_str().to_string(), null_json);
-    } else if obj.contains_key(expanded_properties::VOCAB.as_str()) {
-        obj.insert(expanded_properties::VOCAB.as_str().to_string(), null_vocab);
-    } else {
-        obj.insert(expanded_properties::VALUE.as_str().to_string(), null_value);
-    }
-}
-
-fn fix_null_language_maps(entity: &mut Value) {
-    let Some(obj) = entity.as_object_mut() else { return };
-    for value in obj.values_mut() {
-        let is_null_lang_map = value
-            .as_object()
-            .and_then(|attr| attr.get("languageMap"))
-            .and_then(|lm| lm.as_object())
-            .and_then(|lm_obj| {
-                if lm_obj.len() == 1 {
-                    lm_obj.get("@none").and_then(|v| v.as_str())
-                } else {
-                    None
-                }
-            })
-            == Some(expanded_properties::NULL_URI.as_str());
-        if is_null_lang_map && let Some(attr) = value.as_object_mut() {
-            attr.insert("languageMap".to_string(), Value::String(expanded_properties::NULL_URI.as_str().to_string()));
-        }
-    }
-}
-
-fn inject_deleted_attributes(entity: &mut Value, changed_attributes: &[AttributeName], previous_attributes: Option<&Value>, deleted_at: Option<DateTime<Utc>>) {
-    let Some(prev) = previous_attributes else { return };
-    let prev_obj = match prev {
-        Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
-        Value::Object(obj) => Some(obj),
-        _ => None,
-    };
-    let Some(prev_obj) = prev_obj else { return };
-    let Some(entity_obj) = entity.as_object_mut() else { return };
-
-    for attr_name in changed_attributes {
-        let attr_iri = attr_name.as_str();
-        if entity_obj.contains_key(attr_iri) {
-            inject_deleted_instances(entity_obj, attr_iri, prev_obj, deleted_at);
-            continue;
-        }
-        if let Some(prev_attr) = prev_obj.get(attr_iri) {
-            let first_instance = match prev_attr {
-                Value::Array(arr) => arr.first().cloned(),
-                other => Some(other.clone()),
-            };
-            if let Some(mut instance) = first_instance {
-                nullify_attribute_instance(&mut instance);
-                if let Some(obj) = instance.as_object_mut() {
-                    obj.remove(expanded_properties::DATASET_ID.as_str());
-                }
-                if let Some(ts) = deleted_at {
-                    inject_deleted_at_on_instance(&mut instance, ts);
-                }
-                entity_obj.insert(attr_iri.to_string(), serde_json::json!([instance]));
-            }
-        }
-    }
-}
-
-fn inject_deleted_instances(
-    entity_obj: &mut serde_json::Map<String, Value>,
-    attr_iri: &str,
-    prev_obj: &serde_json::Map<String, Value>,
-    deleted_at: Option<DateTime<Utc>>,
-) {
-    let Some(prev_attr) = prev_obj.get(attr_iri) else { return };
-    let Some(prev_arr) = prev_attr.as_array() else { return };
-    let Some(cur_arr) = entity_obj.get(attr_iri).and_then(|v| v.as_array()) else {
-        return;
-    };
-
-    let current_dataset_ids: HashSet<Option<String>> = cur_arr
-        .iter()
-        .map(|inst| {
-            inst.as_object()
-                .and_then(|o| o.get(expanded_properties::DATASET_ID.as_str()))
-                .and_then(|v| v.as_array())
-                .and_then(|a| a.first())
-                .and_then(|v| v.as_object())
-                .and_then(|o| o.get("@id"))
-                .and_then(|v| v.as_str())
-                .map(String::from)
-        })
-        .collect();
-
-    let mut deleted_instances: Vec<Value> = Vec::new();
-    for prev_inst in prev_arr {
-        let prev_ds_id = prev_inst
-            .as_object()
-            .and_then(|o| o.get(expanded_properties::DATASET_ID.as_str()))
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.first())
-            .and_then(|v| v.as_object())
-            .and_then(|o| o.get("@id"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        if !current_dataset_ids.contains(&prev_ds_id) {
-            let mut nullified = prev_inst.clone();
-            nullify_attribute_instance(&mut nullified);
-            if let Some(ts) = deleted_at {
-                inject_deleted_at_on_instance(&mut nullified, ts);
-            }
-            deleted_instances.push(nullified);
-        }
-    }
-
-    if !deleted_instances.is_empty()
-        && let Some(cur_arr) = entity_obj.get_mut(attr_iri).and_then(|v| v.as_array_mut())
-    {
-        cur_arr.extend(deleted_instances);
-    }
-}
-
-fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
-    if let Some(obj) = instance.as_object_mut() {
-        obj.insert(
-            expanded_properties::DELETED_AT.as_str().to_string(),
-            serde_json::json!([{
-                "@type": expanded_classes::DATE_TIME.as_str(),
-                "@value": whole_seconds(ts)
-            }]),
-        );
-    }
-}
-
-pub fn filter_entity_attributes(entity: &Value, attrs: &[AttributeName]) -> Value {
-    let Some(obj) = entity.as_object() else { return entity.clone() };
-
-    let mut filtered = serde_json::Map::new();
-    for (key, value) in obj {
-        if key.starts_with('@') || attrs.iter().any(|a| a.as_str() == key) {
-            filtered.insert(key.clone(), value.clone());
-        }
-    }
-    Value::Object(filtered)
-}
-
-fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
-    let Some(obj) = expanded_entity_object_mut(entity) else { return };
-    let default_context_prefix = format!("{}default-context/", prefix::NGSI_LD.as_str());
-
-    let attr_keys: Vec<String> = obj
-        .keys()
-        .filter(|k| !k.starts_with('@') && (!k.starts_with(prefix::NGSI_LD.as_str()) || k.starts_with(&default_context_prefix)))
-        .cloned()
-        .collect();
-
-    for key in attr_keys {
-        let Some(arr) = obj.get_mut(&key).and_then(|v| v.as_array_mut()) else {
-            continue;
-        };
-
-        let filtered: Vec<Value> = arr
-            .drain(..)
-            .filter(|instance| {
-                let instance_dataset_id = instance
-                    .as_object()
-                    .and_then(|o| o.get(expanded_properties::DATASET_ID.as_str()))
-                    .and_then(|v| v.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|v| v.as_object())
-                    .and_then(|o| o.get("@id"))
-                    .and_then(|v| v.as_str());
-
-                match instance_dataset_id {
-                    Some(id) => dataset_ids.iter().any(|d| d == id),
-                    None => dataset_ids.is_empty(),
-                }
-            })
-            .collect();
-
-        if filtered.is_empty() {
-            obj.remove(&key);
-        } else if let Some(entry) = obj.get_mut(&key) {
-            *entry = Value::Array(filtered);
-        }
-    }
-}
-
-async fn inject_previous_values(current: &mut Value, previous: &Value, changed_attributes: &[AttributeName], engine: &JsonLdEngine, context: &ContextSpec) {
-    let (Some(curr_obj), Some(prev_obj)) = (current.as_object_mut(), previous.as_object()) else {
-        return;
-    };
-
-    let changed_set: HashSet<&str> = changed_attributes.iter().map(AttributeName::as_str).collect();
-    let keys: Vec<String> = curr_obj.keys().filter(|k| !k.starts_with('@') && *k != "id" && *k != "type").cloned().collect();
-
-    let prepared_context = engine.prepare_term_context(context);
-    for key in keys {
-        if !changed_attributes.is_empty() {
-            let expanded_key = engine
-                .expand_term(&key, &prepared_context)
-                .await
-                .map_or_else(|_| key.clone(), |iri| iri.to_string());
-            if !changed_set.contains(expanded_key.as_str()) && !changed_set.contains(key.as_str()) {
-                continue;
-            }
-        }
-
-        if let Some(prev_val) = prev_obj.get(&key) {
-            let curr_attr = curr_obj.get(&key).cloned();
-            let previous_key = previous_key_for_attr(prev_val);
-
-            if let Some(Value::Object(attr_obj)) = curr_attr.as_ref().filter(|&v| v.is_object()) {
-                let mut updated_attr = attr_obj.clone();
-                let prev_value = extract_previous_value(prev_val, previous_key);
-                updated_attr.insert(previous_key.to_string(), prev_value);
-                curr_obj.insert(key, Value::Object(updated_attr));
-            }
-        }
-    }
-}
-
-fn previous_key_for_attr(val: &Value) -> &'static str {
-    val.as_object()
-        .and_then(|o| o.get("type"))
-        .and_then(|t| t.as_str())
-        .and_then(|s| s.parse::<AttributeType>().ok())
-        .map_or("previousValue", |t| t.previous_key())
-}
-
-fn extract_previous_value(val: &Value, previous_key: &str) -> Value {
-    if let Some(obj) = val.as_object() {
-        match previous_key {
-            "previousObject" => {
-                if let Some(v) = obj.get("object") {
-                    return v.clone();
-                }
-            }
-            "previousLanguageMap" => {
-                if let Some(v) = obj.get("languageMap") {
-                    return v.clone();
-                }
-            }
-            "previousJson" => {
-                if let Some(v) = obj.get("json") {
-                    return v.clone();
-                }
-            }
-            "previousVocab" => {
-                if let Some(v) = obj.get("vocab") {
-                    return v.clone();
-                }
-            }
-            _ => {
-                if let Some(v) = obj.get("value") {
-                    return v.clone();
-                }
-            }
-        }
-    }
-    val.clone()
-}
+/// Notification context selection and compacted-entity normalization.
+pub mod context;
+/// Deleted attribute and instance materialization.
+mod deletion;
+/// Notification filtering and previous-value materialization.
+pub mod filtering;

@@ -18,7 +18,7 @@ use crate::{
     core_context_precedence::without_embedded_core_context,
     engine::options::RemoteContextFetch,
     error::JsonLdError,
-    hit_counter::HitCounter,
+    hit_counter::{HitCounter, HitDelta},
     loader::error::{LoaderError, LoaderErrorKind},
 };
 use iri_rs::{Iri, IriBuf};
@@ -27,8 +27,15 @@ use jsonld_syntax::Parse;
 use mediatype::MediaTypeBuf;
 use moka::future::Cache;
 use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
-use std::{sync::Arc, time::Duration};
-use tracing::trace;
+use serde_json::Value;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use tracing::{trace, warn};
 
 /// What a context fetch asks the server for.
 const ACCEPT_HEADER: &str = "application/ld+json, application/json";
@@ -41,8 +48,41 @@ const ACCEPT_HEADER: &str = "application/ld+json, application/json";
 struct LoadedContext {
     /// The parsed JSON-LD context payload supplied to the processor.
     value: Arc<jsonld_syntax::Value>,
-    /// Whether this payload came from a durable hosted-context row.
-    has_durable_row: bool,
+    /// Where the cached document's durability and hit accounting live.
+    durability: ContextDurability,
+}
+
+#[derive(Debug, Clone)]
+/// Durability and hit-accounting ownership of one L1 entry.
+enum ContextDurability {
+    /// Embedded or preloaded registry entry with no durable hit row.
+    Registry,
+    /// Entry already persisted in the durable cache.
+    Durable,
+    /// Remotely loaded entry awaiting persistence.
+    Pending(Arc<PendingPersistence>),
+}
+
+#[derive(Debug)]
+/// State retained while an L1 context awaits durable persistence.
+struct PendingPersistence {
+    /// Valid remote payload served while persistence is pending.
+    payload: Value,
+    /// Single-flight guard for the persistence retry.
+    retrying: AtomicBool,
+    /// L1 hits accumulated before persistence completes.
+    hits: AtomicU64,
+    /// Whether a retry has completed durable persistence.
+    durable: AtomicBool,
+}
+
+/// Cancellation-safe ownership of one persistence retry.
+struct PersistenceRetryLease<'a>(&'a AtomicBool);
+
+impl Drop for PersistenceRetryLease<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// Resolves a context URL to a context document.
@@ -144,35 +184,51 @@ impl HttpContextLoader {
     /// `Clone + Send + Sync`. The [`Loader`] implementation needs this form,
     /// since the trait fixes the error type.
     pub(crate) async fn load_value_raw(&self, url: &IriBuf) -> Result<Arc<jsonld_syntax::Value>, Arc<LoaderError>> {
+        if let Some(loaded) = self.cache.get(url).await {
+            self.record_cached_access(url, &loaded).await;
+            return Ok(loaded.value);
+        }
         let url_iri = url.clone(); // owned: the moka key and the cache-fill future both need it
         let registry = Arc::clone(&self.registry); // clone: Arc ref-count bump into the cache-fill future
         let client = self.client.clone(); // clone: reqwest::Client is an Arc handle
         let allow_remote = self.allow_remote;
         let max_bytes = self.max_context_bytes;
         let l2_cache = self.l2_cache.clone(); // clone: Arc ref-count bump into the cache-fill future
+        let initialized = Arc::new(AtomicBool::new(false));
+        let initializer = Arc::clone(&initialized); // clone: the cache-fill future records whether this caller initialized the entry
 
         let result = self
             .cache
             .try_get_with(url_iri.clone(), async move {
+                initializer.store(true, Ordering::Relaxed);
                 if let Some(value) = registry.get(&url_iri) {
-                    return Ok(LoadedContext { value, has_durable_row: false });
+                    return Ok(LoadedContext {
+                        value,
+                        durability: ContextDurability::Registry,
+                    });
                 }
 
-                if let Some(ref cache) = l2_cache
-                    && let Some(payload) = cache.get(&url_iri).await
-                {
-                    trace!("L2 cache hit for context: {}", url_iri);
-                    // Convert the stored payload straight into the syntax value.
-                    // The old `to_string` then `parse_str` round trip papered a
-                    // serialisation failure over with an empty string, which then
-                    // failed to parse with an unrelated "invalid context" error;
-                    // `from_serde_json` is the direct, infallible inverse of the
-                    // `into_serde_json` the write path used.
-                    let parsed = jsonld_syntax::Value::from_serde_json(payload);
-                    return Ok(LoadedContext {
-                        value: Arc::new(without_embedded_core_context(url_iri.as_str(), parsed)),
-                        has_durable_row: true,
-                    });
+                if let Some(ref cache) = l2_cache {
+                    match cache.get(&url_iri).await {
+                        Ok(Some(payload)) => {
+                            trace!("L2 cache hit for context: {}", url_iri);
+                            let parsed = jsonld_syntax::Value::from_serde_json(payload);
+                            return Ok(LoadedContext {
+                                value: Arc::new(without_embedded_core_context(url_iri.as_str(), parsed)),
+                                durability: ContextDurability::Durable,
+                            });
+                        }
+                        Ok(None) => {}
+                        Err(error) if allow_remote == RemoteContextFetch::Allow => {
+                            warn!(url = %url_iri, error = %error, "Durable context-cache read failed; attempting remote resolution");
+                        }
+                        Err(error) => {
+                            return Err(LoaderError {
+                                url: url_iri.clone(),
+                                kind: LoaderErrorKind::Cache(error.to_string()),
+                            });
+                        }
+                    }
                 }
 
                 if allow_remote == RemoteContextFetch::Deny {
@@ -187,16 +243,36 @@ impl HttpContextLoader {
                         // accounting is the HitCounter's job.
                         if let Some(ref cache) = l2_cache {
                             let serde_value = jsonld_syntax::Value::into_serde_json(normalized.clone()); // clone: the normalized document is also returned
-                            cache.put(&url_iri, serde_value).await;
-                            trace!("Persisted context to L2 cache: {}", url_iri);
+                            let durability = match cache.put(&url_iri, &serde_value).await {
+                                Ok(()) => {
+                                    trace!("Persisted context to L2 cache: {}", url_iri);
+                                    ContextDurability::Durable
+                                }
+                                Err(error) => {
+                                    warn!(url = %url_iri, error = %error, "Serving remotely loaded context while durable persistence is pending");
+                                    ContextDurability::Pending(Arc::new(PendingPersistence {
+                                        payload: serde_value,
+                                        retrying: AtomicBool::new(false),
+                                        hits: AtomicU64::new(0),
+                                        durable: AtomicBool::new(false),
+                                    }))
+                                }
+                            };
+                            return Ok(LoadedContext {
+                                value: Arc::new(normalized),
+                                durability,
+                            });
                         }
                         Ok(LoadedContext {
                             value: Arc::new(normalized),
-                            has_durable_row: l2_cache.is_some(),
+                            durability: ContextDurability::Registry,
                         })
                     }
                     Err(error) => match registry.get(&url_iri) {
-                        Some(value) => Ok(LoadedContext { value, has_durable_row: false }),
+                        Some(value) => Ok(LoadedContext {
+                            value,
+                            durability: ContextDurability::Registry,
+                        }),
                         None => Err(error),
                     },
                 }
@@ -204,12 +280,55 @@ impl HttpContextLoader {
             .await;
 
         let loaded = result?;
-        if let Some(ref counter) = self.hit_counter
-            && loaded.has_durable_row
-        {
-            counter.bump(url);
+        if !initialized.load(Ordering::Relaxed) {
+            self.record_cached_access(url, &loaded).await;
+        } else if matches!(loaded.durability, ContextDurability::Durable) {
+            // A durable L2 read is a cache hit; the first successful remote
+            // fetch and persistence is not.
+            if let Some(ref counter) = self.hit_counter {
+                counter.bump(url);
+            }
         }
         Ok(loaded.value)
+    }
+
+    /// Record one L1 access and retry pending persistence when necessary.
+    async fn record_cached_access(&self, url: &IriBuf, loaded: &LoadedContext) {
+        match &loaded.durability {
+            ContextDurability::Registry => {}
+            ContextDurability::Durable => {
+                if let Some(ref counter) = self.hit_counter {
+                    counter.bump(url);
+                }
+            }
+            ContextDurability::Pending(pending) if pending.durable.load(Ordering::Acquire) => {
+                if let Some(ref counter) = self.hit_counter {
+                    counter.bump(url);
+                }
+            }
+            ContextDurability::Pending(pending) => {
+                pending.hits.fetch_add(1, Ordering::Relaxed);
+                if pending.retrying.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+                    return;
+                }
+                let _lease = PersistenceRetryLease(&pending.retrying);
+                let Some(ref cache) = self.l2_cache else {
+                    return;
+                };
+                match cache.put(url, &pending.payload).await {
+                    Ok(()) => {
+                        pending.durable.store(true, Ordering::Release);
+                        let count = pending.hits.swap(0, Ordering::AcqRel);
+                        if count > 0
+                            && let Some(ref counter) = self.hit_counter
+                        {
+                            counter.requeue([HitDelta { url: url.clone(), count }]);
+                        }
+                    }
+                    Err(error) => warn!(url = %url, error = %error, "Durable context-cache persistence retry failed"),
+                }
+            }
+        }
     }
 
     /// Fetch a context from its source, bypassing both caches.
@@ -299,6 +418,16 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
         kind: LoaderErrorKind::Invalid(error.to_string()),
     })?;
 
+    let json = serde_json::from_str::<Value>(text).map_err(|error| LoaderError {
+        url: url.clone(),
+        kind: LoaderErrorKind::Invalid(error.to_string()),
+    })?;
+    if !json.as_object().is_some_and(|object| object.contains_key("@context")) {
+        return Err(LoaderError {
+            url: url.clone(),
+            kind: LoaderErrorKind::Invalid("remote document has no usable top-level @context".to_owned()),
+        });
+    }
     let (value, _) = jsonld_syntax::Value::parse_str(text).map_err(|error| LoaderError {
         url: url.clone(),
         kind: LoaderErrorKind::Invalid(error.to_string()),
@@ -356,10 +485,12 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::context_cache::ContextCache for FixedL2 {
-        async fn get(&self, _url: &IriBuf) -> Option<serde_json::Value> {
-            Some(self.0.clone())
+        async fn get(&self, _url: &IriBuf) -> Result<Option<serde_json::Value>, crate::context_cache::ContextCacheError> {
+            Ok(Some(self.0.clone()))
         }
-        async fn put(&self, _url: &IriBuf, _payload: serde_json::Value) {}
+        async fn put(&self, _url: &IriBuf, _payload: &serde_json::Value) -> Result<(), crate::context_cache::ContextCacheError> {
+            Ok(())
+        }
     }
 
     #[tokio::test]

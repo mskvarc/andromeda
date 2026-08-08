@@ -13,14 +13,13 @@ use crate::attribute::{
     relationship::Relationship,
     vocab_property::VocabProperty,
 };
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use chrono::{DateTime, Utc};
 use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::iter::once;
-use urn_rs::Urn;
 
 /// One instance of any NGSI-LD attribute family, discriminated by its `type` member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +107,7 @@ impl Attribute {
     }
 
     /// Borrows the instance's `datasetId`, if set.
-    pub const fn dataset_id(&self) -> Option<&Urn> {
+    pub const fn dataset_id(&self) -> Option<&Uri> {
         self.common().dataset_id.as_ref()
     }
 }

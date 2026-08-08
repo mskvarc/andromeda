@@ -41,7 +41,7 @@ async fn clean_database() {
 // Snapshot HTTP helpers
 // ---------------------------------------------------------------------------
 
-async fn create_snapshot(client: &Client, body: &Value) -> (StatusCode, HeaderMap, Value) {
+async fn create_snapshot_raw(client: &Client, body: &Value) -> (StatusCode, HeaderMap, Value) {
     let resp = client
         .post(format!("{BASE_URL}/snapshots"))
         .header("Content-Type", "application/json")
@@ -53,6 +53,15 @@ async fn create_snapshot(client: &Client, body: &Value) -> (StatusCode, HeaderMa
     let headers = resp.headers().clone();
     let body: Value = resp.json().await.unwrap_or_default();
     (status, headers, body)
+}
+
+async fn create_snapshot(client: &Client, body: &Value) -> (StatusCode, HeaderMap, Value) {
+    let mut body = body.clone(); // clone: each test retains its scenario fragment while this helper adds the shared mandatory shape
+    if let Some(object) = body.as_object_mut() {
+        object.insert("type".to_string(), Value::String("Snapshot".to_string()));
+        object.insert("snapshotQueries".to_string(), json!([{"type": "Query"}]));
+    }
+    create_snapshot_raw(client, &body).await
 }
 
 async fn get_snapshot(client: &Client, id: &str) -> (StatusCode, Value) {
@@ -424,6 +433,104 @@ impl Drop for NotificationReceiver {
 // ---------------------------------------------------------------------------
 // API tests (spec 5.16, 6.36-6.38)
 // ---------------------------------------------------------------------------
+
+async fn assert_snapshot_create_rejected(client: &Client, body: Value) {
+    let (status, _, problem) = create_snapshot_raw(client, &body).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
+    pretty_assertions::assert_eq!(problem["type"], "https://uri.etsi.org/ngsi-ld/errors/BadRequestData");
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_exact_snapshot_and_query_discriminators_are_accepted() {
+    clean_database().await;
+    let c = client();
+    let body = json!({"type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{"type": "Query"}]});
+
+    let (status, _, created) = create_snapshot_raw(&c, &body).await;
+
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+    if let Some(id) = created["id"].as_str() {
+        delete_snapshot(&c, id).await;
+    }
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_missing_snapshot_discriminator_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"snapshotQueries": [{"type": "Query"}]})).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_incorrect_snapshot_discriminator_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"type": "Query", "snapshotQueries": [{"type": "Query"}]})).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_missing_query_discriminator_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotQueries": [{}]})).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_incorrect_query_discriminator_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotQueries": [{"type": "Snapshot"}]})).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_unknown_member_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(
+        &client(),
+        json!({"type": "Snapshot", "snapshotQueries": [{"type": "Query"}], "snapshotPriorty": 5}),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_without_query_collections_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot"})).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_with_two_empty_query_collections_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotQueries": [], "snapshotTemporalQueries": []})).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_entity_query_with_temporal_query_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(
+        &client(),
+        json!({
+            "type": "Snapshot",
+            "snapshotQueries": [{
+                "type": "Query",
+                "temporalQ": {"timerel": "after", "timeAt": "2024-01-01T00:00:00Z"}
+            }]
+        }),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[serial]
+async fn snapshot_api_temporal_query_without_temporal_query_member_is_rejected() {
+    clean_database().await;
+    assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotTemporalQueries": [{"type": "Query"}]})).await;
+}
 
 #[tokio::test]
 #[serial]

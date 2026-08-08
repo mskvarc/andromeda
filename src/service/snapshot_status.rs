@@ -3,7 +3,7 @@
 //! Pure business logic: no I/O, no SQL. Called by the snapshot executor
 //! before any `update_status` request reaches the repository.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_model::snapshot::SnapshotStatus;
 
 /// Validate that a `preparing -> status` transition is permitted by the

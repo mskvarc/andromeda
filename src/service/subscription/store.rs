@@ -4,10 +4,10 @@
 //! context-source subscriptions (clause 5.11): the two differ in what they
 //! select and how they are notified, not in how they are stored.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use serde_json::Value;
 
 /// Borrowed field values used when creating or updating a subscription.
@@ -68,33 +68,98 @@ pub struct StatusUpdateFields {
 
 /// Storing subscriptions, and the lifecycle bookkeeping the notification path
 /// writes back to them.
-#[async_trait]
 pub trait SubscriptionStore: Send + Sync {
     /// Retrieve a subscription by identifier.
-    async fn get(&self, id: &str) -> Result<Option<Subscription>, AndromedaError>;
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<Option<Subscription>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
     /// List subscriptions with pagination, returning the items and total count.
-    async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Subscription>, i64), AndromedaError>;
+    fn list<'life0, 'async_trait>(
+        &'life0 self,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> BoxFuture<'async_trait, Result<(Vec<Subscription>, i64), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
     /// Delete a subscription by identifier. Returns rows affected.
-    async fn delete(&self, id: &str) -> Result<u64, AndromedaError>;
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
     /// Check whether a subscription with the given identifier exists.
-    async fn exists(&self, id: &str) -> Result<bool, AndromedaError>;
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
     /// List all subscriptions with active status.
-    async fn list_active(&self) -> Result<Vec<Subscription>, AndromedaError>;
+    fn list_active<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
     /// Atomically claim a notification slot. `earliest_allowed_last_notification`,
     /// when provided, gates the claim on `last_notification IS NULL OR
     /// last_notification <= $2`. The policy layer computes this timestamp from
     /// the subscription's throttling configuration.
-    async fn claim_notification_slot(&self, id: &str, earliest_allowed_last_notification: Option<DateTime<Utc>>) -> Result<bool, AndromedaError>;
+    fn claim_notification_slot<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 str,
+        earliest_allowed_last_notification: Option<DateTime<Utc>>,
+    ) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
     /// Record a successful notification delivery.
-    async fn mark_success(&self, id: &str) -> Result<(), AndromedaError>;
+    fn mark_success<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
     /// Record a failed notification delivery.
-    async fn mark_failure(&self, id: &str) -> Result<(), AndromedaError>;
+    fn mark_failure<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
     /// Expire subscriptions whose `expiresAt` has passed. Returns the identifiers.
-    async fn expire_due(&self) -> Result<Vec<String>, AndromedaError>;
+    fn expire_due<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<String>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
     /// Find active interval-based subscriptions that are due for their next notification.
-    async fn find_due_interval_subscriptions(&self) -> Result<Vec<Subscription>, AndromedaError>;
+    fn find_due_interval_subscriptions<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
     /// Create a new subscription with the given fields and status.
-    async fn create_subscription(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), AndromedaError>;
+    fn create_subscription<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        id: &'life1 str,
+        fields: &'life2 SubscriptionFields<'life3>,
+        status: SubscriptionStatus,
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
     /// Update an existing subscription. Returns rows affected.
-    async fn update_subscription(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<u64, AndromedaError>;
+    fn update_subscription<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        id: &'life1 str,
+        fields: &'life2 SubscriptionFields<'life3>,
+        status: SubscriptionStatus,
+    ) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 }

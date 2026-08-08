@@ -7,7 +7,8 @@
 //! `UNNEST` binds or a binary `COPY` into a staging table.
 
 use crate::{
-    core::{config::BulkWriteMode, error::AndromedaError},
+    config::BulkWriteMode,
+    error::AndromedaError,
     repository::atomic_write::{
         columns::{columns_for, expectations},
         entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},

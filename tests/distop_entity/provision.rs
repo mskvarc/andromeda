@@ -575,10 +575,10 @@ async fn distop_entity_delete_local_failure_remote_success_returns_207() {
     mock.stop();
 }
 
-/// Delete entity without redirection operations does not forward.
+/// Exclusive ownership without delete capability returns a conflict.
 #[tokio::test]
 #[serial]
-async fn distop_entity_delete_without_redirection_ops_no_forwarding() {
+async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
@@ -599,7 +599,7 @@ async fn distop_entity_delete_without_redirection_ops_no_forwarding() {
     mock.set_stub(Method::DELETE, &delete_path, 207).await;
 
     let (status, _) = delete_entity_with_status(&c, &entity_id).await;
-    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS);
+    pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
 
     // No forwarding should have happened
     pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path).await, 0);

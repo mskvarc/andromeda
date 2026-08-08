@@ -5,7 +5,7 @@
 //! or failed. Periodically cleans up old delivered entries.
 
 use crate::{
-    core::config::OutboxConfig,
+    config::OutboxConfig,
     service::outbox::{entry::WorkerInstanceId, store::OutboxStore},
 };
 use chrono::{Duration, Utc};

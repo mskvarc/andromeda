@@ -5,8 +5,10 @@
 //! broker has, which is exactly what `andromeda-tenancy` must not see.
 
 use crate::{
-    api::state::AndromedaState,
-    core::{batch_activity::BatchActivityTracker, config::RuntimeConfig, error::AndromedaError},
+    api::{context_hit_flush::ContextHitFlushWorker, state::AndromedaState},
+    batch_activity::BatchActivityTracker,
+    config::RuntimeConfig,
+    error::AndromedaError,
     event::{
         change_event::ChangeEvent,
         csr_change_event::CsrChangeEvent,
@@ -15,7 +17,7 @@ use crate::{
     repository::atomic_write::anchor::PostgresAnchorStore,
     service::{
         csource_registration::{CsourceRegistrationService, store::RegistrationStore},
-        csource_subscription::CsourceSubscriptionService,
+        csource_subscription::CsrSubscriptionVariant,
         entity::{
             EntityService,
             OutboxWriteConfig,
@@ -28,7 +30,8 @@ use crate::{
         entity_map::EntityMapService,
         jsonld_context::JsonLdContextService,
         snapshot::store::SnapshotStore,
-        subscription::SubscriptionService,
+        subscription::EntitySubscriptionVariant,
+        subscription_base::SubscriptionServiceCore,
         subscription_cache::SubscriptionCache,
         temporal::TemporalService,
     },
@@ -89,6 +92,8 @@ use tracing::debug;
 /// because closing a pool that workers are still writing through is a
 /// different thing from closing one they have stopped using.
 pub struct BrokerTenantRuntime {
+    /// JSON-LD hit worker, stopped and durably drained before the pool closes.
+    context_hit_flush: Option<ContextHitFlushWorker>,
     /// The background workers running on this tenant's behalf.
     worker_handles: Vec<JoinHandle<()>>,
     /// The notification transports this tenant delivers through.
@@ -103,6 +108,9 @@ impl TenantRuntime for BrokerTenantRuntime {
         self.transport.shutdown().await;
         for handle in self.worker_handles {
             handle.abort();
+        }
+        if let Some(worker) = self.context_hit_flush {
+            worker.shutdown().await;
         }
         // Closed rather than dropped: PostgreSQL reclaims the connection slots
         // immediately instead of waiting out `idle_timeout`, which is what
@@ -148,7 +156,7 @@ impl TenantStateFactory for BrokerTenantFactory {
 
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<AndromedaState>, BrokerTenantRuntime), TenancyError> {
         let db_url = self.database_url.with_db_name(database.as_str());
-        let (state, worker_handles, transport, pool) = build_tenant_state(&self.config, &db_url, tenant.clone()) // clone: the state owns its tenant
+        let (state, context_hit_flush, worker_handles, transport, pool) = build_tenant_state(&self.config, &db_url, tenant.clone()) // clone: the state owns its tenant
             .await
             .map_err(|error| TenancyError::RuntimeUnavailable {
                 tenant: tenant.clone(), // clone: the error outlives this borrow
@@ -162,6 +170,7 @@ impl TenantStateFactory for BrokerTenantFactory {
         Ok((
             Arc::new(state),
             BrokerTenantRuntime {
+                context_hit_flush,
                 worker_handles,
                 transport,
                 pool,
@@ -178,7 +187,16 @@ async fn build_tenant_state(
     config: &RuntimeConfig,
     db_url: &str,
     tenant: TenantRef,
-) -> Result<(AndromedaState, Vec<JoinHandle<()>>, Arc<TransportDispatcher>, sqlx::PgPool), AndromedaError> {
+) -> Result<
+    (
+        AndromedaState,
+        Option<ContextHitFlushWorker>,
+        Vec<JoinHandle<()>>,
+        Arc<TransportDispatcher>,
+        PgPool,
+    ),
+    AndromedaError,
+> {
     let max_connections = match tenant {
         TenantRef::UnnamedDefault => config.database.max_connections,
         TenantRef::Named(_) => config.tenancy.tenant_max_connections,
@@ -212,29 +230,13 @@ async fn build_tenant_state(
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = config.jsonld.build_engine(Arc::clone(&context_repo))?;
 
-    if let Some(hit_counter) = engine.hit_counter() {
-        let flush_repo = Arc::clone(&context_repo);
-        let interval = std::time::Duration::from_secs(config.performance.context_hit_flush_secs.max(1));
-        worker_handles.push(tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            // First tick fires immediately; skip it to avoid a flush before
-            // any hits accumulate.
-            ticker.tick().await;
-            loop {
-                ticker.tick().await;
-                let pending = hit_counter.drain();
-                if pending.is_empty() {
-                    continue;
-                }
-                if let Err(error) = flush_repo.flush_hits(&pending).await {
-                    let count = pending.len();
-                    hit_counter.requeue(pending);
-                    tracing::warn!(error = %error, count, event = "context_hit_flush_failed");
-                }
-            }
-        }));
-    }
+    let context_hit_flush = engine.hit_counter().map(|hit_counter| {
+        ContextHitFlushWorker::spawn(
+            hit_counter,
+            Arc::clone(&context_repo),
+            std::time::Duration::from_secs(config.performance.context_hit_flush_secs.max(1)),
+        )
+    });
 
     let batch_activity = BatchActivityTracker::new();
 
@@ -265,8 +267,8 @@ async fn build_tenant_state(
     worker_handles.push(tokio::spawn(materializer.run()));
 
     let bulk_write_mode = match config.performance.bulk_write_mode {
-        crate::core::config::BulkWriteMode::Unnest => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::Unnest,
-        crate::core::config::BulkWriteMode::CopyStaging => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::CopyStaging,
+        crate::config::BulkWriteMode::Unnest => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::Unnest,
+        crate::config::BulkWriteMode::CopyStaging => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::CopyStaging,
     };
     let temporal_repo = Arc::new(
         TemporalRepository::new(&pool, bulk_write_mode, Arc::clone(&attribute_name_cache) as Arc<dyn AttributeNameLookup>)
@@ -360,13 +362,21 @@ async fn build_tenant_state(
         config.temporal.default_last_n,
     ));
     let context_service = Arc::new(JsonLdContextService::new(&pool, engine.clone()));
-    let subscription_service = Arc::new(SubscriptionService::new(&pool, engine.clone(), Some(sub_change_tx.clone())));
+    let subscription_service = Arc::new(SubscriptionServiceCore::<SubscriptionRepository, EntitySubscriptionVariant>::new(
+        &pool,
+        engine.clone(),
+        Some(sub_change_tx.clone()),
+    ));
     let csr_service = Arc::new(CsourceRegistrationService::new(
         Arc::clone(&registration_store),
         engine.clone(),
         Some(csr_change_tx.clone()),
     ));
-    let csr_subscription_service = Arc::new(CsourceSubscriptionService::new(&pool, engine.clone(), Some(csr_sub_change_tx.clone())));
+    let csr_subscription_service = Arc::new(SubscriptionServiceCore::<CsourceSubscriptionRepository, CsrSubscriptionVariant>::new(
+        &pool,
+        engine.clone(),
+        Some(csr_sub_change_tx.clone()),
+    ));
 
     let sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>> = Arc::new(ConnectionRegistry::new());
     let ws_registry: Arc<ConnectionRegistry<WsNotificationMessage>> = Arc::new(ConnectionRegistry::new());
@@ -377,7 +387,7 @@ async fn build_tenant_state(
             Arc::clone(&sse_registry),
             Arc::clone(&ws_registry),
         )
-        .map_err(|e| crate::core::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
+        .map_err(|e| crate::error::AndromedaError::internal(format!("Failed to create transport dispatcher: {e}")))?,
     );
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -534,6 +544,7 @@ async fn build_tenant_state(
             ws_channel_buffer_size: config.notifications.ws.channel_buffer_size,
             ws_ping_interval_secs: config.notifications.ws.ping_interval_secs,
         },
+        context_hit_flush,
         worker_handles,
         transport_handle,
         pool,

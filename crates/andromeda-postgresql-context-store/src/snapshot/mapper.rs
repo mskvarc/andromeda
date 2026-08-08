@@ -4,8 +4,8 @@ use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
+    query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
-    snapshot_query::SnapshotQuery,
 };
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
@@ -54,8 +54,8 @@ pub fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, ContextS
 
     let queries_details: Option<Vec<ExecutionResultDetails>> = deserialize_json_column(row, "queries_details")?;
     let temporal_queries_details: Option<Vec<ExecutionResultDetails>> = deserialize_json_column(row, "temporal_queries_details")?;
-    let snapshot_queries: Option<Vec<SnapshotQuery>> = deserialize_json_column(row, "snapshot_queries")?;
-    let snapshot_temporal_queries: Option<Vec<SnapshotQuery>> = deserialize_json_column(row, "snapshot_temporal_queries")?;
+    let snapshot_queries: Option<Vec<Query>> = deserialize_json_column(row, "snapshot_queries")?;
+    let snapshot_temporal_queries: Option<Vec<Query>> = deserialize_json_column(row, "snapshot_temporal_queries")?;
     let receiver_info: Option<Vec<KeyValuePair>> = deserialize_json_column(row, "receiver_info")?;
 
     Ok(Snapshot::builder()

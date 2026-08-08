@@ -7,7 +7,7 @@
 //! work with no bulk form.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{atomic_write::AtomicWrite, history_record::HistoryRecord},
 };
 use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;

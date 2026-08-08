@@ -1,14 +1,14 @@
 //! `RegistrationStore` trait implementation for `CsourceRegistrationRepository`.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::{
         csource_merge::ResolvedCsrUpdate,
         csource_registration::store::{CreateCsrParams, RegistrationStore},
     },
 };
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
-use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
@@ -18,10 +18,10 @@ use andromeda_postgresql_context_store::csource_registration::{mapper::row_to_cs
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use async_trait::async_trait;
 use iri_rs::IriBuf;
-use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_binder::SqlxBinder;
 
-fn csr_column_projection() -> sea_query::SimpleExpr {
+fn csr_column_projection() -> SimpleExpr {
     SeaExpr::cust(
         "id, type, registration_name, description, information, \
          tenant, observation_interval, management_interval, \
@@ -43,6 +43,10 @@ fn csr_base_select() -> SelectStatement {
     select
 }
 
+fn operation_names(operations: Option<&[CsrOperation]>) -> Option<Vec<String>> {
+    operations.map(|values| values.iter().map(ToString::to_string).collect())
+}
+
 #[async_trait]
 impl RegistrationStore for CsourceRegistrationRepository {
     async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
@@ -54,6 +58,7 @@ impl RegistrationStore for CsourceRegistrationRepository {
     }
 
     async fn create(&self, id: &str, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError> {
+        let operations = operation_names(params.operations.as_deref());
         sqlx::query(
             r#"
             INSERT INTO context_source_registrations (
@@ -93,7 +98,7 @@ impl RegistrationStore for CsourceRegistrationRepository {
         .bind(params.endpoint)
         .bind(params.accept)
         .bind(<&str>::from(params.mode))
-        .bind(params.operations.as_deref())
+        .bind(operations.as_deref())
         .bind(params.scope.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
         .bind(params.management.cloned())
@@ -153,6 +158,7 @@ impl RegistrationStore for CsourceRegistrationRepository {
     }
 
     async fn update(&self, id: &str, values: &ResolvedCsrUpdate) -> Result<u64, AndromedaError> {
+        let operations = operation_names(values.operations.as_deref());
         let result = sqlx::query(
             r#"
             UPDATE context_source_registrations SET
@@ -195,7 +201,7 @@ impl RegistrationStore for CsourceRegistrationRepository {
         .bind(values.endpoint.as_str())
         .bind(values.accept.as_deref())
         .bind(<&str>::from(values.mode))
-        .bind(values.operations.as_deref())
+        .bind(operations.as_deref())
         .bind(values.scope.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
         .bind(&values.management)

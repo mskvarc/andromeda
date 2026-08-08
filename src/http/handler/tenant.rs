@@ -1,8 +1,8 @@
 //! Handler for the `/tenants` endpoint.
 
 use crate::{
-    api::state::AppState,
-    core::error::{AndromedaError, ResultInstanceExt},
+    api::state::BrokerState,
+    error::{AndromedaError, ResultInstanceExt},
     http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery},
 };
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
@@ -20,14 +20,14 @@ use uuid::Uuid;
 
 /// GET /ngsi-ld/v1/tenants -- Query available named tenants as pure JSON.
 pub async fn query(
-    State(app): State<AppState>,
+    State(broker): State<BrokerState>,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
 ) -> Result<impl IntoResponse, NgsiLdError> {
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("TenantList:{}", Uuid::new_v4()))
         .build()
         .map_err(AndromedaError::from)?;
-    let tenant_list = app.tenants.registered_tenants().await.map_err(AndromedaError::from).with_instance(&uri)?;
+    let tenant_list = broker.tenants.registered_tenants().await.map_err(AndromedaError::from).with_instance(&uri)?;
 
     let response = TenantList {
         id: Uri::Urn(id),
@@ -43,7 +43,7 @@ pub async fn query(
 /// row has been removed (e.g., after external cleanup), closing their
 /// pools and returning the PostgreSQL connection slots. Returns the number
 /// of runtimes evicted.
-pub async fn evict_orphans(State(app): State<AppState>) -> impl IntoResponse {
-    let evicted = app.tenants.evict_orphan_runtimes().await;
+pub async fn evict_orphans(State(broker): State<BrokerState>) -> impl IntoResponse {
+    let evicted = broker.tenants.evict_orphan_runtimes().await;
     (StatusCode::OK, Json(json!({ "evicted": evicted })))
 }

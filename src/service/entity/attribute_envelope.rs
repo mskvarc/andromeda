@@ -5,7 +5,7 @@
 //! specification is not, and clause 5.5.2 makes that a `BadRequestData` rather
 //! than something the store discovers later.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use serde_json::Value;
 

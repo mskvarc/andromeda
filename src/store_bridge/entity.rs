@@ -5,7 +5,7 @@
 //! `EntityRepository` (which now lives in the context-store crate and returns
 //! `ContextStoreError`) and maps the error via the `From` impl.
 
-use crate::{core::error::AndromedaError, service::entity::store::EntityStore};
+use crate::{error::AndromedaError, service::entity::store::EntityStore};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;

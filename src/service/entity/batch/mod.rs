@@ -24,7 +24,7 @@ mod update;
 mod upsert;
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{EntityService, batch::delete::DeleteChunkOutcome, side_effect::BatchSideEffectMode},
 };
 use andromeda_jsonld::context_spec::ContextSpec;

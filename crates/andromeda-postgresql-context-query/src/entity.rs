@@ -194,6 +194,7 @@ fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> S
     match target {
         OrderTarget::Id => format!("\"id\"{collate}"),
         OrderTarget::Type => format!("\"types\"{collate}"),
+        OrderTarget::Scope => "\"scope_paths\"".to_owned(),
         OrderTarget::Attribute(iri) => {
             let json_path = attribute_value_jsonpath(iri.as_str(), &[], &[], VALUE.as_str());
             format!("jsonb_path_query_first(\"payload\", '{}'){collate}", escape_jsonpath(&json_path))

@@ -20,6 +20,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute_deletion;
+mod attribute_selection;
 pub mod body;
 pub mod case_insensitive_bool;
 pub mod csource_subscription;
@@ -30,7 +31,9 @@ pub mod entity;
 pub mod entity_operations;
 pub mod error;
 pub mod jsonld_context;
+pub mod language_filter;
 pub mod local;
+pub mod options;
 pub mod protocol;
 pub mod query;
 pub mod representation_params;

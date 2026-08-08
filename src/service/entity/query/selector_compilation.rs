@@ -5,7 +5,7 @@
 //! selectors on both, and flattening it into a comma-joined `id`/`type` pair
 //! would match a `(id, type)` pairing no single selector named.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_jsonld::{
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,

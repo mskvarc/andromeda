@@ -21,5 +21,6 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait NotificationTransport: Send + Sync {
     /// Deliver a notification to the endpoint the request names.
+    #[must_use = "notification delivery must be awaited"]
     async fn deliver(&self, delivery: &DeliveryRequest) -> Result<DeliveryOutcome, TransportError>;
 }

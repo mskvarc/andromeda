@@ -4,8 +4,8 @@
 //! `TemporalRepository` method, mapping errors at the boundary.
 
 use crate::{entry::TeaEntry, error::TemporalStoreError, params::DeleteScope, repo::TemporalRepository, store::TemporalMutator};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
-use urn_rs::Urn;
 
 #[async_trait]
 impl TemporalMutator for TemporalRepository {
@@ -25,7 +25,7 @@ impl TemporalMutator for TemporalRepository {
         self.delete_teas_for_entity(entity_id).await
     }
 
-    async fn delete_attribute(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&Urn>, scope: DeleteScope) -> Result<u64, TemporalStoreError> {
+    async fn delete_attribute(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&Uri>, scope: DeleteScope) -> Result<u64, TemporalStoreError> {
         self.delete_tea(entity_id, attribute_name, dataset_id.map(|value| value.as_ref()), scope).await
     }
 

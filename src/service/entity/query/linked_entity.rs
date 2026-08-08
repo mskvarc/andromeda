@@ -1,6 +1,6 @@
 //! Resolving the entities a result set links to (clause 4.5.20 `join`).
 
-use crate::{core::error::AndromedaError, service::entity::query::EntityQueryService};
+use crate::{error::AndromedaError, service::entity::query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{

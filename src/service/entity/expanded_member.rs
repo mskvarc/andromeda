@@ -1,7 +1,7 @@
 //! Reading members out of an expanded JSON-LD entity, in the forms the write
 //! path needs them.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde_json::Value;
 

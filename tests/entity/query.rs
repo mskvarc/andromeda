@@ -329,6 +329,7 @@ async fn entity_query_post_by_id_returns_matching_entity() {
     }
 
     let query_body = json!({
+        "type": "Query",
         "entities": [{"id": &id1, "type": "Building"}],
         "@context": TEST_SUITE_CONTEXT
     });
@@ -354,6 +355,7 @@ async fn entity_query_post_by_type_returns_matching_entities() {
     assert_eq!(create_entity(&client, &vehicle_simple_attributes(&vehicle_id2)).await, StatusCode::CREATED);
 
     let query_body = json!({
+        "type": "Query",
         "entities": [{"type": "Vehicle"}],
         "@context": COMPOUND_CONTEXT
     });
@@ -378,6 +380,7 @@ async fn entity_query_post_by_id_pattern_returns_matching_entities() {
     }
 
     let query_body = json!({
+        "type": "Query",
         "entities": [{"idPattern": format!("{prefix}.*"), "type": "Building"}],
         "@context": TEST_SUITE_CONTEXT
     });
@@ -400,6 +403,7 @@ async fn entity_query_post_by_attrs_returns_matching_entities() {
     assert_eq!(create_entity(&client, &vehicle_simple_attributes(&vehicle_id)).await, StatusCode::CREATED);
 
     let query_body = json!({
+        "type": "Query",
         "attrs": ["brandName", "isParked"],
         "@context": TEST_SUITE_CONTEXT
     });
@@ -445,6 +449,7 @@ async fn entity_query_post_two_ids_returns_both() {
     }
 
     let query_body = json!({
+        "type": "Query",
         "entities": [
             {"id": &id1, "type": "Building"},
             {"id": &id2, "type": "Building"}

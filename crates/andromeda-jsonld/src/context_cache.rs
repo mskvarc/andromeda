@@ -9,6 +9,18 @@ use async_trait::async_trait;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use std::fmt::Debug;
+use thiserror::Error;
+
+/// A durable context-cache operation failed.
+#[derive(Debug, Clone, Error)]
+pub enum ContextCacheError {
+    /// A cached context could not be read.
+    #[error("failed to read durable context cache: {0}")]
+    Read(String),
+    /// A context could not be persisted.
+    #[error("failed to write durable context cache: {0}")]
+    Write(String),
+}
 
 /// A cache of fetched context documents that outlives the process.
 ///
@@ -17,7 +29,8 @@ use std::fmt::Debug;
 #[async_trait]
 pub trait ContextCache: Send + Sync + Debug {
     /// Look up a previously cached context by URL.
-    async fn get(&self, url: &IriBuf) -> Option<Value>;
+    #[must_use = "context-cache reads must be awaited"]
+    async fn get(&self, url: &IriBuf) -> Result<Option<Value>, ContextCacheError>;
 
     /// Store a context payload for a URL that has none yet.
     ///
@@ -26,5 +39,6 @@ pub trait ContextCache: Send + Sync + Debug {
     /// [`HitCounter`](crate::hit_counter::HitCounter) and is flushed by a
     /// task the broker wires up, precisely so this write stays off the
     /// expansion path.
-    async fn put(&self, url: &IriBuf, payload: Value);
+    #[must_use = "context-cache writes must be awaited"]
+    async fn put(&self, url: &IriBuf, payload: &Value) -> Result<(), ContextCacheError>;
 }

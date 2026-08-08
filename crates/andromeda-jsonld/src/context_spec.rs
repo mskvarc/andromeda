@@ -17,7 +17,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 /// How the NGSI-LD core context joins the contexts a request supplied.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CoreContextPolicy {
     /// Append the core context last, always.
     Append,

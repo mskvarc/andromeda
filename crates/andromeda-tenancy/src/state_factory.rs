@@ -17,6 +17,7 @@ pub trait TenantRuntime: Send + Sync + 'static {
     /// Takes `self` because a released runtime must not be reachable
     /// afterwards, and returning it to the cache is the bug this signature
     /// makes unwritable.
+    #[must_use = "runtime shutdown must be awaited"]
     async fn shutdown(self);
 }
 
@@ -36,5 +37,6 @@ pub trait TenantStateFactory: Send + Sync + 'static {
 
     /// Build a runtime for one tenant against the database it was provisioned
     /// in.
+    #[must_use = "tenant runtime construction must be awaited"]
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<Self::State>, Self::Runtime), TenancyError>;
 }

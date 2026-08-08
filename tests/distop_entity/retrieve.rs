@@ -253,10 +253,10 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
     mock.stop();
 }
 
-/// Inclusive registration with queryEntity operation forwards via GET /entities/{id}.
+/// Retrieval does not use the query-entity capability.
 #[tokio::test]
 #[serial]
-async fn distop_entity_retrieve_inclusive_with_query_entity_op() {
+async fn distop_entity_retrieve_with_only_query_entity_does_not_forward() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
@@ -269,23 +269,22 @@ async fn distop_entity_retrieve_inclusive_with_query_entity_op() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // The broker always uses GET /entities/{id} regardless of operations
     let mock_entity = vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve entity by ID (CSR matches via queryEntity op)
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await, 0);
 
     delete_registration(&c, &reg_id).await;
     mock.stop();
 }
 
-/// Inclusive registration with queryBatch operation forwards via GET /entities/{id}.
+/// Retrieval does not use the batch-query capability.
 #[tokio::test]
 #[serial]
-async fn distop_entity_retrieve_inclusive_with_query_batch_op() {
+async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
@@ -298,14 +297,13 @@ async fn distop_entity_retrieve_inclusive_with_query_batch_op() {
     let (status, _) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    // The broker always uses GET /entities/{id} regardless of operations
     let mock_entity = vehicle_entity(&entity_id);
     mock.set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 200, &mock_entity)
         .await;
 
-    // Retrieve entity by ID (CSR matches via queryBatch op)
     let (status, _, _) = get_entity(&c, &entity_id, "", &jsonld_link_value()).await;
-    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await, 0);
 
     delete_registration(&c, &reg_id).await;
     mock.stop();

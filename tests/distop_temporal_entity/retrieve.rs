@@ -194,7 +194,7 @@ fn vehicle_registration(reg_id: &str, entity_id: &str, endpoint: &str, mode: Opt
             }
         ],
         "endpoint": endpoint,
-        "operations": ["retrieveEntity", "queryEntity", "retrieveTemporalEntity", "queryTemporalEntity"],
+        "operations": ["retrieveEntity", "queryEntity", "retrieveTemporal", "queryTemporal"],
         "@context": TEST_SUITE_CONTEXT
     });
     if let Some(m) = mode {

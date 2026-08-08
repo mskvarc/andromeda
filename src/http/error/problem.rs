@@ -7,11 +7,11 @@
 //! that conversion are the web framework's, and keeping the impl local is what
 //! keeps the orphan rule from ever being engaged.
 
-use crate::{core::error::AndromedaError, http::error::category};
+use crate::{error::AndromedaError, http::error::category};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use axum::{
-    http::Uri,
+    http::{StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use problem_details::ProblemDetails;
@@ -36,6 +36,8 @@ pub struct NgsiLdError {
     pub detail: String,
     /// The request URI the failure happened on.
     pub instance: Uri,
+    /// HTTP status selected for this occurrence.
+    pub status: StatusCode,
 }
 
 impl NgsiLdError {
@@ -45,6 +47,7 @@ impl NgsiLdError {
             error_type,
             detail: detail.into(),
             instance,
+            status: error_type.status_code(),
         }
     }
 }
@@ -68,8 +71,14 @@ impl From<AndromedaError> for NgsiLdError {
             return NgsiLdError::new(error_type, "Internal error", instance);
         }
 
+        let status = match error.kind() {
+            crate::error::ErrorKind::ContextSourceGateway(_) => StatusCode::BAD_GATEWAY,
+            _other => error_type.status_code(),
+        };
         let detail = error.to_string();
-        NgsiLdError::new(error_type, detail, instance)
+        let mut result = NgsiLdError::new(error_type, detail, instance);
+        result.status = status;
+        result
     }
 }
 
@@ -87,7 +96,7 @@ impl From<RenderError> for NgsiLdError {
 
 impl IntoResponse for NgsiLdError {
     fn into_response(self) -> Response {
-        let status = self.error_type.status_code();
+        let status = self.status;
 
         let problem = ProblemDetails::new()
             .with_type(Uri::from_static(self.error_type.type_uri()))
@@ -102,7 +111,7 @@ impl IntoResponse for NgsiLdError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
+    use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         body::to_bytes,

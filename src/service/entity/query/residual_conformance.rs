@@ -18,7 +18,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        core::error::AndromedaError,
+        error::AndromedaError,
         service::entity::{query::EntityQueryService, store::EntityStore},
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;

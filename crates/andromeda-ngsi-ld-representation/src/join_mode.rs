@@ -12,6 +12,10 @@ pub enum JoinMode {
     Inline,
     /// Linked entities are included as top-level objects in the response.
     Flat,
+    /// Linked entity retrieval is disabled explicitly.
+    #[serde(rename = "@none")]
+    #[strum(serialize = "@none")]
+    None,
 }
 
 #[cfg(test)]
@@ -21,7 +25,7 @@ mod tests {
 
     #[test]
     fn join_mode_display_and_parse_round_trip() {
-        for variant in [JoinMode::Inline, JoinMode::Flat] {
+        for variant in [JoinMode::Inline, JoinMode::Flat, JoinMode::None] {
             let rendered = variant.to_string();
             let parsed = JoinMode::from_str(&rendered).expect("round trip");
             pretty_assertions::assert_eq!(variant, parsed, "round-trip failed for {variant}");
@@ -30,7 +34,7 @@ mod tests {
 
     #[test]
     fn join_mode_serde_round_trip() {
-        for variant in [JoinMode::Inline, JoinMode::Flat] {
+        for variant in [JoinMode::Inline, JoinMode::Flat, JoinMode::None] {
             let json = serde_json::to_string(&variant).expect("serialises");
             let parsed: JoinMode = serde_json::from_str(&json).expect("deserialises");
             pretty_assertions::assert_eq!(variant, parsed);

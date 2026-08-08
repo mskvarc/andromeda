@@ -330,7 +330,7 @@ async fn query_geoquery_within_polygon_returns_matching() {
 
     let qs = format!(
         "type=Building&georel=within&geometry=Polygon&coordinates={}&geoproperty=location",
-        urlencoding::encode("[[-13.503,47.202],[6.541,52.961],[20.37,44.653],[9.46,32.57],[-15.23,21.37]]")
+        urlencoding::encode("[[[-13.503,47.202],[6.541,52.961],[20.37,44.653],[9.46,32.57],[-15.23,21.37],[-13.503,47.202]]]")
     );
     let (status, mut actual) = query_with_context(&c, &qs).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);

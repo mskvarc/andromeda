@@ -5,7 +5,7 @@
 //! content-type classification, and validation.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     http::{error::problem::NgsiLdError, extractor::context::ContextUrl},
 };
 use andromeda_jsonld::context_spec::ContextSpec;

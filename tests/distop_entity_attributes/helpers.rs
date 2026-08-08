@@ -271,7 +271,7 @@ pub fn fragment_brandname() -> Value {
 /// Vehicle registration with entity and attribute redirection operations.
 ///
 /// Includes both entity-level operations (createEntity, updateEntity, etc.) and
-/// attribute-level operations (appendAttrs, updateAttrs, partialAttrUpdate, deleteAttrs).
+/// attribute-level operations (appendAttrs, updateAttrs, deleteAttrs).
 pub fn vehicle_registration_redirection_ops(reg_id: &str, entity_id: Option<&str>, endpoint: &str, mode: Option<&str>) -> Value {
     let ops = [
         "createEntity",
@@ -281,7 +281,6 @@ pub fn vehicle_registration_redirection_ops(reg_id: &str, entity_id: Option<&str
         "replaceEntity",
         "appendAttrs",
         "updateAttrs",
-        "partialAttrUpdate",
         "deleteAttrs",
     ];
     let mut reg = json!({
@@ -321,7 +320,6 @@ pub fn vehicle_registration_speed_redirection_ops(reg_id: &str, entity_id: &str,
         "replaceEntity",
         "appendAttrs",
         "updateAttrs",
-        "partialAttrUpdate",
         "deleteAttrs",
     ];
     let mut reg = json!({

@@ -1,14 +1,17 @@
 //! Query parameters for the NGSI-LD Temporal API.
 
 use crate::{
-    body::temporal_query::TemporalQueryRequest,
+    attribute_selection::validate_attrs,
     error::ParameterError,
     impl_shared_query_params,
+    language_filter::deserialize_optional_language_filter,
+    options::{TemporalRepresentationOptions, deserialize_temporal_representation_options},
     query::{
+        SharedQueryParams,
         deserialization::{
             OptionalGeoQuery,
             deserialize_optional_attribute_names,
-            deserialize_optional_dataset_urns,
+            deserialize_optional_dataset_selectors,
             deserialize_optional_filter_expr,
             deserialize_optional_iso8601_duration,
             deserialize_optional_pattern,
@@ -17,6 +20,7 @@ use crate::{
         entity_selector::EntitySelectorParams,
     },
 };
+use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,
@@ -25,8 +29,11 @@ use andromeda_ngsi_ld_lexicon::{
     time_rel::TimeRel,
     uri::Uri,
 };
+use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_query::{
+    dataset::DatasetSelector,
     filter::expression::Expr,
+    ordering::parameters::OrderingParameters,
     pattern::Pattern,
     scope::query::ScopeQuery,
     temporal::{
@@ -35,10 +42,10 @@ use andromeda_ngsi_ld_query::{
     },
     type_selection::grammar::TypeExprRaw,
 };
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer, de::Error};
-use urn_rs::Urn;
 
 /// Deserialise the `timerel` query parameter as the [`TimeRel`] it names
 /// (clause 4.11), rejecting an unknown relationship at the boundary.
@@ -60,22 +67,6 @@ where
     .transpose()
 }
 
-/// Deserialise a required `timerel` (as a POST temporal body carries it) as the
-/// [`TimeRel`] it names (clause 4.11), rejecting an unknown relationship.
-///
-/// # Errors
-///
-/// Returns the deserialiser's error when the value is not one of `before`,
-/// `after`, `between`.
-pub(crate) fn deserialize_timerel<'de, D>(deserializer: D) -> Result<TimeRel, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = String::deserialize(deserializer)?;
-    raw.parse::<TimeRel>()
-        .map_err(|_| serde::de::Error::custom(format!("invalid timerel: '{raw}'")))
-}
-
 /// Deserialise the `timeproperty` query parameter as the [`TimeProp`] axis it
 /// names (clause 4.8), rejecting an unknown property at the boundary.
 ///
@@ -94,6 +85,30 @@ where
             .map_err(|_| serde::de::Error::custom(format!("invalid timeproperty: '{value}'")))
     })
     .transpose()
+}
+
+/// Deserialise a temporal `format` query parameter at the request boundary.
+pub(crate) fn deserialize_option_temporal_format<'de, D>(deserializer: D) -> Result<Option<TemporalFormat>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| match value.as_str() {
+        "temporalValues" => Ok(TemporalFormat::TemporalValues),
+        "aggregatedValues" => Ok(TemporalFormat::AggregatedValues),
+        other => Err(serde::de::Error::custom(format!("invalid temporal format: {other}"))),
+    })
+    .transpose()
+}
+
+/// Deserialize a comma-separated `aggrMethods` value into validated methods.
+pub(crate) fn deserialize_optional_aggr_methods<'de, D>(deserializer: D) -> Result<Option<Vec<AggrMethod>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    raw.map(|value| value.split(',').map(str::trim).map(|method| method.parse().map_err(Error::custom)).collect())
+        .transpose()
 }
 
 /// Raw HTTP query parameters for temporal entity queries.
@@ -153,8 +168,9 @@ pub struct TemporalQueryParameters {
     /// The representation the response uses (clause 4.5.1 `format`).
     #[serde(default, deserialize_with = "deserialize_option_temporal_format")]
     pub format: Option<TemporalFormat>,
-    /// The legacy representation selector, comma-separated (`options`).
-    pub options: Option<String>,
+    /// Typed temporal representation and system-attribute options (`options`).
+    #[serde(default, deserialize_with = "deserialize_temporal_representation_options")]
+    pub options: Option<TemporalRepresentationOptions>,
     /// The aggregation methods, comma-separated (clause 4.5.19 `aggrMethods`).
     #[serde(rename = "aggrMethods")]
     #[serde(default, deserialize_with = "deserialize_optional_aggr_methods")]
@@ -171,9 +187,9 @@ pub struct TemporalQueryParameters {
     pub offset: Option<u32>,
     /// Whether the response reports the total number of matches (`count`).
     pub count: Option<bool>,
-    /// The ordering terms, accepted for the spec's shape and not read.
-    #[serde(rename = "orderBy")]
-    pub _order_by: Option<String>,
+    /// Typed ordering semantics shared by GET and POST query bindings.
+    #[serde(flatten)]
+    pub ordering: OrderingParameters,
 
     // --- Projection ---
     /// Members the response is narrowed to (clause 6.3.15 `pick`).
@@ -186,11 +202,12 @@ pub struct TemporalQueryParameters {
     // --- Other ---
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
-    #[serde(default, deserialize_with = "deserialize_optional_dataset_urns")]
-    pub dataset_id: Option<Vec<Urn>>,
-    /// Parsed by the language-negotiation extractor; retained so `deny_unknown_fields` accepts `?lang=...`.
+    #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
+    pub dataset_id: Option<Vec<DatasetSelector>>,
+    /// Clause-4.15 natural-language selection preferences.
     #[serde(rename = "lang")]
-    pub _lang: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
+    pub lang: Option<LanguageFilter>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     pub local: Option<bool>,
 
@@ -254,53 +271,39 @@ impl TemporalQueryParameters {
     /// are `"temporalValues"` and `"aggregatedValues"`. Defaults to
     /// `TemporalFormat::Normalized`.
     pub fn parse_format(&self) -> TemporalFormat {
-        if let Some(format) = self.format {
-            return format;
-        }
-        if let Some(opts) = &self.options {
-            if opts.contains("temporalValues") {
-                return TemporalFormat::TemporalValues;
-            }
-            if opts.contains("aggregatedValues") {
-                return TemporalFormat::AggregatedValues;
-            }
-        }
-        TemporalFormat::Normalized
+        self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default()
     }
 
     /// Returns whether the `sysAttrs` option is present in the `options` parameter.
     pub fn has_sys_attrs(&self) -> bool {
-        self.options.as_deref().is_some_and(|o| o.contains("sysAttrs"))
+        self.options.is_some_and(|options| options.sys_attrs == SysAttrsInclusion::Include)
     }
 
     /// Returns whether the query requests simplified (key-values) output.
     ///
     /// Checks both `keyValues` and `simplified` option values, which are
     /// equivalent per NGSI-LD spec.
-    pub fn is_simplified(&self) -> bool {
-        self.options.as_deref().is_some_and(|o| o.contains("keyValues") || o.contains("simplified"))
+    pub const fn is_simplified(&self) -> bool {
+        false
     }
 
     /// Validate parameters.
     /// - For query endpoint (require_temporal=true): timerel and timeAt are REQUIRED.
     /// - For single-entity GET (require_temporal=false): timerel and timeAt are optional (both or neither).
     pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
-        // Validate options parameter
-        if let Some(opts) = &self.options {
-            for opt in opts.split(',') {
-                let opt = opt.trim();
-                if !matches!(opt, "temporalValues" | "aggregatedValues" | "sysAttrs" | "keyValues" | "simplified" | "concise") {
-                    return Err(ParameterError::OptionsInvalid(opt.to_string()));
-                }
-            }
-        }
-
+        validate_attrs(self.attrs.as_deref())?;
         if require_temporal {
             if self.timerel.is_none() || self.time_at.is_none() {
                 return Err(ParameterError::TimerelTimeatRequired);
             }
             // At least one entity selection criterion is required for temporal query
-            if self.id.is_none() && self.entity_type.is_none() && self.id_pattern.is_none() && self.attrs.is_none() && self.q.is_none() {
+            if self.id.is_none()
+                && self.entity_type.is_none()
+                && self.id_pattern.is_none()
+                && self.attrs.is_none()
+                && self.q.is_none()
+                && self.entity_selectors.is_empty()
+            {
                 return Err(ParameterError::SelectorRequired(
                     "At least one of id, type, idPattern, attrs, or q is required for temporal query",
                 ));
@@ -322,80 +325,67 @@ impl TemporalQueryParameters {
     }
 }
 
-impl From<TemporalQueryRequest> for TemporalQueryParameters {
-    fn from(request: TemporalQueryRequest) -> TemporalQueryParameters {
-        let mut ids = Vec::new();
-        let mut id_pattern = None;
-        let mut entity_selectors = Vec::new();
+impl TryFrom<Query> for TemporalQueryParameters {
+    type Error = ParameterError;
 
-        if let Some(entities) = &request.entities {
-            for sel in entities {
-                if let Some(id) = sel.id() {
-                    ids.push(id.clone());
-                }
-                if let Some(p) = sel.id_pattern() {
-                    id_pattern = Some(p.clone());
-                }
-                // The precise per-selector grouping (clause 5.2.11), kept
-                // alongside the flattened summary the fields above form.
-                entity_selectors.push(EntitySelectorParams {
-                    id: sel.id().map(|id| vec![id.clone()]),
-                    id_pattern: sel.id_pattern().cloned(),
-                    type_: sel.type_().cloned(),
-                });
+    fn try_from(query: Query) -> Result<TemporalQueryParameters, ParameterError> {
+        let temporal = query.temporal_q.ok_or(ParameterError::TemporalQueryMissing)?;
+        let aggregation = match query.aggr_params {
+            Some(_) if temporal.aggr_methods.is_some() || temporal.aggr_period_duration.is_some() => {
+                return Err(ParameterError::TemporalAggregationConflict);
             }
-        }
-
-        let (timerel, time_at, end_time_at, timeproperty, aggr_methods, aggr_period_duration) = if let Some(tq) = request.temporal_q {
-            (
-                Some(tq.timerel),
-                Some(tq.time_at),
-                tq.end_time_at,
-                tq.timeproperty,
-                tq.aggr_methods,
-                tq.aggr_period_duration,
-            )
-        } else {
-            (None, None, None, None, None, None)
+            Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration),
+            None => (temporal.aggr_methods, temporal.aggr_period_duration),
         };
+        let entity_selectors = query
+            .entities
+            .unwrap_or_default()
+            .into_iter()
+            .map(|selector| EntitySelectorParams {
+                id: selector.id,
+                id_pattern: selector.id_pattern,
+                type_: Some(selector.type_),
+            })
+            .collect();
 
-        TemporalQueryParameters {
-            id: if ids.is_empty() { None } else { Some(ids) },
+        let parameters = TemporalQueryParameters {
+            id: None,
             entity_type: None,
-            id_pattern,
+            id_pattern: None,
             entity_selectors,
-            attrs: request.attrs,
-            q: request.q,
-            geo: OptionalGeoQuery(request.geo_q.as_ref().map(|geo| geo.0.clone())),
-            timerel,
-            time_at,
-            end_time_at,
-            timeproperty,
-            last_n: request.last_n,
-            format: request.format,
+            attrs: query.attrs,
+            q: query.q,
+            geo: OptionalGeoQuery(query.geo_q),
+            timerel: Some(temporal.timerel),
+            time_at: Some(temporal.time_at),
+            end_time_at: temporal.end_time_at,
+            timeproperty: temporal.timeproperty,
+            last_n: temporal.last_n,
+            format: None,
             options: None,
-            aggr_methods,
-            aggr_period_duration,
-            limit: request.limit,
-            offset: request.offset,
-            count: request.count,
-            _order_by: None,
-            pick: None,
-            omit: None,
-            dataset_id: None,
-            _lang: None,
-            local: request.local,
-            entity_map: None,
-            entity_map_lifetime: None,
-            split_entities: None,
-            scope_q: None,
-            expand_values: None,
-            json_keys: None,
-        }
+            aggr_methods: aggregation.0,
+            aggr_period_duration: aggregation.1,
+            limit: None,
+            offset: None,
+            count: None,
+            ordering: query.ordering.unwrap_or_default(),
+            pick: query.pick,
+            omit: query.omit,
+            dataset_id: query.dataset_id,
+            lang: query.lang.map(LanguageFilter::from_tag),
+            local: None,
+            entity_map: query.entity_map,
+            entity_map_lifetime: query.entity_map_lifetime,
+            split_entities: query.split_entities,
+            scope_q: query.scope_q,
+            expand_values: query.expand_values,
+            json_keys: query.json_keys,
+        };
+        validate_attrs(parameters.attrs.as_deref())?;
+        Ok(parameters)
     }
 }
 
-#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,14 +534,12 @@ mod tests {
 
     #[test]
     fn is_simplified_with_key_values() {
-        let p = params_from_query("options=keyValues");
-        assert!(p.is_simplified());
+        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("options=keyValues").is_err());
     }
 
     #[test]
     fn is_simplified_with_simplified_option() {
-        let p = params_from_query("options=simplified");
-        assert!(p.is_simplified());
+        assert!(serde_urlencoded::from_str::<TemporalQueryParameters>("options=simplified").is_err());
     }
 
     #[test]
@@ -561,116 +549,24 @@ mod tests {
     }
 
     #[test]
-    fn from_temporal_query_request_empty() {
-        use crate::body::temporal_query::TemporalQueryRequest;
-
-        let request = TemporalQueryRequest {
-            _type: "Query".to_string(),
-            entities: None,
-            attrs: None,
-            q: None,
-            geo_q: None,
-            temporal_q: None,
-            limit: None,
-            offset: None,
-            count: None,
-            format: None,
-            last_n: None,
-            local: None,
-        };
-        let params: TemporalQueryParameters = request.into();
-        assert!(params.id.is_none());
-        assert!(params.entity_type.is_none());
-        assert!(params.timerel.is_none());
-        assert!(params.time_at.is_none());
+    fn canonical_temporal_query_requires_temporal_q() {
+        let request = serde_json::from_str::<Query>(r#"{"type":"Query"}"#).expect("valid canonical query");
+        assert!(TemporalQueryParameters::try_from(request).is_err());
     }
 
     #[test]
-    fn from_temporal_query_request_with_temporal_q() {
-        use crate::body::temporal_query::{TemporalQ, TemporalQueryRequest};
-
-        let request = TemporalQueryRequest {
-            _type: "Query".to_string(),
-            entities: None,
-            attrs: Some(vec!["speed".parse().unwrap()]),
-            q: None,
-            geo_q: None,
-            temporal_q: Some(TemporalQ {
-                timerel: TimeRel::After,
-                time_at: "2024-01-01T00:00:00Z".parse().expect("valid RFC 3339 instant"),
-                end_time_at: None,
-                timeproperty: Some(TimeProp::Observed),
-                aggr_methods: Some(vec![AggrMethod::Avg]),
-                aggr_period_duration: AggregationPeriod::parse("PT1H").expect("valid duration"),
-            }),
-            limit: Some(50),
-            offset: None,
-            count: Some(true),
-            format: Some(TemporalFormat::TemporalValues),
-            last_n: Some(10),
-            local: Some(true),
-        };
-        let params: TemporalQueryParameters = request.into();
+    fn canonical_temporal_query_preserves_temporal_members() {
+        let request = serde_json::from_str::<Query>(
+            r#"{"type":"Query","attrs":["speed"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z","timeproperty":"observedAt","aggrMethods":"avg","aggrPeriodDuration":"PT1H","lastN":10}}"#,
+        )
+        .expect("valid canonical temporal query");
+        let params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
         pretty_assertions::assert_eq!(params.timerel, Some(TimeRel::After));
         pretty_assertions::assert_eq!(params.time_at, Some("2024-01-01T00:00:00Z".parse().expect("valid RFC 3339 instant")));
         pretty_assertions::assert_eq!(params.timeproperty, Some(TimeProp::Observed));
         pretty_assertions::assert_eq!(params.aggr_methods, Some(vec![AggrMethod::Avg]));
         pretty_assertions::assert_eq!(params.aggr_period_duration.map(|period| period.as_iso8601()), Some("PT1H".to_string()));
         pretty_assertions::assert_eq!(params.attrs.as_deref().map(|names| names[0].as_str()), Some("speed"));
-        pretty_assertions::assert_eq!(params.limit, Some(50));
-        pretty_assertions::assert_eq!(params.count, Some(true));
-        pretty_assertions::assert_eq!(params.format, Some(TemporalFormat::TemporalValues));
         pretty_assertions::assert_eq!(params.last_n, Some(10));
-        pretty_assertions::assert_eq!(params.local, Some(true));
     }
-
-    #[test]
-    fn from_temporal_query_request_without_temporal_q() {
-        use crate::body::temporal_query::TemporalQueryRequest;
-
-        let request = TemporalQueryRequest {
-            _type: "Query".to_string(),
-            entities: None,
-            attrs: None,
-            q: None,
-            geo_q: None,
-            temporal_q: None,
-            limit: None,
-            offset: None,
-            count: None,
-            format: None,
-            last_n: None,
-            local: None,
-        };
-        let params: TemporalQueryParameters = request.into();
-        assert!(params.timerel.is_none());
-        assert!(params.time_at.is_none());
-        assert!(params.end_time_at.is_none());
-        assert!(params.timeproperty.is_none());
-        assert!(params.aggr_methods.is_none());
-        assert!(params.aggr_period_duration.is_none());
-    }
-}
-/// Deserialise a temporal `format` query parameter at the request boundary.
-pub(crate) fn deserialize_option_temporal_format<'de, D>(deserializer: D) -> Result<Option<TemporalFormat>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| match value.as_str() {
-        "temporalValues" => Ok(TemporalFormat::TemporalValues),
-        "aggregatedValues" => Ok(TemporalFormat::AggregatedValues),
-        other => Err(serde::de::Error::custom(format!("invalid temporal format: {other}"))),
-    })
-    .transpose()
-}
-
-/// Deserialize a comma-separated `aggrMethods` value into validated methods.
-pub(crate) fn deserialize_optional_aggr_methods<'de, D>(deserializer: D) -> Result<Option<Vec<AggrMethod>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| value.split(',').map(str::trim).map(|method| method.parse().map_err(Error::custom)).collect())
-        .transpose()
 }

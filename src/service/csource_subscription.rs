@@ -1,5 +1,5 @@
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::subscription_change::CsourceSubscriptionChange,
     service::{
         subscription_base::{SubscriptionServiceCore, SubscriptionVariant},
@@ -50,13 +50,13 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
             }
         }
 
-        subscription_core::expand_common_subscription_terms(&self.engine, payload, context).await
+        subscription_core::validation::expand_common_subscription_terms(&self.engine, payload, context).await
     }
 
     async fn serialize_for_response(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let mut value = serde_json::to_value(subscription).map_err(|e| AndromedaError::subscription_validation(format!("Serialization failed: {}", e)))?;
-        subscription_core::fixup_expired_status(&mut value, subscription.lifecycle.expires_at);
-        subscription_core::compact_subscription_iris(&self.engine, &mut value, context).await;
+        subscription_core::normalization::fixup_expired_status(&mut value, subscription.lifecycle.expires_at);
+        subscription_core::normalization::compact_subscription_iris(&self.engine, &mut value, context).await;
         Ok(value)
     }
 
@@ -82,19 +82,16 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public type alias — callers continue to use `CsourceSubscriptionService`
-// ---------------------------------------------------------------------------
-
-/// Context source subscription service combining shared CRUD logic with CSR-specific behaviour.
-pub type CsourceSubscriptionService = SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant>;
-
-impl CsourceSubscriptionService {
+impl SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant> {
     /// Create a new context source subscription service backed by the given database pool.
-    pub fn new(pool: &PgPool, engine: JsonLdEngine, sub_change_tx: Option<broadcast::Sender<CsourceSubscriptionChange>>) -> CsourceSubscriptionService {
+    pub fn new(
+        pool: &PgPool,
+        engine: JsonLdEngine,
+        sub_change_tx: Option<broadcast::Sender<CsourceSubscriptionChange>>,
+    ) -> SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant> {
         let repo = CsourceSubscriptionRepository::new(pool);
         debug!("CSR subscription service created!");
-        CsourceSubscriptionService {
+        SubscriptionServiceCore {
             repo,
             engine: engine.clone(), // clone: engine is shared between service and variant
             variant: CsrSubscriptionVariant { engine },

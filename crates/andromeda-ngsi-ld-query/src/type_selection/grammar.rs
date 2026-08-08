@@ -188,6 +188,30 @@ impl TypeExpr {
             TypeExpr::Or(children) => children.iter().any(|child| child.matches(type_iris)),
         }
     }
+
+    /// Convert an expanded expression into the serialisable expression shape.
+    ///
+    /// Full IRIs satisfy the same clause-4.6.2 name grammar as compact type
+    /// names. This conversion lets a stored resource retain the clause-4.17
+    /// wire shape after every leaf has crossed the JSON-LD expansion boundary.
+    pub fn into_raw(self) -> Result<TypeExprRaw, QueryError> {
+        match self {
+            TypeExpr::Wildcard => Ok(TypeExprRaw::Wildcard),
+            TypeExpr::Type(iri) => {
+                let value = iri.to_string();
+                value
+                    .parse()
+                    .map(TypeExprRaw::Type)
+                    .map_err(|_error| QueryError::TypeExprInvalidName { name: value, position: 0 })
+            }
+            TypeExpr::And(children) => children
+                .into_iter()
+                .map(TypeExpr::into_raw)
+                .collect::<Result<Vec<_>, _>>()
+                .map(TypeExprRaw::And),
+            TypeExpr::Or(children) => children.into_iter().map(TypeExpr::into_raw).collect::<Result<Vec<_>, _>>().map(TypeExprRaw::Or),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -291,5 +315,12 @@ mod tests {
         assert!(expanded.matches(&["https://example.com/Tower"]));
         assert!(!compact.matches(&["Vehicle"]));
         assert!(!expanded.matches(&["https://example.com/Vehicle"]));
+    }
+
+    #[test]
+    fn an_expanded_expression_converts_to_a_raw_tree_with_iri_leaves() {
+        let expanded = TypeExpr::Or(vec![iri("https://example.com/Building"), iri("https://example.com/Tower")]);
+        let raw = expanded.into_raw().expect("expanded IRIs are valid NGSI-LD names");
+        pretty_assertions::assert_eq!(raw.to_string(), "https://example.com/Building,https://example.com/Tower");
     }
 }

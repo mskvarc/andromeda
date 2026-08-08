@@ -5,7 +5,7 @@
 //! updating and appending in turn.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         batch::{BatchResult, chunk::ChunkWrite},

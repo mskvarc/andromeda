@@ -6,7 +6,7 @@
 //! `forward_provision`, then uses these helpers to classify the result modes
 //! and build multi-status responses.
 
-use crate::{core::error::AndromedaError, http::error::batch::entity_error, service::csource_forwarding::ForwardedWriteResult};
+use crate::{error::AndromedaError, http::error::batch::entity_error, service::csource_forwarding::outcome::ForwardedWriteResult};
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use serde_json::Value;
 
@@ -53,12 +53,13 @@ pub fn build_multi_status_body(entity_id: &str, local_ok: bool, local_error: Opt
     }
 
     for r in forwarded {
-        if r.status >= 400 {
-            let error_body = r.body.clone().unwrap_or_else(|| {
+        if r.is_failure() {
+            let error_body = r.body().cloned().unwrap_or_else(|| {
                 // clone: owned Value needed for JSON response body
                 serde_json::json!({
-                    "status": r.status,
-                    "title": "Error from context source"
+                    "status": r.status(),
+                    "title": "Error from context source",
+                    "detail": r.transport_detail()
                 })
             });
             errors.push(serde_json::json!({
@@ -78,7 +79,7 @@ pub fn build_multi_status_body(entity_id: &str, local_ok: bool, local_error: Opt
 
 /// Check whether any remote forwarding result has an error status (>= 400).
 pub fn has_remote_errors(forwarded: &[ForwardedWriteResult]) -> bool {
-    forwarded.iter().any(|r| r.status >= 400)
+    forwarded.iter().any(ForwardedWriteResult::is_failure)
 }
 
 /// Get the HTTP status code from the first forwarded result, with a fallback.
@@ -86,18 +87,22 @@ pub fn has_remote_errors(forwarded: &[ForwardedWriteResult]) -> bool {
 /// Used by redirect and exclusive modes to propagate the context source's
 /// response status.
 pub fn first_forwarded_status(forwarded: &[ForwardedWriteResult], fallback: u16) -> u16 {
-    forwarded.first().map_or(fallback, |r| r.status)
+    forwarded.first().map_or(fallback, ForwardedWriteResult::status)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::service::csource_forwarding::outcome::ForwardedWriteOutcome;
 
     fn make_result(mode: ForwardingMode, status: u16) -> ForwardedWriteResult {
         ForwardedWriteResult {
             mode,
-            status,
-            body: None,
+            outcome: if status < 400 {
+                ForwardedWriteOutcome::Completed { status, body: None }
+            } else {
+                ForwardedWriteOutcome::RemoteHttpFailure { status, body: None }
+            },
             exclusive_attrs: Vec::new(),
         }
     }

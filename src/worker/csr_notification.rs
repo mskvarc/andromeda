@@ -6,6 +6,7 @@ use crate::{
         subscription::store::SubscriptionStore,
         subscription_throttle::ceiling_for_throttle,
     },
+    worker::csr_notification::matching::{compile_csr_subscription, filter_csr_for_subscription, find_matching_csr_subscriptions, matches_csr_subscription},
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
@@ -21,9 +22,11 @@ use dashmap::DashMap;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, broadcast::error::TryRecvError};
 use tracing::{debug, error, info};
 use uuid::Uuid;
+
+mod matching;
 
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -89,6 +92,7 @@ impl CsrNotificationWorker {
                 result = self.csr_change_rx.recv() => {
                     match result {
                         Ok(event) => {
+                            self.drain_subscription_changes().await;
                             self.handle_csr_change(event).await;
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -121,7 +125,7 @@ impl CsrNotificationWorker {
         }
     }
 
-    async fn reload_cache(&self) -> Result<(), crate::core::error::AndromedaError> {
+    async fn reload_cache(&self) -> Result<(), crate::error::AndromedaError> {
         let subscriptions = self.sub_repo.list_active().await?;
         self.cache.clear();
         for sub in subscriptions {
@@ -130,6 +134,28 @@ impl CsrNotificationWorker {
             }
         }
         Ok(())
+    }
+
+    /// Apply every already-published subscription change before matching a CSR.
+    ///
+    /// Subscription and registration mutations use separate broadcast channels.
+    /// A later registration event can therefore win `select!` while an earlier
+    /// subscription pause, expiration or selector update is still queued. The
+    /// database mutation is already committed when its event is published, so
+    /// draining that queue restores the request order at the matching seam.
+    async fn drain_subscription_changes(&mut self) {
+        loop {
+            match self.sub_change_rx.try_recv() {
+                Ok(change) => self.handle_subscription_change(change).await,
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    debug!(skipped, "CsrNotificationWorker lagged while ordering subscription changes before a CSR event");
+                    if let Err(error) = self.reload_cache().await {
+                        error!(%error, "Failed to reload CSR subscription cache after lag");
+                    }
+                }
+            }
+        }
     }
 
     async fn handle_subscription_change(&self, change: CsourceSubscriptionChange) {
@@ -493,214 +519,4 @@ impl CsrNotificationWorker {
             }
         }
     }
-}
-
-fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsrSubscription> {
-    // clone: the compiled form outlives the borrowed subscription and every
-    // selector member is already parsed
-    let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
-
-    let watched_attrs = sub
-        .selection
-        .watched_attributes
-        .as_ref()
-        .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
-
-    let endpoint_transport = match parse_endpoint_transport(sub.notification.endpoint.uri.as_str(), sub.notification.endpoint.notifier_info.as_deref()) {
-        Ok(t) => t,
-        Err(e) => {
-            debug!("Failed to parse endpoint transport for CSR subscription {}: {}", sub.id, e);
-            return None;
-        }
-    };
-
-    Some(CompiledCsrSubscription {
-        // clone: the compiled form outlives the borrowed subscription
-        id: sub.id.clone(),
-        status: sub.lifecycle.status,
-        endpoint_uri: sub.notification.endpoint.uri.clone(),
-        // clone: the compiled form outlives the subscription it was built from
-        endpoint_accept: sub.notification.endpoint.accept.clone(),
-        endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
-        endpoint_transport,
-        selectors,
-        watched_attrs,
-        throttling_secs: sub.delivery.throttling,
-        time_interval_secs: sub.delivery.time_interval,
-        jsonld_context: sub.delivery.jsonld_context.clone(),
-        expires_at: sub.lifecycle.expires_at,
-        // clone: the compiled form owns its filter
-        compiled_csf: sub.filters.csf.clone(),
-    })
-}
-
-fn find_matching_csr_subscriptions(cache: &DashMap<Uri, Arc<CompiledCsrSubscription>>, csr_data: &Value) -> Vec<Arc<CompiledCsrSubscription>> {
-    cache
-        .iter()
-        .filter_map(|entry| {
-            if matches_csr_subscription(entry.value(), csr_data) {
-                Some(Arc::clone(entry.value()))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// Match a CSR subscription against a CSR's data.
-/// Matching logic (clause 5.12):
-/// - Match subscription entity selectors against CSR information[].entities[]
-/// - Match watched attrs against CSR information[].propertyNames + relationshipNames
-fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: &Value) -> bool {
-    if sub.status != SubscriptionStatus::Active {
-        return false;
-    }
-
-    if let Some(expires_at) = sub.expires_at
-        && expires_at <= Utc::now()
-    {
-        return false;
-    }
-
-    // Skip time-interval subscriptions
-    if sub.time_interval_secs.is_some() {
-        return false;
-    }
-
-    // Entity selector matching: subscription selectors match against CSR information[].entities[]
-    if !sub.selectors.is_empty() {
-        let information = csr_data.get("information").and_then(|v| v.as_array());
-        let any_selector_matches = sub.selectors.iter().any(|sel| match information {
-            Some(info_arr) => info_arr.iter().any(|info| {
-                let entities = info.get("entities").and_then(|v| v.as_array());
-                match entities {
-                    Some(ents) => ents.iter().any(|ent| {
-                        let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if !sel.type_.matches(&[ent_type]) {
-                            return false;
-                        }
-                        if let Some(ref sel_id) = sel.id {
-                            let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            // `AsRef` hands back the identifier's own text; rendering it
-                            // would allocate once per candidate in a matching loop.
-                            if ent_id != sel_id.as_ref() {
-                                return false;
-                            }
-                        }
-                        if let Some(ref sel_pattern) = sel.id_pattern {
-                            let ent_id = ent.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            if !sel_pattern.is_match(ent_id) {
-                                return false;
-                            }
-                        }
-                        true
-                    }),
-                    None => false,
-                }
-            }),
-            None => false,
-        });
-
-        if !any_selector_matches {
-            return false;
-        }
-    }
-
-    // Watched attributes: match against CSR propertyNames + relationshipNames
-    if let Some(ref watched) = sub.watched_attrs {
-        let information = csr_data.get("information").and_then(|v| v.as_array());
-        let any_attr_matches = match information {
-            Some(info_arr) => info_arr.iter().any(|info| {
-                let prop_names: Vec<&str> = info
-                    .get("propertyNames")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_default();
-                let rel_names: Vec<&str> = info
-                    .get("relationshipNames")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_default();
-
-                prop_names.iter().any(|n| watched.contains(*n)) || rel_names.iter().any(|n| watched.contains(*n))
-            }),
-            None => false,
-        };
-
-        if !any_attr_matches {
-            return false;
-        }
-    }
-
-    // Evaluate csf (Context Source Filter) against the CSR data
-    if let Some(ref csf_expr) = sub.compiled_csf
-        && !eval::evaluate(csf_expr, csr_data)
-    {
-        return false;
-    }
-
-    true
-}
-
-/// Filter CSR information array to only include RegistrationInfo elements
-/// that match the subscription's selectors and watched attributes.
-fn filter_csr_for_subscription(csr_data: &Value, sub: &CompiledCsrSubscription) -> Value {
-    let mut filtered = csr_data.clone();
-
-    if sub.selectors.is_empty() && sub.watched_attrs.is_none() {
-        return filtered;
-    }
-
-    if let Some(information) = filtered.get_mut("information")
-        && let Some(info_arr) = information.as_array()
-    {
-        let filtered_info: Vec<Value> = info_arr
-            .iter()
-            .filter(|info| {
-                // Check entity selector match
-                if !sub.selectors.is_empty() {
-                    let entities = info.get("entities").and_then(|v| v.as_array());
-                    let matches = match entities {
-                        Some(ents) => sub.selectors.iter().any(|sel| {
-                            ents.iter().any(|ent| {
-                                let ent_type = ent.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                                sel.type_.matches(&[ent_type])
-                            })
-                        }),
-                        None => false,
-                    };
-                    if !matches {
-                        return false;
-                    }
-                }
-
-                // Check watched attributes match
-                if let Some(ref watched) = sub.watched_attrs {
-                    let prop_names: Vec<&str> = info
-                        .get("propertyNames")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                        .unwrap_or_default();
-                    let rel_names: Vec<&str> = info
-                        .get("relationshipNames")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-                        .unwrap_or_default();
-
-                    if !prop_names.iter().any(|n| watched.contains(*n)) && !rel_names.iter().any(|n| watched.contains(*n)) {
-                        return false;
-                    }
-                }
-
-                true
-            })
-            .cloned()
-            .collect();
-
-        if let Some(obj) = filtered.as_object_mut() {
-            obj.insert("information".to_string(), Value::Array(filtered_info));
-        }
-    }
-
-    filtered
 }

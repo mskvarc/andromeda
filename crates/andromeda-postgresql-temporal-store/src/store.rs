@@ -8,13 +8,12 @@
 //! provides the PostgreSQL-backed implementation.
 
 use crate::{entry::TeaEntry, error::TemporalStoreError, params::DeleteScope};
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::Value;
-use urn_rs::Urn;
 
 /// A single decoded value from the store's typed history columns.
 ///
@@ -192,12 +191,15 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// The implementation handles backend-specific concerns such as the
     /// attribute-name dictionary resolution and the `attribute_current`
     /// projection barrier wait.
+    #[must_use = "temporal entity-id queries must be awaited"]
     async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<EntityIdOutcome, TemporalStoreError>;
 
     /// Fetch the attribute history rows for a single entity (stage 2).
+    #[must_use = "temporal history queries must be awaited"]
     async fn query_entity_history(&self, entity_id: &str, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalStoreError>;
 
     /// Fetch aggregated attribute values for a single entity.
+    #[must_use = "temporal aggregation queries must be awaited"]
     async fn query_entity_aggregation(&self, entity_id: &str, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalStoreError>;
 }
 
@@ -211,23 +213,30 @@ pub trait TemporalHistoryReader: Send + Sync {
 #[async_trait]
 pub trait TemporalMutator: Send + Sync {
     /// Return whether any temporal entity attribute exists for the entity.
+    #[must_use = "temporal existence checks must be awaited"]
     async fn entity_exists(&self, entity_id: &str) -> Result<bool, TemporalStoreError>;
 
     /// Return the TEA catalogue entries for a specific entity/attribute pair.
+    #[must_use = "temporal attribute lookups must be awaited"]
     async fn attribute_entries(&self, entity_id: &str, attribute_name: &str) -> Result<Vec<TeaEntry>, TemporalStoreError>;
 
     /// Return the expanded attribute names known for an entity.
+    #[must_use = "temporal attribute-name lookups must be awaited"]
     async fn attribute_names_for_entity(&self, entity_id: &str) -> Result<Vec<String>, TemporalStoreError>;
 
     /// Delete all temporal data for an entity. Returns the number of rows deleted.
+    #[must_use = "temporal deletions must be awaited"]
     async fn delete_all_for_entity(&self, entity_id: &str) -> Result<u64, TemporalStoreError>;
 
     /// Delete a specific attribute, optionally scoped to a dataset ID. Returns the number of rows deleted.
-    async fn delete_attribute(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&Urn>, scope: DeleteScope) -> Result<u64, TemporalStoreError>;
+    #[must_use = "temporal attribute deletions must be awaited"]
+    async fn delete_attribute(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&Uri>, scope: DeleteScope) -> Result<u64, TemporalStoreError>;
 
     /// Return whether a specific attribute instance exists.
+    #[must_use = "temporal instance checks must be awaited"]
     async fn get_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<bool, TemporalStoreError>;
 
     /// Delete a specific attribute instance by its instance ID.
+    #[must_use = "temporal instance deletions must be awaited"]
     async fn delete_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<(), TemporalStoreError>;
 }

@@ -2,9 +2,9 @@
 //! (clause 4.5.5).
 
 use crate::error::QueryError;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
-use urn_rs::Urn;
 
 /// The reserved `datasetId` value naming the default attribute instance.
 ///
@@ -25,7 +25,7 @@ pub enum DatasetSelector {
     /// The default instance, which carries no `datasetId` (clause 4.5.5).
     Default,
     /// A specific dataset identifier.
-    Id(Urn),
+    Id(Uri),
 }
 
 impl DatasetSelector {
@@ -34,7 +34,7 @@ impl DatasetSelector {
         if raw == DEFAULT_INSTANCE_TOKEN {
             return Ok(DatasetSelector::Default);
         }
-        raw.parse::<Urn>()
+        raw.parse::<Uri>()
             .map(DatasetSelector::Id)
             .map_err(|_| QueryError::ParamDatasetIdInvalid(raw.to_string()))
     }
@@ -65,7 +65,7 @@ impl fmt::Display for DatasetSelector {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DatasetSelector::Default => formatter.write_str(DEFAULT_INSTANCE_TOKEN),
-            DatasetSelector::Id(urn) => write!(formatter, "{urn}"),
+            DatasetSelector::Id(uri) => write!(formatter, "{uri}"),
         }
     }
 }
@@ -92,9 +92,9 @@ pub enum DatasetFilter {
     /// Only the default instance.
     DefaultOnly,
     /// Only the named datasets.
-    NamedOnly(Vec<Urn>),
+    NamedOnly(Vec<Uri>),
     /// The default instance or any of the named datasets.
-    DefaultOrNamed(Vec<Urn>),
+    DefaultOrNamed(Vec<Uri>),
 }
 
 impl DatasetFilter {
@@ -110,7 +110,7 @@ impl DatasetFilter {
                 DatasetSelector::Default => default_selected = true,
                 // clone: the reduced filter owns its identifiers, and the
                 // selector list it came from is borrowed
-                DatasetSelector::Id(urn) => named.push(urn.clone()),
+                DatasetSelector::Id(uri) => named.push(uri.clone()),
             }
         }
         match (default_selected, named.is_empty()) {
@@ -125,8 +125,8 @@ impl DatasetFilter {
 mod tests {
     use super::*;
 
-    fn dataset_urn(raw: &str) -> Urn {
-        raw.parse().expect("valid URN")
+    fn dataset_uri(raw: &str) -> Uri {
+        raw.parse().expect("valid URI")
     }
 
     fn selectors(raw: &[&str]) -> Vec<DatasetSelector> {
@@ -145,8 +145,15 @@ mod tests {
     }
 
     #[test]
-    fn a_dataset_id_that_is_not_a_urn_is_rejected() {
-        let error = DatasetSelector::parse("not a urn").expect_err("must reject");
+    fn an_https_uri_selects_one_named_dataset() {
+        let selector = DatasetSelector::parse("https://example.com/datasets/one").expect("valid dataset URI");
+        assert!(matches!(selector, DatasetSelector::Id(_)), "got {selector:?}");
+        pretty_assertions::assert_eq!(selector.to_string(), "https://example.com/datasets/one");
+    }
+
+    #[test]
+    fn a_dataset_id_that_is_not_a_uri_is_rejected() {
+        let error = DatasetSelector::parse("not a uri").expect_err("must reject");
         assert!(matches!(error, QueryError::ParamDatasetIdInvalid(_)), "got {error:?}");
     }
 
@@ -160,11 +167,11 @@ mod tests {
         assert_eq!(DatasetFilter::from_selectors(&selectors(&["@none"])), DatasetFilter::DefaultOnly);
         assert_eq!(
             DatasetFilter::from_selectors(&selectors(&["urn:ngsi-ld:Dataset:one"])),
-            DatasetFilter::NamedOnly(vec![dataset_urn("urn:ngsi-ld:Dataset:one")])
+            DatasetFilter::NamedOnly(vec![dataset_uri("urn:ngsi-ld:Dataset:one")])
         );
         assert_eq!(
             DatasetFilter::from_selectors(&selectors(&["@none", "urn:ngsi-ld:Dataset:one"])),
-            DatasetFilter::DefaultOrNamed(vec![dataset_urn("urn:ngsi-ld:Dataset:one")])
+            DatasetFilter::DefaultOrNamed(vec![dataset_uri("urn:ngsi-ld:Dataset:one")])
         );
     }
 }

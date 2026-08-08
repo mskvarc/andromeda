@@ -1,8 +1,8 @@
 //! Handler for the `/info` endpoint.
 
 use crate::{
-    api::state::AppState,
-    core::error::AndromedaError,
+    api::state::BrokerState,
+    error::AndromedaError,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader},
@@ -17,7 +17,7 @@ use axum::{
 };
 
 /// GET /ngsi-ld/v1/info/sourceIdentity -- Retrieve context source identity.
-pub async fn get(State(state): State<AppState>, OriginalUri(uri): OriginalUri, accept: AcceptFormat, context: ContextUrl) -> Result<Response, NgsiLdError> {
+pub async fn get(State(state): State<BrokerState>, OriginalUri(uri): OriginalUri, accept: AcceptFormat, context: ContextUrl) -> Result<Response, NgsiLdError> {
     let identity = ContextSourceIdentity {
         id: state.source_identity,
         type_: ContextSourceIdentityType,

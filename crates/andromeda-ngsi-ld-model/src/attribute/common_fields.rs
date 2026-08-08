@@ -7,7 +7,6 @@ use indexmap::IndexMap;
 use jsonld::Expandable;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use urn_rs::Urn;
 
 /// Members present on all NGSI-LD attribute families (ETSI GS CIM 009 clause 5.2).
 ///
@@ -29,7 +28,7 @@ pub struct CommonAttributeFields {
     pub created_at: Option<DateTime<Utc>>,
     /// Dataset identifier separating multi-instance attributes.
     #[jsonld(property = "ngsi:datasetId", coerce = "@id")]
-    pub dataset_id: Option<Urn>,
+    pub dataset_id: Option<Uri>,
     /// System-generated deletion timestamp.
     #[serde(default)]
     #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]

@@ -5,7 +5,7 @@
 //! at least one filter or `local=true` must be present.
 
 use crate::{
-    core::error::{AndromedaError, ErrorKind},
+    error::{AndromedaError, ErrorKind},
     http::extractor::error::ExtractorRejection,
 };
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
@@ -31,7 +31,7 @@ where
         // Parse query string manually
         let query_str = parts.uri.query().unwrap_or("");
         let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str)
-            .map_err(|error| ExtractorRejection::invalid_request(format!("Invalid query string: {}", error), uri.clone()))?;
+            .map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid query parameters: {}", error), uri.clone()))?;
 
         // Validate options and other parameter values. QueryError classifies
         // each variant as either MalformedRequest or QueryValidation when
@@ -47,7 +47,7 @@ where
 
         // Per NGSI-LD spec 5.7.2.4: at least one filter OR local=true must be provided
         if !params.local.unwrap_or(false) && !params.has_any_filter() {
-            return Err(ExtractorRejection::invalid_request(
+            return Err(ExtractorRejection::bad_request_data(
                 "At least one of type, id, idPattern, q, or local=true must be provided",
                 uri,
             ));
@@ -68,7 +68,7 @@ mod tests {
         let (mut parts, _) = req.into_parts();
 
         let result = EntityQuery::from_request_parts(&mut parts, &()).await;
-        assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
+        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
 
     #[tokio::test]

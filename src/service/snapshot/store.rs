@@ -6,16 +6,19 @@
 //! name, because a store that keeps frozen payloads somewhere else entirely
 //! still answers the same questions.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
+
+/// An entity count and the related discovery names for a frozen snapshot resource.
+pub type SnapshotDiscoveryInfo = (i64, Vec<String>);
 use url::Url;
 
 /// Pre-serialised columns for a snapshot record.
@@ -27,9 +30,9 @@ pub struct InsertSnapshotParams<'a> {
     /// Snapshot identifier.
     pub id: &'a SnapshotId,
     /// Typed entity query definitions, serialized by the SQL adapter.
-    pub snapshot_queries: Option<&'a [andromeda_ngsi_ld_model::snapshot_query::SnapshotQuery]>,
+    pub snapshot_queries: Option<&'a [andromeda_ngsi_ld_model::query::body::Query]>,
     /// Typed temporal query definitions, serialized by the SQL adapter.
-    pub snapshot_temporal_queries: Option<&'a [andromeda_ngsi_ld_model::snapshot_query::SnapshotQuery]>,
+    pub snapshot_temporal_queries: Option<&'a [andromeda_ngsi_ld_model::query::body::Query]>,
     /// Typed ISO-8601 duration for the snapshot's lifetime.
     pub snapshot_lifetime: Option<&'a Iso8601Duration>,
     /// Numeric encoding of [`SnapshotPriority`].
@@ -64,98 +67,234 @@ pub struct SnapshotEntityInput<'a> {
 }
 
 /// Storing snapshots and the frozen payloads they hold.
-#[async_trait]
 pub trait SnapshotStore: Send + Sync + 'static {
     /// Persist a new snapshot record.
-    async fn create(&self, params: InsertSnapshotParams<'_>) -> Result<(), AndromedaError>;
+    fn create<'life0, 'life1, 'async_trait>(&'life0 self, params: InsertSnapshotParams<'life1>) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Retrieve a snapshot record.
-    async fn get(&self, id: &SnapshotId) -> Result<Option<Snapshot>, AndromedaError>;
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 SnapshotId) -> BoxFuture<'async_trait, Result<Option<Snapshot>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Whether a snapshot with this identifier exists.
-    async fn exists(&self, id: &SnapshotId) -> Result<bool, AndromedaError>;
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 SnapshotId) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Move a snapshot's lifetime, priority and expiry. Returns rows affected.
-    async fn update_lifetime_priority(
-        &self,
-        id: &SnapshotId,
-        lifetime: Option<&Iso8601Duration>,
+    fn update_lifetime_priority<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        id: &'life1 SnapshotId,
+        lifetime: Option<&'life2 Iso8601Duration>,
         priority: Option<SnapshotPriority>,
         new_expires_at: Option<DateTime<Utc>>,
-    ) -> Result<u64, AndromedaError>;
+    ) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Advance a snapshot out of `preparing`, recording the execution details.
     ///
     /// The transition itself is validated by the policy layer; this is
     /// unconditional apart from the guard on the stored status still being
     /// `preparing`, which is what makes a concurrent second executor a no-op.
-    async fn update_status(
-        &self,
-        id: &SnapshotId,
+    fn update_status<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        id: &'life1 SnapshotId,
         status: SnapshotStatus,
-        queries_details: Option<&[ExecutionResultDetails]>,
-        temporal_queries_details: Option<&[ExecutionResultDetails]>,
-    ) -> Result<u64, AndromedaError>;
+        queries_details: Option<&'life2 [ExecutionResultDetails]>,
+        temporal_queries_details: Option<&'life3 [ExecutionResultDetails]>,
+    ) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Delete a snapshot and everything frozen under it. Returns rows affected.
-    async fn delete(&self, id: &SnapshotId) -> Result<u64, AndromedaError>;
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 SnapshotId) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Identifiers of all snapshots matching a purge filter (clause 5.16.7).
-    async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<SnapshotId>, AndromedaError>;
+    fn match_by_filter<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        filter: &'life1 SnapshotPurgeFilter,
+    ) -> BoxFuture<'async_trait, Result<Vec<SnapshotId>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Delete one snapshot found by a purge filter. Returns rows affected.
-    async fn delete_one(&self, id: &SnapshotId) -> Result<u64, AndromedaError>;
+    fn delete_one<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 SnapshotId) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Copy a snapshot's frozen contents under a new identifier and expiry.
-    async fn clone_snapshot(&self, source_id: &SnapshotId, new_id: &SnapshotId, new_expires_at: DateTime<Utc>) -> Result<Snapshot, AndromedaError>;
+    fn clone_snapshot<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        source_id: &'life1 SnapshotId,
+        new_id: &'life2 SnapshotId,
+        new_expires_at: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Snapshot, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Delete every expired snapshot, returning the count removed.
-    async fn delete_expired(&self) -> Result<u64, AndromedaError>;
+    fn delete_expired<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Record that a snapshot was read.
-    async fn touch_last_used(&self, id: &SnapshotId) -> Result<(), AndromedaError>;
+    fn touch_last_used<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 SnapshotId) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Freeze entities under a snapshot.
-    async fn insert_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError>;
+    fn insert_entities<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        entities: &'life2 [SnapshotEntityInput<'life3>],
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Freeze temporal entities under a snapshot.
-    async fn insert_temporal_entities(&self, snapshot_id: &SnapshotId, entities: &[SnapshotEntityInput<'_>]) -> Result<(), AndromedaError>;
+    fn insert_temporal_entities<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        entities: &'life2 [SnapshotEntityInput<'life3>],
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Retrieve one frozen entity.
-    async fn get_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError>;
+    fn get_entity<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        entity_id: &'life2 Uri,
+    ) -> BoxFuture<'async_trait, Result<Option<Value>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Query frozen entities, with optional type and identifier filters.
-    async fn query_entities(
-        &self,
-        snapshot_id: &SnapshotId,
-        entity_type: Option<&str>,
-        entity_ids: Option<&[Uri]>,
+    fn query_entities<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        entity_type: Option<&'life2 str>,
+        entity_ids: Option<&'life3 [Uri]>,
         limit: i64,
         offset: i64,
-    ) -> Result<(Vec<Value>, i64), AndromedaError>;
+    ) -> BoxFuture<'async_trait, Result<(Vec<Value>, i64), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Retrieve one frozen temporal entity.
-    async fn get_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError>;
+    fn get_temporal_entity<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        entity_id: &'life2 Uri,
+    ) -> BoxFuture<'async_trait, Result<Option<Value>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Query frozen temporal entities, with optional type and identifier filters.
-    async fn query_temporal_entities(
-        &self,
-        snapshot_id: &SnapshotId,
-        entity_type: Option<&str>,
-        entity_ids: Option<&[Uri]>,
+    fn query_temporal_entities<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        entity_type: Option<&'life2 str>,
+        entity_ids: Option<&'life3 [Uri]>,
         limit: i64,
         offset: i64,
-    ) -> Result<(Vec<Value>, i64), AndromedaError>;
+    ) -> BoxFuture<'async_trait, Result<(Vec<Value>, i64), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Distinct entity types frozen under a snapshot.
-    async fn snapshot_distinct_types(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError>;
+    fn snapshot_distinct_types<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+    ) -> BoxFuture<'async_trait, Result<Vec<String>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Entity count and attribute names for one frozen type.
-    async fn snapshot_type_info(&self, snapshot_id: &SnapshotId, type_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError>;
+    fn snapshot_type_info<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        type_name: &'life2 str,
+    ) -> BoxFuture<'async_trait, Result<Option<SnapshotDiscoveryInfo>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Distinct attribute names frozen under a snapshot.
-    async fn snapshot_distinct_attributes(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError>;
+    fn snapshot_distinct_attributes<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+    ) -> BoxFuture<'async_trait, Result<Vec<String>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Entity count and type names for one frozen attribute.
-    async fn snapshot_attribute_info(&self, snapshot_id: &SnapshotId, attr_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError>;
+    fn snapshot_attribute_info<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        snapshot_id: &'life1 SnapshotId,
+        attr_name: &'life2 str,
+    ) -> BoxFuture<'async_trait, Result<Option<SnapshotDiscoveryInfo>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 }

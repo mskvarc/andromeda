@@ -10,6 +10,7 @@
 //! a parameter is parsed by the language wherever the language defines its
 //! grammar, and there is one error chain either way.
 
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::error::QueryError;
 use thiserror::Error;
 
@@ -50,6 +51,9 @@ pub enum ParameterError {
     /// `drop` and `keep` were both provided on an entity purge.
     #[error("drop and keep parameters are mutually exclusive")]
     DropKeepExclusive,
+    /// The deprecated `attrs` parameter named a structural Entity member.
+    #[error("'{0}' is an Entity member and is not allowed in attrs")]
+    AttrsReservedMember(AttributeName),
     /// The `timerel` value was not one of `before`, `after`, `between`.
     #[error("Invalid timerel value: {0}")]
     TimerelInvalid(String),
@@ -78,4 +82,13 @@ pub enum ParameterError {
     /// malformed request rather than one the broker reinterprets.
     #[error("the query body type must be 'Query', not '{0}'")]
     RequestTypeInvalid(String),
+    /// A non-temporal query carried members that only temporal queries accept.
+    #[error("entity queries must not contain temporalQ or aggrParams")]
+    EntityQueryTemporalMembers,
+    /// A temporal query omitted its required temporal window.
+    #[error("temporal queries require temporalQ")]
+    TemporalQueryMissing,
+    /// Aggregation parameters were specified in both supported spec members.
+    #[error("aggregation parameters must not be duplicated in temporalQ and aggrParams")]
+    TemporalAggregationConflict,
 }

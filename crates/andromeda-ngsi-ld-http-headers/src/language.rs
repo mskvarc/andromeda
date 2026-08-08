@@ -143,6 +143,13 @@ pub struct LanguageFilter {
 }
 
 impl LanguageFilter {
+    /// Build a single-preference filter from an already validated BCP 47 tag.
+    pub fn from_tag(tag: LangTagBuf) -> LanguageFilter {
+        LanguageFilter {
+            preferences: vec![QualityValue::new(LanguageRange::Tag(tag), Quality::default())],
+        }
+    }
+
     /// Parse a comma-separated preference list (clause 6.3.5).
     ///
     /// # Errors

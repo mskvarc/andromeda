@@ -24,7 +24,6 @@ use andromeda_postgresql_query::{
 };
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, Func, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
-use urn_rs::Urn;
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
 pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<BuiltQuery<'static>, RenderError> {
@@ -110,12 +109,12 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
         condition = condition.add(union);
     }
 
-    // Q expression filter. Correlated on the TEA catalogue's entity_id, which
-    // is the driving table for stage 1.
+    // Q expression filter. Stage 1 is driven by the `e` alias; the temporal
+    // catalogue is confined to the separate temporal-match subquery.
     if let Some(q_expr) = &compiled.entities.q_expr {
         condition = condition.add(q_filter::compile(
             q_expr,
-            &QFilterTarget::correlated((Tea, TemporalEntityAttributes::EntityId), (E, Entities::Payload)),
+            &QFilterTarget::correlated((E, Entities::Id), (E, Entities::Payload)),
             attribute_names,
         )?);
     }
@@ -168,10 +167,10 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
     condition = match DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter) {
         DatasetFilter::Unfiltered => condition,
         DatasetFilter::DefaultOnly => condition.add(dataset_column.is_null()),
-        DatasetFilter::NamedOnly(named) => condition.add(dataset_column.is_in(named.iter().map(Urn::to_string))),
+        DatasetFilter::NamedOnly(named) => condition.add(dataset_column.is_in(named.iter().map(ToString::to_string))),
         DatasetFilter::DefaultOrNamed(named) => condition.add(
             Condition::any()
-                .add(SeaExpr::col((Tea, TemporalEntityAttributes::DatasetId)).is_in(named.iter().map(Urn::to_string)))
+                .add(SeaExpr::col((Tea, TemporalEntityAttributes::DatasetId)).is_in(named.iter().map(ToString::to_string)))
                 .add(dataset_column.is_null()),
         ),
     };
@@ -376,7 +375,7 @@ mod tests {
         let result = build_stage1_entity_ids(&compiled, &names).unwrap();
         assert!(result.sql.contains("\"attribute_current\""), "{}", result.sql);
         assert!(
-            result.sql.contains("\"ac\".\"entity_id\" = \"tea\".\"entity_id\""),
+            result.sql.contains("\"ac\".\"entity_id\" = \"e\".\"id\""),
             "stage 1 drives from the TEA catalogue, so the probe correlates there: {}",
             result.sql
         );

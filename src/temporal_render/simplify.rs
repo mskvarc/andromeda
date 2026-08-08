@@ -1,7 +1,7 @@
 //! Temporal simplify renderer: deserializes a compacted temporal entity value
 //! and produces its key-values simplified form.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
 use serde_json::Value;

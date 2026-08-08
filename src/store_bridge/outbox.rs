@@ -1,7 +1,7 @@
 //! `OutboxStore` trait implementation for `OutboxRepository`.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::outbox::{
         entry::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
         store::OutboxStore,

@@ -4,13 +4,12 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations, snapshots, entity maps).
 
-use crate::{core::error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
 use andromeda_ngsi_ld_lexicon::{
     name::grammar::Name,
     ngsi_ld_urn::{EntityMapId, SnapshotId},
     uri::Uri as ResourceUri,
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri;
 use urn_rs::Urn;
@@ -122,40 +121,6 @@ pub fn parse_entity_map_id(id: &str, uri: &Uri) -> Result<EntityMapId, NgsiLdErr
     Ok(parsed)
 }
 
-/// Parsed `options` parameter for subscription and CSR subscription list endpoints.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct ListOptions {
-    /// Whether `count` was present in the options string.
-    pub count: bool,
-    /// Whether `sysAttrs` was present in the options string.
-    pub sys_attrs: SysAttrsInclusion,
-}
-
-/// Parse the `options` query parameter for subscription list endpoints.
-///
-/// Recognized values: `count`, `sysAttrs`. Returns `InvalidRequest` for
-/// any unrecognized value.
-pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOptions, NgsiLdError> {
-    let mut parsed = ListOptions::default();
-    if let Some(opts) = options {
-        for opt in opts.split(',').map(str::trim) {
-            if opt.is_empty() {
-                continue;
-            }
-            match opt {
-                "count" => parsed.count = true,
-                "sysAttrs" => parsed.sys_attrs = SysAttrsInclusion::Include,
-                other => {
-                    return Err(NgsiLdError::from(
-                        AndromedaError::malformed_request(format!("Invalid options value: '{}'", other)).with_instance(uri),
-                    ));
-                }
-            }
-        }
-    }
-    Ok(parsed)
-}
-
 /// Reject an entity-map creation that would match everything.
 ///
 /// Clause 5.14.4.4 requires at least one of `type`, `attrs`, `q`, `georel`,
@@ -166,15 +131,7 @@ pub fn parse_list_options(options: Option<&str>, uri: &Uri) -> Result<ListOption
 ///
 /// Returns an `EntityMapValidation` problem when the query names no filter.
 pub fn validate_entity_map_has_filter(query: &EntityQueryParameters, uri: &Uri) -> Result<(), NgsiLdError> {
-    let has_filter = query.entity_type.is_some()
-        || query.id.is_some()
-        || query.id_pattern.is_some()
-        || query.attrs.is_some()
-        || query.geo.0.is_some()
-        || query.scope_q.is_some()
-        || query.q.is_some();
-
-    if has_filter {
+    if query.has_any_filter() {
         return Ok(());
     }
 
@@ -340,40 +297,5 @@ mod tests {
     #[test]
     fn parse_csr_id_invalid() {
         assert!(parse_csr_id("not a valid id", &test_uri()).is_err());
-    }
-
-    // -- parse_list_options --
-
-    #[test]
-    fn parse_list_options_count() {
-        let opts = parse_list_options(Some("count"), &test_uri()).expect("valid options");
-        assert!(opts.count);
-        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
-    }
-
-    #[test]
-    fn parse_list_options_sys_attrs() {
-        let opts = parse_list_options(Some("sysAttrs"), &test_uri()).expect("valid options");
-        assert!(!opts.count);
-        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
-    }
-
-    #[test]
-    fn parse_list_options_combined() {
-        let opts = parse_list_options(Some("count,sysAttrs"), &test_uri()).expect("valid options");
-        assert!(opts.count);
-        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Include);
-    }
-
-    #[test]
-    fn parse_list_options_invalid_returns_error() {
-        assert!(parse_list_options(Some("badValue"), &test_uri()).is_err());
-    }
-
-    #[test]
-    fn parse_list_options_none_returns_defaults() {
-        let opts = parse_list_options(None, &test_uri()).expect("valid options");
-        assert!(!opts.count);
-        pretty_assertions::assert_eq!(opts.sys_attrs, SysAttrsInclusion::Strip);
     }
 }

@@ -8,9 +8,9 @@
 //! Leasing rather than reading is what makes the drain at-least-once: a lease
 //! that expires unacknowledged becomes claimable again.
 
-use crate::{core::error::AndromedaError, service::entity::BatchSideEffectJob};
-use async_trait::async_trait;
+use crate::{error::AndromedaError, service::entity::BatchSideEffectJob};
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use uuid::Uuid;
 
 /// One side-effect job leased for execution.
@@ -25,21 +25,45 @@ pub struct LeasedSideEffect {
 }
 
 /// Draining the durable side-effect queue.
-#[async_trait]
 pub trait SideEffectQueue: Send + Sync + 'static {
     /// Lease up to `batch_size` due jobs for `lease_seconds`.
     ///
     /// A job whose stored payload cannot be read back is dead-lettered by the
     /// implementation rather than returned, so one unreadable entry cannot
     /// stall the queue behind it.
-    async fn lease_batch(&self, worker_id: &str, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, AndromedaError>;
+    fn lease_batch<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        worker_id: &'life1 str,
+        batch_size: i32,
+        lease_seconds: i32,
+    ) -> BoxFuture<'async_trait, Result<Vec<LeasedSideEffect>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Acknowledge a completed job, removing it. Returns whether it existed.
-    async fn ack(&self, id: Uuid) -> Result<bool, AndromedaError>;
+    fn ack<'life0, 'async_trait>(&'life0 self, id: Uuid) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Release a failed job for another attempt at `next_attempt_at`.
-    async fn nack(&self, id: Uuid, error: &str, next_attempt_at: DateTime<Utc>) -> Result<bool, AndromedaError>;
+    fn nack<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: Uuid,
+        error: &'life1 str,
+        next_attempt_at: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 
     /// Dead-letter a job that has exhausted its attempts. Returns whether it existed.
-    async fn mark_dead(&self, id: Uuid, error: &str) -> Result<bool, AndromedaError>;
+    fn mark_dead<'life0, 'life1, 'async_trait>(&'life0 self, id: Uuid, error: &'life1 str) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
 }

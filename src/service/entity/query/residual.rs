@@ -6,7 +6,7 @@
 //! takes the clause 5.5.6 window.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{query::EntityQueryService, residual_filter},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;

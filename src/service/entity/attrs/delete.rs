@@ -1,7 +1,7 @@
 //! Deleting an attribute from an entity (clause 5.6.5).
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         attrs::attribute_write::{MutatedEntity, payload_write},

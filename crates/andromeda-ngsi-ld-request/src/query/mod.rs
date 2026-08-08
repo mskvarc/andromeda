@@ -13,7 +13,7 @@ pub mod entity_selector;
 pub mod temporal;
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use urn_rs::Urn;
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 
 /// The selection, projection and pagination parameters every query endpoint has.
 ///
@@ -28,8 +28,8 @@ pub trait SharedQueryParams {
     /// The `omit` parameter, if present.
     fn omit(&self) -> Option<&[AttributeName]>;
 
-    /// The `datasetId` URNs, if present.
-    fn dataset_ids(&self) -> Option<&[Urn]>;
+    /// The `datasetId` URI/default selectors, if present.
+    fn dataset_ids(&self) -> Option<&[DatasetSelector]>;
 
     /// The raw `limit` parameter, if present.
     fn raw_limit(&self) -> Option<u32>;
@@ -76,11 +76,11 @@ macro_rules! impl_shared_query_params {
               pick: $($pick:ident)?, omit: $($omit:ident)?,
               /// Dataset instances to select, comma-separated (`datasetId`).
               dataset_id: $($ds:ident)?, limit: $lim:ident, offset: $off:ident }) => {
-        impl $crate::query::SharedQueryParams for $ty {
-            fn attrs(&self) -> Option<&[andromeda_ngsi_ld_lexicon::attribute_name::AttributeName]> { self.$attrs.as_deref() }
-            fn pick(&self) -> Option<&[andromeda_ngsi_ld_lexicon::attribute_name::AttributeName]> { impl_shared_query_params!(@opt self $($pick)?) }
-            fn omit(&self) -> Option<&[andromeda_ngsi_ld_lexicon::attribute_name::AttributeName]> { impl_shared_query_params!(@opt self $($omit)?) }
-            fn dataset_ids(&self) -> Option<&[urn_rs::Urn]> { impl_shared_query_params!(@opt self $($ds)?) }
+        impl SharedQueryParams for $ty {
+            fn attrs(&self) -> Option<&[AttributeName]> { self.$attrs.as_deref() }
+            fn pick(&self) -> Option<&[AttributeName]> { impl_shared_query_params!(@opt self $($pick)?) }
+            fn omit(&self) -> Option<&[AttributeName]> { impl_shared_query_params!(@opt self $($omit)?) }
+            fn dataset_ids(&self) -> Option<&[DatasetSelector]> { impl_shared_query_params!(@opt self $($ds)?) }
             fn raw_limit(&self) -> Option<u32> { self.$lim }
             fn raw_offset(&self) -> Option<u32> { self.$off }
         }

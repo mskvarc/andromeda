@@ -24,14 +24,17 @@ pub trait TenantDatabase: Send + Sync + 'static {
     /// Also the source of truth for eviction: a cached runtime whose tenant is
     /// no longer listed has been removed underneath the broker and is holding
     /// connections open for nothing.
+    #[must_use = "tenant registry reads must be awaited"]
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError>;
 
     /// The database a named tenant's data lives in, if it is registered.
+    #[must_use = "tenant lookups must be awaited"]
     async fn lookup(&self, name: &TenantName) -> Result<Option<TenantDatabaseName>, TenancyError>;
 
     /// Register the tenant and prepare its database.
     ///
     /// Must be idempotent and safe against a concurrent caller: two requests
     /// naming the same unknown tenant will both arrive here.
+    #[must_use = "tenant provisioning must be awaited"]
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError>;
 }

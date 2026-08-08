@@ -3,18 +3,23 @@ use crate::{
     service::{
         csource_forwarding::CsourceForwardingService,
         csource_registration::CsourceRegistrationService,
-        csource_subscription::CsourceSubscriptionService,
+        csource_subscription::CsrSubscriptionVariant,
         entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
         entity_map::EntityMapService,
         jsonld_context::JsonLdContextService,
         snapshot::SnapshotService,
-        subscription::SubscriptionService,
+        subscription::EntitySubscriptionVariant,
+        subscription_base::SubscriptionServiceCore,
         temporal::TemporalService,
     },
 };
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceId;
-use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
+use andromeda_postgresql_context_store::{
+    csource_subscription::repo::CsourceSubscriptionRepository,
+    subscription::repo::SubscriptionRepository,
+    tenant_registry::PostgresTenantRegistry,
+};
 use andromeda_tenancy::runtime::TenantRuntimeManager;
 use std::sync::Arc;
 
@@ -24,10 +29,10 @@ pub struct AndromedaState {
     pub entity_query: Arc<EntityQueryService>,
     pub entity_discovery: Arc<EntityDiscoveryService>,
     pub temporal: Arc<TemporalService>,
-    pub subscriptions: Arc<SubscriptionService>,
+    pub subscriptions: Arc<SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant>>,
     pub contexts: Arc<JsonLdContextService>,
     pub csr: Arc<CsourceRegistrationService>,
-    pub csr_subscriptions: Arc<CsourceSubscriptionService>,
+    pub csr_subscriptions: Arc<SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant>>,
     pub forwarding: Arc<CsourceForwardingService>,
     pub entity_maps: Arc<EntityMapService>,
     pub snapshots: Arc<SnapshotService>,
@@ -44,7 +49,7 @@ pub struct AndromedaState {
 }
 
 #[derive(Clone)]
-pub struct AppState {
+pub struct BrokerState {
     pub tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
     pub source_identity: ContextSourceId,
 }

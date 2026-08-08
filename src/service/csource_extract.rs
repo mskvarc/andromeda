@@ -4,7 +4,7 @@
 //! decodes inbound GeoProperty wrappers into a [`Geometry`] before any CSR
 //! insert or update.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use serde_json::Value;
 

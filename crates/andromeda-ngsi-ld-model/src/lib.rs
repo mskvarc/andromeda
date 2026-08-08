@@ -21,10 +21,10 @@ pub mod expanded;
 pub mod jsonld_context;
 pub mod key_value_pair;
 pub mod notification;
+pub mod query;
 pub mod registration;
 pub mod snapshot;
 pub mod snapshot_filter;
-pub mod snapshot_query;
 pub mod subscription;
 pub mod tenant_list;
 

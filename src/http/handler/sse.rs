@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     api::tenant::TenantState,
-    core::error::{AndromedaError, ResultInstanceExt},
+    error::{AndromedaError, ResultInstanceExt},
     http::error::problem::NgsiLdError,
 };
 use andromeda_delivery::{

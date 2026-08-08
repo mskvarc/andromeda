@@ -1,6 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
+use andromeda_test_common::config::callback_host;
 use reqwest::StatusCode;
 use rumqttc::QoS;
 
@@ -20,16 +21,14 @@ use crate::helpers::{
     with_receiver_info,
 };
 
-const MQTT_BROKER_HOST: &str = "mosquitto";
 const MQTT_BROKER_HOST_LOCAL: &str = "127.0.0.1";
 const MQTT_BROKER_PORT: u16 = 1883;
-const MQTT_AUTH_BROKER_HOST: &str = "mosquitto-auth";
 const MQTT_AUTH_BROKER_HOST_LOCAL: &str = "127.0.0.1";
 const MQTT_AUTH_BROKER_PORT: u16 = 9883;
 const TOPIC_PREFIX: &str = "andromeda-test/notifications";
 
 fn mqtt_uri(topic: &str) -> String {
-    format!("mqtt://{MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}/{topic}")
+    format!("mqtt://{}:{MQTT_BROKER_PORT}/{topic}", callback_host())
 }
 
 #[serial_test::serial]
@@ -249,7 +248,7 @@ async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delive
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
 
     let subscription_id = unique_subscription_id("058_01_02");
-    let uri = format!("mqtt://user_with_password:password@{MQTT_AUTH_BROKER_HOST}:{MQTT_AUTH_BROKER_PORT}/{topic}");
+    let uri = format!("mqtt://user_with_password:password@{}:{MQTT_AUTH_BROKER_PORT}/{topic}", callback_host());
     let mut subscription = subscription_with_endpoint(&subscription_id, &uri);
     set_endpoint_uri(&mut subscription, &uri);
     let _ = create_subscription(&http_client, &subscription).await;
@@ -274,7 +273,7 @@ async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
 
     let subscription_id = unique_subscription_id("058_01_03");
-    let uri = format!("mqtt://user@{MQTT_BROKER_HOST}/{topic}");
+    let uri = format!("mqtt://user@{}/{topic}", callback_host());
     let mut subscription = subscription_with_endpoint(&subscription_id, &uri);
     set_endpoint_uri(&mut subscription, &uri);
     let _ = create_subscription(&http_client, &subscription).await;
@@ -300,7 +299,7 @@ async fn notification_mqtt_endpoint_with_username_and_password_delivers_message(
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
 
     let subscription_id = unique_subscription_id("058_01_04");
-    let uri = format!("mqtt://user_with_password:password@{MQTT_AUTH_BROKER_HOST}:{MQTT_AUTH_BROKER_PORT}/{topic}");
+    let uri = format!("mqtt://user_with_password:password@{}:{MQTT_AUTH_BROKER_PORT}/{topic}", callback_host());
     let mut subscription = subscription_with_endpoint(&subscription_id, &uri);
     set_endpoint_uri(&mut subscription, &uri);
     let _ = create_subscription(&http_client, &subscription).await;
@@ -326,7 +325,7 @@ async fn notification_mqtt_endpoint_with_username_password_and_port_delivers_mes
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
 
     let subscription_id = unique_subscription_id("058_01_05");
-    let uri = format!("mqtt://user_with_password:password@{MQTT_AUTH_BROKER_HOST}:{MQTT_AUTH_BROKER_PORT}/{topic}");
+    let uri = format!("mqtt://user_with_password:password@{}:{MQTT_AUTH_BROKER_PORT}/{topic}", callback_host());
     let mut subscription = subscription_with_endpoint(&subscription_id, &uri);
     set_endpoint_uri(&mut subscription, &uri);
     let _ = create_subscription(&http_client, &subscription).await;

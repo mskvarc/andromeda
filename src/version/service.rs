@@ -2,7 +2,7 @@
 //! extension versions.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     version::report::{AndromedaVersion, ExtensionVersion, TimescaleDbVersion, VersionInfo},
 };
 use shadow_rs::shadow;

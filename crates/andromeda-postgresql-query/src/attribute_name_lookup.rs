@@ -36,8 +36,10 @@ pub trait AttributeNameLookup: Send + Sync + Debug {
     ///
     /// An IRI the broker has never recorded resolves to nothing. Its predicates
     /// compile to constant `FALSE`.
+    #[must_use = "attribute-name lookups must be awaited"]
     async fn lookup(&self, names: &[AttributeName]) -> Result<ResolvedAttributeNames, AttributeNameLookupError>;
 
     /// Resolve every name, creating dictionary entries for those that are new.
+    #[must_use = "attribute-name resolution must be awaited"]
     async fn resolve_or_create(&self, names: &[&str]) -> Result<HashMap<String, AttributeNameId>, AttributeNameLookupError>;
 }

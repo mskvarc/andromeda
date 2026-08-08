@@ -36,6 +36,24 @@ pub fn normalize_entity_attributes(payload: &mut Value) {
     }
 }
 
+/// Normalize an entity merge fragment while preserving first-level NGSI-LD Null members.
+///
+/// Clause 5.5.12 assigns a first-level `"urn:ngsi-ld:null"` a different
+/// meaning from a concise Property value: it removes the complete target
+/// member. Keeping that scalar intact lets JSON-LD expansion retain the
+/// distinction for the merge algorithm.
+pub fn normalize_merge_fragment(payload: &mut Value) {
+    let Some(entity) = payload.as_object_mut() else {
+        return;
+    };
+    for (member, value) in entity.iter_mut() {
+        if ENTITY_MEMBERS.contains(&member.as_str()) || value.as_str() == Some("urn:ngsi-ld:null") {
+            continue;
+        }
+        normalize_attribute(value);
+    }
+}
+
 /// Rewrite one attribute slot: one instance, several, or a concise value.
 fn normalize_attribute(value: &mut Value) {
     if let Value::Object(instance) = value {
@@ -198,7 +216,7 @@ fn as_typed_value(attribute_type: AttributeType, value: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use crate::normalization::normalize_entity_attributes;
+    use crate::normalization::{normalize_entity_attributes, normalize_merge_fragment};
     use serde_json::json;
 
     #[test]
@@ -207,6 +225,16 @@ mod tests {
 
         normalize_entity_attributes(&mut payload);
 
+        pretty_assertions::assert_eq!(payload["speed"], json!({ "type": "Property", "value": 42 }));
+    }
+
+    #[test]
+    fn a_merge_fragment_preserves_a_first_level_null_sentinel() {
+        let mut payload = json!({ "name": "urn:ngsi-ld:null", "speed": 42 });
+
+        normalize_merge_fragment(&mut payload);
+
+        pretty_assertions::assert_eq!(payload["name"], json!("urn:ngsi-ld:null"));
         pretty_assertions::assert_eq!(payload["speed"], json!({ "type": "Property", "value": 42 }));
     }
 

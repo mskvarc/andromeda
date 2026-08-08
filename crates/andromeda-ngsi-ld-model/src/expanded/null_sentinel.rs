@@ -3,6 +3,19 @@
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::Value;
 
+/// Returns `true` when an expanded first-level member is the bare NGSI-LD Null.
+///
+/// This is the expansion of `"attribute": "urn:ngsi-ld:null"` in a merge
+/// fragment. Clause 5.5.12 makes it remove the complete target member rather
+/// than one dataset-partitioned attribute instance.
+pub fn member_is_null_sentinel(instance: &Value) -> bool {
+    instance
+        .as_object()
+        .and_then(|object| object.get("@value").or_else(|| object.get("@id")))
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == properties::NULL_URI.as_str() || value == properties::NULL_IRI.as_str())
+}
+
 /// Returns `true` if the expanded attribute instance is a deletion sentinel
 /// (`urn:ngsi-ld:null` or its expanded IRI form in hasValue, hasObject, or
 /// hasLanguageMap).
@@ -28,7 +41,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::null_sentinel::instance_is_null_sentinel;
+    use crate::expanded::null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel};
     use serde_json::json;
 
     #[test]
@@ -56,5 +69,11 @@ mod tests {
             "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 42}]
         });
         assert!(!instance_is_null_sentinel(&instance));
+    }
+
+    #[test]
+    fn expanded_first_level_null_is_a_member_sentinel() {
+        assert!(member_is_null_sentinel(&json!({"@value": "urn:ngsi-ld:null"})));
+        assert!(!member_is_null_sentinel(&json!({"@value": "ordinary"})));
     }
 }

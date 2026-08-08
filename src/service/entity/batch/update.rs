@@ -6,7 +6,7 @@
 //! concurrent batches touching one entity cannot lose each other's writes.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         batch::{BatchResult, chunk::ChunkWrite},

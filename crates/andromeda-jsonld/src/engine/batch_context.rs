@@ -69,7 +69,7 @@ impl JsonLdEngine {
     /// batch naming the same URL pays a map read.
     pub async fn batch_context_handle(&self, context: &ContextSpec) -> BatchContextHandle {
         let resolved_context = resolve_context_value(None, context);
-        let term_map = build_batch_term_map(context, self.loader(), self.user_term_tables(), self.default_core_url()).await;
+        let term_map = build_batch_term_map(context, self.loader(), self.user_term_tables(), self.default_core_url(), self.core_vocabulary()).await;
 
         BatchContextHandle {
             spec: context.clone(), // clone: the handle outlives the caller's borrow

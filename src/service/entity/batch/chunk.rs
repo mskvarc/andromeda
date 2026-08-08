@@ -6,7 +6,7 @@
 //! off the write that was submitted for it.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,

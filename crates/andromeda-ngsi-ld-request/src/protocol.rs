@@ -14,12 +14,14 @@
 use crate::{
     entity::GetEntityParams,
     error::ParameterError,
+    options::EntityRepresentationOptions,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
-use std::{num::NonZeroU32, str::FromStr};
+use std::num::NonZeroU32;
 
 /// The extension headers a request carried, as the typed values they decoded to.
 ///
@@ -39,13 +41,6 @@ pub struct ProtocolExtensions<'a> {
     pub join_level: Option<NonZeroU32>,
 }
 
-/// Whether a query parameter's `format`/`options` token names an entity
-/// representation (clause 4.5.1), decided by the owner enum rather than a
-/// hand-kept string array.
-fn is_entity_format(token: &str) -> bool {
-    ResponseFormat::from_str(token).is_ok()
-}
-
 /// Whether a decoded `NGSILD-Response-Format` names a temporal representation
 /// (clause 4.5.19). The plain `normalized` is the default, not a temporal
 /// override, so only the two value-oriented tokens count.
@@ -61,7 +56,7 @@ impl<'a> ProtocolExtensions<'a> {
     /// Returns [`ParameterError::FormatInvalid`] when the header names a
     /// rendering that is not one an entity has.
     pub fn apply_to_entity_get(&self, params: &mut GetEntityParams) -> Result<(), ParameterError> {
-        self.apply_format(&mut params.format, params.options.as_deref())?;
+        self.apply_format(&mut params.format, params.options)?;
         self.apply_dataset_ids(&mut params.dataset_id);
         self.apply_join(&mut params.join, &mut params.join_level);
         Ok(())
@@ -81,7 +76,7 @@ impl<'a> ProtocolExtensions<'a> {
             // that borrow, so owning its already-validated AST is necessary.
             params.scope_q = Some(scope.query().clone());
         }
-        self.apply_format(&mut params.format, params.options.as_deref())?;
+        self.apply_format(&mut params.format, params.options)?;
         self.apply_dataset_ids(&mut params.dataset_id);
         self.apply_join(&mut params.join, &mut params.join_level);
         Ok(())
@@ -116,8 +111,8 @@ impl<'a> ProtocolExtensions<'a> {
     ///
     /// `format` and the legacy `options` are two spellings of the same choice,
     /// so a rendering named in either one silences the header.
-    fn apply_format(&self, format: &mut Option<ResponseFormat>, options: Option<&str>) -> Result<(), ParameterError> {
-        let query_chose_a_format = format.is_some() || options.is_some_and(|options| options.split(',').any(|token| is_entity_format(token.trim())));
+    fn apply_format(&self, format: &mut Option<ResponseFormat>, options: Option<EntityRepresentationOptions>) -> Result<(), ParameterError> {
+        let query_chose_a_format = format.is_some() || options.is_some_and(|options| options.format.is_some());
         if query_chose_a_format {
             return Ok(());
         }
@@ -144,7 +139,7 @@ impl<'a> ProtocolExtensions<'a> {
     ///
     /// The header carried the ids as validated URNs; they are joined into the
     /// comma-separated form the `datasetId` parameter takes only here, once.
-    fn apply_dataset_ids(&self, target: &mut Option<Vec<urn_rs::Urn>>) {
+    fn apply_dataset_ids(&self, target: &mut Option<Vec<DatasetSelector>>) {
         if target.is_none()
             && let Some(dataset_ids) = self.dataset_ids
         {
@@ -223,7 +218,7 @@ mod tests {
         extensions.apply_to_entity_get(&mut params).expect("headers apply");
 
         pretty_assertions::assert_eq!(params.format, Some(ResponseFormat::Simplified));
-        pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ds:1"));
+        pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].to_string()), Some("urn:ds:1".to_owned()));
         pretty_assertions::assert_eq!(params.join, Some(JoinMode::Inline));
         pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(2));
     }
@@ -242,7 +237,7 @@ mod tests {
         extensions.apply_to_entity_get(&mut params).expect("headers apply");
 
         pretty_assertions::assert_eq!(params.format, Some(ResponseFormat::Concise));
-        pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].as_str()), Some("urn:ds:9"));
+        pretty_assertions::assert_eq!(params.dataset_id.as_deref().map(|ids| ids[0].to_string()), Some("urn:ds:9".to_owned()));
         pretty_assertions::assert_eq!(params.join, Some(JoinMode::Flat));
         pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(7));
     }

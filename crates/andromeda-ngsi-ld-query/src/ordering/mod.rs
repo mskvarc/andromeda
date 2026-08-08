@@ -4,4 +4,5 @@
 pub mod collation;
 pub mod compiled;
 pub mod geometry;
+pub mod parameters;
 pub mod term;

@@ -4,7 +4,7 @@
 //! Attribute-level mutations live in `attrs.rs`; batch forms live in `batch/`.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     event::change_event::{ChangeEvent, ChangeOrigin},
     service::entity::{
         EntityService,
@@ -24,7 +24,7 @@ use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, mutation::entity::merge_entity},
     notification::NotificationTrigger,
 };
-use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
+use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
 use chrono::Utc;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
@@ -105,7 +105,7 @@ impl EntityService {
         let id = id.to_string();
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
-        normalize_entity_attributes(&mut patch_json);
+        normalize_merge_fragment(&mut patch_json);
         let patch_expanded = Arc::new(self.engine.expand(patch_json, context).await?);
         validate_attribute_envelopes(&patch_expanded)?;
 

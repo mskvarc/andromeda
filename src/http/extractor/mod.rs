@@ -9,6 +9,7 @@ pub mod batch;
 pub mod context;
 pub mod entity_query;
 pub mod error;
+pub mod json_body;
 pub mod jsonld;
 pub mod language;
 pub mod prefer;

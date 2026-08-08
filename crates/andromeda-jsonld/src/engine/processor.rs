@@ -11,7 +11,7 @@ use crate::{
         context_url::{canonical_context_urls, context_urls_of, resolve_relative_context_urls, strip_context},
         options::{CompactOptions, ContextStripping},
         term_lookup::TermCache,
-        term_map::UserTermTableCache,
+        term_map::{user_term::UserTermTableCache, vocabulary::CoreVocabulary},
     },
     error::JsonLdError,
     hit_counter::HitCounter,
@@ -46,17 +46,26 @@ pub struct JsonLdEngine {
     /// differently, and this is where that decision lives rather than in a
     /// process-global.
     default_core_url: IriBuf,
+    /// Generated vocabulary IRIs validated once during engine construction.
+    core_vocabulary: Arc<CoreVocabulary>,
 }
 
 impl JsonLdEngine {
     /// Assemble an engine. Reached through [`JsonLdEngineBuilder`].
-    pub(crate) fn assembled(loader: HttpContextLoader, term_cache: TermCache, hit_counter: Option<Arc<HitCounter>>, default_core_url: IriBuf) -> JsonLdEngine {
+    pub(crate) fn assembled(
+        loader: HttpContextLoader,
+        term_cache: TermCache,
+        hit_counter: Option<Arc<HitCounter>>,
+        default_core_url: IriBuf,
+        core_vocabulary: CoreVocabulary,
+    ) -> JsonLdEngine {
         JsonLdEngine {
             loader: Arc::new(loader),
             term_cache,
             hit_counter,
             user_term_tables: Arc::new(UserTermTableCache::default()),
             default_core_url,
+            core_vocabulary: Arc::new(core_vocabulary),
         }
     }
 
@@ -72,6 +81,11 @@ impl JsonLdEngine {
     /// pin was configured.
     pub const fn default_core_url(&self) -> &IriBuf {
         &self.default_core_url
+    }
+
+    /// The generated vocabulary after construction-time IRI validation.
+    pub(crate) fn core_vocabulary(&self) -> &CoreVocabulary {
+        &self.core_vocabulary
     }
 
     /// The shared access counter, when one is attached.

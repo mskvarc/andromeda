@@ -1,4 +1,4 @@
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_jsonld::{
     core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
     engine::processor::JsonLdEngine,

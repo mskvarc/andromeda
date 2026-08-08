@@ -173,7 +173,7 @@ fn vehicle_registration_temporal(reg_id: &str, endpoint: &str, mode: &str) -> Va
         ],
         "endpoint": endpoint,
         "mode": mode,
-        "operations": ["queryTemporalEntity"],
+        "operations": ["queryTemporal"],
         "@context": TEST_SUITE_CONTEXT
     })
 }

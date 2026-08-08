@@ -211,7 +211,7 @@ mod tests {
     fn an_mqtt_uri_with_no_topic_is_rejected_because_there_is_nothing_to_publish_to() {
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883", None),
-            Err(EndpointParseError::MissingTopic | EndpointParseError::InvalidUri { .. })
+            Err(EndpointParseError::MissingTopic | EndpointParseError::InvalidUri(_))
         ));
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/", None),
@@ -227,7 +227,7 @@ mod tests {
         // delimiter, so the topic newtype's own tests cover it.)
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/sensors/+/data", None),
-            Err(EndpointParseError::InvalidTopic { .. })
+            Err(EndpointParseError::InvalidTopic(_))
         ));
     }
 

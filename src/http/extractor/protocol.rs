@@ -24,7 +24,7 @@ use headers::HeaderMapExt;
 /// Extracts language negotiation, Prefer header, NGSILD-Snapshot header,
 /// NGSILD-EntityMap header, and the Via header in a single pass.
 pub struct NgsiLdProtocolHeaders {
-    /// Resolved language filter from `lang` query param or `NGSILD-Language` header.
+    /// Language filter from the `NGSILD-Language` fallback header.
     pub language_filter: Option<LanguageFilter>,
     /// Parsed Prefer header (body format, version negotiation).
     pub prefer: PreferHeader,
@@ -149,14 +149,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extracts_language_from_query_param() {
+    async fn leaves_query_language_to_the_request_model() {
         let req = Request::builder().uri("/ngsi-ld/v1/entities?lang=en").body(()).unwrap();
         let (mut parts, _) = req.into_parts();
 
         let result = NgsiLdProtocolHeaders::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok());
         let headers = result.unwrap();
-        assert!(headers.language_filter.is_some());
+        assert!(headers.language_filter.is_none());
     }
 
     #[tokio::test]

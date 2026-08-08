@@ -1,5 +1,6 @@
 //! Query parameter types for subscription endpoints.
 
+use crate::options::{ListOptions, deserialize_list_options};
 use serde::Deserialize;
 
 /// Query parameters for `GET /subscriptions` (list subscriptions).
@@ -10,6 +11,7 @@ pub struct ListParams {
     pub limit: Option<u32>,
     /// How many results to skip before the page (`offset`).
     pub offset: Option<u32>,
-    /// The legacy representation selector, comma-separated (`options`).
-    pub options: Option<String>,
+    /// Typed count and system-attribute response options (`options`).
+    #[serde(default, deserialize_with = "deserialize_list_options")]
+    pub options: Option<ListOptions>,
 }

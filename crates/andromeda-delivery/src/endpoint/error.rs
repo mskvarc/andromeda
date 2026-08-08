@@ -6,12 +6,8 @@ use crate::endpoint::topic::MqttTopicError;
 #[derive(Debug, thiserror::Error)]
 pub enum EndpointParseError {
     /// The URI is not a URI.
-    #[error("invalid endpoint URI: {source}")]
-    InvalidUri {
-        /// The underlying parse failure.
-        #[from]
-        source: url::ParseError,
-    },
+    #[error("invalid endpoint URI: {0}")]
+    InvalidUri(#[from] url::ParseError),
     /// An `mqtt` URI named no broker host.
     #[error("MQTT URI missing host")]
     MissingHost,
@@ -19,12 +15,8 @@ pub enum EndpointParseError {
     #[error("MQTT URI must include a topic path")]
     MissingTopic,
     /// An `mqtt` URI's topic path is not a valid publish topic.
-    #[error("MQTT URI has an invalid topic: {source}")]
-    InvalidTopic {
-        /// Why the topic was rejected.
-        #[from]
-        source: MqttTopicError,
-    },
+    #[error("MQTT URI has an invalid topic: {0}")]
+    InvalidTopic(#[from] MqttTopicError),
     /// The scheme names a protocol this broker does not deliver over.
     #[error("unsupported endpoint URI scheme: {scheme}")]
     UnsupportedScheme {

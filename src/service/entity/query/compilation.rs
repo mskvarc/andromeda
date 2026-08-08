@@ -3,14 +3,13 @@
 //! [`CompiledEntityQuery`]: andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         compiled_cache::{CompiledQueryKey, LimitCap},
         query::{EntityQueryService, selector_compilation::compile_entity_selectors},
     },
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -86,7 +85,7 @@ impl EntityQueryService {
         let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), &expander).await?;
 
         let order_by = self.compile_order_terms(params, &prepared_context).await?;
-        let ordering_geometry = compile_ordering_geometry(params)?;
+        let ordering_geometry = compile_ordering_geometry(params);
 
         // Clause 5.7.2.4: distance ordering has no reference point without a
         // geo-query or an explicit `orderFrom`.
@@ -165,17 +164,15 @@ impl EntityQueryService {
     /// Compile the `orderBy` terms against the active context (clause 4.23).
     async fn compile_order_terms(&self, params: &EntityQueryParameters, context: &PreparedTermContext) -> Result<Vec<CompiledOrderTerm>, AndromedaError> {
         // Parsed and validated at the query boundary (clause 4.23).
-        let collation = params.collation.clone();
+        let collation = params.ordering.collation.clone();
 
         let mut compiled = Vec::new();
-        let order_terms = match params.order_by.as_deref() {
-            Some(terms) => terms,
-            None => &[],
-        };
+        let order_terms = &params.ordering.order_by;
         for term in order_terms {
-            let target = match RawOrderTarget::classify(&term.attr) {
+            let target = match RawOrderTarget::classify(term.attr.as_str()) {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,
+                RawOrderTarget::Scope => OrderTarget::Scope,
                 RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.engine().expand_term(name, context).await?),
             };
             compiled.push(CompiledOrderTerm {
@@ -197,17 +194,9 @@ impl EntityQueryService {
 
 /// Compile `orderFrom` and `orderGeometry` into the reference geometry a
 /// distance ordering measures from (clause 5.2.43).
-fn compile_ordering_geometry(params: &EntityQueryParameters) -> Result<Option<OrderingGeometry>, AndromedaError> {
-    let Some(ref order_from) = params.order_from else {
-        return Ok(None);
-    };
-    let coordinates: serde_json::Value = serde_json::from_str(order_from)
-        .map_err(|_| AndromedaError::entity_validation(format!("Invalid orderFrom value: '{order_from}' is not valid JSON")))?;
-    let geometry_type = params.order_geometry.as_deref().unwrap_or("Point");
-    let geojson = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
-    let geometry = Geometry::from_geojson_value(&geojson)
-        .map_err(|error| AndromedaError::entity_validation(format!("Invalid orderFrom/orderGeometry combination: {error}")))?;
-    Ok(Some(OrderingGeometry::new(geometry)))
+fn compile_ordering_geometry(params: &EntityQueryParameters) -> Option<OrderingGeometry> {
+    // The compiled query owns the geometry independently of the reusable request parameters.
+    params.ordering.geometry.clone()
 }
 
 /// Read an expanded `expandValues` / `jsonKeys` selection as the attribute

@@ -2,8 +2,12 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::{AndromedaError, ResultInstanceExt},
-    http::{error::problem::NgsiLdError, extractor::snapshot_purge_q::SnapshotPurgeQ, validation::parse_snapshot_id},
+    error::{AndromedaError, ResultInstanceExt},
+    http::{
+        error::problem::NgsiLdError,
+        extractor::{json_body::invalid_json_body, snapshot_purge_q::SnapshotPurgeQ},
+        validation::parse_snapshot_id,
+    },
     service::snapshot::PurgeOutcome,
 };
 use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
@@ -11,19 +15,9 @@ use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, e
 use axum::{
     Json,
     extract::{OriginalUri, Path, rejection::JsonRejection},
-    http::{HeaderMap, HeaderValue, StatusCode, Uri},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
-
-/// Map an axum JSON body rejection to a clause-5.5.2 `InvalidRequest` (400).
-///
-/// The snapshot bodies are extracted as a `Result` so that bad JSON, or a
-/// well-formed value the typed fields reject -- an out-of-range
-/// `snapshotPriority`, say -- is a 400 rather than axum's default 422, a status
-/// NGSI-LD does not use.
-fn invalid_snapshot_body(rejection: JsonRejection, uri: &Uri) -> AndromedaError {
-    AndromedaError::malformed_request(rejection.body_text()).with_instance(uri)
-}
 
 /// POST /ngsi-ld/v1/snapshots -- Create a new snapshot.
 pub async fn create(
@@ -31,7 +25,7 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     input: Result<Json<SnapshotInput>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
-    let Json(input) = input.map_err(|rejection| invalid_snapshot_body(rejection, &uri))?;
+    let Json(input) = input.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::snapshot_validation))?;
     let snapshot = state.snapshots.create(input).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
@@ -62,7 +56,7 @@ pub async fn update(
     Path(snapshot_id): Path<String>,
     patch: Result<Json<SnapshotPatch>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
-    let Json(patch) = patch.map_err(|rejection| invalid_snapshot_body(rejection, &uri))?;
+    let Json(patch) = patch.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::snapshot_validation))?;
     let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_instance(&uri)?;
 

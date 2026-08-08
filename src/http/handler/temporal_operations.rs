@@ -2,19 +2,24 @@
 
 use crate::{
     api::tenant::TenantState,
-    core::error::ResultInstanceExt,
+    error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
         response::{collection::NgsiLdCollectionResponse, render::start_rendering},
     },
     service::{
-        csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings},
+        csource_forwarding::{
+            entity_result::collect_temporal_warnings,
+            operation::ForwardingOperation,
+            request::{CsrModeFilter, ForwardTemporalQueryRequest},
+        },
         temporal::{TemporalQueryResult, TemporalService},
     },
 };
+use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
-use andromeda_ngsi_ld_request::{body::temporal_query::TemporalQueryRequest, query::temporal::TemporalQueryParameters};
+use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use axum::{
     extract::OriginalUri,
     response::{IntoResponse, Response},
@@ -31,13 +36,12 @@ pub async fn query(
     JsonLd {
         value: request,
         context: body_context,
-    }: JsonLd<TemporalQueryRequest>,
+    }: JsonLd<Query>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
     let context = context.merge(body_context);
 
-    // Convert POST query body to TemporalQueryParameters using From impl
-    let params: TemporalQueryParameters = request.into();
+    let params = TemporalQueryParameters::try_from(request).with_instance(&uri).map_err(NgsiLdError::from)?;
 
     // ETSI GS CIM 009 clause 5.5.15.
     if let Some(snapshot_id) = snapshot_id {

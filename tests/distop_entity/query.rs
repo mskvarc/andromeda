@@ -279,10 +279,10 @@ async fn distop_entity_query_redirect_with_query_entity_op() {
     mock.stop();
 }
 
-/// Redirect with queryBatch operation forwards correctly.
+/// A GET entity query does not use the batch-query capability.
 #[tokio::test]
 #[serial]
-async fn distop_entity_query_redirect_with_query_batch_op() {
+async fn distop_entity_query_redirect_with_only_query_batch_does_not_forward() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
@@ -305,7 +305,8 @@ async fn distop_entity_query_redirect_with_query_batch_op() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entries = body.as_array().expect("response should be array");
-    assert!(entries.iter().any(|e| e["id"] == entity_id));
+    assert!(entries.is_empty());
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities").await, 0);
 
     delete_registration(&c, &reg_id).await;
     mock.stop();
@@ -570,10 +571,10 @@ async fn distop_entity_query_inclusive_by_id_with_query_entity_op() {
     mock.stop();
 }
 
-/// Query by entity ID with queryBatch operation.
+/// A GET query by entity ID does not use the batch-query capability.
 #[tokio::test]
 #[serial]
-async fn distop_entity_query_inclusive_by_id_with_query_batch_op() {
+async fn distop_entity_query_inclusive_by_id_with_only_query_batch_does_not_forward() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
@@ -597,7 +598,8 @@ async fn distop_entity_query_inclusive_by_id_with_query_batch_op() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entries = body.as_array().expect("response should be array");
-    assert!(entries.iter().any(|e| e["id"] == entity_id));
+    assert!(entries.is_empty());
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await, 0);
 
     delete_registration(&c, &reg_id).await;
     mock.stop();
@@ -626,6 +628,7 @@ async fn distop_entity_query_post_with_query_batch_op() {
 
     // Query via POST
     let query_body = json!({
+        "type": "Query",
         "entities": [{"id": entity_id, "type": "Vehicle"}]
     });
     let (status, _, body) = query_entities_post(&c, &query_body, &jsonld_link_value()).await;
@@ -638,10 +641,10 @@ async fn distop_entity_query_post_with_query_batch_op() {
     mock.stop();
 }
 
-/// Query via POST /entityOperations/query with queryEntity operation.
+/// A batch POST query does not use the single-query capability.
 #[tokio::test]
 #[serial]
-async fn distop_entity_query_post_with_query_entity_op() {
+async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
     clean_database().await;
     let c = client();
     let mut mock = MockServer::start().await;
@@ -661,13 +664,15 @@ async fn distop_entity_query_post_with_query_entity_op() {
 
     // Query via POST
     let query_body = json!({
+        "type": "Query",
         "entities": [{"id": entity_id, "type": "Vehicle"}]
     });
     let (status, _, body) = query_entities_post(&c, &query_body, &jsonld_link_value()).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let entries = body.as_array().expect("response should be array");
-    assert!(entries.iter().any(|e| e["id"] == entity_id));
+    assert!(entries.is_empty());
+    pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await, 0);
 
     delete_registration(&c, &reg_id).await;
     mock.stop();

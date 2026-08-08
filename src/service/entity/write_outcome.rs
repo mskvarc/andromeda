@@ -8,7 +8,7 @@
 //! [`AtomicWrite`]: crate::service::entity::atomic_write::AtomicWrite
 //! [`WriteCoordinator::commit`]: crate::service::entity::write_coordinator::WriteCoordinator::commit
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
 use derive_more::IsVariant;
 

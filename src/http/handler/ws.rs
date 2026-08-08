@@ -22,7 +22,7 @@ use tracing::{debug, trace};
 
 use crate::{
     api::tenant::TenantState,
-    core::error::{AndromedaError, ResultInstanceExt},
+    error::{AndromedaError, ResultInstanceExt},
     http::error::problem::NgsiLdError,
 };
 use andromeda_delivery::{

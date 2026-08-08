@@ -6,7 +6,7 @@
 //! transaction, so rows are the store's vocabulary and events are this
 //! module's.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_model::expanded::instance_key::{AttributeInstanceKey, removed_attribute_instances};
 use derive_more::IsVariant;
 use iri_rs::IriBuf;

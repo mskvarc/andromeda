@@ -1,8 +1,9 @@
 //! The HTTP surface: which route reaches which handler.
 
 use crate::{
-    api::{state::AppState, tenant_factory::BrokerTenantFactory},
-    core::{config::RuntimeConfig, error::AndromedaError},
+    api::{state::BrokerState, tenant_factory::BrokerTenantFactory},
+    config::RuntimeConfig,
+    error::AndromedaError,
     http::handler::{
         attribute,
         csource_registration,
@@ -10,6 +11,7 @@ use crate::{
         entity,
         entity_map,
         entity_operations,
+        entity_type,
         health,
         info,
         jsonld_context,
@@ -19,7 +21,6 @@ use crate::{
         temporal,
         temporal_operations,
         tenant,
-        types,
         version,
         ws,
     },
@@ -45,7 +46,15 @@ use std::sync::Arc;
 use tower_helmet::HelmetLayer;
 use tracing::info;
 
-pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, AndromedaError> {
+/// HTTP router together with the tenant runtimes it serves.
+pub struct BrokerHttp {
+    /// Fully configured broker router.
+    pub router: Router,
+    /// Tenant manager to drain after the server stops accepting traffic.
+    pub tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
+}
+
+pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, AndromedaError> {
     info!("Constructing router!");
 
     let database_url = DatabaseUrl::parse(&config.database.url)?;
@@ -82,13 +91,13 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, Androme
     // it through a `Layer` impl on `Health` itself, which the orphan rule
     // stopped being possible the moment the type left the binary -- and which
     // did nothing this line does not.
-    let health_router: Router<AppState> = Router::new().route("/health", get(health::check)).layer(Extension(health_builder.build()));
+    let health_router: Router<BrokerState> = Router::new().route("/health", get(health::check)).layer(Extension(health_builder.build()));
 
     let version_service = Version::new(registry.main_pool().clone()); // clone: `PgPool` is a handle
-    let version_router: Router<AppState> = Router::new().route("/version", get(version::check)).layer(version_service);
+    let version_router: Router<BrokerState> = Router::new().route("/version", get(version::check)).layer(version_service);
 
-    let app_state = AppState {
-        tenants,
+    let broker_state = BrokerState {
+        tenants: Arc::clone(&tenants), // clone: the router and shutdown coordinator share the manager
         source_identity: config
             .info
             .source_identity
@@ -101,8 +110,8 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, Androme
         .nest("/ngsi-ld/v1", build_v1_router().merge(health_router).merge(version_router))
         .layer(DefaultBodyLimit::max(max_body))
         .layer(HelmetLayer::with_defaults())
-        .with_state(app_state);
-    Ok(router)
+        .with_state(broker_state);
+    Ok(BrokerHttp { router, tenants })
 }
 
 async fn favicon() -> impl IntoResponse {
@@ -113,32 +122,32 @@ async fn favicon() -> impl IntoResponse {
     )
 }
 
-fn build_v1_router() -> Router<AppState> {
+fn build_v1_router() -> Router<BrokerState> {
     let entity_routes = Router::new()
-        .route("/", post(entity::create))
-        .route("/", get(entity::query))
-        .route("/", delete(entity::delete_by_query))
-        .route("/", patch(entity::patch_no_id))
-        .route("/", put(entity::put_no_id))
-        .route("/{id}", get(entity::get))
-        .route("/{id}", delete(entity::delete))
-        .route("/{id}", patch(entity::merge))
-        .route("/{id}", put(entity::update))
-        .route("/{id}/attrs", post(entity::append_attrs))
-        .route("/{id}/attrs", patch(entity::update_attrs))
-        .route("/{id}/attrs/{attr_id}", patch(entity::partial_update_attr))
-        .route("/{id}/attrs/{attr_id}", delete(entity::delete_attr))
-        .route("/{id}/attrs/{attr_id}", put(entity::replace_attr));
+        .route("/", post(entity::create::create))
+        .route("/", get(entity::query::query))
+        .route("/", delete(entity::delete_by_query::delete_by_query))
+        .route("/", patch(entity::missing_identifier::patch_no_id))
+        .route("/", put(entity::missing_identifier::put_no_id))
+        .route("/{id}", get(entity::retrieve::get))
+        .route("/{id}", delete(entity::delete::delete))
+        .route("/{id}", patch(entity::merge::merge))
+        .route("/{id}", put(entity::replace::update))
+        .route("/{id}/attrs", post(entity::append_attributes::append_attrs))
+        .route("/{id}/attrs", patch(entity::update_attributes::update_attrs))
+        .route("/{id}/attrs/{attr_id}", patch(entity::partial_update_attribute::partial_update_attr))
+        .route("/{id}/attrs/{attr_id}", delete(entity::delete_attribute::delete_attr))
+        .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr));
 
     let entity_ops_routes = Router::new()
-        .route("/create", post(entity_operations::batch_create))
-        .route("/upsert", post(entity_operations::batch_upsert))
-        .route("/update", post(entity_operations::batch_update))
-        .route("/merge", post(entity_operations::batch_merge))
-        .route("/delete", post(entity_operations::batch_delete))
-        .route("/query", post(entity_operations::query));
+        .route("/create", post(entity_operations::create::batch_create))
+        .route("/upsert", post(entity_operations::upsert::batch_upsert))
+        .route("/update", post(entity_operations::update::batch_update))
+        .route("/merge", post(entity_operations::merge::batch_merge))
+        .route("/delete", post(entity_operations::delete::batch_delete))
+        .route("/query", post(entity_operations::query::query));
 
-    let types_routes = Router::new().route("/", get(types::query)).route("/{type_}", get(types::get));
+    let types_routes = Router::new().route("/", get(entity_type::query)).route("/{type_}", get(entity_type::get));
     let tenants_routes = Router::new().route("/", get(tenant::query)).route("/evictOrphans", post(tenant::evict_orphans));
 
     let attributes_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
@@ -150,14 +159,20 @@ fn build_v1_router() -> Router<AppState> {
         .route("/{context_id}", delete(jsonld_context::delete));
 
     let temporal_entity_routes = Router::new()
-        .route("/", post(temporal::create_or_update))
-        .route("/", get(temporal::query))
-        .route("/{id}", get(temporal::get))
-        .route("/{id}", delete(temporal::delete))
-        .route("/{id}/attrs", post(temporal::add_attrs))
-        .route("/{id}/attrs/{attr_id}", delete(temporal::delete_attr))
-        .route("/{id}/attrs/{attr_id}/{instance_id}", patch(temporal::update_attr_instance))
-        .route("/{id}/attrs/{attr_id}/{instance_id}", delete(temporal::delete_attr_instance));
+        .route("/", post(temporal::create_or_update::create_or_update))
+        .route("/", get(temporal::query::query))
+        .route("/{id}", get(temporal::retrieve::get))
+        .route("/{id}", delete(temporal::delete::delete))
+        .route("/{id}/attrs", post(temporal::add_attributes::add_attrs))
+        .route("/{id}/attrs/{attr_id}", delete(temporal::delete_attribute::delete_attr))
+        .route(
+            "/{id}/attrs/{attr_id}/{instance_id}",
+            patch(temporal::update_attribute_instance::update_attr_instance),
+        )
+        .route(
+            "/{id}/attrs/{attr_id}/{instance_id}",
+            delete(temporal::delete_attribute_instance::delete_attr_instance),
+        );
 
     let temporal_ops_routes = Router::new().route("/query", post(temporal_operations::query));
 

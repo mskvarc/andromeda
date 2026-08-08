@@ -1,7 +1,7 @@
 //! Partially updating one attribute instance (clause 5.6.4).
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         EntityService,
         attribute_envelope::validate_attribute_envelopes,
@@ -30,7 +30,7 @@ impl EntityService {
         &self,
         id: &Urn,
         attr_name: &str,
-        dataset_id: Option<&Urn>,
+        dataset_id: Option<&Uri>,
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
@@ -40,7 +40,7 @@ impl EntityService {
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name, &prepared_context).await?;
         // The tombstone catalogue records a datasetId as its raw string form.
-        let dataset_id_str = dataset_id.map(Urn::to_string);
+        let dataset_id_str = dataset_id.map(ToString::to_string);
 
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;

@@ -13,16 +13,15 @@
 //! replacing.
 
 use crate::{
-    core::error::AndromedaError,
+    error::AndromedaError,
     service::entity::{
         atomic_write::{AtomicWrite, WritePart},
         write_outcome::WriteOutcome,
     },
 };
-use async_trait::async_trait;
+use futures::future::BoxFuture;
 
 /// A store that can commit the parts of an atomic write it owns, atomically.
-#[async_trait]
 pub trait AnchorStore: Send + Sync + 'static {
     /// The transaction this store opens.
     type Transaction: Send;
@@ -31,21 +30,66 @@ pub trait AnchorStore: Send + Sync + 'static {
     fn native_parts(&self) -> &[WritePart];
 
     /// Open a transaction.
-    async fn begin(&self) -> Result<Self::Transaction, AndromedaError>;
+    fn begin<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Self::Transaction, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 
     /// Apply the entity mutation of every write, honouring each precondition,
     /// and report one outcome per write in the order they were given.
-    async fn apply_entities(&self, tx: &mut Self::Transaction, writes: &[AtomicWrite]) -> Result<Vec<WriteOutcome>, AndromedaError>;
+    fn apply_entities<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        tx: &'life1 mut Self::Transaction,
+        writes: &'life2 [AtomicWrite],
+    ) -> BoxFuture<'async_trait, Result<Vec<WriteOutcome>, AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
 
     /// Append the history of every write whose entity mutation landed.
-    async fn apply_history(&self, tx: &mut Self::Transaction, landed: &[&AtomicWrite]) -> Result<(), AndromedaError>;
+    fn apply_history<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        tx: &'life1 mut Self::Transaction,
+        landed: &'life2 [&'life3 AtomicWrite],
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Insert the notification outbox entries of every write that landed.
-    async fn apply_outbox(&self, tx: &mut Self::Transaction, landed: &[&AtomicWrite]) -> Result<(), AndromedaError>;
+    fn apply_outbox<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        tx: &'life1 mut Self::Transaction,
+        landed: &'life2 [&'life3 AtomicWrite],
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Enqueue the deferred side-effect jobs of every write that landed.
-    async fn apply_side_effects(&self, tx: &mut Self::Transaction, landed: &[&AtomicWrite]) -> Result<(), AndromedaError>;
+    fn apply_side_effects<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+        &'life0 self,
+        tx: &'life1 mut Self::Transaction,
+        landed: &'life2 [&'life3 AtomicWrite],
+    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        'life3: 'async_trait,
+        Self: 'async_trait;
 
     /// Commit, and only then release whatever the commit made visible.
-    async fn commit(&self, tx: Self::Transaction) -> Result<(), AndromedaError>;
+    fn commit<'life0, 'async_trait>(&'life0 self, tx: Self::Transaction) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
 }

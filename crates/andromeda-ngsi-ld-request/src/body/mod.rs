@@ -5,5 +5,3 @@
 //! query it stands for rather than being interpreted separately.
 
 pub mod entity_map;
-pub mod query;
-pub mod temporal_query;

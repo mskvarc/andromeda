@@ -7,7 +7,7 @@
 //! holds, and clause 5.5.2 provides `OperationNotSupported` precisely so that
 //! answer can be refused instead of given slowly and silently.
 
-use crate::core::error::AndromedaError;
+use crate::error::AndromedaError;
 use andromeda_ngsi_ld_query::entity_selection::EntitySelection;
 use andromeda_postgresql_context_store::entity::storage_profile::StorageProfile;
 
