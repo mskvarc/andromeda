@@ -14,7 +14,7 @@
 use crate::{
     entity::GetEntityParams,
     error::ParameterError,
-    query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
+    query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
@@ -173,7 +173,7 @@ mod tests {
         entity::GetEntityParams,
         error::ParameterError,
         protocol::ProtocolExtensions,
-        query::{entity::EntityQueryParameters, temporal::TemporalQueryParameters},
+        query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
     };
     use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;

@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
 use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 
 /// Fully-resolved CSR update values for a single row. Every field carries
@@ -41,7 +42,7 @@ pub struct ResolvedCsrUpdate {
     /// New scope strings.
     pub scope: Option<Vec<String>>,
     /// New refresh-rate duration string.
-    pub refresh_rate: Option<String>,
+    pub refresh_rate: Option<Iso8601Duration>,
     /// New management object.
     pub management: Option<Value>,
     /// New context-source-info object.
@@ -97,7 +98,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let refresh_rate = fragment
         .refresh_rate
         .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or_else(|| existing.access.refresh_rate.map(|duration| duration.to_string()));
+        .unwrap_or(existing.access.refresh_rate);
     let management = fragment.management.clone().unwrap_or(existing.access.management); // clone: own fragment side
     let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.access.context_source_info); // clone: own fragment side
     let jsonld_context = fragment

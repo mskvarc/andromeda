@@ -228,7 +228,9 @@ async fn build_tenant_state(
                     continue;
                 }
                 if let Err(error) = flush_repo.flush_hits(&pending).await {
-                    tracing::warn!(error = %error, count = pending.len(), event = "context_hit_flush_failed");
+                    let count = pending.len();
+                    hit_counter.requeue(pending);
+                    tracing::warn!(error = %error, count, event = "context_hit_flush_failed");
                 }
             }
         }));

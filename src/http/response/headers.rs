@@ -6,19 +6,18 @@ use andromeda_ngsi_ld_http_headers::{
     ngsild_snapshot::NgsiLdSnapshot,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{EntityMapId, SnapshotId};
 use andromeda_ngsi_ld_render::context::ContextLocation;
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
 use iri_rs::IriRefBuf;
-use urn_rs::Urn;
 
 /// Options for applying common NGSI-LD headers to a response.
 pub struct CommonHeadersOptions<'a> {
     /// `Location` header value for created resources.
     pub location: Option<&'a str>,
     /// NGSILD-EntityMap header URI for entity map scoping (clause 5.7.3.4).
-    pub entity_map_uri: Option<&'a str>,
+    pub entity_map_uri: Option<&'a EntityMapId>,
     /// NGSILD-Snapshot header URN for snapshot-scoped responses (clause 6.3.22).
     pub snapshot_uri: Option<&'a SnapshotId>,
     /// NGSILD-Warning header values from distributed forwarding (clause 6.3.17).
@@ -39,10 +38,8 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf]
         headers.insert("Location", val);
     }
 
-    if let Some(uri) = options.entity_map_uri
-        && let Ok(urn) = uri.parse::<Urn>()
-    {
-        headers.typed_insert(NgsiLdEntityMap::new(urn));
+    if let Some(id) = options.entity_map_uri {
+        headers.typed_insert(NgsiLdEntityMap::new(id.clone()));
     }
 
     if let Some(snap_urn) = options.snapshot_uri {

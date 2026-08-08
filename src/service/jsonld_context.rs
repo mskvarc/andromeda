@@ -12,6 +12,7 @@ use andromeda_postgresql_context_store::jsonld_context::{
     repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
 };
 use chrono::Utc;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tracing::debug;
@@ -175,7 +176,9 @@ impl JsonLdContextService {
         }
         // Also invalidate by identifier, which is the URL a locally hosted
         // context is referenced by.
-        self.engine.invalidate_context(identifier).await;
+        if let Ok(identifier_iri) = IriBuf::new(identifier.to_owned()) {
+            self.engine.invalidate_context(&identifier_iri).await;
+        }
         Ok(())
     }
 }

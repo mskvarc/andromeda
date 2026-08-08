@@ -33,7 +33,7 @@ use andromeda_ngsi_ld_query::{
         expansion::{expand_attrs, expand_projection_terms},
     },
 };
-use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::EntityQueryParameters};
+use andromeda_ngsi_ld_request::query::{SharedQueryParams, entity::parameters::EntityQueryParameters};
 use iri_rs::IriBuf;
 use std::{collections::HashSet, sync::Arc};
 

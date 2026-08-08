@@ -300,7 +300,7 @@ fn coerced_scalar(text: &str, coercion: Option<&TermCoercion>, term_map: &BatchT
         // caught in `expand_metadata` before dispatch, so this arm is a
         // completeness guard rather than the live path.
         Some(TermCoercion::Json) => return json_literal(&Value::String(text.to_owned())),
-        Some(TermCoercion::TypeIri(declared)) => typed_value(&term_map.expand_iri(declared), text),
+        Some(TermCoercion::TypeIri(declared)) => typed_value(&term_map.expand_iri(declared.as_str()), text),
         None => {
             let mut node = Map::with_capacity(1);
             node.insert("@value".to_owned(), Value::String(text.to_owned()));

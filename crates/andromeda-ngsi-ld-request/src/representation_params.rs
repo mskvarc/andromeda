@@ -2,7 +2,7 @@
 //! representation (clause 4.5.1).
 //!
 //! `format` is the current selector and `options` its legacy predecessor. Both
-//! the GET-query parameter set ([`crate::query::entity::EntityQueryParameters`])
+//! the GET-query parameter set ([`crate::query::entity::parameters::EntityQueryParameters`])
 //! and the single-entity GET parameter set ([`crate::entity::GetEntityParams`])
 //! carry them with identical grammar, so resolving them into a representation
 //! and rejecting values outside the grammar live here once rather than in each.

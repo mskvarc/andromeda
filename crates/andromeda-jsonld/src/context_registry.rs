@@ -7,13 +7,14 @@
 
 use crate::core_context_precedence::without_embedded_core_context;
 use dashmap::DashMap;
+use iri_rs::IriBuf;
 use std::sync::Arc;
 
 /// A thread-safe map from context URL to a parsed context document.
 #[derive(Debug, Default, Clone)]
 pub struct ContextRegistry {
     /// The registered documents, shared by every clone of the registry.
-    contexts: Arc<DashMap<String, Arc<jsonld_syntax::Value>>>,
+    contexts: Arc<DashMap<IriBuf, Arc<jsonld_syntax::Value>>>,
 }
 
 impl ContextRegistry {
@@ -29,14 +30,13 @@ impl ContextRegistry {
     /// Core — appended last per clause 5.5.7 — stays the single occurrence and a
     /// registered user context that redefines a core term resolves to the Core's
     /// definition rather than failing.
-    pub fn register(&self, url: impl Into<String>, value: jsonld_syntax::Value) {
-        let url = url.into();
-        let normalized = without_embedded_core_context(&url, value);
+    pub fn register(&self, url: IriBuf, value: jsonld_syntax::Value) {
+        let normalized = without_embedded_core_context(url.as_str(), value);
         self.contexts.insert(url, Arc::new(normalized));
     }
 
     /// The document registered for a URL, if there is one.
-    pub fn get(&self, url: &str) -> Option<Arc<jsonld_syntax::Value>> {
+    pub fn get(&self, url: &IriBuf) -> Option<Arc<jsonld_syntax::Value>> {
         self.contexts.get(url).map(|entry| Arc::clone(entry.value()))
     }
 }
@@ -44,6 +44,7 @@ impl ContextRegistry {
 #[cfg(test)]
 mod tests {
     use crate::{context_registry::ContextRegistry, core_context::NGSI_LD_CORE_CONTEXT_V19_URL};
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     #[test]
@@ -55,13 +56,14 @@ mod tests {
         // own new terms are kept.
         let registry = ContextRegistry::new();
         registry.register(
-            "https://example.com/user.jsonld",
+            IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL"),
             jsonld_syntax::Value::from_serde_json(json!({
                 "@context": [NGSI_LD_CORE_CONTEXT_V19_URL, { "speed": "https://example.com/speed" }]
             })),
         );
 
-        let registered = registry.get("https://example.com/user.jsonld").expect("registered");
+        let url = IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL");
+        let registered = registry.get(&url).expect("registered");
 
         pretty_assertions::assert_eq!(
             jsonld_syntax::Value::into_serde_json((*registered).clone()),
@@ -71,6 +73,7 @@ mod tests {
 
     #[test]
     fn an_unregistered_url_resolves_to_nothing() {
-        assert!(ContextRegistry::new().get("https://example.com/absent.jsonld").is_none());
+        let url = IriBuf::new("https://example.com/absent.jsonld".to_string()).expect("valid URL");
+        assert!(ContextRegistry::new().get(&url).is_none());
     }
 }

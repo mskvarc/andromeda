@@ -30,9 +30,9 @@ impl SnapshotStore for SnapshotRepository {
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8::snapshot_status, $9, $10, $11, $12, $13, $14)",
         )
         .bind(params.id.as_str())
-        .bind(params.snapshot_queries_json)
-        .bind(params.snapshot_temporal_queries_json)
-        .bind(params.snapshot_lifetime)
+        .bind(params.snapshot_queries.map(serde_json::to_value).transpose()?)
+        .bind(params.snapshot_temporal_queries.map(serde_json::to_value).transpose()?)
+        .bind(params.snapshot_lifetime.map(ToString::to_string))
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
         .bind(params.receiver_info_json)

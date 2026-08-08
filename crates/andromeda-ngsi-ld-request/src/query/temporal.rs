@@ -10,6 +10,7 @@ use crate::{
             deserialize_optional_attribute_names,
             deserialize_optional_dataset_urns,
             deserialize_optional_filter_expr,
+            deserialize_optional_iso8601_duration,
             deserialize_optional_pattern,
             deserialize_optional_uri_csv,
         },
@@ -35,6 +36,7 @@ use andromeda_ngsi_ld_query::{
     type_selection::grammar::TypeExprRaw,
 };
 use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer, de::Error};
 use urn_rs::Urn;
 
@@ -197,7 +199,8 @@ pub struct TemporalQueryParameters {
     pub entity_map: Option<bool>,
     /// How long a created entity map lives, as an ISO 8601 duration (`entityMapLifetime`).
     #[serde(rename = "entityMapLifetime")]
-    pub entity_map_lifetime: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_iso8601_duration")]
+    pub entity_map_lifetime: Option<Iso8601Duration>,
     /// Whether attributes split across Context Sources are merged after forwarding (`splitEntities`).
     #[serde(rename = "splitEntities")]
     pub split_entities: Option<bool>,
@@ -392,6 +395,7 @@ impl From<TemporalQueryRequest> for TemporalQueryParameters {
     }
 }
 
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;

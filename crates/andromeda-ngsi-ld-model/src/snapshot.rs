@@ -112,10 +112,10 @@ pub struct Snapshot {
     pub id: SnapshotId,
     /// Entity queries the snapshot materialises.
     #[builder(default)]
-    pub snapshot_queries: Option<Vec<Value>>,
+    pub snapshot_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
     /// Temporal queries the snapshot materialises.
     #[builder(default)]
-    pub snapshot_temporal_queries: Option<Vec<Value>>,
+    pub snapshot_temporal_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
     /// How long the snapshot stays usable after its last use.
     #[builder(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,
@@ -236,10 +236,10 @@ pub struct SnapshotInput {
     pub id: Option<SnapshotId>,
     /// Entity queries to materialise.
     #[serde(default)]
-    pub snapshot_queries: Option<Vec<Value>>,
+    pub snapshot_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
     /// Temporal queries to materialise.
     #[serde(default)]
-    pub snapshot_temporal_queries: Option<Vec<Value>>,
+    pub snapshot_temporal_queries: Option<Vec<crate::snapshot_query::SnapshotQuery>>,
     /// How long the snapshot should stay usable.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,

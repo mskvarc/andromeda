@@ -31,6 +31,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -84,7 +85,7 @@ fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, Androme
             .get("scope")
             .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'scope' value: {}", e)))) // clone: serde_json::from_value consumes the Value
             .transpose()?,
-        refresh_rate: payload.get("refreshRate").and_then(|v| v.as_str()),
+        refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
         management: payload.get("management"),
         context_source_info: payload.get("contextSourceInfo"),
         jsonld_context: payload.get("jsonldContext").and_then(|v| v.as_str()),
@@ -179,7 +180,7 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
                 }
             })
             .transpose()?,
-        refresh_rate: extract_optional_string(fragment, "refreshRate"),
+        refresh_rate: extract_optional_duration(fragment, "refreshRate")?,
         management: extract_optional_value(fragment, "management"),
         context_source_info: extract_optional_value(fragment, "contextSourceInfo"),
         jsonld_context: extract_optional_string(fragment, "jsonldContext"),
@@ -191,6 +192,22 @@ fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragment, Androm
 /// For nullable string fields: absent -> None, null -> Some(None), value -> Some(Some(s))
 fn extract_optional_string(payload: &Value, key: &str) -> Option<Option<String>> {
     payload.get(key).map(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+}
+
+fn parse_duration_value(value: &Value, key: &str) -> Result<Iso8601Duration, AndromedaError> {
+    let raw = value
+        .as_str()
+        .ok_or_else(|| AndromedaError::csr_validation(format!("'{key}' must be a string")))?;
+    raw.parse::<Iso8601Duration>()
+        .map_err(|error| AndromedaError::csr_validation(format!("Invalid '{key}' value '{raw}': {error:?}")))
+}
+
+fn extract_optional_duration(payload: &Value, key: &str) -> Result<Option<Option<Iso8601Duration>>, AndromedaError> {
+    match payload.get(key) {
+        None => Ok(None),
+        Some(value) if value.is_null() => Ok(Some(None)),
+        Some(value) => Ok(Some(Some(parse_duration_value(value, key)?))),
+    }
 }
 
 /// For nullable Value fields: absent -> None, null -> Some(None), value -> Some(Some(v))
@@ -390,18 +407,8 @@ impl CsourceRegistrationService {
 
         // Parse temporal filter
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
-            let parsed_time_at = chrono::DateTime::parse_from_rfc3339(time_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .map_err(|_| AndromedaError::csr_validation("Invalid timeAt: must be ISO 8601 date-time"))?;
-            let parsed_end_time_at = params
-                .end_time_at
-                .as_deref()
-                .map(|s| {
-                    chrono::DateTime::parse_from_rfc3339(s)
-                        .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .map_err(|_| AndromedaError::csr_validation("Invalid endTimeAt: must be ISO 8601 date-time"))
-                })
-                .transpose()?;
+            let parsed_time_at = *time_at;
+            let parsed_end_time_at = params.end_time_at;
             // `timerel` and `timeproperty` were validated as their enums at the
             // query boundary.
             let parsed_timerel = *timerel;

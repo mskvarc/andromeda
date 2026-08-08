@@ -18,6 +18,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes;
 use dashmap::DashMap;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::{
     collections::HashMap,
@@ -39,18 +40,18 @@ pub(crate) struct TermSemantics {
 type SemanticsTable = HashMap<Box<str>, TermSemantics>;
 
 /// Derived semantics tables, one per core-context URL, built on first use.
-static SEMANTICS_BY_URL: LazyLock<DashMap<String, Arc<SemanticsTable>>> = LazyLock::new(DashMap::new);
+static SEMANTICS_BY_URL: LazyLock<DashMap<IriBuf, Arc<SemanticsTable>>> = LazyLock::new(DashMap::new);
 
 /// The core context's term semantics for a deployment's effective core URL.
 ///
 /// The first batch resolving against a URL parses its embedded document; every
 /// later one reads the cached table.
-pub(crate) fn core_term_semantics(core_url: &str) -> Arc<SemanticsTable> {
+pub(crate) fn core_term_semantics(core_url: &IriBuf) -> Arc<SemanticsTable> {
     if let Some(cached) = SEMANTICS_BY_URL.get(core_url) {
         return Arc::clone(cached.value());
     }
     let table = Arc::new(derive_semantics(core_url));
-    SEMANTICS_BY_URL.insert(core_url.to_owned(), Arc::clone(&table));
+    SEMANTICS_BY_URL.insert(core_url.clone(), Arc::clone(&table));
     table
 }
 
@@ -58,9 +59,9 @@ pub(crate) fn core_term_semantics(core_url: &str) -> Arc<SemanticsTable> {
 ///
 /// The Andromeda extension context is folded in unconditionally: its terms
 /// join every deployment's vocabulary regardless of the core version.
-fn derive_semantics(core_url: &str) -> SemanticsTable {
+fn derive_semantics(core_url: &IriBuf) -> SemanticsTable {
     let mut table = HashMap::new();
-    if let Some(core_document) = NGSI_LD_CORE_CONTEXT_MAP.get(core_url) {
+    if let Some(core_document) = NGSI_LD_CORE_CONTEXT_MAP.get(core_url.as_str()) {
         accumulate_document(core_document, &mut table);
     }
     accumulate_document(ANDROMEDA_CORE_CONTEXT, &mut table);
@@ -133,6 +134,7 @@ mod tests {
             term_map::{TermCoercion, TermContainer},
         },
     };
+    use iri_rs::IriBuf;
 
     /// The derivation reads the real v1.9 declarations, not a hand-written copy.
     ///
@@ -144,7 +146,7 @@ mod tests {
     /// (`valueList`).
     #[test]
     fn the_table_reflects_the_v1_9_context_declarations() {
-        let semantics = core_term_semantics(NGSI_LD_CORE_CONTEXT_V19_URL);
+        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
 
         assert!(matches!(
             semantics.get("objectType").and_then(|s| s.coercion.as_ref()),
@@ -165,7 +167,7 @@ mod tests {
     /// released core context, so the derivation records nothing for them.
     #[test]
     fn terms_no_context_declares_are_absent() {
-        let semantics = core_term_semantics(NGSI_LD_CORE_CONTEXT_V19_URL);
+        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
         for phantom in ["instanceTimeAt", "previousTime", "timestamp"] {
             assert!(semantics.get(phantom).is_none(), "{phantom} is declared by no context");
         }
@@ -178,7 +180,7 @@ mod tests {
     fn every_annotated_v1_9_term_is_derived() {
         let document: serde_json::Value = serde_json::from_str(crate::core_context::NGSI_LD_CORE_CONTEXT_V19).expect("embedded v1.9 context parses");
         let context = document.get("@context").and_then(serde_json::Value::as_object).expect("a context object");
-        let semantics = core_term_semantics(NGSI_LD_CORE_CONTEXT_V19_URL);
+        let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
 
         for (term, declaration) in context {
             if term.starts_with('@') {

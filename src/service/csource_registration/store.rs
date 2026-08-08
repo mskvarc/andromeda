@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, Forwardin
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 
 /// Parameters for creating a new context source registration.
@@ -47,7 +48,7 @@ pub struct CreateCsrParams<'a> {
     /// Scope values for the registration.
     pub scope: Option<Vec<String>>,
     /// ISO 8601 duration between context source refreshes.
-    pub refresh_rate: Option<&'a str>,
+    pub refresh_rate: Option<Iso8601Duration>,
     /// Management information for the registration.
     pub management: Option<&'a Value>,
     /// Additional context source metadata entries.
@@ -131,7 +132,7 @@ pub struct CsrUpdateFragment {
     /// Updated scope values.
     pub scope: Option<Option<Vec<String>>>,
     /// Updated refresh rate duration.
-    pub refresh_rate: Option<Option<String>>,
+    pub refresh_rate: Option<Option<Iso8601Duration>>,
     /// Updated management information.
     pub management: Option<Option<Value>>,
     /// Updated context source metadata entries.

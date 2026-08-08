@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri as ResourceUri,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri;
 use urn_rs::Urn;
 
@@ -21,20 +21,6 @@ use urn_rs::Urn;
 pub fn parse_entity_id(id: &str, uri: &Uri) -> Result<Urn, NgsiLdError> {
     id.parse::<Urn>()
         .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid entity id: not a valid URI").with_instance(uri)))
-}
-
-/// Parse an optional `datasetId` query parameter as the URI it must be.
-///
-/// Absent leaves the target instance unselected; a present value that is not a
-/// valid URI is a clause 5.6 `BadRequestData`, since a `datasetId` is a URI
-/// (clause 4.5.5).
-pub fn parse_dataset_id(raw: Option<&str>, uri: &Uri) -> Result<Option<Urn>, NgsiLdError> {
-    raw.map(|value| {
-        value
-            .parse::<Urn>()
-            .map_err(|_| NgsiLdError::from(AndromedaError::malformed_request("Invalid datasetId: not a valid URI").with_instance(uri)))
-    })
-    .transpose()
 }
 
 /// Validate that a string is a valid NGSI-LD Name (clause 4.6.2) or a valid IRI.

@@ -18,7 +18,6 @@ use crate::{
     },
     service::{
         csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
-        entity_map::{parse_entity_map_urn, parse_iso8601_duration},
         geo_filter::matches_geo_query,
         subscription_matching::matches_scope_query,
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
@@ -128,8 +127,7 @@ pub async fn get(
     // EntityMap scoping (spec 5.7.3.4): if NGSILD-EntityMap header is present,
     // only entities in the map are accessible. Return 404 if not in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
-        state.entity_maps.validate_entity_in_map(&map_urn, &id).await.with_instance(&uri)?;
+        state.entity_maps.validate_entity_in_map(map_id.as_inner(), &id).await.with_instance(&uri)?;
     }
 
     let is_local = params.is_local();
@@ -199,7 +197,7 @@ pub async fn get(
         .render()?;
     let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
     if let Some(map_header) = entity_map_header {
-        builder = builder.with_entity_map_uri(map_header.into_inner().to_string());
+        builder = builder.with_entity_map_uri(map_header.into_inner());
     }
     if let Some(cr) = content_range {
         builder = builder.with_content_range(cr);
@@ -268,9 +266,12 @@ pub async fn query(
     // EntityMap scoping (spec 5.5.14): if NGSILD-EntityMap header is present,
     // scope the query to only the entity IDs in the map.
     if let Some(ref map_id) = entity_map_header {
-        let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
         let scoped_input = params.id.clone();
-        let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
+        let scoped = state
+            .entity_maps
+            .scope_query_ids(map_id.as_inner(), scoped_input.as_deref())
+            .await
+            .with_instance(&uri)?;
         params.id = Some(scoped);
 
         // EntityMap-scoped temporal queries may omit temporal bounds; default to
@@ -412,16 +413,11 @@ pub async fn query(
             .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::temporal_validation(format!("Invalid entity id URI '{}'", id))))
             .collect::<Result<Vec<_>, _>>()
             .with_instance(&uri)?;
-        let lifetime = params
-            .entity_map_lifetime
-            .as_deref()
-            .map(|raw| parse_iso8601_duration(Some(raw)))
-            .transpose()
-            .with_instance(&uri)?;
-        let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
-        Some(map.id.to_string())
+        let lifetime = params.entity_map_lifetime.as_ref();
+        let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+        Some(map.id.clone())
     } else if entity_map_header.is_some() {
-        entity_map_header.map(|h| h.into_inner().to_string())
+        entity_map_header.map(|h| h.into_inner())
     } else {
         None
     };
@@ -512,7 +508,7 @@ pub async fn delete_attr(
         DeleteScope::Single
     };
     service
-        .delete_attr(id.as_ref(), &attr_id, params.dataset_id.as_deref(), scope, &context)
+        .delete_attr(id.as_ref(), &attr_id, params.dataset_id.as_ref(), scope, &context)
         .await
         .with_instance(&uri)?;
     Ok(StatusCode::NO_CONTENT.into_response())

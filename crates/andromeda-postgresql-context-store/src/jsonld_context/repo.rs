@@ -7,10 +7,11 @@ use crate::{
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
 };
-use andromeda_jsonld::context_cache::ContextCache;
+use andromeda_jsonld::{context_cache::ContextCache, hit_counter::HitDelta};
 use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
 use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
 use async_trait::async_trait;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
 use urn_rs::{Urn, UrnBuilder};
@@ -218,7 +219,7 @@ impl JsonLdContextRepository {
     }
 
     /// Looks up internal id, kind, and optional URL for a context.
-    pub async fn get_kind_and_url(&self, identifier: &str) -> Result<Option<(String, ContextKind, Option<String>)>, ContextStoreError> {
+    pub async fn get_kind_and_url(&self, identifier: &str) -> Result<Option<(String, ContextKind, Option<IriBuf>)>, ContextStoreError> {
         let row_opt: Option<(String, String, Option<String>)> = sqlx::query_as(
             r#"
                 SELECT id, kind::text AS kind, url
@@ -235,6 +236,9 @@ impl JsonLdContextRepository {
                 let kind = kind_label
                     .parse::<ContextKind>()
                     .map_err(|e| ContextStoreError::Internal(format!("Invalid JSON-LD context kind '{kind_label}': {e}")))?;
+                let url = url
+                    .map(|raw| IriBuf::new(raw.clone()).map_err(|error| ContextStoreError::Internal(format!("stored context URL is invalid: {}", error.0))))
+                    .transpose()?;
                 Ok((id, kind, url))
             })
             .transpose()
@@ -263,12 +267,12 @@ impl JsonLdContextRepository {
     /// in `jsonld_contexts` are silently dropped: registry-resident
     /// contexts (core, preloaded) never get a row, so a counter bump for
     /// them is a no-op here and that is the intended behaviour.
-    pub async fn flush_hits(&self, deltas: &[(String, u64)]) -> Result<(), ContextStoreError> {
+    pub async fn flush_hits(&self, deltas: &[HitDelta]) -> Result<(), ContextStoreError> {
         if deltas.is_empty() {
             return Ok(());
         }
-        let urls: Vec<&str> = deltas.iter().map(|(u, _)| u.as_str()).collect();
-        let bigints: Vec<i64> = deltas.iter().map(|(_, n)| i64::try_from(*n).unwrap_or(i64::MAX)).collect();
+        let urls: Vec<&str> = deltas.iter().map(|delta| delta.url.as_str()).collect();
+        let bigints: Vec<i64> = deltas.iter().map(|delta| i64::try_from(delta.count).unwrap_or(i64::MAX)).collect();
 
         sqlx::query(
             r#"
@@ -289,9 +293,9 @@ impl JsonLdContextRepository {
 
 #[async_trait]
 impl ContextCache for JsonLdContextRepository {
-    async fn get(&self, url: &str) -> Option<Value> {
+    async fn get(&self, url: &IriBuf) -> Option<Value> {
         let row_opt: Option<(sqlx::types::Json<Value>,)> = sqlx::query_as("SELECT payload FROM jsonld_contexts WHERE url = $1 OR id = $1")
-            .bind(url)
+            .bind(url.as_str())
             .fetch_optional(&self.pool)
             .await
             .ok()?;
@@ -299,7 +303,7 @@ impl ContextCache for JsonLdContextRepository {
         row_opt.map(|r| r.0.0)
     }
 
-    async fn put(&self, url: &str, payload: Value) {
+    async fn put(&self, url: &IriBuf, payload: Value) {
         let local_id = match UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4())).build() {
             Ok(urn) => urn.to_string(),
             Err(e) => {
@@ -313,7 +317,7 @@ impl ContextCache for JsonLdContextRepository {
              ON CONFLICT (url) DO NOTHING",
         )
         .bind(local_id)
-        .bind(url)
+        .bind(url.as_str())
         .bind(payload)
         .execute(&self.pool)
         .await;

@@ -60,6 +60,7 @@ use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
 use std::{collections::HashSet, sync::Arc};
+use urn_rs::Urn;
 
 /// Return short IRI token from fragment or last path segment.
 fn iri_short_name(iri: &str) -> Option<String> {
@@ -349,7 +350,7 @@ impl TemporalService {
         &self,
         entity_id: &str,
         attr_id: &str,
-        dataset_id: Option<&str>,
+        dataset_id: Option<&Urn>,
         scope: DeleteScope,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {

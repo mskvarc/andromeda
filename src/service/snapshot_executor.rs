@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::{geo::input::GeoQueryInput, pattern::Pattern};
 use andromeda_ngsi_ld_request::query::{
     deserialization::OptionalGeoQuery,
-    entity::EntityQueryParameters,
+    entity::parameters::EntityQueryParameters,
     entity_selector::EntitySelectorParams,
     temporal::TemporalQueryParameters,
 };
@@ -88,17 +88,17 @@ impl SnapshotExecutor {
         let mut any_failure = false;
         let mut all_empty = true;
 
-        if let Some(raw_queries) = &snapshot.snapshot_queries {
-            for (idx, raw_query) in raw_queries.iter().enumerate() {
-                let detail = self.run_entity_query(&snapshot.id, raw_query, idx).await;
+        if let Some(queries) = &snapshot.snapshot_queries {
+            for (idx, query) in queries.iter().enumerate() {
+                let detail = self.run_entity_query(&snapshot.id, query, idx).await;
                 update_aggregate_flags(&detail, &mut any_success_with_results, &mut any_failure, &mut all_empty);
                 queries_details.push(detail);
             }
         }
 
-        if let Some(raw_queries) = &snapshot.snapshot_temporal_queries {
-            for (idx, raw_query) in raw_queries.iter().enumerate() {
-                let detail = self.run_temporal_query(&snapshot.id, raw_query, idx).await;
+        if let Some(queries) = &snapshot.snapshot_temporal_queries {
+            for (idx, query) in queries.iter().enumerate() {
+                let detail = self.run_temporal_query(&snapshot.id, query, idx).await;
                 update_aggregate_flags(&detail, &mut any_success_with_results, &mut any_failure, &mut all_empty);
                 temporal_queries_details.push(detail);
             }
@@ -127,12 +127,7 @@ impl SnapshotExecutor {
         }
     }
 
-    async fn run_entity_query(&self, snapshot_id: &SnapshotId, raw_query: &Value, idx: usize) -> ExecutionResultDetails {
-        let query: SnapshotQuery = match serde_json::from_value(raw_query.clone()) {
-            Ok(value) => value,
-            Err(error) => return failure_detail(format!("Failed to parse snapshot query: {error}")),
-        };
-
+    async fn run_entity_query(&self, snapshot_id: &SnapshotId, query: &SnapshotQuery, idx: usize) -> ExecutionResultDetails {
         let params = match snapshot_query_to_entity_params(&query) {
             Ok(params) => params,
             Err(error) => return failure_detail(error.to_string()),
@@ -203,12 +198,7 @@ impl SnapshotExecutor {
         success_detail(count)
     }
 
-    async fn run_temporal_query(&self, snapshot_id: &SnapshotId, raw_query: &Value, idx: usize) -> ExecutionResultDetails {
-        let query: SnapshotQuery = match serde_json::from_value(raw_query.clone()) {
-            Ok(value) => value,
-            Err(error) => return failure_detail(format!("Failed to parse snapshot temporal query: {error}")),
-        };
-
+    async fn run_temporal_query(&self, snapshot_id: &SnapshotId, query: &SnapshotQuery, idx: usize) -> ExecutionResultDetails {
         let params = match snapshot_query_to_temporal_params(&query) {
             Ok(params) => params,
             Err(error) => return failure_detail(error.to_string()),

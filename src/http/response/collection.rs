@@ -5,7 +5,7 @@ use crate::http::response::{
     sonic_json::SonicJson,
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{EntityMapId, SnapshotId};
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
@@ -30,7 +30,7 @@ pub struct NgsiLdCollectionResponse {
     rendered: RenderedOutput,
     total_count: Option<usize>,
     content_range: Option<String>,
-    entity_map_uri: Option<String>,
+    entity_map_uri: Option<EntityMapId>,
     snapshot_uri: Option<SnapshotId>,
     warnings: Vec<NgsiLdWarning>,
 }
@@ -68,7 +68,7 @@ impl NgsiLdCollectionResponse {
     }
 
     /// Set the NGSILD-EntityMap header URI.
-    pub fn with_entity_map_uri(mut self, uri: String) -> Self {
+    pub fn with_entity_map_uri(mut self, uri: EntityMapId) -> Self {
         self.entity_map_uri = Some(uri);
         self
     }
@@ -117,7 +117,7 @@ impl IntoResponse for NgsiLdCollectionResponse {
             &self.rendered.context_links,
             CommonHeadersOptions {
                 location: None,
-                entity_map_uri: self.entity_map_uri.as_deref(),
+                entity_map_uri: self.entity_map_uri.as_ref(),
                 snapshot_uri: self.snapshot_uri.as_ref(),
                 warnings: &self.warnings,
                 context_location: self.rendered.context_location,

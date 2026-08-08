@@ -56,6 +56,8 @@ pub enum ForwardingOperation {
     UpdateEntityAttributes,
     /// Partially update a single attribute.
     PartialUpdateAttribute,
+    /// Replace a single attribute.
+    ReplaceEntityAttribute,
     /// Delete a single attribute from an entity.
     DeleteEntityAttribute,
     /// Batch create entities (per spec 5.6.7-5.6.10, 5.6.20).
@@ -109,6 +111,7 @@ impl ForwardingOperation {
             ForwardingOperation::PartialUpdateAttribute => ops
                 .iter()
                 .any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::PartialAttrUpdate)),
+            ForwardingOperation::ReplaceEntityAttribute => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::UpdateAttrs)),
             ForwardingOperation::DeleteEntityAttribute => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::DeleteAttrs)),
             ForwardingOperation::CreateBatch => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::CreateBatch)),
             ForwardingOperation::UpsertBatch => ops.iter().any(|op| matches!(op, CsrOperation::RedirectionOps | CsrOperation::UpsertBatch)),
@@ -1876,12 +1879,13 @@ mod tests {
         ForwardedTemporalEntities,
         ForwardedWriteResult,
         NgsiLdWarning,
+        build_forwarding_query_string,
         collect_forwarded_exclusive_attrs,
         collect_warnings,
         merge_query_results,
         strip_exclusive_attrs_from_value,
     };
-    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_model::registration::ForwardingMode;
     use url::Url;
 
@@ -2347,5 +2351,17 @@ mod tests {
         }];
         let result = merge_query_results(local, remote);
         pretty_assertions::assert_eq!(result.len(), 2, "Inclusive should add new entities");
+    }
+
+    #[test]
+    fn forwarding_query_string_renders_typed_ids_without_reparsing() {
+        let ids = vec![
+            "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid URI"),
+            "urn:ngsi-ld:Entity:b".parse::<Uri>().expect("valid URI"),
+        ];
+        pretty_assertions::assert_eq!(
+            build_forwarding_query_string(Some("Vehicle"), Some(&ids)),
+            "id=urn:ngsi-ld:Entity:a,urn:ngsi-ld:Entity:b&type=Vehicle"
+        );
     }
 }

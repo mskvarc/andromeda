@@ -78,7 +78,7 @@ pub enum EntitySelection {
 
 impl EntitySelection {
     /// Returns the entity ID, if present.
-    pub fn id(&self) -> Option<&Uri> {
+    pub const fn id(&self) -> Option<&Uri> {
         match self {
             EntitySelection::Object { id, .. } => id.as_ref(),
             EntitySelection::Id(id) => Some(id),
@@ -86,7 +86,7 @@ impl EntitySelection {
     }
 
     /// Returns the ID pattern, if present.
-    pub fn id_pattern(&self) -> Option<&Pattern> {
+    pub const fn id_pattern(&self) -> Option<&Pattern> {
         match self {
             EntitySelection::Object { id_pattern, .. } => id_pattern.as_ref(),
             EntitySelection::Id(_) => None,
@@ -94,7 +94,7 @@ impl EntitySelection {
     }
 
     /// Returns the entity type, if present.
-    pub fn type_(&self) -> Option<&TypeExprRaw> {
+    pub const fn type_(&self) -> Option<&TypeExprRaw> {
         match self {
             EntitySelection::Object { type_, .. } => type_.as_ref(),
             EntitySelection::Id(_) => None,

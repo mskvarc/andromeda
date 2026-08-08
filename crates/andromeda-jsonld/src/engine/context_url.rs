@@ -1,7 +1,7 @@
 //! Reading and rewriting the URLs a document's `@context` names.
 
 use crate::core_context::is_ngsi_ld_core_context_url;
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use iri_rs::{IriBuf, iri};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -47,16 +47,20 @@ pub(crate) fn is_absolute_iri(term: &str) -> bool {
 ///
 /// Used on the failure path, once the document itself has been consumed by
 /// the processor and only its context survives for the diagnostic.
-pub(crate) fn context_urls_of(context: &Value) -> Vec<String> {
+pub(crate) fn context_urls_of(context: &Value) -> Vec<IriBuf> {
     let mut urls = Vec::new();
     collect_context_urls(context, &mut urls);
     urls
 }
 
 /// Walk a `@context` node accumulating the URLs it names.
-fn collect_context_urls(value: &Value, urls: &mut Vec<String>) {
+fn collect_context_urls(value: &Value, urls: &mut Vec<IriBuf>) {
     match value {
-        Value::String(url) => urls.push(url.clone()), // clone: the document is borrowed and stays valid
+        Value::String(url) => {
+            if let Ok(url) = IriBuf::new(url.clone()) {
+                urls.push(url);
+            }
+        }
         Value::Array(items) => {
             for item in items {
                 collect_context_urls(item, urls);
@@ -75,12 +79,12 @@ fn collect_context_urls(value: &Value, urls: &mut Vec<String>) {
 ///
 /// A diagnostic that lists v1.6 and the versionless URL as two separate
 /// contexts sends the reader looking for a difference that is not there.
-pub(crate) fn canonical_context_urls(urls: &[String]) -> Vec<String> {
+pub(crate) fn canonical_context_urls(urls: &[IriBuf]) -> Vec<IriBuf> {
     let mut seen = HashSet::new();
     let mut canonical = Vec::with_capacity(urls.len());
     for url in urls {
-        let candidate = if is_ngsi_ld_core_context_url(url) {
-            NGSI_LD_CORE_CONTEXT_URL.to_string()
+        let candidate = if is_ngsi_ld_core_context_url(url.as_str()) {
+            IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"))
         } else {
             url.clone() // clone: the slice is borrowed and stays valid
         };
@@ -157,6 +161,7 @@ mod tests {
         engine::context_url::{canonical_context_urls, context_urls_of, is_absolute_iri, is_full_iri, resolve_relative_context_urls, strip_context},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriBuf;
     use serde_json::json;
 
     #[test]
@@ -195,20 +200,26 @@ mod tests {
         let context = json!(["https://example.com/a", { "@context": ["https://example.com/b"] }, { "term": "https://example.com/t" }]);
         pretty_assertions::assert_eq!(
             context_urls_of(&context),
-            vec!["https://example.com/a".to_string(), "https://example.com/b".to_string()]
+            vec![
+                IriBuf::new("https://example.com/a".to_string()).expect("valid URL"),
+                IriBuf::new("https://example.com/b".to_string()).expect("valid URL"),
+            ]
         );
     }
 
     #[test]
     fn core_context_aliases_collapse_to_one_canonical_url_for_a_diagnostic() {
         let urls = vec![
-            NGSI_LD_CORE_CONTEXT_V16_URL.to_string(),
-            NGSI_LD_CORE_CONTEXT_URL.to_string(),
-            "https://example.com/user.jsonld".to_string(),
+            IriBuf::new(NGSI_LD_CORE_CONTEXT_V16_URL.to_string()).expect("valid URL"),
+            IriBuf::new(NGSI_LD_CORE_CONTEXT_URL.to_string()).expect("valid URL"),
+            IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL"),
         ];
         pretty_assertions::assert_eq!(
             canonical_context_urls(&urls),
-            vec![NGSI_LD_CORE_CONTEXT_URL.to_string(), "https://example.com/user.jsonld".to_string()]
+            vec![
+                IriBuf::new(NGSI_LD_CORE_CONTEXT_URL.to_string()).expect("valid URL"),
+                IriBuf::new("https://example.com/user.jsonld".to_string()).expect("valid URL"),
+            ]
         );
     }
 

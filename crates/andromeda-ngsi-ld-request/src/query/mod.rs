@@ -10,7 +10,6 @@ pub mod csr;
 pub mod deserialization;
 pub mod entity;
 pub mod entity_selector;
-pub(crate) mod order_by;
 pub mod temporal;
 
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;

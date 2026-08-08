@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_query::{
         term::{OrderDirection, OrderTerm},
     },
 };
-use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use moka::future::Cache;
 use std::{
     fmt::Write,
@@ -301,5 +301,17 @@ mod tests {
     fn different_parameters_produce_different_keys() {
         assert_ne!(key("q=speed>50", LimitCap::Capped), key("q=speed>10", LimitCap::Capped));
         assert_ne!(key("limit=10", LimitCap::Capped), key("limit=20", LimitCap::Capped));
+    }
+
+    #[test]
+    fn typed_identifier_and_dataset_values_are_part_of_the_key() {
+        assert_ne!(
+            key("id=urn%3Angsi-ld%3AEntity%3Aa", LimitCap::Capped),
+            key("id=urn%3Angsi-ld%3AEntity%3Ab", LimitCap::Capped)
+        );
+        assert_ne!(
+            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Aa", LimitCap::Capped),
+            key("type=Vehicle&datasetId=urn%3Angsi-ld%3ADataset%3Ab", LimitCap::Capped)
+        );
     }
 }

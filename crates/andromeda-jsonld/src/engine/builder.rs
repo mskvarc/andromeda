@@ -14,7 +14,7 @@ use crate::{
     hit_counter::HitCounter,
     loader::http::HttpContextLoader,
 };
-use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use iri_rs::{IriBuf, iri};
 use jsonld_syntax::Parse;
 use std::{collections::HashMap, fs, path::PathBuf, sync::Arc};
 use tracing::info;
@@ -58,7 +58,7 @@ pub struct JsonLdEngineBuilder {
     preload_contexts: Option<HashMap<Url, PathBuf>>,
     /// The released core context a versionless reference expands against
     /// (clause 4.3.6.8), or `None` for the versionless core context.
-    default_core_url: Option<String>,
+    default_core_url: Option<IriBuf>,
 }
 
 impl JsonLdEngineBuilder {
@@ -84,8 +84,8 @@ impl JsonLdEngineBuilder {
     /// and the fastpath term table is derived from it. Left unset, a versionless
     /// reference expands against the versionless core context.
     #[must_use]
-    pub fn default_core_url(mut self, url: impl Into<String>) -> JsonLdEngineBuilder {
-        self.default_core_url = Some(url.into());
+    pub fn default_core_url(mut self, url: IriBuf) -> JsonLdEngineBuilder {
+        self.default_core_url = Some(url);
         self
     }
 
@@ -152,17 +152,17 @@ impl JsonLdEngineBuilder {
     /// Returns [`JsonLdError::EmbeddedContextInvalid`] if an embedded context
     /// will not parse, [`JsonLdError::ContextLoad`] if a preloaded file
     /// cannot be read, [`JsonLdError::ContextInvalid`] if one will not parse,
-    /// and [`JsonLdError::ContextLoad`] if the HTTP client cannot be built.
+    /// and [`JsonLdError::ClientBuild`] if the HTTP client cannot be built.
     pub fn build(self) -> Result<JsonLdEngine, JsonLdError> {
         for url in NGSI_LD_CORE_CONTEXT_URL_LIST {
-            self.registry.register(url.to_string(), embedded_core_context(url)?);
+            self.registry.register(iri_buf(url)?, embedded_core_context(url)?);
         }
         self.registry.register(
-            ANDROMEDA_CORE_CONTEXT_URL.to_string(),
+            iri_buf(ANDROMEDA_CORE_CONTEXT_URL)?,
             parse_embedded(ANDROMEDA_CORE_CONTEXT, ANDROMEDA_CORE_CONTEXT_URL)?,
         );
         self.registry.register(
-            DATA_INTEGRITY_CONTEXT_URL.to_string(),
+            iri_buf(DATA_INTEGRITY_CONTEXT_URL)?,
             parse_embedded(DATA_INTEGRITY_STUB, DATA_INTEGRITY_CONTEXT_URL)?,
         );
 
@@ -195,7 +195,9 @@ impl JsonLdEngineBuilder {
 
         // The pin defaults to the versionless core context, which the registry
         // resolves to whatever version this deployment embedded.
-        let default_core_url: Arc<str> = self.default_core_url.map_or_else(|| Arc::from(NGSI_LD_CORE_CONTEXT_URL), Arc::from);
+        let default_core_url = self
+            .default_core_url
+            .unwrap_or_else(|| IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld")));
         Ok(JsonLdEngine::assembled(
             loader,
             TermCache::new(self.cache_capacity, self.cache_ttl_seconds),
@@ -225,6 +227,11 @@ fn parse_embedded(payload: &str, url: &str) -> Result<jsonld_syntax::Value, Json
     Ok(value)
 }
 
+/// Parse a compile-time or configuration URL before it enters an internal registry.
+fn iri_buf(url: &str) -> Result<IriBuf, JsonLdError> {
+    IriBuf::new(url.to_string()).map_err(|error| JsonLdError::EmbeddedContextInvalid(format!("{url}: invalid IRI: {}", error.0)))
+}
+
 /// Read the preloaded contexts from disk and register them.
 fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &ContextRegistry) -> Result<Vec<(Url, PathBuf)>, JsonLdError> {
     let Some(entries) = entries else {
@@ -233,15 +240,17 @@ fn register_preloaded(entries: Option<&HashMap<Url, PathBuf>>, registry: &Contex
 
     let mut loaded = Vec::with_capacity(entries.len());
     for (url, file) in entries {
+        let typed_url = iri_buf(url.as_str())?;
         let raw = fs::read_to_string(file).map_err(|error| JsonLdError::ContextLoad {
-            url: url.to_string(),
+            url: typed_url.clone(),
             message: format!("Failed reading preloaded context file '{}': {error}", file.display()),
         })?;
         let (value, _) = jsonld_syntax::Value::parse_str(&raw).map_err(|error| JsonLdError::ContextInvalid {
-            url: url.to_string(),
+            url: typed_url.clone(),
             message: format!("Invalid preloaded context file '{}': {error}", file.display()),
         })?;
-        registry.register(url.as_str(), value);
+        let iri = iri_buf(url.as_str())?;
+        registry.register(iri, value);
         loaded.push((url.clone(), file.clone())); // clone: the configuration map is borrowed and stays valid
     }
     Ok(loaded)
@@ -256,6 +265,7 @@ mod tests {
         error::JsonLdError,
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+    use iri_rs::IriBuf;
     use serde_json::json;
     use std::{
         collections::HashMap,
@@ -444,22 +454,22 @@ mod tests {
         // the first setter win for the whole process (clause 4.3.6.8).
         let older = JsonLdEngine::builder()
             .allow_remote(false)
-            .default_core_url(NGSI_LD_CORE_CONTEXT_V16_URL)
+            .default_core_url(IriBuf::new(NGSI_LD_CORE_CONTEXT_V16_URL.to_string()).expect("valid core URL"))
             .build()
             .expect("engine builds");
         let newer = JsonLdEngine::builder()
             .allow_remote(false)
-            .default_core_url(NGSI_LD_CORE_CONTEXT_V19_URL)
+            .default_core_url(IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"))
             .build()
             .expect("engine builds");
 
-        pretty_assertions::assert_eq!(older.default_core_url(), NGSI_LD_CORE_CONTEXT_V16_URL);
-        pretty_assertions::assert_eq!(newer.default_core_url(), NGSI_LD_CORE_CONTEXT_V19_URL);
+        pretty_assertions::assert_eq!(older.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_V16_URL);
+        pretty_assertions::assert_eq!(newer.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_V19_URL);
     }
 
     #[test]
     fn an_engine_without_a_pin_defaults_to_the_versionless_core_context() {
         let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
-        pretty_assertions::assert_eq!(engine.default_core_url(), NGSI_LD_CORE_CONTEXT_URL);
+        pretty_assertions::assert_eq!(engine.default_core_url().as_str(), NGSI_LD_CORE_CONTEXT_URL);
     }
 }

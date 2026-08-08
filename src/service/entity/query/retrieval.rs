@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, pagination::CountPolicy};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_request::query::entity::EntityQueryParameters;
+use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use serde_json::Value;
 use std::collections::HashMap;
 use urn_rs::Urn;

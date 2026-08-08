@@ -16,7 +16,7 @@ use crate::{
             via::IncomingVia,
         },
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
-        validation::{parse_dataset_id, parse_entity_id, validate_attr_name},
+        validation::{parse_entity_id, validate_attr_name},
     },
     service::{
         csource_forwarding::{
@@ -34,7 +34,6 @@ use crate::{
             provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
             query::EntityQueryService,
         },
-        entity_map::{parse_entity_map_urn, parse_iso8601_duration},
         geo_filter::matches_geo_query,
         subscription_matching::matches_scope_query,
     },
@@ -493,9 +492,12 @@ pub async fn query(
 
         // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
         if let Some(ref map_id) = entity_map_header {
-            let map_urn = parse_entity_map_urn(map_id.as_str()).with_instance(&uri)?;
             let scoped_input = query.id.clone();
-            let scoped = state.entity_maps.scope_query_ids(&map_urn, scoped_input.as_deref()).await.with_instance(&uri)?;
+            let scoped = state
+                .entity_maps
+                .scope_query_ids(map_id.as_inner(), scoped_input.as_deref())
+                .await
+                .with_instance(&uri)?;
             query.id = Some(scoped);
         }
 
@@ -637,17 +639,12 @@ pub async fn query(
                 .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))
                 .collect::<Result<Vec<_>, _>>()
                 .with_instance(&uri)?;
-            let lifetime = query
-                .entity_map_lifetime
-                .as_deref()
-                .map(|raw| parse_iso8601_duration(Some(raw)))
-                .transpose()
-                .with_instance(&uri)?;
-            let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
-            Some(map.id.to_string())
+            let lifetime = query.entity_map_lifetime.as_ref();
+            let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+            Some(map.id.clone())
         } else if entity_map_header.is_some() {
             // Echo the same map back in the response header
-            entity_map_header.map(|h| h.into_inner().to_string())
+            entity_map_header.map(|h| h.into_inner())
         } else {
             None
         };
@@ -1064,7 +1061,7 @@ pub async fn partial_update_attr(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;
-    let dataset_id = parse_dataset_id(params.dataset_id.as_deref(), &uri)?;
+    let dataset_id = params.dataset_id.as_ref();
     let context = context.merge(body_context);
 
     // Forward to matching context sources
@@ -1095,7 +1092,7 @@ pub async fn partial_update_attr(
     if forwarded.is_empty() {
         // No matching CSRs — update locally
         service
-            .partial_update_attr(&id, &attr_id, dataset_id.as_ref(), fragment, &context)
+            .partial_update_attr(&id, &attr_id, dataset_id, fragment, &context)
             .await
             .with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -1115,7 +1112,7 @@ pub async fn partial_update_attr(
 
     // Inclusive: apply locally and return 204.
     // Local errors are non-fatal — the remote already succeeded.
-    if let Err(e) = service.partial_update_attr(&id, &attr_id, dataset_id.as_ref(), fragment, &context).await {
+    if let Err(e) = service.partial_update_attr(&id, &attr_id, dataset_id, fragment, &context).await {
         tracing::warn!(error = %e, entity_id = %id, attr_id = %attr_id, "Failed to apply inclusive partial_update_attr locally");
     }
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -1134,7 +1131,7 @@ pub async fn delete_attr(
     validate_attr_name(&attr_id, &uri)?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
-    let dataset_id = parse_dataset_id(params.dataset_id.as_deref(), &uri)?;
+    let dataset_id = params.dataset_id.as_ref();
     // NGSI-LD clause 5.6.5: `deleteAll` wins over `datasetId`, and with neither
     // present the default (no-datasetId) instance is the target.
     let selection = if delete_all {
@@ -1206,6 +1203,7 @@ pub async fn replace_attr(
     context: ContextUrl,
     Path((id, attr_id)): Path<(String, String)>,
     ValidatedQuery(params): ValidatedQuery<ReplaceAttrParams>,
+    IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -1214,13 +1212,52 @@ pub async fn replace_attr(
     let service = &state.entities;
     let id = parse_entity_id(&id, &uri)?;
     validate_attr_name(&attr_id, &uri)?;
-    let dataset_id = parse_dataset_id(params.dataset_id.as_deref(), &uri)?;
+    let dataset_id = params.dataset_id.as_ref();
     let context = context.merge(body_context);
 
-    service
-        .replace_attr(&id, &attr_id, dataset_id.as_ref(), fragment, &context)
+    let context_url = context.link_contexts().first().map(|s| s.as_str());
+    let fragment_body =
+        serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(&uri))?;
+    let entity_id = id.to_string();
+    let path_suffix = format!("/attrs/{attr_id}");
+    let qs = params.dataset_id.as_ref().map(|dataset_id| format!("datasetId={dataset_id}"));
+
+    let (forwarded, _) = state
+        .forwarding
+        .forward_provision(ForwardProvisionRequest {
+            entity_id: Some(&entity_id),
+            entity_type_compact: None,
+            method: reqwest::Method::PUT,
+            body: Some(&fragment_body),
+            context_url,
+            context: &context,
+            operation: ForwardingOperation::ReplaceEntityAttribute,
+            path_suffix: Some(&path_suffix),
+            query_string: qs.as_deref(),
+            incoming_via: incoming_via.as_ref(),
+        })
         .await
         .with_instance(&uri)?;
+
+    if forwarded.is_empty() {
+        service.replace_attr(&id, &attr_id, dataset_id, fragment, &context).await.with_instance(&uri)?;
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
+    let modes = ForwardingModes::from_results(&forwarded);
+    if modes.has_redirect || modes.has_exclusive {
+        if modes.has_exclusive
+            && let Err(error) = service.delete_attr(&id, &attr_id, DatasetSelection::All, &context).await
+        {
+            tracing::warn!(error = %error, entity_id = %id, attr_id = %attr_id, "Failed to delete exclusive attribute locally");
+        }
+        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
+        return Ok(status.into_response());
+    }
+
+    if let Err(error) = service.replace_attr(&id, &attr_id, dataset_id, fragment, &context).await {
+        tracing::warn!(error = %error, entity_id = %id, attr_id = %attr_id, "Failed to apply inclusive replace_attr locally");
+    }
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

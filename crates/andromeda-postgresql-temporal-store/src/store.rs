@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::Value;
+use urn_rs::Urn;
 
 /// A single decoded value from the store's typed history columns.
 ///
@@ -222,7 +223,7 @@ pub trait TemporalMutator: Send + Sync {
     async fn delete_all_for_entity(&self, entity_id: &str) -> Result<u64, TemporalStoreError>;
 
     /// Delete a specific attribute, optionally scoped to a dataset ID. Returns the number of rows deleted.
-    async fn delete_attribute(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&str>, scope: DeleteScope) -> Result<u64, TemporalStoreError>;
+    async fn delete_attribute(&self, entity_id: &str, attribute_name: &str, dataset_id: Option<&Urn>, scope: DeleteScope) -> Result<u64, TemporalStoreError>;
 
     /// Return whether a specific attribute instance exists.
     async fn get_instance(&self, instance_id: &str, entity_id: &str, attribute_name: &str) -> Result<bool, TemporalStoreError>;

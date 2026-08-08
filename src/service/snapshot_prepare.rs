@@ -11,14 +11,6 @@ use serde_json::Value;
 /// an [`AndromedaError::internal`] so the repository call is infallible w.r.t.
 /// encoding.
 pub fn to_insert_params(snapshot: &Snapshot) -> Result<InsertSnapshotParams<'_>, AndromedaError> {
-    let snapshot_queries_json = match snapshot.snapshot_queries.as_ref() {
-        Some(v) => Some(to_value(v, "snapshot_queries")?),
-        None => None,
-    };
-    let snapshot_temporal_queries_json = match snapshot.snapshot_temporal_queries.as_ref() {
-        Some(v) => Some(to_value(v, "snapshot_temporal_queries")?),
-        None => None,
-    };
     let receiver_info_json = match snapshot.receiver_info.as_ref() {
         Some(v) => Some(to_value(v, "receiver_info")?),
         None => None,
@@ -34,9 +26,9 @@ pub fn to_insert_params(snapshot: &Snapshot) -> Result<InsertSnapshotParams<'_>,
 
     Ok(InsertSnapshotParams {
         id: &snapshot.id,
-        snapshot_queries_json,
-        snapshot_temporal_queries_json,
-        snapshot_lifetime: snapshot.snapshot_lifetime.as_ref().map(ToString::to_string),
+        snapshot_queries: snapshot.snapshot_queries.as_deref(),
+        snapshot_temporal_queries: snapshot.snapshot_temporal_queries.as_deref(),
+        snapshot_lifetime: snapshot.snapshot_lifetime.as_ref(),
         snapshot_priority: i16::from(snapshot.snapshot_priority.as_u8()),
         endpoint: snapshot.endpoint.as_ref(),
         receiver_info_json,

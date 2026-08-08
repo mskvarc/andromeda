@@ -8,6 +8,7 @@
 //! Detail, instead of being flattened into one message at the boundary.
 
 use crate::error::JsonLdError;
+use iri_rs::IriBuf;
 use reqwest::StatusCode;
 use thiserror::Error;
 
@@ -17,7 +18,7 @@ use thiserror::Error;
 #[error("{kind} for {url}")]
 pub struct LoaderError {
     /// The URL being resolved when the failure occurred.
-    pub url: String,
+    pub url: IriBuf,
     /// What went wrong.
     pub kind: LoaderErrorKind,
 }
@@ -49,7 +50,7 @@ pub enum LoaderErrorKind {
 
 impl LoaderError {
     /// The failure a loader reports when configuration forbids the fetch.
-    pub(crate) const fn fetch_disabled(url: String) -> LoaderError {
+    pub(crate) const fn fetch_disabled(url: IriBuf) -> LoaderError {
         LoaderError {
             url,
             kind: LoaderErrorKind::FetchDisabled,
@@ -85,6 +86,7 @@ mod tests {
         error::JsonLdError,
         loader::error::{LoaderError, LoaderErrorKind},
     };
+    use iri_rs::IriBuf;
     use reqwest::StatusCode;
 
     #[test]
@@ -98,7 +100,7 @@ mod tests {
         ];
         for kind in kinds {
             let error = JsonLdError::from(&LoaderError {
-                url: "https://example.com/context.jsonld".to_string(),
+                url: IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid URL"),
                 kind,
             });
             assert!(
@@ -111,12 +113,12 @@ mod tests {
     #[test]
     fn the_url_and_the_status_survive_the_conversion_as_separate_fields() {
         let error = JsonLdError::from(&LoaderError {
-            url: "https://example.com/gone.jsonld".to_string(),
+            url: IriBuf::new("https://example.com/gone.jsonld".to_string()).expect("valid URL"),
             kind: LoaderErrorKind::Http(StatusCode::GONE),
         });
         match error {
             JsonLdError::ContextHttp { url, status } => {
-                pretty_assertions::assert_eq!(url, "https://example.com/gone.jsonld");
+                pretty_assertions::assert_eq!(url.as_str(), "https://example.com/gone.jsonld");
                 pretty_assertions::assert_eq!(status, StatusCode::GONE);
             }
             other => unreachable!("expected ContextHttp, got {other}"),

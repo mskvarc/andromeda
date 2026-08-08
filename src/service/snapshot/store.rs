@@ -26,12 +26,12 @@ use url::Url;
 pub struct InsertSnapshotParams<'a> {
     /// Snapshot identifier.
     pub id: &'a SnapshotId,
-    /// Pre-serialised JSON for the snapshot's entity queries.
-    pub snapshot_queries_json: Option<Value>,
-    /// Pre-serialised JSON for the snapshot's temporal queries.
-    pub snapshot_temporal_queries_json: Option<Value>,
-    /// Stringified ISO-8601 duration for the snapshot's lifetime.
-    pub snapshot_lifetime: Option<String>,
+    /// Typed entity query definitions, serialized by the SQL adapter.
+    pub snapshot_queries: Option<&'a [andromeda_ngsi_ld_model::snapshot_query::SnapshotQuery]>,
+    /// Typed temporal query definitions, serialized by the SQL adapter.
+    pub snapshot_temporal_queries: Option<&'a [andromeda_ngsi_ld_model::snapshot_query::SnapshotQuery]>,
+    /// Typed ISO-8601 duration for the snapshot's lifetime.
+    pub snapshot_lifetime: Option<&'a Iso8601Duration>,
     /// Numeric encoding of [`SnapshotPriority`].
     pub snapshot_priority: i16,
     /// Endpoint URL.

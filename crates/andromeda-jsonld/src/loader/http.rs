@@ -53,7 +53,7 @@ pub struct HttpContextLoader {
     /// The HTTP client remote fetches go through.
     client: Client,
     /// The in-process cache in front of every other step.
-    cache: Cache<String, LoadedContext>,
+    cache: Cache<IriBuf, LoadedContext>,
     /// Embedded and preloaded documents, available without network access.
     registry: Arc<ContextRegistry>,
     /// The caller's durable cache, when one is attached.
@@ -71,7 +71,7 @@ impl HttpContextLoader {
     ///
     /// # Errors
     ///
-    /// Returns [`JsonLdError::ContextLoad`] when the HTTP client cannot be
+    /// Returns [`JsonLdError::ClientBuild`] when the HTTP client cannot be
     /// built from the supplied timeout and redirect limit.
     pub(crate) fn new(
         registry: Arc<ContextRegistry>,
@@ -86,10 +86,7 @@ impl HttpContextLoader {
             .timeout(Duration::from_secs(timeout_seconds))
             .redirect(Policy::limited(max_redirects as usize))
             .build()
-            .map_err(|error| JsonLdError::ContextLoad {
-                url: "client".to_string(),
-                message: error.to_string(),
-            })?;
+            .map_err(JsonLdError::ClientBuild)?;
 
         let cache = Cache::builder()
             .max_capacity(cache_capacity)
@@ -127,7 +124,7 @@ impl HttpContextLoader {
     /// The durable L2 cache is the repository's lifecycle to manage (a delete or
     /// a reload writes it directly), so this invalidates only the moka layer the
     /// loader owns.
-    pub async fn invalidate(&self, url: &str) {
+    pub async fn invalidate(&self, url: &IriBuf) {
         self.cache.invalidate(url).await;
     }
 
@@ -137,7 +134,7 @@ impl HttpContextLoader {
     ///
     /// Returns the [`JsonLdError`] variant describing which step failed and
     /// why.
-    pub async fn load_value(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, JsonLdError> {
+    pub async fn load_value(&self, url: &IriBuf) -> Result<Arc<jsonld_syntax::Value>, JsonLdError> {
         self.load_value_raw(url).await.map_err(|error| JsonLdError::from(error.as_ref()))
     }
 
@@ -146,8 +143,8 @@ impl HttpContextLoader {
     /// `Arc`-wrapped because `moka` requires a cached error to be
     /// `Clone + Send + Sync`. The [`Loader`] implementation needs this form,
     /// since the trait fixes the error type.
-    pub(crate) async fn load_value_raw(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, Arc<LoaderError>> {
-        let url_string = url.to_string(); // owned: the moka key and the cache-fill future both need it
+    pub(crate) async fn load_value_raw(&self, url: &IriBuf) -> Result<Arc<jsonld_syntax::Value>, Arc<LoaderError>> {
+        let url_iri = url.clone(); // owned: the moka key and the cache-fill future both need it
         let registry = Arc::clone(&self.registry); // clone: Arc ref-count bump into the cache-fill future
         let client = self.client.clone(); // clone: reqwest::Client is an Arc handle
         let allow_remote = self.allow_remote;
@@ -156,15 +153,15 @@ impl HttpContextLoader {
 
         let result = self
             .cache
-            .try_get_with(url_string.clone(), async move {
-                if let Some(value) = registry.get(&url_string) {
+            .try_get_with(url_iri.clone(), async move {
+                if let Some(value) = registry.get(&url_iri) {
                     return Ok(LoadedContext { value, has_durable_row: false });
                 }
 
                 if let Some(ref cache) = l2_cache
-                    && let Some(payload) = cache.get(&url_string).await
+                    && let Some(payload) = cache.get(&url_iri).await
                 {
-                    trace!("L2 cache hit for context: {}", url_string);
+                    trace!("L2 cache hit for context: {}", url_iri);
                     // Convert the stored payload straight into the syntax value.
                     // The old `to_string` then `parse_str` round trip papered a
                     // serialisation failure over with an empty string, which then
@@ -173,32 +170,32 @@ impl HttpContextLoader {
                     // `into_serde_json` the write path used.
                     let parsed = jsonld_syntax::Value::from_serde_json(payload);
                     return Ok(LoadedContext {
-                        value: Arc::new(without_embedded_core_context(&url_string, parsed)),
+                        value: Arc::new(without_embedded_core_context(url_iri.as_str(), parsed)),
                         has_durable_row: true,
                     });
                 }
 
                 if allow_remote == RemoteContextFetch::Deny {
-                    return Err(LoaderError::fetch_disabled(url_string.clone()));
+                    return Err(LoaderError::fetch_disabled(url_iri.clone()));
                 }
 
-                match fetch_and_parse(&client, &url_string, max_bytes).await {
+                match fetch_and_parse(&client, &url_iri, max_bytes).await {
                     Ok(value) => {
-                        let normalized = without_embedded_core_context(&url_string, value);
+                        let normalized = without_embedded_core_context(url_iri.as_str(), value);
                         // Written to L2 only here, on the first remote-fetch
                         // success: the row carries no counter, because hit
                         // accounting is the HitCounter's job.
                         if let Some(ref cache) = l2_cache {
                             let serde_value = jsonld_syntax::Value::into_serde_json(normalized.clone()); // clone: the normalized document is also returned
-                            cache.put(&url_string, serde_value).await;
-                            trace!("Persisted context to L2 cache: {}", url_string);
+                            cache.put(&url_iri, serde_value).await;
+                            trace!("Persisted context to L2 cache: {}", url_iri);
                         }
                         Ok(LoadedContext {
                             value: Arc::new(normalized),
                             has_durable_row: l2_cache.is_some(),
                         })
                     }
-                    Err(error) => match registry.get(&url_string) {
+                    Err(error) => match registry.get(&url_iri) {
                         Some(value) => Ok(LoadedContext { value, has_durable_row: false }),
                         None => Err(error),
                     },
@@ -224,12 +221,12 @@ impl HttpContextLoader {
     ///
     /// Returns a [`LoaderError`] when remote fetch is disabled or the request
     /// fails.
-    pub(crate) async fn fetch_remote_value(&self, url: &str) -> Result<Arc<jsonld_syntax::Value>, LoaderError> {
+    pub(crate) async fn fetch_remote_value(&self, url: &IriBuf) -> Result<Arc<jsonld_syntax::Value>, LoaderError> {
         if self.allow_remote == RemoteContextFetch::Deny {
-            return Err(LoaderError::fetch_disabled(url.to_string()));
+            return Err(LoaderError::fetch_disabled(url.clone()));
         }
         let value = fetch_and_parse(&self.client, url, self.max_context_bytes).await?;
-        Ok(Arc::new(without_embedded_core_context(url, value)))
+        Ok(Arc::new(without_embedded_core_context(url.as_str(), value)))
     }
 }
 
@@ -237,36 +234,11 @@ impl Loader for HttpContextLoader {
     type Error = LoaderError;
 
     async fn load(&self, url: Iri<&str>) -> Result<RemoteDocument<IriBuf>, LoadError<Self::Error>> {
-        let url_string = url.as_str().to_string();
-        let value = self.load_value_raw(&url_string).await.map_err(|error| {
-            let iri = IriBuf::new(url_string.clone()).unwrap_or_else(|_| fallback_iri()); // clone: the IRI is also needed below
-            LoadError::new(iri, (*error).clone()) // clone: the Arc is shared with the moka cache
+        let url_iri = IriBuf::from(url);
+        let value = self.load_value_raw(&url_iri).await.map_err(|error| {
+            LoadError::new(url_iri.clone(), (*error).clone()) // clone: the Arc is shared with the moka cache
         })?;
-
-        let iri = IriBuf::new(url_string.clone()).map_err(|error| {
-            // clone: the URL is also reported in the error
-            LoadError::new(
-                fallback_iri(),
-                LoaderError {
-                    url: url_string,
-                    kind: LoaderErrorKind::Invalid(format!("invalid IRI: {error}")),
-                },
-            )
-        })?;
-
-        Ok(RemoteDocument::new(Some(iri), Some(ld_json_media_type()), (*value).clone())) // clone: the document is shared with the moka cache
-    }
-}
-
-/// The IRI a [`LoadError`] carries when the real one will not parse.
-///
-/// `urn:error` is a syntactically valid IRI per RFC 8141, so the failing
-/// branch is unreachable; aborting rather than panicking keeps the crate free
-/// of `unwrap`, `expect` and `panic!`.
-fn fallback_iri() -> IriBuf {
-    match IriBuf::new("urn:error".to_string()) {
-        Ok(iri) => iri,
-        Err(_) => std::process::abort(),
+        Ok(RemoteDocument::new(Some(url_iri), Some(ld_json_media_type()), (*value).clone())) // clone: the document is shared with the moka cache
     }
 }
 
@@ -277,15 +249,20 @@ fn ld_json_media_type() -> MediaTypeBuf {
 
 /// Fetch a context over HTTP and parse it, refusing anything that is not
 /// JSON-shaped or is larger than the configured limit.
-async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result<jsonld_syntax::Value, LoaderError> {
-    let response = client.get(url).header("Accept", ACCEPT_HEADER).send().await.map_err(|error| LoaderError {
-        url: url.to_string(),
-        kind: LoaderErrorKind::Request(error.to_string()),
-    })?;
+async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<jsonld_syntax::Value, LoaderError> {
+    let response = client
+        .get(url.as_str())
+        .header("Accept", ACCEPT_HEADER)
+        .send()
+        .await
+        .map_err(|error| LoaderError {
+            url: url.clone(),
+            kind: LoaderErrorKind::Request(error.to_string()),
+        })?;
 
     if !response.status().is_success() {
         return Err(LoaderError {
-            url: url.to_string(),
+            url: url.clone(),
             kind: LoaderErrorKind::Http(response.status()),
         });
     }
@@ -294,7 +271,7 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
         && !is_json_like(content_type)
     {
         return Err(LoaderError {
-            url: url.to_string(),
+            url: url.clone(),
             kind: LoaderErrorKind::Invalid(format!("Unsupported context content type: {content_type}")),
         });
     }
@@ -305,25 +282,25 @@ async fn fetch_and_parse(client: &Client, url: &str, max_bytes: usize) -> Result
     if let Some(len) = response.content_length()
         && len as usize > max_bytes
     {
-        return Err(too_large(url.to_string(), len as usize, max_bytes));
+        return Err(too_large(url.clone(), len as usize, max_bytes));
     }
 
     let bytes = response.bytes().await.map_err(|error| LoaderError {
-        url: url.to_string(),
+        url: url.clone(),
         kind: LoaderErrorKind::Request(error.to_string()),
     })?;
 
     if bytes.len() > max_bytes {
-        return Err(too_large(url.to_string(), bytes.len(), max_bytes));
+        return Err(too_large(url.clone(), bytes.len(), max_bytes));
     }
 
     let text = std::str::from_utf8(&bytes).map_err(|error| LoaderError {
-        url: url.to_string(),
+        url: url.clone(),
         kind: LoaderErrorKind::Invalid(error.to_string()),
     })?;
 
     let (value, _) = jsonld_syntax::Value::parse_str(text).map_err(|error| LoaderError {
-        url: url.to_string(),
+        url: url.clone(),
         kind: LoaderErrorKind::Invalid(error.to_string()),
     })?;
     Ok(value)
@@ -344,7 +321,7 @@ fn is_json_like(content_type: &str) -> bool {
 }
 
 /// The failure reported for a context past the configured size limit.
-const fn too_large(url: String, size: usize, max: usize) -> LoaderError {
+const fn too_large(url: IriBuf, size: usize, max: usize) -> LoaderError {
     LoaderError {
         url,
         kind: LoaderErrorKind::TooLarge { size, max },
@@ -365,7 +342,7 @@ mod tests {
 
     fn registry_with(url: &str, context: serde_json::Value) -> Arc<ContextRegistry> {
         let registry = Arc::new(ContextRegistry::new());
-        registry.register(url, jsonld_syntax::Value::from_serde_json(context));
+        registry.register(IriBuf::new(url.to_string()).expect("valid URL"), jsonld_syntax::Value::from_serde_json(context));
         registry
     }
 
@@ -379,10 +356,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::context_cache::ContextCache for FixedL2 {
-        async fn get(&self, _url: &str) -> Option<serde_json::Value> {
+        async fn get(&self, _url: &IriBuf) -> Option<serde_json::Value> {
             Some(self.0.clone())
         }
-        async fn put(&self, _url: &str, _payload: serde_json::Value) {}
+        async fn put(&self, _url: &IriBuf, _payload: serde_json::Value) {}
     }
 
     #[tokio::test]
@@ -394,7 +371,8 @@ mod tests {
         let l2 = Arc::new(FixedL2(json!({ "@context": { "name": "https://example.com/name" } })));
         let loader = offline_loader(Arc::new(ContextRegistry::new())).with_l2_cache(l2);
 
-        let value = loader.load_value("https://example.com/from-l2.jsonld").await.expect("an L2 hit resolves");
+        let url = IriBuf::new("https://example.com/from-l2.jsonld".to_string()).expect("valid URL");
+        let value = loader.load_value(&url).await.expect("an L2 hit resolves");
 
         let json = jsonld_syntax::Value::into_serde_json((*value).clone());
         assert!(json.is_object() || json.is_array(), "expected a parsed context document, got {json:?}");
@@ -418,7 +396,8 @@ mod tests {
     async fn an_unregistered_context_reports_that_fetching_is_disabled() {
         let loader = offline_loader(Arc::new(ContextRegistry::new()));
 
-        let error = loader.load_value("https://example.com/unknown.jsonld").await.expect_err("no registry entry");
+        let url = IriBuf::new("https://example.com/unknown.jsonld".to_string()).expect("valid URL");
+        let error = loader.load_value(&url).await.expect_err("no registry entry");
 
         assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
     }

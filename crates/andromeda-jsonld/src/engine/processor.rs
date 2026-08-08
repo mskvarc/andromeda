@@ -18,6 +18,7 @@ use crate::{
     loader::http::HttpContextLoader,
 };
 use contextual::WithContext;
+use iri_rs::IriBuf;
 use jsonld::{
     JsonLdProcessor,
     RemoteContextReference,
@@ -44,17 +45,12 @@ pub struct JsonLdEngine {
     /// so two engines built with different pins expand a versionless request
     /// differently, and this is where that decision lives rather than in a
     /// process-global.
-    default_core_url: Arc<str>,
+    default_core_url: IriBuf,
 }
 
 impl JsonLdEngine {
     /// Assemble an engine. Reached through [`JsonLdEngineBuilder`].
-    pub(crate) fn assembled(
-        loader: HttpContextLoader,
-        term_cache: TermCache,
-        hit_counter: Option<Arc<HitCounter>>,
-        default_core_url: Arc<str>,
-    ) -> JsonLdEngine {
+    pub(crate) fn assembled(loader: HttpContextLoader, term_cache: TermCache, hit_counter: Option<Arc<HitCounter>>, default_core_url: IriBuf) -> JsonLdEngine {
         JsonLdEngine {
             loader: Arc::new(loader),
             term_cache,
@@ -74,7 +70,7 @@ impl JsonLdEngine {
     /// The version this deployment pinned (clause 4.3.6.8); the fastpath term
     /// table is built from it. Defaults to the versionless core context when no
     /// pin was configured.
-    pub fn default_core_url(&self) -> &str {
+    pub const fn default_core_url(&self) -> &IriBuf {
         &self.default_core_url
     }
 
@@ -104,7 +100,7 @@ impl JsonLdEngine {
     /// next use rather than served from memory. The durable L2 cache is the
     /// caller's to update (a delete removes its row, a reload replaces its
     /// payload).
-    pub async fn invalidate_context(&self, url: &str) {
+    pub async fn invalidate_context(&self, url: &IriBuf) {
         self.loader.invalidate(url).await;
         self.user_term_tables.remove(url);
     }
@@ -236,8 +232,9 @@ impl JsonLdEngine {
     /// # Errors
     ///
     /// Returns a context-loading variant when the URL does not resolve.
-    pub async fn resolve_context(&self, url: &str) -> Result<Value, JsonLdError> {
-        let value = self.loader.load_value(url).await?;
+    pub async fn resolve_context(&self, url: impl AsRef<str>) -> Result<Value, JsonLdError> {
+        let url = IriBuf::new(url.as_ref().to_owned()).map_err(|error| JsonLdError::invalid_iri(format!("context URL is not an IRI: {}", error.0)))?;
+        let value = self.loader.load_value(&url).await?;
         Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
 
@@ -249,7 +246,7 @@ impl JsonLdEngine {
     /// # Errors
     ///
     /// Returns a context-loading variant when the fetch fails.
-    pub async fn fetch_remote_context(&self, url: &str) -> Result<Value, JsonLdError> {
+    pub async fn fetch_remote_context(&self, url: &IriBuf) -> Result<Value, JsonLdError> {
         let value = self.loader.fetch_remote_value(url).await.map_err(|error| JsonLdError::from(&error))?;
         Ok(jsonld_syntax::Value::into_serde_json(Arc::unwrap_or_clone(value)))
     }
@@ -260,10 +257,7 @@ fn context_reference(context: &ContextSpec) -> Result<RemoteContextReference<Iri
     let jsonld_context = match context.to_context_value() {
         Some(value) => {
             let syntax_value = jsonld_syntax::Value::from_serde_json(value);
-            JsonLdContext::try_from_json(&syntax_value).map_err(|error| JsonLdError::ContextInvalid {
-                url: "inline".to_string(),
-                message: error.to_string(),
-            })?
+            JsonLdContext::try_from_json(&syntax_value).map_err(|error| JsonLdError::InlineContextInvalid(error.to_string()))?
         }
         None => JsonLdContext::default(),
     };

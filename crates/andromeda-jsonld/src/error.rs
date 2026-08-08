@@ -9,6 +9,7 @@
 //! rather than pre-rendered into one message.
 
 use crate::loader::error::LoaderError;
+use iri_rs::IriBuf;
 use jsonld::{CompactError, ContextLoadError, ExpandError, compaction, context_processing, expansion};
 use reqwest::StatusCode;
 use thiserror::Error;
@@ -31,14 +32,14 @@ pub enum JsonLdError {
     #[error("Remote context fetch disabled for {url}")]
     ContextFetchDisabled {
         /// The URL that was requested.
-        url: String,
+        url: IriBuf,
     },
 
     /// A remote JSON-LD context could not be loaded.
     #[error("Failed to load context from {url}: {message}")]
     ContextLoad {
         /// The URL that was requested.
-        url: String,
+        url: IriBuf,
         /// Human-readable failure reason.
         message: String,
     },
@@ -47,7 +48,7 @@ pub enum JsonLdError {
     #[error("HTTP error {status} for {url}")]
     ContextHttp {
         /// The URL that was requested.
-        url: String,
+        url: IriBuf,
         /// HTTP status code returned by the server.
         status: StatusCode,
     },
@@ -56,7 +57,7 @@ pub enum JsonLdError {
     #[error("Context {url} too large ({size} > {max} bytes)")]
     ContextTooLarge {
         /// The URL that was requested.
-        url: String,
+        url: IriBuf,
         /// Actual payload size in bytes.
         size: usize,
         /// Configured maximum in bytes.
@@ -67,7 +68,7 @@ pub enum JsonLdError {
     #[error("Invalid JSON-LD context at {url}: {message}")]
     ContextInvalid {
         /// The URL that was requested.
-        url: String,
+        url: IriBuf,
         /// Parse / validation error message.
         message: String,
     },
@@ -75,6 +76,14 @@ pub enum JsonLdError {
     /// An embedded (inline) context could not be parsed.
     #[error("Embedded context invalid: {0}")]
     EmbeddedContextInvalid(String),
+
+    /// An inline context could not be parsed as valid JSON-LD.
+    #[error("Inline context invalid: {0}")]
+    InlineContextInvalid(String),
+
+    /// The HTTP client could not be constructed from the configured settings.
+    #[error("Failed to build JSON-LD HTTP client")]
+    ClientBuild(#[source] reqwest::Error),
 
     /// JSON-LD expansion failed.
     #[error("Failed to expand document")]
@@ -236,8 +245,8 @@ mod tests {
     use jsonld::{CompactError, ContextLoadError, ExpandError, ExtractContextError, LoadError, compaction, context_processing, expansion};
     use reqwest::StatusCode;
 
-    fn url() -> String {
-        "https://example.com/ctx.jsonld".to_string()
+    fn url() -> IriBuf {
+        IriBuf::new("https://example.com/ctx.jsonld".to_string()).expect("valid URL")
     }
 
     fn loader_error() -> LoaderError {
@@ -248,7 +257,7 @@ mod tests {
     }
 
     fn load_error() -> LoadError<LoaderError> {
-        LoadError::new(IriBuf::new(url()).expect("a well-formed IRI"), loader_error())
+        LoadError::new(url(), loader_error())
     }
 
     #[test]
@@ -275,6 +284,7 @@ mod tests {
 
         let internal = [
             JsonLdError::EmbeddedContextInvalid("boom".to_string()),
+            JsonLdError::InlineContextInvalid("boom".to_string()),
             JsonLdError::InvalidIri("boom".to_string()),
             JsonLdError::InvalidDocument("boom".to_string()),
         ];

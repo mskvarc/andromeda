@@ -7,11 +7,11 @@
 
 use crate::{
     context_cache::ContextCache,
-    core_context::NGSI_LD_CORE_CONTEXT_V19_URL,
     engine::{builder::JsonLdEngineBuilder, processor::JsonLdEngine},
     error::JsonLdError,
 };
 use confique::Config;
+use iri_rs::{IriBuf, iri};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -130,7 +130,7 @@ impl JsonLdConfig {
             .cache_capacity(self.cache_capacity)
             .cache_ttl_seconds(self.cache_ttl_seconds)
             .max_context_bytes(self.max_context_bytes)
-            .default_core_url(NGSI_LD_CORE_CONTEXT_V19_URL)
+            .default_core_url(IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld")))
             .with_l2_cache(l2_cache);
         if !self.preload_contexts.is_empty() {
             builder = builder.preload_contexts(self.preload_contexts.clone()); // clone: the configuration is borrowed and stays valid

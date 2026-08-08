@@ -24,11 +24,10 @@ use crate::{
 };
 use andromeda_ngsi_ld_vocabulary::COMPACT_TO_EXPANDED;
 use dashmap::DashMap;
+use iri_rs::{IriBuf, iri};
 use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
-/// The `@vocab` the NGSI-LD core context declares.
-const NGSI_LD_DEFAULT_CONTEXT_PREFIX: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
 /// The XSD namespace, available as `xsd:` without any context declaring it.
 const XSD_PREFIX: &str = "http://www.w3.org/2001/XMLSchema#";
 /// The NGSI-LD namespace, available as `ngsi-ld:`.
@@ -43,13 +42,13 @@ pub struct BatchTermMap {
     /// Term name to resolved IRI, coercion, container and scoped-context flag.
     terms: HashMap<Box<str>, ResolvedTerm>,
     /// The active `@vocab`, which any term not otherwise defined falls back to.
-    vocab: Box<str>,
+    vocab: IriBuf,
     /// Prefix definitions, longest first so `exFoo:bar` beats `ex:` per
     /// JSON-LD 1.1 clause 4.4.
-    prefix_table: Vec<(Box<str>, Box<str>)>,
+    prefix_table: Vec<(Box<str>, IriBuf)>,
     /// The core context URL this batch resolves versionless references to, so
     /// an entity's inline core context can be checked against it.
-    core_url: Box<str>,
+    core_url: IriBuf,
     /// Whether the fastpath may run against this table.
     eligibility: FastpathEligibility,
 }
@@ -84,7 +83,7 @@ enum IneligibilityReason {
 #[derive(Debug, Clone)]
 struct ResolvedTerm {
     /// The IRI the term expands to.
-    iri: Box<str>,
+    iri: IriBuf,
     /// The `@type` coercion declared for it, if any.
     coercion: Option<TermCoercion>,
     /// The `@container` declared for it, if any.
@@ -135,7 +134,7 @@ pub(crate) enum TermCoercion {
     /// `{"@type": "@json", "@value": <value>}`.
     Json,
     /// A user datatype: emitted as `{"@type": "<the expanded user IRI>", "@value": "<s>"}`.
-    TypeIri(Box<str>),
+    TypeIri(IriBuf),
 }
 
 /// The `@container` a term declares.
@@ -172,11 +171,11 @@ impl BatchTermMap {
             return Cow::Borrowed(term);
         }
         if let Some(resolved) = self.terms.get(term) {
-            return Cow::Borrowed(&resolved.iri);
+            return Cow::Borrowed(resolved.iri.as_str());
         }
         if let Some((prefix, suffix)) = term.split_once(':') {
             if let Some((_, expansion)) = self.prefix_table.iter().find(|(declared, _)| prefix == declared.as_ref()) {
-                return Cow::Owned(format!("{expansion}{suffix}"));
+                return Cow::Owned(format!("{}{suffix}", expansion.as_str()));
             }
             if let Some(expansion) = builtin_prefix(prefix) {
                 return Cow::Owned(format!("{expansion}{suffix}"));
@@ -188,7 +187,7 @@ impl BatchTermMap {
                 return Cow::Borrowed(term);
             }
         }
-        Cow::Owned(format!("{}{}", self.vocab, term))
+        Cow::Owned(format!("{}{term}", self.vocab.as_str()))
     }
 
     /// The coercion declared for a term, if any.
@@ -212,7 +211,7 @@ impl BatchTermMap {
 
     /// The core context URL this batch resolves versionless references to.
     pub(crate) fn effective_core_url(&self) -> &str {
-        &self.core_url
+        self.core_url.as_str()
     }
 }
 
@@ -233,7 +232,7 @@ fn builtin_prefix(prefix: &str) -> Option<&'static str> {
 #[derive(Debug, Default)]
 pub(crate) struct UserTermTableCache {
     /// Context URL to its parsed table.
-    tables: DashMap<String, Arc<UserTermTable>>,
+    tables: DashMap<IriBuf, Arc<UserTermTable>>,
 }
 
 impl UserTermTableCache {
@@ -243,14 +242,14 @@ impl UserTermTableCache {
     /// # Errors
     ///
     /// Returns the loader's failure when the URL does not resolve.
-    async fn get_or_load(&self, loader: &HttpContextLoader, url: &str) -> Result<Arc<UserTermTable>, JsonLdError> {
+    async fn get_or_load(&self, loader: &HttpContextLoader, url: &IriBuf) -> Result<Arc<UserTermTable>, JsonLdError> {
         if let Some(cached) = self.tables.get(url) {
             return Ok(Arc::clone(cached.value()));
         }
         let value = loader.load_value(url).await?;
         let serde_value = jsonld_syntax::Value::into_serde_json((*value).clone()); // clone: the loader's copy stays in its cache
         let table = Arc::new(parse_user_context(&serde_value));
-        self.tables.insert(url.to_owned(), Arc::clone(&table));
+        self.tables.insert(url.clone(), Arc::clone(&table));
         Ok(table)
     }
 
@@ -259,7 +258,7 @@ impl UserTermTableCache {
     /// Called when the context behind that URL is deleted or reloaded, so the
     /// next batch that names it re-resolves it instead of serving a table parsed
     /// from a document that no longer exists (clause 5.13.3).
-    pub(crate) fn remove(&self, url: &str) {
+    pub(crate) fn remove(&self, url: &IriBuf) {
         self.tables.remove(url);
     }
 
@@ -277,7 +276,12 @@ impl UserTermTableCache {
 /// versionless reference against (clause 4.3.6.8); the coercion, container and
 /// scoped-context flags below are read from that version's document, so two
 /// engines pinned to different versions build different tables.
-pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContextLoader, cache: &UserTermTableCache, default_core_url: &str) -> BatchTermMap {
+pub(crate) async fn build_batch_term_map(
+    spec: &ContextSpec,
+    loader: &HttpContextLoader,
+    cache: &UserTermTableCache,
+    default_core_url: &IriBuf,
+) -> BatchTermMap {
     // The IRI of every core term comes from the compile-time table the vocab
     // macro derived from the core context; its coercion, container and
     // scoped-context flag come from the same context document, parsed for the
@@ -293,7 +297,7 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
             (
                 Box::<str>::from(*compact),
                 ResolvedTerm {
-                    iri: Box::<str>::from(*expanded),
+                    iri: required_iri(expanded),
                     coercion: declared.and_then(|term| term.coercion.clone()),
                     container: declared.and_then(|term| term.container),
                     has_scoped_context: declared.is_some_and(|term| term.has_scoped_context),
@@ -307,8 +311,8 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
     // The `@vocab` any undefined member falls back to. Seeded from the core
     // context and never overwritten: clause 5.5.7 gives the core `@vocab`
     // absolute precedence, so a user `@vocab` does not change it.
-    let vocab = Box::<str>::from(NGSI_LD_DEFAULT_CONTEXT_PREFIX);
-    let mut prefix_table: Vec<(Box<str>, Box<str>)> = Vec::new();
+    let vocab = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/default-context/"));
+    let mut prefix_table: Vec<(Box<str>, IriBuf)> = Vec::new();
     let mut eligibility = FastpathEligibility::Eligible;
 
     // A spec that omits the core context resolves nothing the seeded table
@@ -319,11 +323,14 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
     }
 
     for url in spec.link_contexts() {
-        let url = url.as_str();
-        if is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL {
+        let Ok(url) = IriBuf::new(url.as_str().to_owned()) else {
+            eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
+            continue;
+        };
+        if is_ngsi_ld_core_context_url(url.as_str()) || url.as_str() == ANDROMEDA_CORE_CONTEXT_URL {
             continue;
         }
-        match cache.get_or_load(loader, url).await {
+        match cache.get_or_load(loader, &url).await {
             Ok(table) => merge_user_table(&mut terms, &mut prefix_table, &table, &mut eligibility),
             Err(_unresolved) => eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable),
         }
@@ -342,7 +349,7 @@ pub(crate) async fn build_batch_term_map(spec: &ContextSpec, loader: &HttpContex
         terms,
         vocab,
         prefix_table,
-        core_url: Box::<str>::from(core_url),
+        core_url: core_url.clone(),
         eligibility,
     }
 }
@@ -396,10 +403,14 @@ fn parse_user_context_into(value: &Value, table: &mut UserTermTable) {
 fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermTable) {
     match declaration {
         Value::String(iri) => {
+            let Some(iri) = iri_from_context(iri) else {
+                table.has_unsupported_feature = true;
+                return;
+            };
             table.terms.insert(
                 Box::<str>::from(term),
                 ResolvedTerm {
-                    iri: Box::<str>::from(iri.as_str()),
+                    iri,
                     coercion: None,
                     container: None,
                     has_scoped_context: false,
@@ -423,10 +434,14 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
             let Some(iri) = definition.get("@id").and_then(Value::as_str) else {
                 return;
             };
+            let Some(iri) = iri_from_context(iri) else {
+                table.has_unsupported_feature = true;
+                return;
+            };
             table.terms.insert(
                 Box::<str>::from(term),
                 ResolvedTerm {
-                    iri: Box::<str>::from(iri),
+                    iri,
                     coercion: declared_coercion(definition.get("@type").and_then(Value::as_str)),
                     container: container_of(definition.get("@container").and_then(Value::as_str)),
                     has_scoped_context,
@@ -446,7 +461,20 @@ fn parse_term_declaration(term: &str, declaration: &Value, table: &mut UserTermT
 /// [`coercion_of`]; anything else a request context names is an arbitrary
 /// datatype IRI, kept as a [`TermCoercion::TypeIri`] and resolved at emit time.
 fn declared_coercion(declared_type: Option<&str>) -> Option<TermCoercion> {
-    coercion_of(declared_type).or_else(|| declared_type.map(|declared| TermCoercion::TypeIri(Box::<str>::from(declared))))
+    coercion_of(declared_type).or_else(|| declared_type.and_then(iri_from_context).map(TermCoercion::TypeIri))
+}
+
+/// Parse an IRI from a JSON context before storing it in the fastpath table.
+fn iri_from_context(value: &str) -> Option<IriBuf> {
+    IriBuf::new(value.to_owned()).ok()
+}
+
+/// Convert a generated vocabulary IRI, aborting only if the compiled vocabulary is corrupt.
+fn required_iri(value: &str) -> IriBuf {
+    match IriBuf::new(value.to_owned()) {
+        Ok(iri) => iri,
+        Err(_) => std::process::abort(),
+    }
 }
 
 /// Merge one request context into the accumulating batch table.
@@ -458,7 +486,7 @@ fn declared_coercion(declared_type: Option<&str>) -> Option<TermCoercion> {
 /// anything. The `@vocab` is never touched — the core one wins (clause 5.5.7).
 fn merge_user_table(
     terms: &mut HashMap<Box<str>, ResolvedTerm>,
-    prefix_table: &mut Vec<(Box<str>, Box<str>)>,
+    prefix_table: &mut Vec<(Box<str>, IriBuf)>,
     table: &UserTermTable,
     eligibility: &mut FastpathEligibility,
 ) {
@@ -724,7 +752,8 @@ mod tests {
         let _handle = engine.batch_context_handle(&spec).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 1, "the batch parses the context");
 
-        engine.invalidate_context(url.as_str()).await;
+        let url_iri = iri_ref(url.as_str()).try_into_iri().expect("absolute context URL");
+        engine.invalidate_context(&url_iri).await;
         pretty_assertions::assert_eq!(engine.user_term_tables().len(), 0, "invalidation drops the parsed table");
 
         let _ = fs::remove_file(path);

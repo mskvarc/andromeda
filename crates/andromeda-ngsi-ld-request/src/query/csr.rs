@@ -14,6 +14,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, temporal::window::TimeInterval, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 /// Raw HTTP query parameters for Context Source Registration discovery.
@@ -47,10 +48,10 @@ pub struct CsrQueryParameters {
     pub timerel: Option<TimeRel>,
     /// The instant the window is anchored at (`timeAt`).
     #[serde(rename = "timeAt")]
-    pub time_at: Option<String>,
+    pub time_at: Option<DateTime<Utc>>,
     /// The closing instant, required by `timerel=between` (`endTimeAt`).
     #[serde(rename = "endTimeAt")]
-    pub end_time_at: Option<String>,
+    pub end_time_at: Option<DateTime<Utc>>,
     /// The temporal property the window applies to (clause 4.8 `timeproperty`).
     #[serde(default, deserialize_with = "crate::query::temporal::deserialize_option_timeproperty")]
     pub timeproperty: Option<TimeProp>,

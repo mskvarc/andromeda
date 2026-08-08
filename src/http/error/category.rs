@@ -87,6 +87,7 @@ mod tests {
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_ngsi_ld_render::error::{RenderError, RenderedShape};
     use andromeda_tenancy::error::TenancyError;
+    use iri_rs::IriBuf;
 
     #[test]
     fn each_family_of_failures_reports_the_category_clause_5_5_2_gives_it() {
@@ -124,7 +125,7 @@ mod tests {
     #[test]
     fn a_jsonld_failure_is_categorised_by_the_processor_rather_than_by_its_message() {
         let unavailable = ErrorKind::JsonLd(JsonLdError::ContextFetchDisabled {
-            url: "https://example.com/context.jsonld".to_string(),
+            url: IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid IRI"),
         });
         pretty_assertions::assert_eq!(category::of(&unavailable), NgsiLdErrorType::LdContextNotAvailable);
 

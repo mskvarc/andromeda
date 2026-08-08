@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_query::{
     geo::input::GeoQueryInput,
     pattern::Pattern,
 };
+use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer};
 use urn_rs::Urn;
 
@@ -14,10 +15,15 @@ use urn_rs::Urn;
 pub struct OptionalGeoQuery(pub Option<GeoQueryInput>);
 
 #[derive(Deserialize)]
+/// Wire members used to assemble one complete geo-query.
 struct GeoQueryParameters {
+    /// Spatial relationship token.
     georel: Option<String>,
+    /// GeoJSON geometry type.
     geometry: Option<String>,
+    /// GeoJSON coordinates.
     coordinates: Option<serde_json::Value>,
+    /// Optional GeoProperty reference.
     geoproperty: Option<NgsiLdReference>,
 }
 
@@ -161,4 +167,34 @@ where
             .collect()
     })
     .transpose()
+}
+
+/// Deserialize one dataset URN for a mutation endpoint.
+///
+/// Unlike query filtering, mutation `datasetId` is singleton-valued. Keeping
+/// the whole wire value in the parser means a comma-separated list cannot be
+/// accidentally accepted as one opaque identifier.
+pub fn deserialize_optional_dataset_urn<'de, D>(deserializer: D) -> Result<Option<Urn>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| {
+        let value = value.trim();
+        if value.contains(',') {
+            return Err(serde::de::Error::custom("datasetId must contain one URN"));
+        }
+        value.parse().map_err(serde::de::Error::custom)
+    })
+    .transpose()
+}
+
+/// Deserialize an optional ISO-8601 calendar duration at the request boundary.
+pub fn deserialize_optional_iso8601_duration<'de, D>(deserializer: D) -> Result<Option<Iso8601Duration>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| value.parse().map_err(|error| serde::de::Error::custom(format!("{error:?}"))))
+        .transpose()
 }

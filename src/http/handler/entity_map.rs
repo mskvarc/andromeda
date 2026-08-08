@@ -9,12 +9,14 @@ use crate::{
         response::{render::start_rendering, single::NgsiLdResponse},
         validation::parse_entity_map_id,
     },
-    service::entity_map::parse_iso8601_duration,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
-use andromeda_ngsi_ld_request::body::entity_map::{QueryRequestBody, UpdateEntityMapBody, query_body_to_params};
+use andromeda_ngsi_ld_request::{
+    body::entity_map::{QueryRequestBody, UpdateEntityMapBody},
+    query::entity::body_conversion::query_body_to_params,
+};
 use axum::{
     Json,
     extract::{OriginalUri, Path},
@@ -91,24 +93,18 @@ pub async fn create_from_query(
     let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let lifetime = query
-        .entity_map_lifetime
-        .as_deref()
-        .map(|raw| parse_iso8601_duration(Some(raw)))
-        .transpose()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
+    let lifetime = query.entity_map_lifetime.as_ref();
     let typed_ids: Vec<Uri> = ids
         .iter()
         .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)
         .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
     // Clone id before converting map to Value
-    let map_uri = map.id.to_string();
+    let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
@@ -138,23 +134,17 @@ pub async fn create_from_query_post(
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let lifetime = body
-        .entity_map_lifetime
-        .as_deref()
-        .map(|raw| parse_iso8601_duration(Some(raw)))
-        .transpose()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
+    let lifetime = body.entity_map_lifetime.as_ref();
     let typed_ids: Vec<Uri> = ids
         .iter()
         .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)
         .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
-    let map_uri = map.id.to_string();
+    let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
     let rendered = start_rendering(accept.media_type(), &context_spec, PreferHeader::default())
@@ -182,23 +172,17 @@ pub async fn create_temporal_from_query(
     let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let lifetime = query
-        .entity_map_lifetime
-        .as_deref()
-        .map(|raw| parse_iso8601_duration(Some(raw)))
-        .transpose()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
+    let lifetime = query.entity_map_lifetime.as_ref();
     let typed_ids: Vec<Uri> = ids
         .iter()
         .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)
         .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
-    let map_uri = map.id.to_string();
+    let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
@@ -228,23 +212,17 @@ pub async fn create_temporal_from_query_post(
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let lifetime = body
-        .entity_map_lifetime
-        .as_deref()
-        .map(|raw| parse_iso8601_duration(Some(raw)))
-        .transpose()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
+    let lifetime = body.entity_map_lifetime.as_ref();
     let typed_ids: Vec<Uri> = ids
         .iter()
         .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
         .collect::<Result<Vec<_>, _>>()
         .with_instance(&uri)
         .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
-    let map_uri = map.id.to_string();
+    let map_uri = map.id.clone();
 
     let value = serde_json::to_value(&map).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity map: {}", e)).with_instance(&uri))?;
     let rendered = start_rendering(accept.media_type(), &context_spec, PreferHeader::default())

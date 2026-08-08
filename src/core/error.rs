@@ -697,6 +697,7 @@ mod tests {
     #![allow(clippy::invalid_regex)]
     use super::*;
     use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+    use iri_rs::IriBuf;
     use sqlx::{
         Error as SqlxError,
         error::{DatabaseError, ErrorKind as SqlxErrorKind},
@@ -816,25 +817,24 @@ mod tests {
         // Each of these used to be flattened into a formatted string, which
         // meant the clause 5.5.2 category had to be re-derived from the
         // variant here instead of being asked of the error itself.
+        let iri = || IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid IRI");
         let failures = [
             JsonLdError::ContextHttp {
-                url: "https://example.com/context.jsonld".to_string(),
+                url: iri(),
                 status: reqwest::StatusCode::NOT_FOUND,
             },
-            JsonLdError::ContextFetchDisabled {
-                url: "https://example.com/context.jsonld".to_string(),
-            },
+            JsonLdError::ContextFetchDisabled { url: iri() },
             JsonLdError::ContextLoad {
-                url: "https://example.com/context.jsonld".to_string(),
+                url: iri(),
                 message: "connection refused".to_string(),
             },
             JsonLdError::ContextTooLarge {
-                url: "https://example.com/context.jsonld".to_string(),
+                url: iri(),
                 size: 2_000_000,
                 max: 1_000_000,
             },
             JsonLdError::ContextInvalid {
-                url: "https://example.com/context.jsonld".to_string(),
+                url: iri(),
                 message: "invalid JSON-LD".to_string(),
             },
             JsonLdError::EmbeddedContextInvalid("bad context".to_string()),
@@ -854,7 +854,7 @@ mod tests {
     #[test]
     fn a_context_loading_failure_stays_distinguishable_from_a_document_failure() {
         let unavailable = AndromedaError::from(JsonLdError::ContextFetchDisabled {
-            url: "https://example.com/context.jsonld".to_string(),
+            url: IriBuf::new("https://example.com/context.jsonld".to_string()).expect("valid IRI"),
         });
         let malformed = AndromedaError::from(JsonLdError::invalid_document("not an object"));
 

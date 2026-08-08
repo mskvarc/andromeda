@@ -1,8 +1,6 @@
-//! Query parameters for the NGSI-LD Entity query API (5.7.2).
+//! Entity-query parameter definitions and their boundary tests.
 
 use crate::{
-    body::query::QueryRequest,
-    error::ParameterError,
     impl_shared_query_params,
     query::{
         deserialization::{
@@ -10,13 +8,13 @@ use crate::{
             deserialize_optional_attribute_names,
             deserialize_optional_dataset_urns,
             deserialize_optional_filter_expr,
+            deserialize_optional_iso8601_duration,
             deserialize_optional_pattern,
             deserialize_optional_uri_csv,
         },
         entity_selector::EntitySelectorParams,
-        order_by::deserialize_optional_order_by,
     },
-    representation_params::{deserialize_option_response_format, resolve_response_format, validate_representation_params},
+    representation_params::deserialize_option_response_format,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{
@@ -27,24 +25,10 @@ use andromeda_ngsi_ld_query::{
     type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
-use serde::{Deserialize, Deserializer};
+use iso8601_duration::Duration as Iso8601Duration;
+use serde::Deserialize;
 use std::num::NonZeroU32;
 use urn_rs::Urn;
-
-/// Deserialise the `collation` query parameter, validating it as an ICU
-/// collation identifier at the boundary (clause 4.23) rather than downstream.
-///
-/// # Errors
-///
-/// Returns the deserialiser's error when the value is present and is not a valid
-/// ICU collation identifier.
-fn deserialize_option_collation<'de, D>(deserializer: D) -> Result<Option<IcuCollation>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| IcuCollation::parse(&value).map_err(serde::de::Error::custom)).transpose()
-}
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
 ///
@@ -103,7 +87,7 @@ pub struct EntityQueryParameters {
     pub omit: Option<Vec<AttributeName>>,
     /// The ordering terms, comma-separated (clause 4.23 `orderBy`).
     #[serde(rename = "orderBy")]
-    #[serde(default, deserialize_with = "deserialize_optional_order_by")]
+    #[serde(default, deserialize_with = "super::deserializer::deserialize_optional_order_by")]
     pub order_by: Option<Vec<OrderTerm>>,
     /// The scope query expression (clause 4.18 `scopeQ`).
     #[serde(rename = "scopeQ")]
@@ -141,7 +125,8 @@ pub struct EntityQueryParameters {
     pub entity_map: Option<bool>,
     /// How long a created entity map lives, as an ISO 8601 duration (`entityMapLifetime`).
     #[serde(rename = "entityMapLifetime")]
-    pub entity_map_lifetime: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_iso8601_duration")]
+    pub entity_map_lifetime: Option<Iso8601Duration>,
     /// Whether attributes split across Context Sources are merged after forwarding (`splitEntities`).
     #[serde(rename = "splitEntities")]
     pub split_entities: Option<bool>,
@@ -149,7 +134,7 @@ pub struct EntityQueryParameters {
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// ICU collation identifier for orderBy string sorting (S4.23).
-    #[serde(default, deserialize_with = "deserialize_option_collation")]
+    #[serde(default, deserialize_with = "super::deserializer::deserialize_option_collation")]
     pub collation: Option<IcuCollation>,
     /// Reference coordinates for distance-based ordering (S5.2.43).
     #[serde(rename = "orderFrom")]
@@ -181,77 +166,6 @@ impl_shared_query_params!(EntityQueryParameters {
     offset: offset
 });
 
-impl EntityQueryParameters {
-    /// Parses the `options` and `format` parameters into structured flags.
-    ///
-    /// Handles both the legacy `options` parameter (e.g. `"keyValues,sysAttrs"`)
-    /// and the newer `format` parameter, with `format` taking precedence where
-    /// both are provided (clause 4.5.1). The representation is resolved by the
-    /// shared [`resolve_response_format`] so this and the single-entity GET path
-    /// cannot drift apart.
-    pub fn parse_options(&self) -> EntityQueryParametersOptions {
-        let opts = self.options.as_deref().unwrap_or("");
-        EntityQueryParametersOptions {
-            render_mode: resolve_response_format(self.format, self.options.as_deref()),
-            sys_attrs: if opts.split(',').map(str::trim).any(|token| token == "sysAttrs") {
-                SysAttrsInclusion::Include
-            } else {
-                SysAttrsInclusion::Strip
-            },
-            count: self.count.unwrap_or(false),
-        }
-    }
-
-    /// Whether any entity filter parameter is present.
-    ///
-    /// Per NGSI-LD 5.7.2.4, at least one filter (type, id, idPattern, q, attrs,
-    /// georel, scopeQ) must be provided unless `local=true`. A `q` parameter
-    /// that is present but empty/whitespace-only does not count as a filter.
-    pub fn has_any_filter(&self) -> bool {
-        self.entity_type.is_some()
-            || self.id.is_some()
-            || self.id_pattern.is_some()
-            || self.attrs.is_some()
-            || self.geo.0.is_some()
-            || self.scope_q.is_some()
-            || self.q.is_some()
-    }
-
-    /// Validate query parameters.
-    pub fn validate(&self) -> Result<(), ParameterError> {
-        // Representation parameters (`format`/`options`), clause 4.5.1.
-        validate_representation_params(self.format, self.options.as_deref())?;
-
-        // Validate orderGeometry: must be a valid GeoJSON geometry type, not GeometryCollection (S5.2.43)
-        if let Some(ref order_geometry) = self.order_geometry {
-            match order_geometry.as_str() {
-                "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" => {}
-                "GeometryCollection" => {
-                    return Err(ParameterError::OrderGeometryCollection);
-                }
-                other => {
-                    return Err(ParameterError::OrderGeometryInvalid(other.to_string()));
-                }
-            }
-        }
-
-        // Validate orderFrom: must be valid JSON coordinates (S5.2.43)
-        if let Some(ref order_from) = self.order_from {
-            serde_json::from_str::<serde_json::Value>(order_from).map_err(|source| ParameterError::OrderFromInvalid {
-                value: order_from.clone(),
-                source,
-            })?;
-        }
-
-        // drop and keep are mutually exclusive (S5.6.21)
-        if self.drop.is_some() && self.keep.is_some() {
-            return Err(ParameterError::DropKeepExclusive);
-        }
-
-        Ok(())
-    }
-}
-
 /// Parsed response shaping options from the `options` and `format` parameters.
 #[derive(Debug)]
 pub struct EntityQueryParametersOptions {
@@ -263,73 +177,10 @@ pub struct EntityQueryParametersOptions {
     pub count: bool,
 }
 
-impl From<QueryRequest> for EntityQueryParameters {
-    fn from(request: QueryRequest) -> EntityQueryParameters {
-        let mut ids = Vec::new();
-        let mut id_pattern = None;
-        let mut entity_selectors = Vec::new();
-
-        if let Some(entities) = &request.entities {
-            for selection in entities {
-                if let Some(id) = selection.id() {
-                    ids.push(id.clone());
-                }
-                if let Some(p) = selection.id_pattern() {
-                    id_pattern = Some(p.clone());
-                }
-                // The precise per-selector grouping (clause 5.2.11), kept
-                // alongside the flattened summary the fields above form.
-                entity_selectors.push(EntitySelectorParams {
-                    id: selection.id().map(|id| vec![id.clone()]),
-                    id_pattern: selection.id_pattern().cloned(),
-                    type_: selection.type_().cloned(),
-                });
-            }
-        }
-
-        EntityQueryParameters {
-            id: if ids.is_empty() { None } else { Some(ids) },
-            entity_type: None,
-            id_pattern,
-            entity_selectors,
-            attrs: request.attrs,
-            q: request.q,
-            geo: OptionalGeoQuery(request.geo_q.map(|geo| geo.0)),
-            limit: request.limit,
-            offset: request.offset,
-            count: request.count,
-            options: None,
-            local: None,
-            pick: None,
-            omit: None,
-            order_by: None,
-            scope_q: None,
-            lang: None,
-            dataset_id: None,
-            expand_values: None,
-            json_keys: None,
-            format: None,
-            join: None,
-            join_level: None,
-            contained_by: None,
-            entity_map: None,
-            entity_map_lifetime: None,
-            split_entities: None,
-            geometry_property: None,
-            collation: None,
-            order_from: None,
-            order_geometry: None,
-            csf: None,
-            drop: None,
-            keep: None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{params_from_query, query::SharedQueryParams};
+    use crate::{body::query::QueryRequest, error::ParameterError, params_from_query, query::SharedQueryParams};
     use andromeda_ngsi_ld_query::ordering::term::OrderDirection;
 
     fn params_from_query(query: &str) -> EntityQueryParameters {

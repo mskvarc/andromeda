@@ -1,15 +1,22 @@
-//! Boundary deserialization for the entity-query `orderBy` expression.
+//! Entity-query-specific boundary deserializers.
 
 use crate::error::ParameterError;
-use andromeda_ngsi_ld_query::ordering::term::{OrderDirection, OrderTerm};
+use andromeda_ngsi_ld_query::ordering::{
+    collation::IcuCollation,
+    term::{OrderDirection, OrderTerm},
+};
 use serde::{Deserialize, Deserializer};
 
+/// Deserialize the `collation` query parameter as a validated ICU identifier.
+pub(super) fn deserialize_option_collation<'de, D>(deserializer: D) -> Result<Option<IcuCollation>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Option<String> = Option::deserialize(deserializer)?;
+    raw.map(|value| IcuCollation::parse(&value).map_err(serde::de::Error::custom)).transpose()
+}
+
 /// Deserialize `orderBy` into validated query ordering terms.
-///
-/// # Errors
-///
-/// Returns a deserialization error when a direction is not one of the values
-/// defined by NGSI-LD clause 4.23.
 pub(crate) fn deserialize_optional_order_by<'de, D>(deserializer: D) -> Result<Option<Vec<OrderTerm>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -18,6 +25,7 @@ where
     raw.map(|value| parse_order_by(&value).map_err(serde::de::Error::custom)).transpose()
 }
 
+/// Parse the comma-separated `orderBy` grammar.
 fn parse_order_by(raw: &str) -> Result<Vec<OrderTerm>, ParameterError> {
     raw.split(',')
         .filter_map(|term| {
@@ -66,15 +74,14 @@ mod tests {
 
     #[test]
     fn deserializes_specified_directions() {
-        let parsed: Parameters = serde_urlencoded::from_str("orderBy=name,location;dist-desc").unwrap();
-        let terms = parsed.order_by.unwrap();
+        let parsed: Parameters = serde_urlencoded::from_str("orderBy=name,location;dist-desc").expect("valid orderBy");
+        let terms = parsed.order_by.expect("order terms");
         pretty_assertions::assert_eq!(terms[0].direction, OrderDirection::Asc);
         pretty_assertions::assert_eq!(terms[1].direction, OrderDirection::DistDesc);
     }
 
     #[test]
     fn rejects_unknown_direction_at_deserialization_boundary() {
-        let parsed = serde_urlencoded::from_str::<Parameters>("orderBy=name;sideways");
-        assert!(parsed.is_err());
+        assert!(serde_urlencoded::from_str::<Parameters>("orderBy=name;sideways").is_err());
     }
 }

@@ -3,8 +3,8 @@
 //! Carries the entity map URI for paginated distributed queries.
 //! The value must be a valid URN (RFC 8141).
 
+use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityMapId;
 use http::{HeaderName, HeaderValue};
-use urn_rs::Urn;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_ENTITYMAP: HeaderName = HeaderName::from_static("ngsild-entitymap");
@@ -14,11 +14,11 @@ static NGSILD_ENTITYMAP: HeaderName = HeaderName::from_static("ngsild-entitymap"
 /// Carries the URN of an entity map resource created during a distributed
 /// query, used for stable pagination across context sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdEntityMap(Urn);
+pub struct NgsiLdEntityMap(EntityMapId);
 
 impl NgsiLdEntityMap {
-    /// Create a new `NGSILD-EntityMap` header from a validated URN.
-    pub const fn new(value: Urn) -> NgsiLdEntityMap {
+    /// Create a new `NGSILD-EntityMap` header from a validated identifier.
+    pub const fn new(value: EntityMapId) -> NgsiLdEntityMap {
         NgsiLdEntityMap(value)
     }
 
@@ -27,8 +27,13 @@ impl NgsiLdEntityMap {
         self.0.as_str()
     }
 
-    /// Consume the header and return the inner URN.
-    pub fn into_inner(self) -> Urn {
+    /// Borrow the validated entity-map identifier.
+    pub const fn as_inner(&self) -> &EntityMapId {
+        &self.0
+    }
+
+    /// Consume the header and return the inner identifier.
+    pub fn into_inner(self) -> EntityMapId {
         self.0
     }
 }
@@ -48,8 +53,8 @@ impl headers::Header for NgsiLdEntityMap {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        let urn: Urn = trimmed.parse().map_err(|_| headers::Error::invalid())?;
-        Ok(NgsiLdEntityMap(urn))
+        let id: EntityMapId = trimmed.parse().map_err(|_| headers::Error::invalid())?;
+        Ok(NgsiLdEntityMap(id))
     }
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
@@ -104,9 +109,14 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_a_different_ngsi_ld_resource_kind() {
+        assert!(decode_from("urn:ngsi-ld:Snapshot:test").is_err());
+    }
+
+    #[test]
     fn encode_roundtrip() {
-        let urn: Urn = "urn:ngsi-ld:EntityMap:test".parse().expect("valid URN");
-        let header = NgsiLdEntityMap::new(urn);
+        let id = "urn:ngsi-ld:EntityMap:test".parse().expect("valid entity map id");
+        let header = NgsiLdEntityMap::new(id);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);
         pretty_assertions::assert_eq!(encoded.len(), 1);

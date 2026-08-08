@@ -3,7 +3,12 @@
 use crate::{
     case_insensitive_bool::deserialize_option_bool_case_insensitive,
     error::ParameterError,
-    query::deserialization::{deserialize_optional_attribute_names, deserialize_optional_dataset_urns, deserialize_optional_uri_csv},
+    query::deserialization::{
+        deserialize_optional_attribute_names,
+        deserialize_optional_dataset_urn,
+        deserialize_optional_dataset_urns,
+        deserialize_optional_uri_csv,
+    },
     representation_params::{deserialize_option_response_format, resolve_response_format, validate_representation_params},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -26,7 +31,8 @@ pub struct AppendParams {
 pub struct PartialUpdateAttrParams {
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_dataset_urn")]
+    pub dataset_id: Option<Urn>,
 }
 
 /// Query parameters for `PUT /entities/{id}/attrs/{attrId}` (replace attribute).
@@ -35,7 +41,8 @@ pub struct PartialUpdateAttrParams {
 pub struct ReplaceAttrParams {
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
-    pub dataset_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_dataset_urn")]
+    pub dataset_id: Option<Urn>,
 }
 
 /// Query parameters for `GET /entities/{id}` (retrieve single entity).
@@ -201,5 +208,20 @@ mod tests {
         params.format = Some(ResponseFormat::Concise);
         params.options = Some("sysAttrs".to_string());
         assert!(params.validate().is_ok());
+    }
+
+    #[test]
+    fn mutation_dataset_id_is_typed_at_deserialization() {
+        let params: PartialUpdateAttrParams = serde_urlencoded::from_str("datasetId=urn:ngsi-ld:Dataset:test").expect("valid dataset id");
+        pretty_assertions::assert_eq!(params.dataset_id.as_ref().map(ToString::to_string).as_deref(), Some("urn:ngsi-ld:Dataset:test"));
+        assert!(serde_urlencoded::from_str::<ReplaceAttrParams>("datasetId=not-a-urn").is_err());
+    }
+
+    #[test]
+    fn entity_map_lifetime_is_typed_at_deserialization() {
+        let params: crate::query::entity::parameters::EntityQueryParameters =
+            serde_urlencoded::from_str("type=Vehicle&entityMapLifetime=P1M").expect("valid duration");
+        pretty_assertions::assert_eq!(params.entity_map_lifetime.as_ref().map(ToString::to_string).as_deref(), Some("P1M"));
+        assert!(serde_urlencoded::from_str::<crate::query::entity::parameters::EntityQueryParameters>("type=Vehicle&entityMapLifetime=bad").is_err());
     }
 }

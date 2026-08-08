@@ -30,7 +30,7 @@ use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use andromeda_ngsi_ld_request::{
     body::query::QueryRequest,
     entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
-    query::entity::EntityQueryParameters,
+    query::entity::parameters::EntityQueryParameters,
 };
 use axum::{
     body::Bytes,

@@ -6,6 +6,7 @@
 //! processing may depend on which was made.
 
 use async_trait::async_trait;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::fmt::Debug;
 
@@ -16,7 +17,7 @@ use std::fmt::Debug;
 #[async_trait]
 pub trait ContextCache: Send + Sync + Debug {
     /// Look up a previously cached context by URL.
-    async fn get(&self, url: &str) -> Option<Value>;
+    async fn get(&self, url: &IriBuf) -> Option<Value>;
 
     /// Store a context payload for a URL that has none yet.
     ///
@@ -25,5 +26,5 @@ pub trait ContextCache: Send + Sync + Debug {
     /// [`HitCounter`](crate::hit_counter::HitCounter) and is flushed by a
     /// task the broker wires up, precisely so this write stays off the
     /// expansion path.
-    async fn put(&self, url: &str, payload: Value);
+    async fn put(&self, url: &IriBuf, payload: Value);
 }

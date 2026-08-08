@@ -25,6 +25,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.1", features = ["sync"] }
 tracing = "0.1.44"
+urn-rs = { version = "0.9.2", features = ["serde"] }
 uuid = { version = "1.23.1", features = ["v4"] }
 
 [dev-dependencies]
