@@ -3,9 +3,9 @@
 //! aggregation method values (NGSI-LD aggregation methods: avg, min, max,
 //! sum, sumsq, stddev, totalCount, distinctCount).
 
-use crate::service::temporal::store::{AggregationMinMax, TemporalAggregationRow};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_postgresql_temporal_store::store::{AggregationMinMax, TemporalAggregationRow};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
 

@@ -23,9 +23,11 @@ andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
+andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
+andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
@@ -70,9 +72,11 @@ andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-context-query.workspace = true
+andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
+andromeda-postgresql-temporal-store.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.89"

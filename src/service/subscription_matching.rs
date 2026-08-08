@@ -281,7 +281,7 @@ mod tests {
         )
         .expect("the subscription geoQ compiles");
 
-        let residual = crate::service::entity::residual_filter::ResidualFilter::over(
+        let residual = andromeda_postgresql_context_store::entity::residual_filter::ResidualFilter::over(
             andromeda_ngsi_ld_query::entity_selection::EntitySelection::builder()
                 .geo(Some(geo_query.clone())) // clone: the residual owns its predicate and the direct evaluator borrows this one
                 .build(),
@@ -294,7 +294,7 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(
                 matches_geo_query(&geo_query, &entity),
-                residual.matches(&entity),
+                crate::service::entity::residual_filter::matches(&residual, &entity),
                 "the two readings disagreed on {entity}"
             );
         }

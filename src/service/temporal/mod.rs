@@ -1,11 +1,8 @@
 //! Service layer for the NGSI-LD Temporal API.
 
-pub mod store;
-
 use crate::{
     core::error::AndromedaError,
     http::response::content_range::build_content_range,
-    repository::temporal::{params::DeleteScope, recorder::TemporalRecorder},
     service::{
         csource_forwarding::{ForwardedTemporalEntities, merge_temporal_query_results},
         entity::{
@@ -16,7 +13,6 @@ use crate::{
             store::EntityStore,
             write_coordinator::WriteCoordinator,
         },
-        temporal::store::{TemporalHistoryReader, TemporalMutator},
     },
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
@@ -55,6 +51,11 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::{normalization::normalize_entity_attributes, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
+use andromeda_postgresql_temporal_store::{
+    params::DeleteScope,
+    recorder::TemporalRecorder,
+    store::{TemporalAggregationRow, TemporalHistoryReader, TemporalMutator},
+};
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
@@ -206,11 +207,6 @@ impl TemporalService {
     /// Return a reference to the underlying JSON-LD engine.
     pub const fn engine(&self) -> &JsonLdEngine {
         &self.engine
-    }
-
-    /// The capability descriptor of the underlying temporal store.
-    pub fn storage_profile(&self) -> store::TemporalStorageProfile {
-        self.reader.profile()
     }
 
     // -------------------------------------------------------------------------
@@ -415,6 +411,7 @@ impl TemporalService {
         self.recorder
             .update_attribute_instance(entity_id, &attr_iri, instance_id, &instance_value)
             .await
+            .map_err(AndromedaError::from)
     }
 
     /// Delete a specific attribute instance by its instance ID.
@@ -631,7 +628,7 @@ impl TemporalService {
         &self,
         entity_id: &str,
         entity_types: &[EntityTypeName],
-        rows: &[store::TemporalAggregationRow],
+        rows: &[TemporalAggregationRow],
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
     ) -> Result<Value, AndromedaError> {

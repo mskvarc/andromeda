@@ -7,8 +7,9 @@
 //! holds, and clause 5.5.2 provides `OperationNotSupported` precisely so that
 //! answer can be refused instead of given slowly and silently.
 
-use crate::{core::error::AndromedaError, service::entity::storage_profile::StorageProfile};
+use crate::core::error::AndromedaError;
 use andromeda_ngsi_ld_query::entity_selection::EntitySelection;
+use andromeda_postgresql_context_store::entity::storage_profile::StorageProfile;
 
 /// Refuse a selection carrying a predicate the store cannot narrow.
 ///
@@ -30,12 +31,10 @@ pub(super) fn refuse_unnarrowable(profile: &StorageProfile, selection: &EntitySe
 
 #[cfg(test)]
 mod tests {
-    use crate::service::entity::{
-        query::pushdown_refusal::refuse_unnarrowable,
-        storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
-    };
+    use crate::service::entity::query::pushdown_refusal::refuse_unnarrowable;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, filter::parser, geo::query::GeoQuery, scope::query::ScopeQuery};
+    use andromeda_postgresql_context_store::entity::storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown};
     use serde_json::json;
 
     fn all_three() -> EntitySelection {

@@ -7,49 +7,16 @@
 //! store gains a neutral row type when the temporal ports are declared, and
 //! this becomes a decoding of that instead.
 
-use crate::{
-    core::error::AndromedaError,
-    repository::temporal::{entry::TeaEntry, value_type::ValueType},
-    service::temporal::store::{TemporalHistoryRow, TemporalValue},
-    temporal_render::geojson_ld::expand_geojson,
-};
+use crate::temporal_render::geojson_ld::expand_geojson;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, rfc3339::whole_seconds};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_postgresql_temporal_store::store::{TemporalHistoryRow, TemporalValue};
 use chrono::{DateTime, Utc};
-use iri_rs::IriBuf;
 use serde_json::{Value, json};
-use sqlx::{Row, postgres::PgRow};
-use std::str::FromStr;
 
 /// The observed time span of a set of history rows.
 pub type TimeRange = (DateTime<Utc>, DateTime<Utc>);
-
-pub fn parse_tea_entry(row: &PgRow) -> Result<TeaEntry, AndromedaError> {
-    let attribute_name_raw: String = row.try_get("attribute_name")?;
-    let attribute_name = IriBuf::new(attribute_name_raw.clone())
-        .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute IRI '{}': {}", attribute_name_raw, e)))?;
-
-    let attribute_type_raw: String = row.try_get("attribute_type")?;
-    let attribute_type = AttributeType::from_str(&attribute_type_raw)
-        .map_err(|e| AndromedaError::internal(format!("Invalid temporal attribute type '{}': {}", attribute_type_raw, e)))?;
-
-    let dataset_id = row
-        .try_get::<Option<String>, _>("dataset_id")?
-        .map(|raw| IriBuf::new(raw.clone()).map_err(|e| AndromedaError::internal(format!("Invalid temporal dataset id '{}': {}", raw, e))))
-        .transpose()?;
-
-    let value_type_raw: String = row.try_get("value_type")?;
-    let value_type =
-        ValueType::from_str(&value_type_raw).map_err(|e| AndromedaError::internal(format!("Invalid temporal value type '{}': {}", value_type_raw, e)))?;
-
-    Ok(TeaEntry {
-        attribute_name,
-        attribute_type,
-        dataset_id,
-        value_type,
-    })
-}
 
 /// Build an expanded NGSI-LD attribute instance from a backend-neutral
 /// [`TemporalHistoryRow`].

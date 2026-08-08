@@ -1,6 +1,5 @@
 use crate::{
     core::error::AndromedaError,
-    repository::subscription::repo::SubscriptionRepository,
     service::{
         entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
         subscription::store::SubscriptionStore,
@@ -22,6 +21,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
+use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};

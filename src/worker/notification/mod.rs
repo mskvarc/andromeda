@@ -2,7 +2,6 @@ pub(crate) mod payload;
 
 use crate::{
     event::{change_event::ChangeEvent, subscription_change::SubscriptionChange},
-    repository::subscription::repo::SubscriptionRepository,
     service::{
         compiled_subscription::CompiledSubscription,
         entity::{query::EntityQueryService, store::EntityStore, sys_attrs::inject_sys_attrs},
@@ -25,6 +24,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};

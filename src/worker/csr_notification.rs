@@ -1,6 +1,5 @@
 use crate::{
     event::{csr_change_event::CsrChangeEvent, subscription_change::CsourceSubscriptionChange},
-    repository::csource_subscription::repo::CsourceSubscriptionRepository,
     service::{
         compiled_subscription::CompiledCsrSubscription,
         csource_registration::store::RegistrationStore,
@@ -15,6 +14,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_postgresql_context_store::csource_subscription::repo::CsourceSubscriptionRepository;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use dashmap::DashMap;

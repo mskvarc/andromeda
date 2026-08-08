@@ -16,6 +16,7 @@ mod http;
 mod repository;
 mod server;
 mod service;
+mod store_bridge;
 mod temporal_render;
 mod version;
 mod worker;

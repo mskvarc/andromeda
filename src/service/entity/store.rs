@@ -18,66 +18,19 @@
 //! [`AtomicWrite`]: crate::service::entity::atomic_write::AtomicWrite
 //! [`WriteCoordinator`]: crate::service::entity::write_coordinator::WriteCoordinator
 
-use crate::{
-    core::error::AndromedaError,
-    service::entity::{query_outcome::QueryOutcome, storage_profile::StorageProfile},
-};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName, uri::Uri};
+use crate::core::error::AndromedaError;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
+use andromeda_postgresql_context_store::entity::{
+    attribute_summary::AttributeSummary,
+    query_outcome::QueryOutcome,
+    snapshot::EntitySnapshot,
+    storage_profile::StorageProfile,
+};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
-
-/// One entity as it stood at the moment it was deleted.
-///
-/// Carries the payload and system attributes the notification path needs, which
-/// are no longer readable once the row is gone.
-#[derive(Debug)]
-pub struct DeletedEntity {
-    /// Entity identifier.
-    pub id: Uri,
-    /// The expanded JSON-LD payload at the time of deletion.
-    pub payload: Value,
-    /// Timestamp when the entity was originally created.
-    pub created_at: DateTime<Utc>,
-    /// Timestamp of the last modification before deletion.
-    pub modified_at: DateTime<Utc>,
-    /// Optional expiration timestamp.
-    pub expires_at: Option<DateTime<Utc>>,
-}
-
-/// One entity's payload together with the version token a
-/// [`Precondition::UnchangedSince`](crate::service::entity::precondition::Precondition::UnchangedSince)
-/// compares against.
-///
-/// A read-modify-write reads this, computes its result, and states the
-/// `modified_at` it assumed; the store refuses the write if the entity has
-/// moved on since. That is what replaces reading inside the writing
-/// transaction.
-#[derive(Debug)]
-pub struct EntitySnapshot {
-    /// The expanded JSON-LD payload as it stood when it was read.
-    pub payload: Value,
-    /// The entity's clause 4.8 `modifiedAt` at the same instant.
-    pub modified_at: DateTime<Utc>,
-}
-
-/// Aggregated metadata for a single attribute across all entities.
-///
-/// Backs the clause 5.7.3 attribute discovery endpoints.
-#[derive(Debug)]
-pub struct AttributeSummary {
-    /// The expanded IRI of the attribute, named as an attribute reference.
-    pub attr_iri: AttributeName,
-    /// Number of distinct entities that carry this attribute.
-    pub entity_count: i64,
-    /// Entity type IRIs that contain this attribute.
-    pub entity_types: Vec<EntityTypeName>,
-    /// NGSI-LD attribute types observed for this attribute.
-    pub attribute_types: Vec<AttributeType>,
-}
 
 /// Reading entities, and the two bulk removals that stand alone.
 #[async_trait]

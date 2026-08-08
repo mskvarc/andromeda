@@ -6,7 +6,6 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::subscription::repo::SubscriptionRepository,
     service::{
         subscription::store::{StatusUpdateFields, SubscriptionStore},
         subscription_core,
@@ -20,6 +19,7 @@ use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{Subscription, SubscriptionStatus},
 };
+use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;

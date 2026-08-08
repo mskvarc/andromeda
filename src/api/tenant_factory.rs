@@ -12,23 +12,7 @@ use crate::{
         csr_change_event::CsrChangeEvent,
         subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
     },
-    repository::{
-        atomic_write::anchor::PostgresAnchorStore,
-        attribute_current::materializer::AttributeCurrentMaterializer,
-        attribute_names::AttributeNameCache,
-        csource_registration::repo::CsourceRegistrationRepository,
-        csource_subscription::repo::CsourceSubscriptionRepository,
-        entity::repo::EntityRepository,
-        entity_map::InMemoryEntityMapStore,
-        jsonld_context::repo::JsonLdContextRepository,
-        outbox::repo::OutboxRepository,
-        pending_side_effects::repo::PendingSideEffectsRepository,
-        snapshot::repo::SnapshotRepository,
-        spatial_warmup::warmup_location,
-        subscription::repo::SubscriptionRepository,
-        temporal::{recorder::TemporalRecorder, repo::TemporalRepository},
-        tenant_database::{DatabaseUrl, configure_pool_options, migrate_tenant_db},
-    },
+    repository::atomic_write::anchor::PostgresAnchorStore,
     service::{
         csource_registration::{CsourceRegistrationService, store::RegistrationStore},
         csource_subscription::CsourceSubscriptionService,
@@ -68,6 +52,23 @@ use andromeda_delivery::{
     mqtt::{config::MqttPoolConfig, pool::MqttTransportPool},
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
 };
+use andromeda_postgresql_context_store::{
+    attribute_current::materializer::AttributeCurrentMaterializer,
+    attribute_names::AttributeNameCache,
+    csource_registration::repo::CsourceRegistrationRepository,
+    csource_subscription::repo::CsourceSubscriptionRepository,
+    entity::repo::EntityRepository,
+    entity_map::InMemoryEntityMapStore,
+    jsonld_context::repo::JsonLdContextRepository,
+    outbox::repo::OutboxRepository,
+    pending_side_effects::repo::PendingSideEffectsRepository,
+    snapshot::repo::SnapshotRepository,
+    spatial_warmup::warmup_location,
+    subscription::repo::SubscriptionRepository,
+    tenant_database::{DatabaseUrl, configure_pool_options, migrate_tenant_db},
+};
+use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, projection_barrier::ProjectionBarrier};
+use andromeda_postgresql_temporal_store::{recorder::TemporalRecorder, repo::TemporalRepository, timescale_features::TimescaleFeatures};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::{
     database_name::TenantDatabaseName,
@@ -182,13 +183,13 @@ async fn build_tenant_state(
         TenantRef::UnnamedDefault => config.database.max_connections,
         TenantRef::Named(_) => config.tenancy.tenant_max_connections,
     };
-    let pool = configure_pool_options(max_connections, config.database.synchronous_commit)
+    let pool = configure_pool_options(max_connections, config.database.synchronous_commit.as_postgres_setting())
         .connect(db_url)
         .await?;
 
     migrate_tenant_db(&pool).await?;
 
-    let timescale_features = crate::repository::timescale_features::TimescaleFeatures::detect(&pool)
+    let timescale_features = TimescaleFeatures::detect(&pool)
         .await
         .map_err(|e| AndromedaError::internal(format!("Failed to probe TimescaleDB features: {}", e)))?;
     tracing::info!(
@@ -261,10 +262,14 @@ async fn build_tenant_state(
     }
     worker_handles.push(tokio::spawn(materializer.run()));
 
+    let bulk_write_mode = match config.performance.bulk_write_mode {
+        crate::core::config::BulkWriteMode::Unnest => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::Unnest,
+        crate::core::config::BulkWriteMode::CopyStaging => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::CopyStaging,
+    };
     let temporal_repo = Arc::new(
-        TemporalRepository::new(&pool, config.performance.bulk_write_mode, Arc::clone(&attribute_name_cache))
+        TemporalRepository::new(&pool, bulk_write_mode, Arc::clone(&attribute_name_cache) as Arc<dyn AttributeNameLookup>)
             .with_features(timescale_features)
-            .with_barrier(attribute_current_barrier.clone()), // clone: shared with entity store and temporal service
+            .with_barrier(Arc::new(attribute_current_barrier.clone()) as Arc<dyn ProjectionBarrier>), // clone: shared with entity store and temporal service
     );
 
     // One entity store per tenant. It owns the attribute-name dictionary and
@@ -272,8 +277,8 @@ async fn build_tenant_state(
     // `q` predicate down; nothing above the port sees either.
     let entity_store: Arc<dyn EntityStore> = Arc::new(EntityRepository::new(
         &pool,
-        Arc::clone(&attribute_name_cache),
-        attribute_current_barrier.clone(), // clone: the temporal service still waits on the same watermark until the temporal read path moves behind its port
+        Arc::clone(&attribute_name_cache) as Arc<dyn AttributeNameLookup>,
+        Arc::new(attribute_current_barrier.clone()) as Arc<dyn ProjectionBarrier>, // clone: the temporal service still waits on the same watermark until the temporal read path moves behind its port
     ));
 
     let registration_store: Arc<dyn RegistrationStore> = Arc::new(CsourceRegistrationRepository::new(&pool));
@@ -345,8 +350,8 @@ async fn build_tenant_state(
     ));
     let temporal_service = Arc::new(TemporalService::new(
         Arc::clone(&entity_store),
-        Arc::clone(&temporal_repo) as Arc<dyn crate::service::temporal::store::TemporalHistoryReader>,
-        Arc::clone(&temporal_repo) as Arc<dyn crate::service::temporal::store::TemporalMutator>,
+        Arc::clone(&temporal_repo) as Arc<dyn andromeda_postgresql_temporal_store::store::TemporalHistoryReader>,
+        Arc::clone(&temporal_repo) as Arc<dyn andromeda_postgresql_temporal_store::store::TemporalMutator>,
         Arc::clone(&temporal_recorder),
         Arc::clone(&writes),
         engine.clone(),

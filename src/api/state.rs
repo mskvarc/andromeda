@@ -1,6 +1,5 @@
 use crate::{
     api::tenant_factory::BrokerTenantFactory,
-    repository::tenant_registry::PostgresTenantRegistry,
     service::{
         csource_forwarding::CsourceForwardingService,
         csource_registration::CsourceRegistrationService,
@@ -15,6 +14,7 @@ use crate::{
 };
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceId;
+use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_tenancy::runtime::TenantRuntimeManager;
 use std::sync::Arc;
 

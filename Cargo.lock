@@ -98,9 +98,11 @@ dependencies = [
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-context-query",
+ "andromeda-postgresql-context-store",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-temporal-query",
+ "andromeda-postgresql-temporal-store",
  "andromeda-spatial-index",
  "andromeda-tenancy",
  "andromeda-test-common",
@@ -457,17 +459,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-postgresql-context-store"
+version = "0.1.0"
+dependencies = [
+ "andromeda-health",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-context-query",
+ "andromeda-postgresql-encoding",
+ "andromeda-postgresql-query",
+ "andromeda-spatial-index",
+ "andromeda-tenancy",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "derive_more",
+ "iri-rs",
+ "iso8601-duration",
+ "langtag",
+ "mediatype",
+ "pretty_assertions",
+ "sea-query",
+ "sea-query-binder",
+ "serde",
+ "serde_json",
+ "sonic-rs",
+ "sqlx",
+ "strum",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "url",
+ "urn-rs",
+ "uuid",
+]
+
+[[package]]
 name = "andromeda-postgresql-encoding"
 version = "0.1.0"
 dependencies = [
  "andromeda-layer-guard",
  "andromeda-ngsi-ld-geometry",
  "bytes",
+ "chrono",
  "geo",
  "geozero",
  "pretty_assertions",
  "serde_json",
  "thiserror 2.0.19",
+ "uuid",
 ]
 
 [[package]]
@@ -480,6 +525,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-encoding",
+ "async-trait",
  "chrono",
  "derive_more",
  "iri-rs",
@@ -487,6 +533,7 @@ dependencies = [
  "sea-query",
  "serde_json",
  "thiserror 2.0.19",
+ "uuid",
 ]
 
 [[package]]
@@ -505,6 +552,32 @@ dependencies = [
  "sea-query",
  "serde_json",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-postgresql-temporal-store"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-encoding",
+ "andromeda-postgresql-query",
+ "andromeda-postgresql-temporal-query",
+ "async-trait",
+ "chrono",
+ "iri-rs",
+ "pretty_assertions",
+ "serde_json",
+ "sqlx",
+ "strum",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

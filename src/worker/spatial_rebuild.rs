@@ -6,7 +6,7 @@
 //! store on a timer, so drift from a dropped event or a restarted worker heals
 //! on its own rather than persisting until the process ends.
 
-use crate::repository::spatial_warmup::warmup_location;
+use andromeda_postgresql_context_store::spatial_warmup::warmup_location;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;

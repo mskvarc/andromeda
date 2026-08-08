@@ -14,7 +14,9 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod copy;
 pub mod ewkb;
+pub mod ewkb_binding;
 
 #[cfg(test)]
 mod boundary {

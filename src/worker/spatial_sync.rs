@@ -264,12 +264,15 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        event::change_event::ChangeOrigin,
-        repository::{attribute_current::materializer::AttributeCurrentMaterializer, attribute_names::AttributeNameCache, entity::repo::EntityRepository},
-    };
+    use crate::event::change_event::ChangeOrigin;
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_postgresql_context_store::{
+        attribute_current::materializer::AttributeCurrentMaterializer,
+        attribute_names::AttributeNameCache,
+        entity::repo::EntityRepository,
+    };
+    use andromeda_postgresql_query::projection_barrier::ProjectionBarrier;
     use chrono::Utc;
     use geo::{Coord, LineString, Polygon};
     use iri_rs::iri;
@@ -288,7 +291,11 @@ mod tests {
     fn unreachable_store() -> Arc<dyn EntityStore> {
         let pool = PgPool::connect_lazy("postgres://localhost/nonexistent").expect("connect_lazy should not fail");
         let (_materializer, _queue, barrier) = AttributeCurrentMaterializer::new(Arc::new(pool.clone()), Duration::from_secs(60));
-        Arc::new(EntityRepository::new(&pool, Arc::new(AttributeNameCache::new(&pool)), barrier))
+        Arc::new(EntityRepository::new(
+            &pool,
+            Arc::new(AttributeNameCache::new(&pool)),
+            Arc::new(barrier) as Arc<dyn ProjectionBarrier>,
+        ))
     }
 
     fn entity_payload(id: &str, lon: f64, lat: f64) -> Value {

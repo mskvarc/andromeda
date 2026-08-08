@@ -8,26 +8,30 @@
 
 use crate::{
     core::{config::BulkWriteMode, error::AndromedaError},
-    repository::{
-        atomic_write::{
-            columns::{columns_for, expectations},
-            entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
-            history,
-        },
-        attribute_current::queue::AttributeCurrentQueue,
-        entity::{copy::create_batch_via_copy_in_tx, repo::EntityRepository},
-        outbox::repo::OutboxRepository,
-        pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
-        temporal::{params::HistoryBatchEntry, recorder::TemporalRecorder},
+    repository::atomic_write::{
+        columns::{columns_for, expectations},
+        entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
+        history,
     },
     service::entity::{
         anchor_store::AnchorStore,
         atomic_write::{ALL_WRITE_PARTS, AtomicWrite, WritePart},
-        store::DeletedEntity,
         write_outcome::WriteOutcome,
     },
 };
+use andromeda_postgresql_context_store::{
+    attribute_current::queue::AttributeCurrentQueue,
+    entity::{copy::create_batch_via_copy_in_tx, deleted::DeletedEntity, repo::EntityRepository},
+    outbox::repo::{OutboxInsertRow, OutboxRepository},
+    pending_side_effects::{
+        payload::{PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
+        repo::PendingSideEffectsRepository,
+    },
+};
+use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
+use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
 use async_trait::async_trait;
+use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use std::{
     collections::{HashMap, HashSet},
@@ -215,7 +219,24 @@ impl AnchorStore for PostgresAnchorStore {
         if entries.is_empty() {
             return Ok(());
         }
-        OutboxRepository::insert_batch_in_tx(tx.tx_mut()?, &entries).await
+        let null = serde_json::Value::Null;
+        let trigger_strs: Vec<String> = entries.iter().map(|e| e.trigger.to_string()).collect();
+        let attr_strs: Vec<Vec<String>> = entries.iter().map(|e| e.changed_attrs.iter().map(ToString::to_string).collect()).collect();
+        let rows: Vec<OutboxInsertRow<'_>> = entries
+            .iter()
+            .zip(&trigger_strs)
+            .zip(&attr_strs)
+            .map(|((e, trig), attrs)| OutboxInsertRow {
+                subscription_id: e.subscription_id.as_str(),
+                entity_id: e.entity_id.as_str(),
+                trigger: trig,
+                entity_snapshot: e.entity_snapshot.as_ref().unwrap_or(&null),
+                previous_snapshot: &e.previous_snapshot,
+                changed_attrs: attrs,
+            })
+            .collect();
+        OutboxRepository::insert_batch_raw_in_tx(tx.tx_mut()?, &rows).await?;
+        Ok(())
     }
 
     async fn apply_side_effects(&self, tx: &mut AnchoredTransaction, landed: &[&AtomicWrite]) -> Result<(), AndromedaError> {
@@ -227,9 +248,30 @@ impl AnchorStore for PostgresAnchorStore {
             let Some(job) = &write.side_effects else {
                 continue;
             };
-            let persisted = PersistedBatchSideEffectJob::from(job);
-            merged.temporal_entities.extend(persisted.temporal_entities);
-            merged.change_events.extend(persisted.change_events);
+            merged
+                .temporal_entities
+                .extend(job.temporal_entities.iter().map(|(id, expanded)| PersistedTemporalEntity {
+                    id: id.to_string(),
+                    expanded: Value::clone(expanded),
+                }));
+            merged.change_events.extend(job.change_events.iter().map(|ce| PersistedChangeEvent {
+                entity_id: ce.entity_id.to_string(),
+                entity_types: ce.entity_types.iter().map(ToString::to_string).collect(),
+                trigger_reason: ce.trigger_reason.to_string(),
+                changed_attributes: ce.changed_attributes.iter().map(ToString::to_string).collect(),
+                occurred_at: ce.occurred_at,
+                entity_snapshot: ce.entity_snapshot.as_deref().cloned(),
+                previous_attributes: ce.previous_attributes.as_deref().cloned(),
+                sys_attrs_snapshot: ce.sys_attrs_snapshot.as_ref().map(|s| PersistedSysAttrs {
+                    created_at: s.created_at,
+                    modified_at: s.modified_at,
+                    expires_at: s.expires_at,
+                }),
+                origin: match ce.origin {
+                    crate::event::change_event::ChangeOrigin::Local => "local".to_string(),
+                    crate::event::change_event::ChangeOrigin::Forwarded => "forwarded".to_string(),
+                },
+            }));
         }
         if merged.temporal_entities.is_empty() && merged.change_events.is_empty() {
             return Ok(());

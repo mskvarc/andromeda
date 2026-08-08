@@ -7,13 +7,8 @@
 //! write assumed, which is why the mapping lives here as plain functions rather
 //! than inside the statement calls.
 
-use crate::service::entity::{
-    atomic_write::AtomicWrite,
-    entity_mutation::EntityMutation,
-    precondition::Precondition,
-    store::DeletedEntity,
-    write_outcome::WriteOutcome,
-};
+use crate::service::entity::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, precondition::Precondition, write_outcome::WriteOutcome};
+use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
 
 /// Whether a fused statement returned the identifier a write named.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,8 +103,8 @@ mod tests {
         atomic_write::AtomicWrite,
         entity_mutation::{EntityMutation, EntityRecord},
         precondition::Precondition,
-        store::DeletedEntity,
     };
+    use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;

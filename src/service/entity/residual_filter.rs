@@ -1,11 +1,12 @@
-//! The predicates a store declined to apply, and the in-memory pass that
-//! finishes them.
+//! In-memory evaluation of residual predicates.
 //!
-//! Every store port returns rows. None of them can be assumed to have applied
-//! every predicate it was given: a backend with no PostGIS cannot answer
-//! `georel=near`, and one with no `ltree` cannot answer a `scopeQ` wildcard.
-//! Such a store says so, and the policy layer finishes the job here rather than
-//! silently returning unfiltered results.
+//! The [`ResidualFilter`] type itself lives in the context-store crate, which
+//! owns its construction and structural inspection. This module adds the
+//! in-memory evaluator that finishes what a store declined, because it depends
+//! on [`matches_geo_query`] which is a service-layer concern above the store.
+//!
+//! [`ResidualFilter`]: andromeda_postgresql_context_store::entity::residual_filter::ResidualFilter
+//! [`matches_geo_query`]: crate::service::geo_filter::matches_geo_query
 
 use crate::service::geo_filter::matches_geo_query;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
@@ -21,163 +22,27 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExpr,
 };
+use andromeda_postgresql_context_store::entity::residual_filter::ResidualFilter;
 use iri_rs::IriBuf;
 use serde_json::Value;
-use strum::Display;
 
-/// One kind of predicate a store may decline.
+/// Whether one expanded entity satisfies every outstanding predicate.
 ///
-/// Spelled as the NGSI-LD query parameter it comes from (clause 5.7.2), because
-/// the only thing this vocabulary is used for is telling a client which part of
-/// its request could not be answered.
-///
-/// All seven members of an [`EntitySelection`] are named, not just the three
-/// [`StorageProfile`] has axes for today. The residual *is* a selection, so
-/// [`ResidualFilter::kinds`] must be able to name whatever a selection can
-/// carry; a shorter enum would make some selections unnameable. Four of the
-/// seven therefore have no production constructor, and the in-memory readings
-/// of those four are held to the pushed-down renderings by the profile-driven
-/// conformance tests rather than by a live caller.
-///
-/// [`StorageProfile`]: crate::service::entity::storage_profile::StorageProfile
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
-pub enum ResidualPredicate {
-    /// The `id` list.
-    #[strum(serialize = "id")]
-    Identifier,
-    /// The `idPattern` regular expression.
-    #[strum(serialize = "idPattern")]
-    IdentifierPattern,
-    /// The `type` selection expression (clause 4.17).
-    #[strum(serialize = "type")]
-    EntityType,
-    /// The `attrs` list.
-    #[strum(serialize = "attrs")]
-    Attributes,
-    /// The `q` filter (clause 4.9).
-    #[strum(serialize = "q")]
-    ValueFilter,
-    /// The `georel` / `geometry` / `coordinates` triple (clause 4.10).
-    #[strum(serialize = "georel")]
-    GeoQuery,
-    /// The `scopeQ` expression (clause 4.18).
-    #[strum(serialize = "scopeQ")]
-    ScopeQuery,
-}
-
-/// The subset of an [`EntitySelection`] a store did not apply.
-///
-/// A newtype over the selection rather than a second seven-field struct: the
-/// residual is drawn from exactly the same vocabulary of predicates, and
-/// restating them would be two definitions of one concept. The wrapper exists
-/// so a call site cannot confuse what was asked for with what is left over.
-#[derive(Debug, Default)]
-pub struct ResidualFilter(EntitySelection);
-
-impl ResidualFilter {
-    /// A residual over the predicates in `selection`.
-    pub const fn over(selection: EntitySelection) -> ResidualFilter {
-        ResidualFilter(selection)
-    }
-
-    /// Whether the store applied every predicate, leaving nothing to finish.
-    pub fn is_empty(&self) -> bool {
-        self.kinds().is_empty()
-    }
-
-    /// Remove from `selection` every predicate this residual carries.
-    ///
-    /// What is left is the query a store actually issues: asking it to apply a
-    /// predicate it has already said it cannot would either fail or, worse,
-    /// silently render something weaker.
-    pub fn strip_from(&self, selection: &mut EntitySelection) {
-        let EntitySelection {
-            selectors,
-            attrs,
-            q_expr,
-            geo,
-            scope_q,
-        } = &self.0;
-        // The selector axes are the same across every selector, so a residual
-        // that carries one clears that axis from every selector of the target.
-        // In production every store pushes id/idPattern/type down, so these
-        // branches are exercised only by the conformance harness.
-        if selectors.iter().any(|selector| !selector.ids.is_empty()) {
-            selection.selectors.iter_mut().for_each(|selector| selector.ids.clear());
-        }
-        if selectors.iter().any(|selector| selector.id_pattern.is_some()) {
-            selection.selectors.iter_mut().for_each(|selector| selector.id_pattern = None);
-        }
-        if selectors.iter().any(|selector| selector.type_expr.is_some()) {
-            selection.selectors.iter_mut().for_each(|selector| selector.type_expr = None);
-        }
-        if !attrs.is_empty() {
-            selection.attrs.clear();
-        }
-        if q_expr.is_some() {
-            selection.q_expr = None;
-        }
-        if geo.is_some() {
-            selection.geo = None;
-        }
-        if scope_q.is_some() {
-            selection.scope_q = None;
-        }
-    }
-
-    /// Which kinds of predicate are outstanding, in the order they are
-    /// evaluated.
-    pub fn kinds(&self) -> Vec<ResidualPredicate> {
-        let EntitySelection {
-            selectors,
-            attrs,
-            q_expr,
-            geo,
-            scope_q,
-        } = &self.0;
-        let mut kinds = Vec::new();
-        if selectors.iter().any(|selector| !selector.ids.is_empty()) {
-            kinds.push(ResidualPredicate::Identifier);
-        }
-        if selectors.iter().any(|selector| selector.id_pattern.is_some()) {
-            kinds.push(ResidualPredicate::IdentifierPattern);
-        }
-        if selectors.iter().any(|selector| selector.type_expr.is_some()) {
-            kinds.push(ResidualPredicate::EntityType);
-        }
-        if !attrs.is_empty() {
-            kinds.push(ResidualPredicate::Attributes);
-        }
-        if q_expr.is_some() {
-            kinds.push(ResidualPredicate::ValueFilter);
-        }
-        if geo.is_some() {
-            kinds.push(ResidualPredicate::GeoQuery);
-        }
-        if scope_q.is_some() {
-            kinds.push(ResidualPredicate::ScopeQuery);
-        }
-        kinds
-    }
-
-    /// Whether one expanded entity satisfies every outstanding predicate.
-    ///
-    /// Every predicate must hold at once, which is the clause 4.9 conjunction
-    /// the store would have rendered as `AND`.
-    pub fn matches(&self, expanded: &Value) -> bool {
-        let EntitySelection {
-            selectors,
-            attrs,
-            q_expr,
-            geo,
-            scope_q,
-        } = &self.0;
-        selectors_match(selectors, expanded)
-            && attributes_present(attrs, expanded)
-            && value_filter_matches(q_expr.as_ref(), expanded)
-            && geo_matches(geo.as_ref(), expanded)
-            && scope_matches(scope_q.as_ref(), expanded)
-    }
+/// Every predicate must hold at once, which is the clause 4.9 conjunction
+/// the store would have rendered as `AND`.
+pub fn matches(residual: &ResidualFilter, expanded: &Value) -> bool {
+    let EntitySelection {
+        selectors,
+        attrs,
+        q_expr,
+        geo,
+        scope_q,
+    } = residual.selection();
+    selectors_match(selectors, expanded)
+        && attributes_present(attrs, expanded)
+        && value_filter_matches(q_expr.as_ref(), expanded)
+        && geo_matches(geo.as_ref(), expanded)
+        && scope_matches(scope_q.as_ref(), expanded)
 }
 
 /// Clause 5.2.11 union of selectors: an entity matches when any selector admits
@@ -258,7 +123,7 @@ fn scope_matches(scope_q: Option<&ScopeQuery>, expanded: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::service::entity::residual_filter::{ResidualFilter, ResidualPredicate};
+    use crate::service::entity::residual_filter::matches;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_query::{
         entity_selection::{EntitySelection, EntitySelector},
@@ -268,6 +133,7 @@ mod tests {
         scope::query::ScopeQuery,
         type_selection::grammar::TypeExpr,
     };
+    use andromeda_postgresql_context_store::entity::residual_filter::ResidualFilter;
     use serde_json::{Value, json};
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
@@ -317,7 +183,7 @@ mod tests {
     fn an_empty_residual_admits_every_entity() {
         let residual = ResidualFilter::default();
         assert!(residual.is_empty());
-        assert!(residual.matches(&entity(20.0)));
+        assert!(matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -325,8 +191,8 @@ mod tests {
         // Clause 4.9: `temperature>25` selects only instances above the bound.
         let residual = ResidualFilter::over(EntitySelection::builder().q_expr(Some(q("\"https://example.com/temperature\">25"))).build());
         assert!(!residual.is_empty());
-        assert!(!residual.matches(&entity(20.0)));
-        assert!(residual.matches(&entity(30.0)));
+        assert!(!matches(&residual, &entity(20.0)));
+        assert!(matches(&residual, &entity(30.0)));
     }
 
     #[test]
@@ -337,7 +203,7 @@ mod tests {
         let residual = ResidualFilter::over(EntitySelection::builder().q_expr(Some(q("\"https://example.com/temperature\">25"))).build());
         for temperature in [0.0, 25.0, 25.5, 100.0] {
             let payload = entity(temperature);
-            pretty_assertions::assert_eq!(residual.matches(&payload), eval::evaluate(&expr, &payload), "disagreement at {temperature}");
+            pretty_assertions::assert_eq!(matches(&residual, &payload), eval::evaluate(&expr, &payload), "disagreement at {temperature}");
         }
     }
 
@@ -345,15 +211,15 @@ mod tests {
     fn a_residual_geo_filter_excludes_an_entity_outside_the_reference_geometry() {
         // Clause 4.10: `near;maxDistance==1000` about the reference point.
         let residual = ResidualFilter::over(EntitySelection::builder().geo(Some(near_berlin())).build());
-        assert!(residual.matches(&located(13.4, 52.5)));
-        assert!(!residual.matches(&located(13.4, 53.5)));
+        assert!(matches(&residual, &located(13.4, 52.5)));
+        assert!(!matches(&residual, &located(13.4, 53.5)));
     }
 
     #[test]
     fn a_residual_geo_filter_excludes_an_entity_that_carries_no_such_geoproperty() {
         // Clause 4.10 relates two geometries; an absent one relates to nothing.
         let residual = ResidualFilter::over(EntitySelection::builder().geo(Some(near_berlin())).build());
-        assert!(!residual.matches(&entity(20.0)));
+        assert!(!matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -364,7 +230,7 @@ mod tests {
             "@id": "urn:ngsi-ld:Building:001",
             LOCATION: [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "{\"type\":\"Point\",\"coordinates\":[13.4,52.5]}"}]}]
         }]);
-        assert!(residual.matches(&payload));
+        assert!(matches(&residual, &payload));
     }
 
     #[test]
@@ -375,8 +241,8 @@ mod tests {
                 .scope_q(Some(ScopeQuery::parse("/A/#").expect("valid scopeQ")))
                 .build(),
         );
-        assert!(residual.matches(&scoped(&["/A/B/C"])));
-        assert!(!residual.matches(&scoped(&["/B"])));
+        assert!(matches(&residual, &scoped(&["/A/B/C"])));
+        assert!(!matches(&residual, &scoped(&["/B"])));
     }
 
     #[test]
@@ -391,9 +257,9 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(residual.matches(&entity(20.0)));
+        assert!(matches(&residual, &entity(20.0)));
         let vehicle = json!([{"@id": "urn:ngsi-ld:Vehicle:001", "@type": ["https://example.com/Vehicle"]}]);
-        assert!(!residual.matches(&vehicle));
+        assert!(!matches(&residual, &vehicle));
     }
 
     #[test]
@@ -409,7 +275,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(residual.matches(&entity(20.0)));
+        assert!(matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -422,7 +288,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(!residual.matches(&entity(20.0)));
+        assert!(!matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -436,7 +302,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(!residual.matches(&entity(20.0)));
+        assert!(!matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -450,7 +316,7 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(!residual.matches(&entity(20.0)));
+        assert!(!matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -462,7 +328,7 @@ mod tests {
                 .build(),
         );
         // The `q` half holds and the `scopeQ` half does not.
-        assert!(!residual.matches(&entity(20.0)));
+        assert!(!matches(&residual, &entity(20.0)));
     }
 
     #[test]
@@ -484,30 +350,10 @@ mod tests {
                 ])
                 .build(),
         );
-        assert!(residual.matches(&entity("urn:ngsi-ld:Building:001", "https://example.com/Office")));
-        assert!(residual.matches(&entity("urn:ngsi-ld:Building:002", "https://example.com/Warehouse")));
-        assert!(!residual.matches(&entity("urn:ngsi-ld:Building:001", "https://example.com/Warehouse")));
-        assert!(!residual.matches(&entity("urn:ngsi-ld:Building:002", "https://example.com/Office")));
-    }
-
-    #[test]
-    fn an_empty_residual_names_no_outstanding_predicate_kinds() {
-        assert!(ResidualFilter::default().kinds().is_empty());
-    }
-
-    #[test]
-    fn a_residual_names_every_predicate_kind_it_carries() {
-        let residual = ResidualFilter::over(
-            EntitySelection::builder()
-                .q_expr(Some(q("\"https://example.com/temperature\">25")))
-                .geo(Some(near_berlin()))
-                .scope_q(Some(ScopeQuery::parse("/A").expect("valid scopeQ")))
-                .build(),
-        );
-        pretty_assertions::assert_eq!(
-            residual.kinds(),
-            vec![ResidualPredicate::ValueFilter, ResidualPredicate::GeoQuery, ResidualPredicate::ScopeQuery]
-        );
+        assert!(matches(&residual, &entity("urn:ngsi-ld:Building:001", "https://example.com/Office")));
+        assert!(matches(&residual, &entity("urn:ngsi-ld:Building:002", "https://example.com/Warehouse")));
+        assert!(!matches(&residual, &entity("urn:ngsi-ld:Building:001", "https://example.com/Warehouse")));
+        assert!(!matches(&residual, &entity("urn:ngsi-ld:Building:002", "https://example.com/Office")));
     }
 
     /// One entity carrying every member the seven predicate kinds address.
@@ -656,15 +502,7 @@ mod tests {
         ];
 
         for (clause, selection, expected) in cases {
-            pretty_assertions::assert_eq!(ResidualFilter::over(selection).matches(&entity), expected, "{clause}");
+            pretty_assertions::assert_eq!(matches(&ResidualFilter::over(selection), &entity), expected, "{clause}");
         }
-    }
-
-    #[test]
-    fn a_residual_predicate_is_named_by_the_query_parameter_it_comes_from() {
-        pretty_assertions::assert_eq!(ResidualPredicate::ValueFilter.to_string(), "q");
-        pretty_assertions::assert_eq!(ResidualPredicate::GeoQuery.to_string(), "georel");
-        pretty_assertions::assert_eq!(ResidualPredicate::ScopeQuery.to_string(), "scopeQ");
-        pretty_assertions::assert_eq!(ResidualPredicate::IdentifierPattern.to_string(), "idPattern");
     }
 }

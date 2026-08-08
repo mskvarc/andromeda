@@ -1,12 +1,10 @@
 //! Temporal entity assembly: [`TemporalEntityRenderer`] assembles a temporal
 //! entity representation from decoded history rows (NGSI-LD clause 6.3.10).
 
-use crate::{
-    service::temporal::store::TemporalHistoryRow,
-    temporal_render::history_row::{TimeRange, neutral_row_to_expanded_instance},
-};
+use crate::temporal_render::history_row::{TimeRange, neutral_row_to_expanded_instance};
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
+use andromeda_postgresql_temporal_store::store::TemporalHistoryRow;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde_json::{Value, json};

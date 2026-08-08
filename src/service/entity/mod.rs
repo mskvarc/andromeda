@@ -26,8 +26,6 @@ pub mod id_lock;
 pub mod mutation;
 /// Turning one mutation into the outbox entries its subscribers need.
 pub mod outbox_fanout;
-/// Whether a store applied the result window a query asked for.
-pub mod pagination_outcome;
 /// Optimistic concurrency control for the write path.
 pub mod precondition;
 /// Provision (write) forwarding mode classification and multi-status helpers.
@@ -36,8 +34,6 @@ pub mod provision_forwarding;
 pub mod purge;
 /// Entity query and retrieval operations.
 pub mod query;
-/// What a store returned from a query, and what it left for the caller.
-pub mod query_outcome;
 /// Turning a read plus a computation into an optimistic write.
 pub mod read_modify_write;
 /// The predicates a store declined to apply.
@@ -46,8 +42,6 @@ pub mod residual_filter;
 pub mod side_effect;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
-/// Which predicates a store can push down, and how far.
-pub mod storage_profile;
 /// The entity store port, declared by the policy that calls it.
 pub mod store;
 /// Injecting the clause 4.8 system attributes into an expanded entity.
@@ -60,7 +54,6 @@ pub mod write_outcome;
 use crate::{
     core::batch_activity::BatchActivityTracker,
     event::change_event::{ChangeEvent, ChangeOrigin},
-    repository::temporal::recorder::TemporalRecorder,
     service::{
         entity::{
             batch::execution::BatchExecutionConfig,
@@ -75,6 +68,7 @@ use crate::{
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
 use chrono::Utc;
 use dashmap::DashMap;
 use serde_json::Value;

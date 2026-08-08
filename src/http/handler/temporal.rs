@@ -16,7 +16,6 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
         validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
-    repository::temporal::params::DeleteScope,
     service::{
         csource_forwarding::{CsrModeFilter, ForwardTemporalQueryRequest, ForwardingOperation, collect_temporal_warnings, merge_temporal_retrieve_results},
         entity_map::{parse_entity_map_urn, parse_iso8601_duration},
@@ -40,6 +39,7 @@ use andromeda_ngsi_ld_request::{
     empty::EmptyParams,
     query::temporal::TemporalQueryParameters,
 };
+use andromeda_postgresql_temporal_store::params::DeleteScope;
 use axum::{
     extract::{OriginalUri, Path},
     http::StatusCode,

@@ -7,10 +7,11 @@
 
 use crate::{
     core::error::AndromedaError,
-    service::entity::{pagination_outcome::PaginationOutcome, query::EntityQueryService, query_outcome::QueryOutcome, residual_filter::ResidualFilter},
+    service::entity::{query::EntityQueryService, residual_filter},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
+use andromeda_postgresql_context_store::entity::{pagination_outcome::PaginationOutcome, query_outcome::QueryOutcome, residual_filter::ResidualFilter};
 use serde_json::Value;
 
 /// The rows a query answers with, and the clause 6.3.13 count when one was
@@ -47,7 +48,7 @@ pub(super) fn finish_page(outcome: QueryOutcome<Value>, pagination: Pagination) 
             Ok(FinishedPage { rows, total_count: total })
         }
         PaginationOutcome::Deferred => {
-            let admitted: Vec<Value> = rows.into_iter().filter(|row| unapplied.matches(row)).collect();
+            let admitted: Vec<Value> = rows.into_iter().filter(|row| residual_filter::matches(&unapplied, row)).collect();
             Ok(window(admitted, pagination))
         }
     }
@@ -110,7 +111,7 @@ impl EntityQueryService {
                 let payloads = self.repo.get_batch(&rows).await?;
                 Ok(rows
                     .iter()
-                    .filter(|id| payloads.get(*id).is_some_and(|payload| unapplied.matches(payload)))
+                    .filter(|id| payloads.get(*id).is_some_and(|payload| residual_filter::matches(&unapplied, payload)))
                     .skip(pagination.offset as usize)
                     .take(pagination.limit as usize)
                     .map(Uri::to_string)
@@ -122,17 +123,13 @@ impl EntityQueryService {
 
 #[cfg(test)]
 mod tests {
-    use crate::service::entity::{
-        pagination_outcome::PaginationOutcome,
-        query::residual::finish_page,
-        query_outcome::QueryOutcome,
-        residual_filter::ResidualFilter,
-    };
+    use crate::service::entity::query::residual::finish_page;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::parser,
         pagination::{CountPolicy, Pagination},
     };
+    use andromeda_postgresql_context_store::entity::{pagination_outcome::PaginationOutcome, query_outcome::QueryOutcome, residual_filter::ResidualFilter};
     use serde_json::{Value, json};
 
     const TEMPERATURE: &str = "https://example.com/temperature";

@@ -82,7 +82,8 @@ pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
 #[cfg(test)]
 mod tests {
     use super::{AfterAttempt, WRITE_ATTEMPTS, after_attempt};
-    use crate::service::entity::{store::DeletedEntity, write_outcome::WriteOutcome};
+    use crate::service::entity::write_outcome::WriteOutcome;
+    use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
     use chrono::Utc;
     use serde_json::json;
 

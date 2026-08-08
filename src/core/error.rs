@@ -7,13 +7,14 @@
 //! [`AndromedaError`] wraps an [`ErrorKind`] with an optional request URI
 //! (`instance`) that handlers attach for RFC 7807 Problem Details responses.
 
-use crate::service::temporal::store::TemporalStoreError;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{AttributeListIdParseError, EntityMapIdParseError, EntityTypeListIdParseError, SnapshotIdParseError};
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
-use andromeda_postgresql_query::error::RenderError as StatementRenderError;
+use andromeda_postgresql_context_store::error::ContextStoreError;
+use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookupError, error::RenderError as StatementRenderError};
+use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
 use confique::Error as ConfigError;
@@ -449,6 +450,15 @@ impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
     }
 }
 
+/// An attribute-name dictionary lookup failure is never client-caused: the
+/// attribute IRI was already validated on the way in, so a failure here is a
+/// broker or driver fault.
+impl From<AttributeNameLookupError> for AndromedaError {
+    fn from(error: AttributeNameLookupError) -> AndromedaError {
+        AndromedaError::internal(format!("Attribute name lookup: {error}"))
+    }
+}
+
 // -- From impls that go through ErrorKind's #[from] --------------------------
 
 impl From<MigrateError> for AndromedaError {
@@ -645,11 +655,38 @@ impl From<ReqwestError> for AndromedaError {
     }
 }
 
-/// A temporal store failure is an infrastructure error whose detail is
-/// sanitised before reaching API clients.
+/// A temporal store failure is mapped to the error category that matches
+/// the original call site's intent: not-found stays 404, validation stays
+/// 400, and infrastructure errors stay 500.
 impl From<TemporalStoreError> for AndromedaError {
     fn from(error: TemporalStoreError) -> AndromedaError {
-        AndromedaError::temporal_store(error)
+        match error {
+            TemporalStoreError::NotFound(msg) => AndromedaError::temporal_not_found(msg),
+            TemporalStoreError::Validation(msg) => AndromedaError::temporal_validation(msg),
+            TemporalStoreError::Database(_)
+            | TemporalStoreError::Decode(_)
+            | TemporalStoreError::Query(_)
+            | TemporalStoreError::Encoding(_)
+            | TemporalStoreError::AttributeLookup(_) => AndromedaError::temporal_store(error),
+        }
+    }
+}
+
+/// A context store failure preserves the PG error-code structure so the
+/// HTTP layer can map unique violations to 409 and regex errors to 400
+/// without re-inspecting the driver error.
+impl From<ContextStoreError> for AndromedaError {
+    fn from(error: ContextStoreError) -> AndromedaError {
+        match error {
+            ContextStoreError::Database(e) => ErrorKind::Database(e).into(),
+            ContextStoreError::UniqueViolation(e) => ErrorKind::DatabaseUniqueViolation(e).into(),
+            ContextStoreError::InvalidRegex(e) => ErrorKind::DatabaseRegexError(e).into(),
+            ContextStoreError::Encoding(e) => AndromedaError::internal(format!("EWKB codec: {e}")),
+            ContextStoreError::Render(e) => AndromedaError::internal(format!("statement render: {e}")),
+            ContextStoreError::AttributeLookup(e) => AndromedaError::internal(format!("attribute name lookup: {e}")),
+            ContextStoreError::Migration(e) => ErrorKind::Migration(e).into(),
+            ContextStoreError::Internal(msg) => AndromedaError::internal(msg),
+        }
     }
 }
 

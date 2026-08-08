@@ -1,7 +1,4 @@
-use crate::{
-    core::error::AndromedaError,
-    service::entity::store::{AttributeSummary, EntityStore},
-};
+use crate::{core::error::AndromedaError, service::entity::store::EntityStore};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
@@ -20,6 +17,7 @@ use andromeda_ngsi_ld_model::{
     attribute_list::{AttributeDetail, AttributeInfo, AttributeList, AttributeListType, AttributeResourceType},
     entity_type_list::{EntityType, EntityTypeInfo, EntityTypeInfoType, EntityTypeList, EntityTypeListType, EntityTypeType},
 };
+use andromeda_postgresql_context_store::entity::attribute_summary::AttributeSummary;
 use iri_rs::IriBuf;
 use jsonld::Expandable;
 use serde_json::Value;

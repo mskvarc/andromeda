@@ -1,10 +1,8 @@
-use crate::{
-    repository::csource_subscription::repo::CsourceSubscriptionRepository,
-    service::{csource_registration::store::RegistrationStore, subscription::store::SubscriptionStore},
-};
+use crate::service::{csource_registration::store::RegistrationStore, subscription::store::SubscriptionStore};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::Subscription};
+use andromeda_postgresql_context_store::csource_subscription::repo::CsourceSubscriptionRepository;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use serde_json::Value;

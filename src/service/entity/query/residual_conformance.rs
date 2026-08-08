@@ -8,25 +8,18 @@
 //!
 //! The store applies the predicates it kept using a reference reading of the
 //! specification written in this module, deliberately independent of
-//! [`ResidualFilter::matches`]. When the two disagree, the profile that declines
+//! [`residual_filter::matches`]. When the two disagree, the profile that declines
 //! the predicate returns a different set from the profile that pushes it down,
 //! and the comparison fails. That is the only construction available without a
 //! second backend that makes the residual and the pushdown check each other.
 //!
-//! [`StorageProfile`]: crate::service::entity::storage_profile::StorageProfile
-//! [`ResidualFilter::matches`]: crate::service::entity::residual_filter::ResidualFilter::matches
+//! [`StorageProfile`]: andromeda_postgresql_context_store::entity::storage_profile::StorageProfile
 
 #[cfg(test)]
 mod tests {
     use crate::{
         core::error::AndromedaError,
-        service::entity::{
-            pagination_outcome::PaginationOutcome,
-            query::EntityQueryService,
-            query_outcome::QueryOutcome,
-            storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
-            store::{AttributeSummary, EntitySnapshot, EntityStore},
-        },
+        service::entity::{query::EntityQueryService, store::EntityStore},
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
@@ -45,6 +38,13 @@ mod tests {
         geo::query::GeoQuery,
         pagination::{CountPolicy, Pagination},
         scope::query::ScopeQuery,
+    };
+    use andromeda_postgresql_context_store::entity::{
+        attribute_summary::AttributeSummary,
+        pagination_outcome::PaginationOutcome,
+        query_outcome::QueryOutcome,
+        snapshot::EntitySnapshot,
+        storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
     };
     use andromeda_spatial_index::entity::index::SpatialEntityIndex;
     use andromeda_tenancy::tenant_ref::TenantRef;

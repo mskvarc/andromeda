@@ -111,11 +111,9 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        repository::entity_map::InMemoryEntityMapStore,
-        service::entity_map::{parse_entity_map_urn, parse_iso8601_duration},
-    };
+    use crate::service::entity_map::{parse_entity_map_urn, parse_iso8601_duration};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_postgresql_context_store::entity_map::InMemoryEntityMapStore;
     use std::{str::FromStr, sync::Arc};
 
     fn make_service() -> super::EntityMapService {

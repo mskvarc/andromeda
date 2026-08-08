@@ -17,7 +17,6 @@ use crate::{
         expanded_member::extract_attribute_keys,
         precondition::Precondition,
         side_effect::{BatchSideEffectJob, BatchSideEffectMode},
-        store::DeletedEntity,
         write_outcome::WriteOutcome,
     },
 };
@@ -26,6 +25,7 @@ use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
     notification::{NotificationTrigger, SysAttrsSnapshot},
 };
+use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;

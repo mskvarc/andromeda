@@ -23,20 +23,25 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute_name_id;
+pub mod attribute_name_lookup;
 pub mod bind;
 pub mod built;
 pub mod column_reference;
 pub mod error;
 pub mod geo_predicate;
+/// Input for a single attribute history observation in a bulk insert.
+pub mod history_batch_entry;
 pub mod jsonb;
 pub mod literal;
 pub mod ltree;
 pub mod operator;
 pub mod postgis;
+pub mod projection_barrier;
 pub mod q_predicate;
 pub mod schema;
 pub mod scope_predicate;
 pub mod type_predicate;
+pub mod value_binding;
 
 #[cfg(test)]
 mod boundary {

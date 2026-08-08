@@ -8,9 +8,10 @@
 
 use crate::{
     core::error::AndromedaError,
-    repository::temporal::{params::HistoryBatchEntry, recorder::TemporalRecorder},
     service::entity::{atomic_write::AtomicWrite, history_record::HistoryRecord},
 };
+use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
+use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};

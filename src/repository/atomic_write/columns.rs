@@ -7,10 +7,8 @@
 //!
 //! [`EntityRecord`]: crate::service::entity::entity_mutation::EntityRecord
 
-use crate::{
-    core::error::AndromedaError,
-    repository::{atomic_write::entity_group::IndexedWrite, entity::params::PreparedEntityColumns},
-};
+use crate::{core::error::AndromedaError, repository::atomic_write::entity_group::IndexedWrite};
+use andromeda_postgresql_context_store::entity::params::PreparedEntityColumns;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use chrono::{DateTime, Utc};
 use serde_json::Value;

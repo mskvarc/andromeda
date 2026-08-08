@@ -9,7 +9,7 @@ use crate::{
         entity_mutation::{EntityMutation, EntityRecord},
         history_record::HistoryRecord,
         precondition::Precondition,
-        store::{EntitySnapshot, EntityStore},
+        store::EntityStore,
         write_coordinator::WriteCoordinator,
         write_outcome::WriteOutcome,
     },
@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_model::{
     expanded::{instance_key::removed_attribute_instances, mutation::expiry::remove_expired_attribute_instances},
     notification::NotificationTrigger,
 };
+use andromeda_postgresql_context_store::entity::snapshot::EntitySnapshot;
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
@@ -182,8 +183,9 @@ fn purge_write(id: &str, snapshot: EntitySnapshot, cutoff: chrono::DateTime<Utc>
 #[cfg(test)]
 mod tests {
     use super::{landed_ids, purge_write};
-    use crate::service::entity::{history_record::HistoryRecord, store::EntitySnapshot, write_outcome::WriteOutcome};
+    use crate::service::entity::{history_record::HistoryRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_postgresql_context_store::entity::snapshot::EntitySnapshot;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
 

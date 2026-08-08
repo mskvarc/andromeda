@@ -10,11 +10,13 @@ workspace = true
 [dependencies]
 andromeda-ngsi-ld-geometry.workspace = true
 bytes = "1.11.1"
+chrono = { version = "0.4.44", features = ["serde"] }
 geo = "0.33.1"
 geozero = { version = "0.15.1", default-features = false, features = ["with-geo", "with-wkb"] }
+serde_json = "1.0.149"
 thiserror = "2.0.18"
+uuid = "1.23.1"
 
 [dev-dependencies]
 andromeda-layer-guard.workspace = true
 pretty_assertions = "1.4.1"
-serde_json = "1.0.149"

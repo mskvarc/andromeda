@@ -1,11 +1,4 @@
-use crate::{
-    core::error::AndromedaError,
-    repository::jsonld_context::{
-        mapper::row_to_metadata,
-        params::{DetailLevel, ListContextsParams},
-        repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
-    },
-};
+use crate::core::error::AndromedaError;
 use andromeda_jsonld::{
     core_context::{NGSI_LD_CORE_CONTEXT_V19, is_ngsi_ld_core_context_url},
     engine::processor::JsonLdEngine,
@@ -13,6 +6,11 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextGetResult, ContextKind, ContextListResult, ContextMetadata};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
+use andromeda_postgresql_context_store::jsonld_context::{
+    mapper::row_to_metadata,
+    params::{DetailLevel, ListContextsParams},
+    repo::{FetchedContext, JsonLdContextRepository, ListedContexts},
+};
 use chrono::Utc;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
@@ -40,7 +38,7 @@ impl JsonLdContextService {
             return Err(AndromedaError::malformed_request("Payload must contain a top-level @context field"));
         }
 
-        self.repo.create_hosted(payload, base_url).await
+        Ok(self.repo.create_hosted(payload, base_url).await?)
     }
 
     /// List available JSON-LD contexts, optionally filtered by kind and with detailed metadata.

@@ -23,15 +23,15 @@ use crate::{
         version,
         ws,
     },
-    repository::{
-        health::DatabaseHealthIndicator,
-        tenant_database::{DatabaseUrl, configure_pool_options},
-        tenant_registry::PostgresTenantRegistry,
-    },
     version::service::Version,
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_health::aggregate::Health;
+use andromeda_postgresql_context_store::{
+    health::DatabaseHealthIndicator,
+    tenant_database::{DatabaseUrl, configure_pool_options},
+    tenant_registry::PostgresTenantRegistry,
+};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
 use axum::{
     Extension,
@@ -49,7 +49,7 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, Androme
     info!("Constructing router!");
 
     let database_url = DatabaseUrl::parse(&config.database.url)?;
-    let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit)
+    let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit.as_postgres_setting())
         .connect(&config.database.url)
         .await?;
     let registry = Arc::new(
@@ -58,7 +58,7 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<Router, Androme
             // clone: the registry and the factory each hold the base URL
             database_url.clone(),
             config.tenancy.clone(), // clone: the registry keeps its own copy of the section
-            config.database.synchronous_commit,
+            config.database.synchronous_commit.as_postgres_setting(),
         )
         .await?,
     );
