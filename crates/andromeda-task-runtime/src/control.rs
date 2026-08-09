@@ -19,6 +19,32 @@ pub struct ScheduledExecution {
     cutoff: SystemTime,
 }
 
+/// Context supplied to one bounded durable drain execution.
+#[derive(Clone, Debug)]
+pub struct DrainExecution {
+    /// Task-local cooperative cancellation.
+    cancellation: CancellationToken,
+    /// Fixed wall-clock instant for the bounded claim-and-process pass.
+    cutoff: SystemTime,
+}
+
+impl DrainExecution {
+    /// Construct one drain execution context.
+    pub(crate) const fn new(cancellation: CancellationToken, cutoff: SystemTime) -> DrainExecution {
+        DrainExecution { cancellation, cutoff }
+    }
+
+    /// Return the cancellation token for cooperative active shutdown.
+    pub const fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
+    }
+
+    /// Return the wall-clock cutoff fixed for this bounded pass.
+    pub const fn cutoff(&self) -> SystemTime {
+        self.cutoff
+    }
+}
+
 impl ScheduledExecution {
     /// Construct one scheduled execution context.
     pub(crate) const fn new(cancellation: CancellationToken, cutoff: SystemTime) -> ScheduledExecution {

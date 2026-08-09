@@ -3,14 +3,24 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+/// Typed, durable consequences for deferred temporal append.
+pub mod append_intent;
 mod compilation;
 pub mod config;
 pub mod error;
+/// Bounded delivery of deferred temporal append intents.
+pub mod intent_drain;
+mod intent_preparation;
 pub mod outcome;
+/// Read overlay combining stored history with committed pending intents.
+pub mod pending_overlay;
 pub mod port;
 mod read;
 pub mod service;
 mod write;
+
+#[cfg(test)]
+mod deferred_history_tests;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

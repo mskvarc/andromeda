@@ -37,7 +37,7 @@ impl TemporalService {
         let compiled = self.compile_temporal_query(params, context).await?;
         ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
 
-        if !self.mutator.entity_exists(entity_id).await? {
+        if !self.reader.entity_exists(entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
         }
 
@@ -58,23 +58,22 @@ impl TemporalService {
             return Ok(TemporalReadResult { value: result, range: None });
         }
 
-        let outcome = self.reader.query_entity_history(entity_id, &compiled).await?;
+        let rows = self.reader.query_entity_history(entity_id, &compiled).await?.into_rows();
 
         // When an attrs filter is specified and nothing matches, return 404
-        if outcome.rows.is_empty() && !compiled.instances.attr_filter.is_empty() {
+        if rows.is_empty() && !compiled.instances.attr_filter.is_empty() {
             return Err(TemporalError::not_found(format!(
                 "No temporal data found for the specified attributes on entity {}",
                 entity_id
             )));
         }
 
-        let result = TemporalEntityRenderer::new(entity_id, &entity_types, &outcome.rows, &compiled).render();
+        let result = TemporalEntityRenderer::new(entity_id, &entity_types, &rows, &compiled).render();
         let compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
         let mut compacted = TemporalArrayNormalizer::new(compacted).render();
         if !has_explicit_context(context) {
             normalize_temporal_payload_without_context(&mut compacted);
         }
-
         let value = if format == TemporalFormat::TemporalValues {
             TemporalValuesRenderer::new(compacted)
                 .render()
@@ -156,8 +155,9 @@ impl TemporalService {
             } else {
                 match self.reader.query_entity_history(&entity_id, &compiled).await {
                     Ok(outcome) => {
-                        if !outcome.rows.is_empty() {
-                            let result = TemporalEntityRenderer::new(&entity_id, &entity_types, &outcome.rows, &compiled).render();
+                        let rows = outcome.into_rows();
+                        if !rows.is_empty() {
+                            let result = TemporalEntityRenderer::new(&entity_id, &entity_types, &rows, &compiled).render();
                             if result.truncated {
                                 any_truncated = true;
                             }

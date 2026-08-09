@@ -88,6 +88,8 @@ const BASE_COLUMNS: &str = r#""ah"."time", "ah"."tea_id",
        ST_AsEWKB("ah"."value_geo") as value_geo_ewkb,
        "ah"."value_object", "ah"."value_datetime", "ah"."value_uri",
        "ah"."instance_id", "ah"."observed_at", "ah"."metadata",
+       "ah"."recorded_at", COALESCE("ah"."modified_at", "ah"."recorded_at") AS modified_at,
+       "ah"."intent_id", "ah"."intent_ordinal",
        "an"."name" AS attribute_name, "tea"."attribute_type", "tea"."dataset_id", "tea"."value_type""#;
 
 /// Build history query SQL (with optional lastN CTE).
@@ -113,7 +115,7 @@ fn build_history_query_sql(
     WHERE {}
 )
 SELECT "time", "tea_id", "value_number", "value_string", "value_bool", "value_geo_ewkb",
-       "value_object", "value_datetime", "value_uri", "instance_id", "observed_at", "metadata",
+       "value_object", "value_datetime", "value_uri", "instance_id", "observed_at", "metadata", "recorded_at", "modified_at", "intent_id", "intent_ordinal",
        "attribute_name", "attribute_type", "dataset_id", "value_type", "partition_total"
 FROM ranked WHERE "rn" <= {}
 ORDER BY "attribute_name", {} ASC, "instance_id" ASC"#,

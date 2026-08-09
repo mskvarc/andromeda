@@ -2,10 +2,12 @@
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A single decoded value from temporal history storage.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum TemporalValue {
     /// A numeric attribute value.
     Number(f64),
@@ -26,7 +28,7 @@ pub enum TemporalValue {
 }
 
 /// One decoded temporal attribute observation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 pub struct TemporalHistoryRow {
     /// Expanded attribute IRI.
     pub attribute_name: AttributeName,
@@ -40,6 +42,10 @@ pub struct TemporalHistoryRow {
     pub observed_at: Option<DateTime<Utc>>,
     /// Store-recorded temporal position.
     pub time: DateTime<Utc>,
+    /// Server time at which this attribute instance was first recorded.
+    pub created_at: DateTime<Utc>,
+    /// Server time at which this attribute instance was last modified.
+    pub modified_at: DateTime<Utc>,
     /// Stable temporal attribute instance identifier.
     pub instance_id: InstanceId,
     /// Additional expanded metadata attached to the instance.

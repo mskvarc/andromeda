@@ -49,4 +49,8 @@ pub struct HistoryBatchEntry {
     /// term (NGSI-LD section 4.5.7) rather than being server-generated. Drives
     /// whether the broker must run the dedup DELETE before INSERT.
     pub instance_id_client_supplied: bool,
+    /// Deferred append intent that produced the row, absent for native writes.
+    pub intent_id: Option<uuid::Uuid>,
+    /// Entry position within the deferred append intent.
+    pub intent_ordinal: Option<i32>,
 }

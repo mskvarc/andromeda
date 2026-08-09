@@ -1,6 +1,6 @@
 //! Temporal lifecycle and query policy service.
 
-use crate::port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator};
+use crate::port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::port::reader::EntityReader;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -80,6 +80,8 @@ pub(crate) fn normalize_temporal_payload_without_context(value: &mut Value) {
 pub struct TemporalService {
     /// Temporal history reader selected by composition.
     pub(crate) reader: Arc<dyn TemporalHistoryReader>,
+    /// Delivery barrier required before direct update and delete operations.
+    pub(crate) mutation_barrier: Arc<dyn TemporalMutationBarrier>,
     /// Immediate temporal mutation capability selected by composition.
     pub(crate) mutator: Arc<dyn TemporalMutator>,
     /// Atomic semantic write boundary used by create and append operations.
@@ -152,6 +154,7 @@ impl TemporalService {
     pub fn new(
         entity_reader: Arc<dyn EntityReader>,
         reader: Arc<dyn TemporalHistoryReader>,
+        mutation_barrier: Arc<dyn TemporalMutationBarrier>,
         mutator: Arc<dyn TemporalMutator>,
         writes: Arc<dyn ContextCommitter>,
         engine: JsonLdEngine,
@@ -159,6 +162,7 @@ impl TemporalService {
     ) -> TemporalService {
         TemporalService {
             reader,
+            mutation_barrier,
             mutator,
             writes,
             entity_reader,

@@ -20,6 +20,18 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaErr
     if config.temporal.expiration_check_interval_secs == 0 {
         return Err(AndromedaError::internal("temporal.expiration_check_interval_secs must be at least 1"));
     }
+    if config.temporal.intent_fallback_secs == 0 {
+        return Err(AndromedaError::internal("temporal.intent_fallback_secs must be at least 1"));
+    }
+    if config.temporal.intent_batch_size == 0 {
+        return Err(AndromedaError::internal("temporal.intent_batch_size must be at least 1"));
+    }
+    if config.temporal.intent_lease_secs == 0 {
+        return Err(AndromedaError::internal("temporal.intent_lease_secs must be at least 1"));
+    }
+    if config.temporal.intent_retry_secs == 0 {
+        return Err(AndromedaError::internal("temporal.intent_retry_secs must be at least 1"));
+    }
     if config.tenancy.tenant_max_connections == 0 {
         return Err(AndromedaError::internal("tenancy.tenant_max_connections must be at least 1"));
     }

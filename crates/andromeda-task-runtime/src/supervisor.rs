@@ -3,6 +3,8 @@
 use crate::{
     control::{RunNowHandle, run_now_channel},
     criticality::TaskCriticality,
+    drain_driver,
+    drain_task::DrainTask,
     failure::TaskFailure,
     lifecycle_event::{LifecycleEventKind, TaskLifecycleEvent},
     registration::{TaskRegistration, TaskRegistrationError},
@@ -14,6 +16,7 @@ use crate::{
     task_health::{TaskHealth, TaskHealthSnapshot, TaskHealthState},
     task_name::TaskName,
     task_observer::{DriverTerminal, apply_criticality, emit, join_failure, observe_terminal},
+    wake_trigger::{WakeHandle, wake_channel},
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
@@ -207,6 +210,36 @@ impl TaskSupervisor {
         });
         self.observe(name, registration, health, driver);
         Ok(run_now)
+    }
+
+    /// Register and start one wake-triggered durable drain task.
+    pub fn register_drain(&self, task: DrainTask) -> Result<WakeHandle, TaskRegistrationError> {
+        let (registration, fallback, operation) = task.into_parts();
+        let health = self.reserve(&registration)?;
+        let name = registration.name().clone(); // clone: the driver and supervisor registry both retain the stable task identity.
+        let cancellation = self.inner.cancellation.child_token();
+        let (wake, receiver) = wake_channel();
+        let wake_guard = wake.clone(); // clone: the driver retains a sender so dropping the external capability cannot close its trigger.
+        let driver_health = Arc::clone(&health); // clone: driver updates are observed through the supervisor health registry.
+        let lifecycle = self.inner.lifecycle.clone(); // clone: every driver publishes into the same completion-ordered channel.
+        let driver_name = name.clone(); // clone: the asynchronous driver owns its task identity.
+        let restart_policy = registration.restart_policy();
+        let driver = self.inner.host.spawn(async move {
+            let _wake_guard = wake_guard;
+            drain_driver::run(
+                driver_name,
+                restart_policy,
+                fallback,
+                operation,
+                receiver,
+                cancellation,
+                driver_health,
+                lifecycle,
+            )
+            .await
+        });
+        self.observe(name, registration, health, driver);
+        Ok(wake)
     }
 
     /// Register and start one long-lived resident task.

@@ -45,7 +45,7 @@ impl TemporalService {
 
         // Per the specification, temporal entities can be created independently
         // of the entity table, so the entity is not required to exist first.
-        let exists = self.mutator.entity_exists(&entity_id).await?;
+        let exists = self.reader.entity_exists(&entity_id).await?;
 
         let payload = Arc::new(expanded);
 
@@ -74,7 +74,7 @@ impl TemporalService {
 
     /// Add temporal attributes to an existing temporal entity.
     pub async fn add_attrs(&self, entity_id: &Uri, mut payload: Value, context: &ContextSpec) -> Result<(), TemporalError> {
-        if !self.mutator.entity_exists(entity_id).await? {
+        if !self.reader.entity_exists(entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
         }
 
@@ -142,6 +142,7 @@ impl TemporalService {
 
     /// Delete all temporal data for an entity.
     pub async fn delete(&self, entity_id: &Uri) -> Result<(), TemporalError> {
+        self.mutation_barrier.synchronize(entity_id).await?;
         if !self.mutator.entity_exists(entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
         }
@@ -158,6 +159,7 @@ impl TemporalService {
         scope: TemporalDeleteScope,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
+        self.mutation_barrier.synchronize(entity_id).await?;
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(entity_id).await? {
@@ -192,6 +194,7 @@ impl TemporalService {
         payload: Value,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
+        self.mutation_barrier.synchronize(entity_id).await?;
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(entity_id).await? {
@@ -220,6 +223,7 @@ impl TemporalService {
         instance_id: &InstanceId,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
+        self.mutation_barrier.synchronize(entity_id).await?;
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(entity_id).await? {

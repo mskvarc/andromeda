@@ -12,6 +12,7 @@ use crate::{
     create_temporal_entity,
     extract_instance_id,
     get_temporal_entity,
+    get_temporal_entity_with_query,
     modify_instance_fragment,
     modify_temporal_attr_instance,
     request_temporal_attrs,
@@ -20,6 +21,7 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Setup helper
@@ -51,6 +53,16 @@ async fn temporal_attrs_modify_instance_success() {
     clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_01_01").await;
 
+    let (status, before) = get_temporal_entity_with_query(&c, &id, "options=sysAttrs", Some(COMPOUND_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    let before_instance = before["speed"]
+        .as_array()
+        .and_then(|instances| instances.iter().find(|instance| instance["instanceId"] == instance_id))
+        .expect("instance must be visible before modification");
+    let created_at = before_instance["createdAt"].as_str().expect("createdAt must be rendered").to_owned();
+    let modified_at = before_instance["modifiedAt"].as_str().expect("modifiedAt must be rendered").to_owned();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     let fragment = modify_instance_fragment();
     let (status, bytes, _) = modify_temporal_attr_instance(&c, &id, "speed", &instance_id, &fragment).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "modify should return 204");
@@ -65,6 +77,16 @@ async fn temporal_attrs_modify_instance_success() {
     // Should have one instance with modified value 129
     let has_modified = speed.iter().any(|inst| inst["value"] == 129);
     assert!(has_modified, "should have instance with modified value 129");
+
+    let (status, after) = get_temporal_entity_with_query(&c, &id, "options=sysAttrs", Some(COMPOUND_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    let after_instance = after["speed"]
+        .as_array()
+        .and_then(|instances| instances.iter().find(|instance| instance["instanceId"] == instance_id))
+        .expect("instance must be visible after modification");
+    assert_eq!(after_instance["createdAt"], created_at, "createdAt must be stable across instance replacement");
+    let advanced = after_instance["modifiedAt"].as_str().expect("modifiedAt must be rendered after update");
+    assert!(advanced > modified_at.as_str(), "modifiedAt must advance across instance replacement");
 }
 
 // ---------------------------------------------------------------------------

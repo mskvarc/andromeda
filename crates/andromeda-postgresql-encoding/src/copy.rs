@@ -101,6 +101,25 @@ pub fn write_uuid(buf: &mut Vec<u8>, value: uuid::Uuid) {
     buf.extend_from_slice(value.as_bytes());
 }
 
+/// Append an optional `uuid` field, encoding `None` as a NULL.
+pub fn write_uuid_opt(buf: &mut Vec<u8>, value: Option<uuid::Uuid>) {
+    match value {
+        Some(value) => write_uuid(buf, value),
+        None => write_null(buf),
+    }
+}
+
+/// Append an optional 32-bit integer field in network byte order.
+pub fn write_i32_opt(buf: &mut Vec<u8>, value: Option<i32>) {
+    match value {
+        Some(value) => {
+            write_length(buf, 4);
+            buf.extend_from_slice(&value.to_be_bytes());
+        }
+        None => write_null(buf),
+    }
+}
+
 /// Append an optional `double precision` (f64) field as 8 bytes IEEE 754
 /// big-endian, encoding `None` as a NULL.
 pub fn write_f64_opt(buf: &mut Vec<u8>, value: Option<f64>) {

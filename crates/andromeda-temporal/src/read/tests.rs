@@ -27,6 +27,11 @@ impl TemporalHistoryReader for RefusingReader {
         }
     }
 
+    async fn entity_exists(&self, _entity_id: &Uri) -> Result<bool, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        Err(TemporalError::internal("query must not execute"))
+    }
+
     async fn query_entity_ids(&self, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         Err(TemporalError::internal("query must not execute"))

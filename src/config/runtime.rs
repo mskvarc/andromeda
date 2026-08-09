@@ -147,8 +147,13 @@ mod tests {
                 preload_contexts: preloads,
             },
             temporal: TemporalConfig {
+                append_mode: andromeda_temporal::config::TemporalAppendMode::Native,
                 default_last_n: 19,
                 expiration_check_interval_secs: 30,
+                intent_fallback_secs: 1,
+                intent_batch_size: 64,
+                intent_lease_secs: 30,
+                intent_retry_secs: 2,
             },
             tenancy: TenancyConfig {
                 enabled: true,

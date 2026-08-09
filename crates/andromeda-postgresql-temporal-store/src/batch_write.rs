@@ -260,6 +260,8 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
     let mut observed_ats = Vec::with_capacity(entries.len());
     let mut metadatas = Vec::with_capacity(entries.len());
     let mut recorded_ats = Vec::with_capacity(entries.len());
+    let mut intent_ids = Vec::with_capacity(entries.len());
+    let mut intent_ordinals = Vec::with_capacity(entries.len());
     for entry in entries {
         times.push(entry.time);
         tea_ids.push(entry.tea_id);
@@ -274,25 +276,27 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
         observed_ats.push(entry.observed_at);
         metadatas.push(entry.metadata.as_ref());
         recorded_ats.push(entry.recorded_at);
+        intent_ids.push(entry.intent_id);
+        intent_ordinals.push(entry.intent_ordinal);
     }
     sqlx::query(
         r#"
         INSERT INTO attribute_history
             (time, tea_id, value_number, value_string, value_bool,
              value_geo, value_object, value_datetime, value_uri,
-             instance_id, observed_at, metadata, recorded_at)
+             instance_id, observed_at, metadata, recorded_at, intent_id, intent_ordinal)
         SELECT
             d.time, d.tea_id, d.value_number, d.value_string, d.value_bool,
             CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
             d.value_object, d.value_datetime, d.value_uri,
-            d.instance_id, d.observed_at, d.metadata, d.recorded_at
+            d.instance_id, d.observed_at, d.metadata, d.recorded_at, d.intent_id, d.intent_ordinal
         FROM UNNEST(
             $1::timestamptz[], $2::uuid[], $3::double precision[], $4::text[], $5::boolean[],
             $6::bytea[], $7::jsonb[], $8::timestamptz[], $9::text[],
-            $10::text[], $11::timestamptz[], $12::jsonb[], $13::timestamptz[]
+            $10::text[], $11::timestamptz[], $12::jsonb[], $13::timestamptz[], $14::uuid[], $15::integer[]
         ) AS d(time, tea_id, value_number, value_string, value_bool,
                value_geo, value_object, value_datetime, value_uri,
-               instance_id, observed_at, metadata, recorded_at)
+               instance_id, observed_at, metadata, recorded_at, intent_id, intent_ordinal)
         "#,
     )
     .bind(&times)
@@ -308,6 +312,8 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, e
     .bind(&observed_ats)
     .bind(&metadatas)
     .bind(&recorded_ats)
+    .bind(&intent_ids)
+    .bind(&intent_ordinals)
     .execute(&mut **tx)
     .await?;
     Ok(())

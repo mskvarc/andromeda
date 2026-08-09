@@ -5,10 +5,14 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+mod bounded_driver;
 /// Cancellation and scheduled-task control handles.
 pub mod control;
 /// The operational effect of an exhausted task.
 pub mod criticality;
+mod drain_driver;
+/// Wake-triggered durable drain execution.
+pub mod drain_task;
 /// Runtime-neutral task failure classification.
 pub mod failure;
 /// Observable task lifecycle events.
@@ -36,6 +40,8 @@ pub mod task_health;
 /// Validated task identifiers.
 pub mod task_name;
 mod task_observer;
+/// Coalescing wake control and fallback cadence for drains.
+pub mod wake_trigger;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
@@ -78,6 +84,7 @@ mod boundary_tests {
             "andromeda-federation",
             "andromeda-registration",
             "andromeda-subscription",
+            "andromeda-temporal",
         ] {
             let root = workspace.join("crates").join(policy);
             let manifest = fs::read_to_string(root.join("Cargo.toml"))?;

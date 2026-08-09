@@ -11,6 +11,7 @@ use crate::{
             runtime::BrokerTenantRuntime,
             services::{ServiceConstructionInputs, construct_services},
             storage::initialize_storage,
+            temporal_intent_task::{TemporalIntentRegistration, register_temporal_intent_drain},
             transport::construct_transports,
             workers::{TenantSignals, WorkerSupervisionInputs, supervise_workers},
         },
@@ -21,10 +22,19 @@ use crate::{
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_entity::batch_activity::BatchActivityTracker;
-use andromeda_postgresql_atomic_write::committer::{EntityInsertMode, PostgresAtomicCommitter};
+use andromeda_postgresql_atomic_write::{
+    committer::{EntityInsertMode, PostgresAtomicCommitter},
+    history_mode::TemporalHistoryCommitMode,
+    intent_store::PostgresTemporalIntentStore,
+};
 use andromeda_postgresql_context_store::tenant_database::DatabaseUrl;
-use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
+use andromeda_postgresql_temporal_store::{intent_sink::PostgresTemporalHistorySink, recorder::TemporalRecorder};
 use andromeda_task_runtime::supervisor::TaskSupervisor;
+use andromeda_temporal::{
+    config::TemporalAppendMode,
+    pending_overlay::PendingTemporalHistoryOverlay,
+    port::{history_reader::TemporalHistoryReader, pending_intent_reader::PendingTemporalIntentReader, temporal_intent_queue::TemporalIntentQueue},
+};
 use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
 use async_trait::async_trait;
 use std::sync::{Arc, OnceLock};
@@ -34,6 +44,7 @@ use tracing::debug;
 pub mod runtime;
 mod services;
 mod storage;
+mod temporal_intent_task;
 mod transport;
 mod workers;
 
@@ -117,6 +128,36 @@ async fn build_tenant_state(
     let batch_activity = BatchActivityTracker::new();
 
     let temporal_recorder = Arc::new(TemporalRecorder::new(Arc::clone(&temporal_repo)));
+    let intent_store = Arc::new(PostgresTemporalIntentStore::new(&pool));
+    let temporal_sink = Arc::new(PostgresTemporalHistorySink::new(
+        Arc::clone(&temporal_repo),
+        storage.attribute_current_queue.clone(), // clone: the native committer and deferred sink share one projection producer.
+    ));
+    let TemporalIntentRegistration {
+        publisher: intent_publisher,
+        mutation_barrier,
+    } = register_temporal_intent_drain(
+        &config.temporal,
+        &task_supervisor,
+        Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>,
+        Arc::clone(&intent_store) as Arc<dyn PendingTemporalIntentReader>,
+        temporal_sink,
+    )?;
+    let (history_mode, temporal_reader): (TemporalHistoryCommitMode, Arc<dyn TemporalHistoryReader>) = match config.temporal.append_mode {
+        TemporalAppendMode::Native => (
+            TemporalHistoryCommitMode::Native {
+                recorder: Arc::clone(&temporal_recorder), // clone: native commit mode owns its recorder handle.
+            },
+            Arc::clone(&temporal_repo) as Arc<dyn TemporalHistoryReader>,
+        ),
+        TemporalAppendMode::Deferred => (
+            TemporalHistoryCommitMode::Deferred { publisher: intent_publisher },
+            Arc::new(PendingTemporalHistoryOverlay::new(
+                Arc::clone(&temporal_repo) as Arc<dyn TemporalHistoryReader>,
+                Arc::clone(&intent_store) as Arc<dyn PendingTemporalIntentReader>,
+            )),
+        ),
+    };
 
     // Sole owner of the materializer producer handle: every write path reaches
     // the projection through this complete atomic commit implementation.
@@ -126,7 +167,7 @@ async fn build_tenant_state(
     };
     let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &pool,
-        Arc::clone(&temporal_recorder),
+        history_mode,
         entity_insert_mode,
         storage.attribute_current_queue,
     ));
@@ -141,7 +182,8 @@ async fn build_tenant_state(
             .transports(&transports)
             .engine(&engine)
             .temporal_repo(&temporal_repo)
-            .temporal_recorder(&temporal_recorder)
+            .temporal_reader(&temporal_reader)
+            .temporal_mutation_barrier(&mutation_barrier)
             .entity_reader(&entity_ports.reader)
             .entity_query_store(&entity_ports.query)
             .entity_discovery_store(&entity_ports.discovery)

@@ -117,6 +117,8 @@ pub mod tests {
             metadata: None,
             recorded_at: stamp,
             instance_id_client_supplied: false,
+            intent_id: None,
+            intent_ordinal: None,
         }
     }
 

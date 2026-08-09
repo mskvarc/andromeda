@@ -1,6 +1,6 @@
 //! Temporal history selection and observation reads.
 
-use crate::{error::TemporalError, outcome::TemporalEntityIdOutcome};
+use crate::{append_intent::TemporalObservationIdentity, error::TemporalError, outcome::TemporalEntityIdOutcome};
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -10,8 +10,24 @@ use std::time::Duration;
 /// Result of one entity history read.
 #[derive(Debug)]
 pub struct TemporalHistoryOutcome {
-    /// Neutral history observations in stable temporal order.
-    pub rows: Vec<TemporalHistoryRow>,
+    /// Neutral history observations in stable temporal order with optional append provenance.
+    pub observations: Vec<TemporalHistoryObservation>,
+}
+
+impl TemporalHistoryOutcome {
+    /// Consume the outcome and discard adapter provenance after overlay deduplication.
+    pub fn into_rows(self) -> Vec<TemporalHistoryRow> {
+        self.observations.into_iter().map(|observation| observation.row).collect()
+    }
+}
+
+/// One stored observation and the idempotent append identity that produced it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemporalHistoryObservation {
+    /// Backend-neutral temporal row.
+    pub row: TemporalHistoryRow,
+    /// Intent identity when the sink retained append provenance.
+    pub identity: Option<TemporalObservationIdentity>,
 }
 
 /// Whether aggregation is materialized, computed from raw history, or unavailable.
@@ -59,6 +75,10 @@ pub trait TemporalHistoryReader: Send + Sync {
             AggregationPushdown::None => requested.to_vec(),
         }
     }
+
+    /// Return whether the logical history view contains an entity.
+    #[must_use = "temporal entity existence reads must be awaited"]
+    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError>;
 
     /// Resolve temporal entity candidates and report every unapplied predicate and window operation.
     #[must_use = "temporal entity selection must be awaited"]

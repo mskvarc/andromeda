@@ -36,7 +36,7 @@ use andromeda_postgresql_context_store::{
     jsonld_context::repo::JsonLdContextRepository,
     subscription::repo::SubscriptionRepository,
 };
-use andromeda_postgresql_temporal_store::{recorder::TemporalRecorder, repo::TemporalRepository};
+use andromeda_postgresql_temporal_store::repo::TemporalRepository;
 use andromeda_registration::{RegistrationService, store::RegistrationStore};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::{
@@ -46,7 +46,7 @@ use andromeda_subscription::{
     lifecycle::{SubscriptionEndpointValidator, SubscriptionService},
 };
 use andromeda_temporal::{
-    port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator},
+    port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator},
     service::TemporalService,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -64,7 +64,8 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) transports: &'a TenantTransports,
     pub(super) engine: &'a JsonLdEngine,
     pub(super) temporal_repo: &'a Arc<TemporalRepository>,
-    pub(super) temporal_recorder: &'a Arc<TemporalRecorder>,
+    pub(super) temporal_reader: &'a Arc<dyn TemporalHistoryReader>,
+    pub(super) temporal_mutation_barrier: &'a Arc<dyn TemporalMutationBarrier>,
     pub(super) entity_reader: &'a Arc<dyn EntityReader>,
     pub(super) entity_query_store: &'a Arc<dyn EntityQueryStore>,
     pub(super) entity_discovery_store: &'a Arc<dyn EntityDiscoveryStore>,
@@ -86,7 +87,8 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         transports,
         engine,
         temporal_repo,
-        temporal_recorder,
+        temporal_reader,
+        temporal_mutation_barrier,
         entity_reader,
         entity_query_store,
         entity_discovery_store,
@@ -102,7 +104,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         TenantRef::Named(_) => config.tenancy.tenant_max_connections as usize,
     };
     let entity_change_sink = Arc::new(BroadcastEntityChangeSink::new(signals.entity.clone())) as Arc<dyn EntityChangeSink>; // clone: the runtime and policy each own a sender handle.
-    let attribute_history = Arc::clone(temporal_recorder) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the history recorder.
+    let attribute_history = Arc::clone(temporal_repo) as Arc<dyn AttributeDatasetHistory>; // clone: temporal and entity policy share the concrete history adapter.
     let entities = Arc::new(EntityService::new(
         Arc::clone(entity_reader),
         Arc::new(TokioBlockingExecutor),
@@ -126,7 +128,8 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     ));
     let temporal = Arc::new(TemporalService::new(
         Arc::clone(entity_reader),
-        Arc::clone(temporal_repo) as Arc<dyn TemporalHistoryReader>,
+        Arc::clone(temporal_reader),
+        Arc::clone(temporal_mutation_barrier),
         Arc::clone(temporal_repo) as Arc<dyn TemporalMutator>,
         Arc::clone(writes),
         engine.clone(),

@@ -11,6 +11,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::A
 use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
+use andromeda_temporal::append_intent::{TemporalIntentId, TemporalObservationIdentity};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
@@ -23,7 +24,7 @@ use std::str::FromStr;
 /// the neutral row type instead of expanded JSON. The EWKB-to-GeoJSON
 /// conversion and the legacy `effective_value_type` heuristic are handled
 /// here so the renderer never touches a database type.
-pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryRow, TemporalStoreError> {
+pub(crate) fn decode_history_row(row: &PgRow) -> Result<andromeda_temporal::port::history_reader::TemporalHistoryObservation, TemporalStoreError> {
     let tea = row_to_tea(row)?;
 
     let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(expanded_properties::NULL_URI.as_str());
@@ -36,6 +37,8 @@ pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryRow, Temp
 
     let observed_at = row.try_get::<Option<DateTime<Utc>>, _>("observed_at").unwrap_or(None);
     let time: DateTime<Utc> = row.try_get("time").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
+    let created_at: DateTime<Utc> = row.try_get("recorded_at").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
+    let modified_at: DateTime<Utc> = row.try_get("modified_at").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
     let instance_id_raw: String = row.try_get("instance_id").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
     let instance_id = instance_id_raw
         .parse::<InstanceId>()
@@ -43,17 +46,37 @@ pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryRow, Temp
     let metadata: Option<Value> = row.try_get("metadata").unwrap_or(None);
     let partition_total: Option<i64> = row.try_get("partition_total").ok();
 
-    Ok(TemporalHistoryRow {
+    let temporal_row = TemporalHistoryRow {
         attribute_name: tea.attribute_name,
         attribute_type: tea.attribute_type,
         dataset_id: tea.dataset_id,
         value,
         observed_at,
         time,
+        created_at,
+        modified_at,
         instance_id,
         metadata,
         partition_total,
-    })
+    };
+    let intent_id = row
+        .try_get::<Option<uuid::Uuid>, _>("intent_id")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.intent_id: {error}")))?;
+    let intent_ordinal = row
+        .try_get::<Option<i32>, _>("intent_ordinal")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.intent_ordinal: {error}")))?;
+    let identity = intent_id
+        .zip(intent_ordinal)
+        .map(|(intent_id, ordinal)| {
+            u32::try_from(ordinal)
+                .map(|ordinal| TemporalObservationIdentity {
+                    intent_id: TemporalIntentId::from_uuid(intent_id),
+                    ordinal,
+                })
+                .map_err(|error| TemporalStoreError::Decode(format!("negative attribute_history.intent_ordinal: {error}")))
+        })
+        .transpose()?;
+    Ok(andromeda_temporal::port::history_reader::TemporalHistoryObservation { row: temporal_row, identity })
 }
 
 /// Decode one aggregation row into a [`TemporalAggregationRow`].

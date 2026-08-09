@@ -109,7 +109,11 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
     if sys_attrs == SysAttrsInclusion::Include {
         instance.insert(
             expanded_properties::CREATED_AT.as_str().to_string(),
-            json!([{"@value": whole_seconds(row.time), "@type": expanded_classes::DATE_TIME.as_str()}]),
+            json!([{"@value": whole_seconds(row.created_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
+        );
+        instance.insert(
+            expanded_properties::MODIFIED_AT.as_str().to_string(),
+            json!([{"@value": whole_seconds(row.modified_at), "@type": expanded_classes::DATE_TIME.as_str()}]),
         );
     }
 

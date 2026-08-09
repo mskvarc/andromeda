@@ -37,6 +37,10 @@ impl TemporalHistoryReader for TemporalRepository {
         }
     }
 
+    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
+        self.tea_exists_for_entity(entity_id).await.map_err(TemporalError::from)
+    }
+
     async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         let attribute_names = if let Some(q_expr) = &compiled.entities.q_expr {
             let mut names = Vec::new();
@@ -111,7 +115,7 @@ impl TemporalHistoryReader for TemporalRepository {
             rows.push(decode_history_row(pg_row).map_err(TemporalError::from)?);
         }
 
-        Ok(TemporalHistoryOutcome { rows })
+        Ok(TemporalHistoryOutcome { observations: rows })
     }
 
     async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {

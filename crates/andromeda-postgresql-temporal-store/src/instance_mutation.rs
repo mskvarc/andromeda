@@ -163,7 +163,7 @@ UPDATE attribute_history
 SET value_number = $4, value_string = $5, value_bool = $6,
     value_geo = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
     value_object = $8, value_datetime = $9, value_uri = $10,
-    observed_at = $11, metadata = $12
+    observed_at = $11, metadata = $12, modified_at = NOW()
 WHERE instance_id = $1
 AND tea_id IN (
     SELECT tea.id FROM temporal_entity_attributes tea
@@ -181,5 +181,6 @@ mod tests {
     fn update_returns_the_owning_temporal_entity_attribute() {
         assert!(UPDATE_INSTANCE_SQL.contains("RETURNING tea_id"));
         assert!(!UPDATE_INSTANCE_SQL.contains("RETURNING instance_id"));
+        assert!(UPDATE_INSTANCE_SQL.contains("modified_at = NOW()"));
     }
 }

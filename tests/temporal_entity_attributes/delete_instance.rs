@@ -54,6 +54,13 @@ async fn temporal_attrs_delete_instance_success() {
     assert_eq!(status, StatusCode::NO_CONTENT, "delete instance should return 204");
     assert!(bytes.is_empty(), "response body should be empty");
 
+    let (status, _, _) = delete_temporal_attr_instance(&c, &id, "speed", &instance_id).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "repeating the same instance deletion must observe the first deletion"
+    );
+
     // Verify
     let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
     assert_eq!(status, StatusCode::OK);

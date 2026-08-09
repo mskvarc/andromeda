@@ -28,12 +28,12 @@ pub mod error;
 /// Decoding `PgRow` into the backend-neutral temporal row types.
 pub(crate) mod history_row_decode;
 mod instance_mutation;
+/// Idempotent PostgreSQL implementation of deferred temporal appends.
+pub mod intent_sink;
 /// Row-to-domain conversions for temporal data.
 pub mod mapper;
 /// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod mutator;
-/// Turning expanded entity payloads into the rows one temporal write commits.
-pub mod observation;
 /// Repository input parameter types for temporal data.
 pub mod params;
 /// Projection repair used by the asynchronous materializer and instance mutations.
@@ -61,6 +61,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-encoding",
+        "andromeda-postgresql-context-store",
         "andromeda-postgresql-query",
         "andromeda-postgresql-temporal-query",
         "andromeda-temporal",
@@ -72,16 +73,19 @@ andromeda_architecture_checks::dependency_boundary! {
 
 #[cfg(test)]
 mod port_contract_tests {
-    use crate::repo::TemporalRepository;
-    use andromeda_temporal::port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator};
+    use crate::{intent_sink::PostgresTemporalHistorySink, repo::TemporalRepository};
+    use andromeda_temporal::port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator, temporal_history_sink::TemporalHistorySink};
 
     fn assert_history_reader<T: TemporalHistoryReader>() {}
 
     fn assert_mutator<T: TemporalMutator>() {}
 
+    fn assert_sink<T: TemporalHistorySink>() {}
+
     #[test]
     fn repository_implements_temporal_ports_directly() {
         assert_history_reader::<TemporalRepository>();
         assert_mutator::<TemporalRepository>();
+        assert_sink::<PostgresTemporalHistorySink>();
     }
 }

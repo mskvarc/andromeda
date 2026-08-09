@@ -2,8 +2,10 @@
 
 use crate::{
     columns::{columns_for, expectations},
+    deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
+    history_mode::TemporalHistoryCommitMode,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -23,13 +25,11 @@ use andromeda_postgresql_context_store::{
     },
 };
 use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
-use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
-    sync::Arc,
 };
 
 /// PostgreSQL statement strategy used for fused entity inserts.
@@ -42,12 +42,11 @@ pub enum EntityInsertMode {
 }
 
 /// Atomic context committer backed by one tenant's PostgreSQL database.
-#[derive(Debug)]
 pub struct PostgresAtomicCommitter {
     /// Tenant pool whose connection owns the complete transaction.
     pool: PgPool,
-    /// Native PostgreSQL temporal-history recorder used inside that transaction.
-    recorder: Arc<TemporalRecorder>,
+    /// Native or deferred temporal history behavior.
+    history_mode: TemporalHistoryCommitMode,
     /// Fused insert statement strategy.
     entity_insert_mode: EntityInsertMode,
     /// Post-commit publisher for the current-attribute projection.
@@ -58,13 +57,13 @@ impl PostgresAtomicCommitter {
     /// Construct the native PostgreSQL commit implementation for one tenant.
     pub fn new(
         pool: &PgPool,
-        recorder: Arc<TemporalRecorder>,
+        history_mode: TemporalHistoryCommitMode,
         entity_insert_mode: EntityInsertMode,
         attribute_current_queue: AttributeCurrentQueue,
     ) -> PostgresAtomicCommitter {
         PostgresAtomicCommitter {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
-            recorder,
+            history_mode,
             entity_insert_mode,
             attribute_current_queue,
         }
@@ -263,7 +262,10 @@ impl ContextCommitter for PostgresAtomicCommitter {
                 .filter(|(_, outcome)| consequences_land(outcome))
                 .map(|(write, _)| write)
                 .collect();
-            let pending_attribute_current: Vec<HistoryBatchEntry> = history::apply(&self.recorder, &mut tx, &landed).await?;
+            let (pending_attribute_current, deferred_intents) = match &self.history_mode {
+                TemporalHistoryCommitMode::Native { recorder } => (history::apply(recorder, &mut tx, &landed).await?, 0),
+                TemporalHistoryCommitMode::Deferred { .. } => (Vec::<HistoryBatchEntry>::new(), deferred_history::apply(&mut tx, &landed).await?),
+            };
             PostgresAtomicCommitter::apply_outbox(&mut tx, &landed).await?;
             PostgresAtomicCommitter::apply_side_effects(&mut tx, &landed).await?;
 
@@ -275,6 +277,11 @@ impl ContextCommitter for PostgresAtomicCommitter {
                 Ok(()) => {
                     if let Some(reserved) = reserved {
                         reserved.enqueue().await;
+                    }
+                    if deferred_intents > 0
+                        && let TemporalHistoryCommitMode::Deferred { publisher } = &self.history_mode
+                    {
+                        publisher.intents_available();
                     }
                     Ok(outcomes)
                 }

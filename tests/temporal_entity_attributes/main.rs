@@ -110,7 +110,14 @@ async fn create_temporal_entity(c: &Client, entity: &Value) -> StatusCode {
 }
 
 async fn get_temporal_entity(c: &Client, id: &str, context: Option<&str>) -> (StatusCode, Value) {
-    let mut req = c.get(format!("{BASE_URL}/temporal/entities/{id}")).header("Accept", "application/ld+json");
+    get_temporal_entity_with_query(c, id, "", context).await
+}
+
+async fn get_temporal_entity_with_query(c: &Client, id: &str, query: &str, context: Option<&str>) -> (StatusCode, Value) {
+    let suffix = if query.is_empty() { String::new() } else { format!("?{query}") };
+    let mut req = c
+        .get(format!("{BASE_URL}/temporal/entities/{id}{suffix}"))
+        .header("Accept", "application/ld+json");
     if let Some(ctx) = context {
         req = req.header("Link", jsonld_link_header(ctx));
     }

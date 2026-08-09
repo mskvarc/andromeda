@@ -15,6 +15,7 @@ use andromeda_postgresql_encoding::{
         write_f64_opt,
         write_field_count,
         write_header,
+        write_i32_opt,
         write_jsonb_opt,
         write_text,
         write_text_opt,
@@ -22,6 +23,7 @@ use andromeda_postgresql_encoding::{
         write_timestamptz_opt,
         write_trailer,
         write_uuid,
+        write_uuid_opt,
     },
     ewkb_binding::geometry_bytes,
 };
@@ -29,7 +31,7 @@ use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
 use sqlx::{Executor, Postgres, Transaction};
 
 /// Number of columns written per staged history tuple.
-const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 13;
+const STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT: i16 = 15;
 
 const CREATE_STAGE_ATTRIBUTE_HISTORY_SQL: &str = r#"
 CREATE TEMP TABLE stage_attribute_history (
@@ -45,19 +47,21 @@ CREATE TEMP TABLE stage_attribute_history (
     instance_id     text NOT NULL,
     observed_at     timestamptz,
     metadata        jsonb,
-    recorded_at     timestamptz NOT NULL
+    recorded_at     timestamptz NOT NULL,
+    intent_id       uuid,
+    intent_ordinal  integer
 ) ON COMMIT DROP
 "#;
 
 const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (time, tea_id, value_number, value_string, value_bool, \
-     value_geo, value_object, value_datetime, value_uri, instance_id, observed_at, metadata, recorded_at) \
+     value_geo, value_object, value_datetime, value_uri, instance_id, observed_at, metadata, recorded_at, intent_id, intent_ordinal) \
      FROM STDIN WITH (FORMAT binary)";
 
 const INSERT_FROM_STAGE_SQL: &str = r#"
 INSERT INTO attribute_history (
     time, tea_id, value_number, value_string, value_bool,
     value_geo, value_object, value_datetime, value_uri,
-    instance_id, observed_at, metadata, recorded_at
+    instance_id, observed_at, metadata, recorded_at, intent_id, intent_ordinal
 )
 SELECT
     s.time, s.tea_id, s.value_number, s.value_string, s.value_bool,
@@ -65,7 +69,7 @@ SELECT
          THEN ST_MakeValid(ST_GeomFromEWKB(s.value_geo))
          ELSE NULL END,
     s.value_object, s.value_datetime, s.value_uri,
-    s.instance_id, s.observed_at, s.metadata, s.recorded_at
+    s.instance_id, s.observed_at, s.metadata, s.recorded_at, s.intent_id, s.intent_ordinal
 FROM stage_attribute_history s
 "#;
 
@@ -110,6 +114,8 @@ pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Resul
         write_timestamptz_opt(&mut buf, entry.observed_at);
         write_jsonb_opt(&mut buf, entry.metadata.as_ref());
         write_timestamptz(&mut buf, entry.recorded_at);
+        write_uuid_opt(&mut buf, entry.intent_id);
+        write_i32_opt(&mut buf, entry.intent_ordinal);
     }
     write_trailer(&mut buf);
     Ok(buf)
@@ -143,6 +149,8 @@ mod tests {
             metadata: None,
             recorded_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
             instance_id_client_supplied: false,
+            intent_id: None,
+            intent_ordinal: None,
         }
     }
 
@@ -161,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_copy_emits_field_count_13_per_tuple() {
+    fn binary_copy_emits_field_count_15_per_tuple() {
         let entries = [
             make_entry(uuid::Uuid::nil(), "i0"),
             make_entry(uuid::Uuid::nil(), "i1"),
@@ -169,16 +177,15 @@ mod tests {
         ];
         let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // Header is 19 bytes; first tuple field count starts at byte 19.
-        assert_eq!(&buf[19..21], &[0x00, 0x0d]);
+        assert_eq!(&buf[19..21], &[0x00, 0x0f]);
     }
 
     #[test]
     fn binary_copy_encodes_recorded_at_as_trailing_timestamptz() {
         let entries = [make_entry(uuid::Uuid::nil(), "i")];
         let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
-        // recorded_at is the last field: the stream ends with the 2-byte
-        // trailer preceded by the 4-byte length prefix and 8-byte payload.
-        let offset = buf.len() - 2 - 12;
+        // recorded_at precedes the two nullable intent-provenance fields.
+        let offset = buf.len() - 2 - 4 - 4 - 12;
         assert_eq!(&buf[offset..offset + 4], &[0, 0, 0, 8]);
         let micros = i64::from_be_bytes([
             buf[offset + 4],

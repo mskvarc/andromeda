@@ -1,6 +1,7 @@
 use crate::{
     control::RunNowRequest,
     criticality::TaskCriticality,
+    drain_task::{DrainPassOutcome, DrainTask},
     failure::TaskFailure,
     lifecycle_event::LifecycleEventKind,
     periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule, PeriodicScheduleError},
@@ -13,6 +14,7 @@ use crate::{
     supervisor::TaskSupervisor,
     task_health::TaskHealthState,
     task_name::{TaskName, TaskNameError},
+    wake_trigger::{DrainFallbackCadence, DrainFallbackCadenceError, WakeRequest},
 };
 use std::{
     future,
@@ -47,6 +49,8 @@ enum TestError {
     Receive(#[from] RecvError),
     #[error(transparent)]
     Join(#[from] JoinError),
+    #[error(transparent)]
+    DrainCadence(#[from] DrainFallbackCadenceError),
 }
 
 fn registration(name: &str, restart_policy: RestartPolicy, grace: Duration) -> Result<TaskRegistration, TestError> {
@@ -524,6 +528,48 @@ async fn run_now_signals_coalesce_into_one_prompt_execution() -> Result<(), Test
     assert_eq!(run_now.request(), RunNowRequest::Coalesced);
     settle().await;
     assert_eq!(executions.load(Ordering::SeqCst), 1);
+    supervisor.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn drain_wake_runs_one_bounded_pass_and_acknowledges_only_after_processing() -> Result<(), TestError> {
+    let supervisor = TaskSupervisor::process(Handle::current());
+    let durable_items = Arc::new(AtomicUsize::new(1));
+    let sink_effects = Arc::new(AtomicUsize::new(0));
+    let acknowledgements = Arc::new(AtomicUsize::new(0));
+    let task = DrainTask::new(
+        registration("drain-wake", RestartPolicy::Never, Duration::from_secs(1))?,
+        DrainFallbackCadence::new(Duration::from_secs(3_600))?,
+        {
+            let durable_items = Arc::clone(&durable_items);
+            let sink_effects = Arc::clone(&sink_effects);
+            let acknowledgements = Arc::clone(&acknowledgements);
+            move |_| {
+                let durable_items = Arc::clone(&durable_items);
+                let sink_effects = Arc::clone(&sink_effects);
+                let acknowledgements = Arc::clone(&acknowledgements);
+                async move {
+                    if durable_items.load(Ordering::SeqCst) == 0 {
+                        return Ok(DrainPassOutcome::Idle);
+                    }
+                    assert_eq!(acknowledgements.load(Ordering::SeqCst), 0);
+                    sink_effects.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(sink_effects.load(Ordering::SeqCst), 1);
+                    durable_items.store(0, Ordering::SeqCst);
+                    acknowledgements.fetch_add(1, Ordering::SeqCst);
+                    Ok(DrainPassOutcome::Idle)
+                }
+            }
+        },
+    );
+    let wake = supervisor.register_drain(task)?;
+    settle().await;
+    assert_eq!(sink_effects.load(Ordering::SeqCst), 0);
+    assert_eq!(wake.wake(), WakeRequest::Scheduled);
+    settle().await;
+    assert_eq!(sink_effects.load(Ordering::SeqCst), 1);
+    assert_eq!(acknowledgements.load(Ordering::SeqCst), 1);
     supervisor.shutdown().await;
     Ok(())
 }

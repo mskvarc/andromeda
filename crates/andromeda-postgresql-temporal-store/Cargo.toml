@@ -16,6 +16,7 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-temporal.workspace = true
 andromeda-postgresql-encoding.workspace = true
+andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 async-trait = "0.1.89"
