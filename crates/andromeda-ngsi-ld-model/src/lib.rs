@@ -26,6 +26,7 @@ pub mod registration;
 pub mod snapshot;
 pub mod snapshot_filter;
 pub mod subscription;
+pub mod temporal;
 pub mod tenant_list;
 
 #[cfg(test)]

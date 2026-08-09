@@ -255,8 +255,8 @@ async fn temporal_attrs_add_invalid_json_returns_400() {
     let (status, body) = add_temporal_attrs_raw(&c, &id, b"{invalid json", "application/ld+json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid JSON should return 400");
     assert!(
-        body["type"].as_str().is_some_and(|t| t.contains("InvalidRequest")),
-        "error type should be InvalidRequest"
+        body["type"].as_str().is_some_and(|t| t.contains("BadRequestData")),
+        "error type should be BadRequestData"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
 }

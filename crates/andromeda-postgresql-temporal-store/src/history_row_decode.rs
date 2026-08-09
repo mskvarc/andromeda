@@ -6,13 +6,9 @@
 //! legacy `effective_value_type` heuristic lives here so that neither the
 //! service layer nor the renderers ever import `sqlx`.
 
-use crate::{
-    error::TemporalStoreError,
-    mapper::row_to_tea,
-    store::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
-    value_type::ValueType,
-};
+use crate::{error::TemporalStoreError, mapper::row_to_tea, value_type::ValueType};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
+use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use chrono::{DateTime, Utc};
@@ -103,7 +99,7 @@ pub(crate) fn decode_aggregation_row(row: &PgRow) -> Result<TemporalAggregationR
 
 /// Decide which typed column actually holds this row's value and decode it.
 ///
-/// See `effective_value_type` in `temporal_render::history_row` for the
+/// See the neutral temporal renderer for the
 /// rationale: the catalogue's `value_type` can disagree with the populated
 /// column on legacy rows, so detection is column-driven.
 fn decode_typed_value(row: &PgRow, declared: ValueType) -> Result<TemporalValue, TemporalStoreError> {

@@ -16,6 +16,7 @@ andromeda-entity-map = { path = "crates/andromeda-entity-map" }
 andromeda-federation = { path = "crates/andromeda-federation" }
 andromeda-health = { path = "crates/andromeda-health" }
 andromeda-http-entity = { path = "crates/andromeda-http-entity" }
+andromeda-http-temporal = { path = "crates/andromeda-http-temporal" }
 andromeda-http-extraction = { path = "crates/andromeda-http-extraction" }
 andromeda-http-headers = { path = "crates/andromeda-http-headers" }
 andromeda-http-response = { path = "crates/andromeda-http-response" }
@@ -41,6 +42,7 @@ andromeda-registration = { path = "crates/andromeda-registration" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-subscription = { path = "crates/andromeda-subscription" }
 andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
+andromeda-temporal = { path = "crates/andromeda-temporal" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
 
@@ -78,6 +80,7 @@ andromeda-entity-map.workspace = true
 andromeda-federation.workspace = true
 andromeda-health.workspace = true
 andromeda-http-entity.workspace = true
+andromeda-http-temporal.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
@@ -102,6 +105,7 @@ andromeda-registration.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-task-runtime.workspace = true
+andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["ws"] }

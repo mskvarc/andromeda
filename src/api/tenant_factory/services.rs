@@ -14,10 +14,7 @@ use crate::{
         subscription_change_sink::BroadcastSubscriptionChangeSink,
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
-    service::{
-        snapshot::{SnapshotService, store::SnapshotStore},
-        temporal::TemporalService,
-    },
+    service::snapshot::{SnapshotService, store::SnapshotStore},
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
@@ -39,11 +36,7 @@ use andromeda_postgresql_context_store::{
     jsonld_context::repo::JsonLdContextRepository,
     subscription::repo::SubscriptionRepository,
 };
-use andromeda_postgresql_temporal_store::{
-    recorder::TemporalRecorder,
-    repo::TemporalRepository,
-    store::{TemporalHistoryReader, TemporalMutator},
-};
+use andromeda_postgresql_temporal_store::{recorder::TemporalRecorder, repo::TemporalRepository};
 use andromeda_registration::{RegistrationService, store::RegistrationStore};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::{
@@ -51,6 +44,10 @@ use andromeda_subscription::{
     csource::CsrSubscriptionVariant,
     entity::EntitySubscriptionVariant,
     lifecycle::{SubscriptionEndpointValidator, SubscriptionService},
+};
+use andromeda_temporal::{
+    port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator},
+    service::TemporalService,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
@@ -131,7 +128,6 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         Arc::clone(entity_reader),
         Arc::clone(temporal_repo) as Arc<dyn TemporalHistoryReader>,
         Arc::clone(temporal_repo) as Arc<dyn TemporalMutator>,
-        Arc::clone(temporal_recorder),
         Arc::clone(writes),
         engine.clone(),
         config.temporal.default_last_n,

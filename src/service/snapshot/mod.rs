@@ -13,7 +13,6 @@ use crate::{
         },
         snapshot_executor::SnapshotExecutor,
         snapshot_prepare::to_insert_params,
-        temporal::TemporalService,
     },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
@@ -26,6 +25,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_temporal::service::TemporalService;
 use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;

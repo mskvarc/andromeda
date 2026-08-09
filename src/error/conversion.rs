@@ -21,7 +21,6 @@ use crate::error::{
     SnapshotIdParseError,
     SqlxError,
     StatementRenderError,
-    TemporalStoreError,
     TenancyError,
 };
 use andromeda_context_commit::error::CommitError;
@@ -331,23 +330,6 @@ impl From<FederationError> for AndromedaError {
             FederationError::Request(error) => error.into(),
             FederationError::Representation(error) => error.into(),
             FederationError::Internal { detail } => AndromedaError::internal(detail),
-        }
-    }
-}
-
-/// A temporal store failure is mapped to the error category that matches
-/// the original call site's intent: not-found stays 404, validation stays
-/// 400, and infrastructure errors stay 500.
-impl From<TemporalStoreError> for AndromedaError {
-    fn from(error: TemporalStoreError) -> AndromedaError {
-        match error {
-            TemporalStoreError::NotFound(msg) => AndromedaError::temporal_not_found(msg),
-            TemporalStoreError::Validation(msg) => AndromedaError::temporal_validation(msg),
-            TemporalStoreError::Database(_)
-            | TemporalStoreError::Decode(_)
-            | TemporalStoreError::Query(_)
-            | TemporalStoreError::Encoding(_)
-            | TemporalStoreError::AttributeLookup(_) => AndromedaError::temporal_store(error),
         }
     }
 }

@@ -14,7 +14,6 @@ use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
 use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookupError, error::RenderError as StatementRenderError};
-use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
 use confique::Error as ConfigError;
@@ -55,10 +54,6 @@ pub enum ErrorKind {
     /// The requested entity map does not exist.
     #[error("Entity map {0} not found")]
     EntityMapNotFound(String),
-
-    /// A temporal resource (entity, attribute, or instance) was not found.
-    #[error("{0}")]
-    TemporalNotFound(String),
 
     // -- Resource already exists ---------------------------------------------
     /// An entity with the given identifier already exists.
@@ -131,10 +126,6 @@ pub enum ErrorKind {
     /// Entity payload validation failed.
     #[error("{0}")]
     EntityValidation(String),
-
-    /// Temporal entity or attribute validation failed.
-    #[error("{0}")]
-    TemporalValidation(String),
 
     /// Context source registration payload validation failed.
     #[error("{0}")]
@@ -251,7 +242,6 @@ impl ErrorKind {
                 | ErrorKind::SnapshotNotFound(_)
                 | ErrorKind::ContextNotFound(_)
                 | ErrorKind::EntityMapNotFound(_)
-                | ErrorKind::TemporalNotFound(_)
         )
     }
 
@@ -334,11 +324,6 @@ impl AndromedaError {
         ErrorKind::EntityMapNotFound(id.into()).into()
     }
 
-    /// Temporal resource (entity, attribute, or instance) was not found.
-    pub fn temporal_not_found(message: impl Into<String>) -> AndromedaError {
-        ErrorKind::TemporalNotFound(message.into()).into()
-    }
-
     // -- Resource already exists factories -----------------------------------
 
     /// Entity with the given identifier already exists.
@@ -387,11 +372,6 @@ impl AndromedaError {
         ErrorKind::EntityValidation(message.into()).into()
     }
 
-    /// Temporal entity or attribute validation failed.
-    pub fn temporal_validation(message: impl Into<String>) -> AndromedaError {
-        ErrorKind::TemporalValidation(message.into()).into()
-    }
-
     /// Context source registration payload validation failed.
     pub fn csr_validation(message: impl Into<String>) -> AndromedaError {
         ErrorKind::CsrValidation(message.into()).into()
@@ -435,11 +415,6 @@ impl AndromedaError {
     /// An internal error that does not fit another category.
     pub fn internal(message: impl Into<String>) -> AndromedaError {
         ErrorKind::Internal(message.into()).into()
-    }
-
-    /// A temporal store operation failed.
-    pub fn temporal_store(error: TemporalStoreError) -> AndromedaError {
-        ErrorKind::Internal(error.to_string()).into()
     }
 }
 
@@ -708,7 +683,6 @@ mod tests {
         assert!(AndromedaError::snapshot_not_found("x").is_not_found());
         assert!(AndromedaError::context_not_found("x").is_not_found());
         assert!(AndromedaError::entity_map_not_found("x").is_not_found());
-        assert!(AndromedaError::temporal_not_found("x").is_not_found());
     }
 
     #[test]

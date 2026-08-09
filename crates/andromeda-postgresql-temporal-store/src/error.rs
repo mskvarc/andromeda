@@ -1,12 +1,11 @@
 //! Error types for the temporal store crate.
 
 use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_temporal::error::TemporalError;
 
 /// Errors produced by a temporal store implementation.
 ///
-/// Internal to the temporal store boundary: the service layer converts these
-/// into `AndromedaError` (via the `From` impl) rather than propagating
-/// store-specific detail to API clients.
+/// Internal to the PostgreSQL adapter boundary: the direct port implementation converts these into [`TemporalError`] without exposing store detail to policy or HTTP clients.
 #[derive(Debug, thiserror::Error)]
 pub enum TemporalStoreError {
     /// The underlying database query failed.
@@ -30,4 +29,18 @@ pub enum TemporalStoreError {
     /// An extracted attribute value was invalid.
     #[error("temporal store validation: {0}")]
     Validation(String),
+}
+
+impl From<TemporalStoreError> for TemporalError {
+    fn from(error: TemporalStoreError) -> TemporalError {
+        match error {
+            TemporalStoreError::NotFound(detail) => TemporalError::not_found(detail),
+            TemporalStoreError::Validation(detail) => TemporalError::validation(detail),
+            TemporalStoreError::Database(_)
+            | TemporalStoreError::Decode(_)
+            | TemporalStoreError::Query(_)
+            | TemporalStoreError::Encoding(_)
+            | TemporalStoreError::AttributeLookup(_) => TemporalError::persistence(error.to_string()),
+        }
+    }
 }

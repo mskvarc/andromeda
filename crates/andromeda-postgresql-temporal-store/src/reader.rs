@@ -10,29 +10,26 @@ use crate::{
     error::TemporalStoreError,
     history_row_decode::{decode_aggregation_row, decode_history_row},
     repo::TemporalRepository,
-    store::{
-        AggregationPushdown,
-        EntityIdOutcome,
-        HistoryVisibility,
-        TemporalAggregationRow,
-        TemporalHistoryOutcome,
-        TemporalHistoryReader,
-        TemporalStorageProfile,
-    },
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
 use andromeda_postgresql_query::q_predicate::projection::referenced_attribute_names;
 use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
+use andromeda_temporal::{
+    error::TemporalError,
+    outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
+    port::history_reader::{AggregationPushdown, HistoryVisibility, TemporalHistoryOutcome, TemporalHistoryReader, TemporalReaderCapabilities},
+};
 use async_trait::async_trait;
 use sqlx::Row;
 
 #[async_trait]
 impl TemporalHistoryReader for TemporalRepository {
-    fn profile(&self) -> TemporalStorageProfile {
-        TemporalStorageProfile {
-            aggregation_pushdown: if self.timescale_features.has_continuous_aggregates {
-                AggregationPushdown::Materialised
+    fn capabilities(&self) -> TemporalReaderCapabilities {
+        TemporalReaderCapabilities {
+            aggregation: if self.timescale_features.has_continuous_aggregates {
+                AggregationPushdown::Materialized
             } else {
                 AggregationPushdown::OnTheFly
             },
@@ -40,7 +37,7 @@ impl TemporalHistoryReader for TemporalRepository {
         }
     }
 
-    async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<EntityIdOutcome, TemporalStoreError> {
+    async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         let attribute_names = if let Some(q_expr) = &compiled.entities.q_expr {
             let mut names = Vec::new();
             referenced_attribute_names(q_expr, &mut names);
@@ -89,10 +86,20 @@ impl TemporalHistoryReader for TemporalRepository {
             None
         };
 
-        Ok(EntityIdOutcome { entity_ids, total_count })
+        Ok(TemporalEntityIdOutcome {
+            candidates: entity_ids
+                .into_iter()
+                .map(|entity_id| TemporalEntityCandidate {
+                    entity_id,
+                    selection_value: None,
+                })
+                .collect(),
+            residual: TemporalResidual::default(),
+            pagination: TemporalPaginationOutcome::Applied { total: total_count },
+        })
     }
 
-    async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalStoreError> {
+    async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
         let stage2 = build_temporal_history_query(entity_id, compiled).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
         let pg_rows = self
             .execute_temporal_query(&stage2.sql, &stage2.bind_values)
@@ -101,13 +108,13 @@ impl TemporalHistoryReader for TemporalRepository {
 
         let mut rows = Vec::with_capacity(pg_rows.len());
         for pg_row in &pg_rows {
-            rows.push(decode_history_row(pg_row)?);
+            rows.push(decode_history_row(pg_row).map_err(TemporalError::from)?);
         }
 
         Ok(TemporalHistoryOutcome { rows })
     }
 
-    async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalStoreError> {
+    async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         let stage2 = build_temporal_history_query(entity_id, compiled).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
         let pg_rows = self
             .execute_temporal_query(&stage2.sql, &stage2.bind_values)
@@ -116,7 +123,7 @@ impl TemporalHistoryReader for TemporalRepository {
 
         let mut rows = Vec::with_capacity(pg_rows.len());
         for pg_row in &pg_rows {
-            rows.push(decode_aggregation_row(pg_row)?);
+            rows.push(decode_aggregation_row(pg_row).map_err(TemporalError::from)?);
         }
 
         Ok(rows)

@@ -19,7 +19,6 @@ mod http;
 mod server;
 mod service;
 mod store_bridge;
-mod temporal_render;
 mod version;
 mod worker;
 mod worker_instance_id;

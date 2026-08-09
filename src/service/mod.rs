@@ -11,4 +11,3 @@ pub mod snapshot;
 pub mod snapshot_executor;
 pub mod snapshot_prepare;
 pub mod snapshot_status;
-pub mod temporal;

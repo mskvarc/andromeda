@@ -6,7 +6,7 @@
 //! headers from analogous pagination state.
 
 use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
-use andromeda_ngsi_ld_query::temporal::{compiled::CompiledTemporalQuery, last_n::LastNOrigin, window::TimeInterval};
+use andromeda_ngsi_ld_query::temporal::{last_n::LastNOrigin, window::TimeInterval};
 use chrono::{DateTime, Utc};
 
 /// Build a `Content-Range` header value for temporal pagination.
@@ -15,7 +15,7 @@ use chrono::{DateTime, Utc};
 /// The format is `date-time <start>-<end>/<size>` where size is `*` when the
 /// total is unknown.
 pub fn build_content_range(
-    compiled: &CompiledTemporalQuery,
+    interval: &TimeInterval,
     time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     partition_total: Option<i64>,
     last_n_origin: LastNOrigin,
@@ -25,15 +25,15 @@ pub fn build_content_range(
     let mrt = whole_seconds(max_time);
 
     let (start, end, size) = if last_n_origin.is_user_specified() {
-        let upper = match compiled.window.interval {
-            TimeInterval::Before(instant) => whole_seconds(instant),
-            TimeInterval::Between { to, .. } => whole_seconds(to),
+        let upper = match interval {
+            TimeInterval::Before(instant) => whole_seconds(*instant),
+            TimeInterval::Between { to, .. } => whole_seconds(*to),
             TimeInterval::After(_) | TimeInterval::Unbounded => mrt,
         };
         let size = partition_total.map_or_else(|| "*".to_string(), |n| n.to_string());
         (upper, lrt, size)
     } else {
-        let lower = compiled.window.interval.reference().map_or(lrt, |instant| whole_seconds(*instant));
+        let lower = interval.reference().map_or(lrt, |instant| whole_seconds(*instant));
         (lower, mrt, "*".to_string())
     };
 

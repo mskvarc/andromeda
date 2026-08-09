@@ -17,8 +17,7 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         | ErrorKind::CsrNotFound(_)
         | ErrorKind::SnapshotNotFound(_)
         | ErrorKind::ContextNotFound(_)
-        | ErrorKind::EntityMapNotFound(_)
-        | ErrorKind::TemporalNotFound(_) => NgsiLdErrorType::ResourceNotFound,
+        | ErrorKind::EntityMapNotFound(_) => NgsiLdErrorType::ResourceNotFound,
 
         ErrorKind::EntityAlreadyExists(_)
         | ErrorKind::SubscriptionAlreadyExists(_)
@@ -55,7 +54,6 @@ pub const fn of(kind: &ErrorKind) -> NgsiLdErrorType {
         ErrorKind::JsonLdProcessing(_)
         | ErrorKind::SubscriptionValidation(_)
         | ErrorKind::EntityValidation(_)
-        | ErrorKind::TemporalValidation(_)
         | ErrorKind::CsrValidation(_)
         | ErrorKind::SnapshotValidation(_)
         | ErrorKind::EntityMapValidation(_)

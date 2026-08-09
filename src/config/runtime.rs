@@ -9,12 +9,12 @@ use crate::{
         performance::PerformanceConfig,
         server::{ServerConfig, ServerOverrides},
         spatial::SpatialConfig,
-        temporal::TemporalConfig,
         validation::{normalize_preload_context_paths, validate_config},
     },
     error::AndromedaError,
 };
 use andromeda_jsonld::config::JsonLdConfig;
+use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::config::TenancyConfig;
 use confique::{Config, Layer};
 use serde::Serialize;

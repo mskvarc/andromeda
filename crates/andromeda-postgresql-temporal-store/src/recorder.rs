@@ -1,20 +1,19 @@
 //! Writing attribute history whenever entities are created or modified.
 
 use crate::{
-    attribute_instance::{collect_metadata, detect_attribute_type, extract_observed_at, generated_instance_id},
-    attribute_value::{HistoryValueColumns, extract_attribute_value},
+    attribute_instance::generated_instance_id,
     entry::TeaEntry,
     error::TemporalStoreError,
     observation::{PreparedObservations, build_history_entries, prepare_from_shared},
-    params::{HistoryValues, TeaBatchEntry, UpdateInstanceParams},
+    params::TeaBatchEntry,
     repo::TemporalRepository,
     rows::TeaBatchResultRow,
     value_type::ValueType,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use std::{slice::from_ref, sync::Arc};
@@ -145,65 +144,6 @@ impl TemporalRecorder {
             instance_id_client_supplied: false,
         };
         Ok((tea_entry, history_entry))
-    }
-
-    /// Update an existing attribute instance (full replacement, preserves `createdAt`).
-    pub async fn update_attribute_instance(
-        &self,
-        entity_id: &Uri,
-        attr_name: &AttributeName,
-        instance_id: &InstanceId,
-        instance: &Value,
-    ) -> Result<(), TemporalStoreError> {
-        let (owned, observed_at) = build_update_instance_state(instance)?;
-        let params = build_update_instance_params(instance_id, entity_id, attr_name, &owned, observed_at);
-        self.repo.update_instance(params).await
-    }
-}
-
-/// The owned halves of an instance update, kept alive while the borrowed
-/// parameter struct that points into them is built and executed.
-struct UpdateInstanceOwned {
-    columns: HistoryValueColumns,
-    metadata: Option<Value>,
-}
-
-fn build_update_instance_state(instance: &Value) -> Result<(UpdateInstanceOwned, Option<DateTime<Utc>>), TemporalStoreError> {
-    let attribute_type = detect_attribute_type(instance);
-    let attribute_value = extract_attribute_value(instance, attribute_type)?;
-    let observed_at = extract_observed_at(instance)?;
-    let metadata = collect_metadata(instance);
-    Ok((
-        UpdateInstanceOwned {
-            columns: attribute_value.into_columns(),
-            metadata,
-        },
-        observed_at,
-    ))
-}
-
-fn build_update_instance_params<'a>(
-    instance_id: &'a InstanceId,
-    entity_id: &'a Uri,
-    attribute_name: &'a AttributeName,
-    owner: &'a UpdateInstanceOwned,
-    observed_at: Option<DateTime<Utc>>,
-) -> UpdateInstanceParams<'a> {
-    UpdateInstanceParams {
-        instance_id,
-        entity_id,
-        attribute_name,
-        values: HistoryValues {
-            value_number: owner.columns.value_number,
-            value_string: owner.columns.value_string.as_deref(),
-            value_bool: owner.columns.value_bool,
-            value_geo: owner.columns.value_geo.as_ref(),
-            value_object: owner.columns.value_object.as_ref(),
-            value_datetime: owner.columns.value_datetime,
-            value_uri: owner.columns.value_uri.as_ref(),
-            metadata: owner.metadata.as_ref(),
-        },
-        observed_at,
     }
 }
 

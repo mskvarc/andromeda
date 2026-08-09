@@ -36,6 +36,7 @@ pub mod response;
 pub mod simplify;
 pub mod snapshot;
 pub mod subscription;
+pub mod temporal;
 pub mod uri_decoding;
 pub mod version;
 
@@ -45,6 +46,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
     ],

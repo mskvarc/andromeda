@@ -1,6 +1,7 @@
 //! Exhaustive classification shared by HTTP extractors.
 
 use andromeda_http_response::classified_report::ClassifiedReport;
+use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -66,5 +67,24 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ParamDatasetIdInvalid(_)
         | QueryError::ParamEndTimeAtRequired => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
         QueryError::TermExpansion { .. } | QueryError::AttributeNameInvalid { .. } | QueryError::TermNotAnIri { .. } => ClassifiedReport::internal(error),
+    }
+}
+
+/// Classify JSON-LD context availability separately from malformed input.
+pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
+    match error {
+        JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {
+            ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string())
+        }
+        JsonLdError::ProtectedContextPreload { .. }
+        | JsonLdError::ContextInvalid { .. }
+        | JsonLdError::EmbeddedContextInvalid(_)
+        | JsonLdError::InlineContextInvalid(_)
+        | JsonLdError::ClientBuild(_)
+        | JsonLdError::Expansion(_)
+        | JsonLdError::Compaction(_)
+        | JsonLdError::InvalidIri(_)
+        | JsonLdError::InvalidDocument(_)
+        | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }

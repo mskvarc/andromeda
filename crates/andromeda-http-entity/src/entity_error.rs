@@ -1,9 +1,8 @@
 //! Exhaustive HTTP classification of failures owned by entity policy.
 
 use andromeda_entity::error::EntityError;
-use andromeda_http_extraction::classification::{classify_parameter_error, classify_query_error};
+use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::classified_report::ClassifiedReport;
-use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
 /// Classify one entity-policy failure for both single and batch HTTP reporting.
@@ -24,25 +23,6 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::EntityTypeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::AttributeListIdentifier(source) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, source.to_string()),
         EntityError::Commit(_) | EntityError::Persistence { .. } | EntityError::Internal { .. } => ClassifiedReport::internal(error),
-    }
-}
-
-/// Classify a JSON-LD failure without inspecting its formatted text.
-pub(crate) fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
-    match error {
-        JsonLdError::ContextFetchDisabled { .. } | JsonLdError::ContextLoad { .. } | JsonLdError::ContextHttp { .. } | JsonLdError::ContextTooLarge { .. } => {
-            ClassifiedReport::public(NgsiLdErrorType::LdContextNotAvailable, error.to_string())
-        }
-        JsonLdError::ProtectedContextPreload { .. }
-        | JsonLdError::ContextInvalid { .. }
-        | JsonLdError::EmbeddedContextInvalid(_)
-        | JsonLdError::InlineContextInvalid(_)
-        | JsonLdError::ClientBuild(_)
-        | JsonLdError::Expansion(_)
-        | JsonLdError::Compaction(_)
-        | JsonLdError::InvalidIri(_)
-        | JsonLdError::InvalidDocument(_)
-        | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 

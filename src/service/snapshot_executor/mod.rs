@@ -4,10 +4,11 @@ mod execution;
 mod status;
 mod translation;
 
-use crate::service::{snapshot::store::SnapshotStore, snapshot_status::validate_preparing_transition, temporal::TemporalService};
+use crate::service::{snapshot::store::SnapshotStore, snapshot_status::validate_preparing_transition};
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
+use andromeda_temporal::service::TemporalService;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 

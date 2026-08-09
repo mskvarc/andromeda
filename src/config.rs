@@ -10,5 +10,4 @@ pub mod performance;
 pub mod runtime;
 pub mod server;
 pub mod spatial;
-pub mod temporal;
 mod validation;

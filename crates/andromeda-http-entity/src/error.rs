@@ -1,10 +1,10 @@
 //! Focused classification helpers for every non-entity policy consumed by entity routes.
 
-use crate::{entity_error::classify_jsonld_error, snapshot_scope::EntitySnapshotError};
+use crate::snapshot_scope::EntitySnapshotError;
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
-use andromeda_http_extraction::classification::{classify_parameter_error, classify_query_error};
+use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_ngsi_ld_query::error::QueryError;

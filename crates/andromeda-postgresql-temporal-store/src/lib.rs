@@ -2,15 +2,10 @@
 //!
 //! This crate owns the persistence layer for temporal entity attributes: the
 //! `temporal_entity_attributes` catalogue, the `attribute_history` hypertable,
-//! and the `scope_history` table.  It provides the [`TemporalRepository`]
-//! (the concrete store), [`TemporalRecorder`] (the bulk-write coordinator),
-//! and the backend-neutral port traits ([`TemporalHistoryReader`] and
-//! [`TemporalMutator`]) that the service layer programs against.
+//! and the `scope_history` table. It provides the [`TemporalRepository`] concrete adapter and [`TemporalRecorder`] bulk-write coordinator while implementing the ports owned by `andromeda-temporal`.
 //!
 //! [`TemporalRepository`]: repo::TemporalRepository
 //! [`TemporalRecorder`]: recorder::TemporalRecorder
-//! [`TemporalHistoryReader`]: store::TemporalHistoryReader
-//! [`TemporalMutator`]: store::TemporalMutator
 
 #![deny(missing_docs)]
 
@@ -35,7 +30,7 @@ pub(crate) mod history_row_decode;
 mod instance_mutation;
 /// Row-to-domain conversions for temporal data.
 pub mod mapper;
-/// [`TemporalMutator`](store::TemporalMutator) implementation on [`TemporalRepository`](repo::TemporalRepository).
+/// `andromeda-temporal` mutation-port implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod mutator;
 /// Turning expanded entity payloads into the rows one temporal write commits.
 pub mod observation;
@@ -43,7 +38,7 @@ pub mod observation;
 pub mod params;
 /// Projection repair used by the asynchronous materializer and instance mutations.
 pub mod projection_repair;
-/// [`TemporalHistoryReader`](store::TemporalHistoryReader) implementation on [`TemporalRepository`](repo::TemporalRepository).
+/// `andromeda-temporal` history-reader implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod reader;
 /// Writing attribute history whenever entities are created or modified.
 pub mod recorder;
@@ -51,8 +46,6 @@ pub mod recorder;
 pub mod repo;
 /// Persistence-shaped row structs for temporal tables.
 pub mod rows;
-/// Backend-neutral temporal store types and trait declarations.
-pub mod store;
 /// Runtime capability probe for TimescaleDB TSL (Enterprise) features.
 pub mod timescale_features;
 /// The column an attribute's recorded values are stored in.
@@ -70,8 +63,25 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
         "andromeda-postgresql-temporal-query",
+        "andromeda-temporal",
     ],
     allow_workspace_dev_dependencies: [
     ],
     allow_production_dependencies: ["sqlx", "tokio"],
+}
+
+#[cfg(test)]
+mod port_contract_tests {
+    use crate::repo::TemporalRepository;
+    use andromeda_temporal::port::{history_reader::TemporalHistoryReader, mutator::TemporalMutator};
+
+    fn assert_history_reader<T: TemporalHistoryReader>() {}
+
+    fn assert_mutator<T: TemporalMutator>() {}
+
+    #[test]
+    fn repository_implements_temporal_ports_directly() {
+        assert_history_reader::<TemporalRepository>();
+        assert_mutator::<TemporalRepository>();
+    }
 }

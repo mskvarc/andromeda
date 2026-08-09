@@ -1,30 +1,16 @@
 //! The HTTP surface: which route reaches which handler.
 
 use crate::{
-    api::{entity_binding::BrokerEntityStateResolver, state::BrokerState, tenant_factory::BrokerTenantFactory},
+    api::{entity_binding::BrokerEntityStateResolver, state::BrokerState, temporal_binding::BrokerTemporalStateResolver, tenant_factory::BrokerTenantFactory},
     config::runtime::RuntimeConfig,
     error::AndromedaError,
-    http::handler::{
-        csource_registration,
-        csource_subscription,
-        entity_map,
-        health,
-        info,
-        jsonld_context,
-        snapshot,
-        sse,
-        subscription,
-        temporal,
-        temporal_operations,
-        tenant,
-        version,
-        ws,
-    },
+    http::handler::{csource_registration, csource_subscription, entity_map, health, info, jsonld_context, snapshot, sse, subscription, tenant, version, ws},
     version::service::Version,
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_health::aggregate::Health;
 use andromeda_http_entity::routes::EntityRoutes;
+use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_postgresql_context_store::{
     health::DatabaseHealthIndicator,
     tenant_database::{DatabaseUrl, configure_pool_options},
@@ -108,8 +94,13 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
     let max_body = config.performance.max_request_body_bytes;
     let entity_resolver = Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants)));
     let entity_routes = EntityRoutes::new(entity_resolver).into_router();
+    let temporal_resolver = Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants)));
+    let temporal_routes = TemporalRoutes::new(temporal_resolver).into_router();
     let router = Router::new()
-        .nest("/ngsi-ld/v1", build_v1_router(entity_routes).merge(health_router).merge(version_router))
+        .nest(
+            "/ngsi-ld/v1",
+            build_v1_router(entity_routes, temporal_routes).merge(health_router).merge(version_router),
+        )
         .layer(DefaultBodyLimit::max(max_body))
         .layer(HelmetLayer::with_defaults())
         .with_state(broker_state);
@@ -120,8 +111,9 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
     })
 }
 
-fn build_v1_router(entity_routes: Router) -> Router<BrokerState> {
+fn build_v1_router(entity_routes: Router, temporal_routes: Router) -> Router<BrokerState> {
     let entity_routes: Router<BrokerState> = entity_routes.with_state(());
+    let temporal_routes: Router<BrokerState> = temporal_routes.with_state(());
     let tenants_routes = Router::new().route("/", get(tenant::query)).route("/evictOrphans", post(tenant::evict_orphans));
 
     let jsonld_context_routes = Router::new()
@@ -129,24 +121,6 @@ fn build_v1_router(entity_routes: Router) -> Router<BrokerState> {
         .route("/", get(jsonld_context::query))
         .route("/{context_id}", get(jsonld_context::get))
         .route("/{context_id}", delete(jsonld_context::delete));
-
-    let temporal_entity_routes = Router::new()
-        .route("/", post(temporal::create_or_update::create_or_update))
-        .route("/", get(temporal::query::query))
-        .route("/{id}", get(temporal::retrieve::get))
-        .route("/{id}", delete(temporal::delete::delete))
-        .route("/{id}/attrs", post(temporal::add_attributes::add_attrs))
-        .route("/{id}/attrs/{attr_id}", delete(temporal::delete_attribute::delete_attr))
-        .route(
-            "/{id}/attrs/{attr_id}/{instance_id}",
-            patch(temporal::update_attribute_instance::update_attr_instance),
-        )
-        .route(
-            "/{id}/attrs/{attr_id}/{instance_id}",
-            delete(temporal::delete_attribute_instance::delete_attr_instance),
-        );
-
-    let temporal_ops_routes = Router::new().route("/query", post(temporal_operations::query));
 
     let entity_map_routes = Router::new()
         .route("/", get(entity_map::create_from_query))
@@ -194,10 +168,9 @@ fn build_v1_router(entity_routes: Router) -> Router<BrokerState> {
 
     Router::new()
         .merge(entity_routes)
+        .nest("/temporal", temporal_routes)
         .nest("/tenants", tenants_routes)
         .nest("/jsonldContexts", jsonld_context_routes)
-        .nest("/temporal/entities", temporal_entity_routes)
-        .nest("/temporal/entityOperations", temporal_ops_routes)
         .nest("/entityMaps", entity_map_routes)
         .nest("/temporal/entityMaps", temporal_entity_map_routes)
         .nest("/subscriptions", subscription_routes)

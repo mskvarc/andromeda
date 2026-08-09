@@ -95,6 +95,7 @@ dependencies = [
  "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-response",
+ "andromeda-http-temporal",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
@@ -116,6 +117,7 @@ dependencies = [
  "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-task-runtime",
+ "andromeda-temporal",
  "andromeda-tenancy",
  "andromeda-test-common",
  "async-trait",
@@ -453,6 +455,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-http-temporal"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-context-commit",
+ "andromeda-entity-map",
+ "andromeda-federation",
+ "andromeda-http-extraction",
+ "andromeda-http-response",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
+ "andromeda-temporal",
+ "andromeda-tenancy",
+ "axum",
+ "chrono",
+ "futures",
+ "pretty_assertions",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tower",
+ "tracing",
+ "typed-builder",
+]
+
+[[package]]
 name = "andromeda-jsonld"
 version = "0.1.0"
 dependencies = [
@@ -601,6 +634,7 @@ dependencies = [
  "andromeda-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "chrono",
@@ -815,6 +849,7 @@ dependencies = [
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-postgresql-temporal-query",
+ "andromeda-temporal",
  "async-trait",
  "chrono",
  "iri-rs",
@@ -918,6 +953,34 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "andromeda-temporal"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-context-commit",
+ "andromeda-entity",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-request",
+ "andromeda-ngsi-ld-vocabulary",
+ "async-trait",
+ "chrono",
+ "confique",
+ "iri-rs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 
