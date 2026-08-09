@@ -5,17 +5,15 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::ChangeEvent,
-    service::entity::{
-        EntityService,
-        atomic_write::AtomicWrite,
-        attribute_envelope::validate_attribute_envelopes,
-        entity_mutation::{EntityMutation, EntityRecord},
-        expanded_member::extract_attribute_keys,
-        history_record::{HistoryRecord, replacement_history, tombstone},
-        precondition::Precondition,
-        write_outcome::single,
-    },
+    service::entity::{EntityService, attribute_envelope::validate_attribute_envelopes, expanded_member::extract_attribute_keys},
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    change_event::ChangeEvent,
+    entity_mutation::{EntityMutation, EntityRecord},
+    history_record::{HistoryRecord, replacement_history, tombstone},
+    precondition::Precondition,
+    write_outcome::single,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};

@@ -11,16 +11,16 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::ChangeEvent,
-    service::entity::{
-        atomic_write::AtomicWrite,
-        entity_mutation::EntityMutation,
-        history_record::HistoryRecord,
-        side_effect::BatchSideEffectJob,
-        side_effect_queue::{LeasedSideEffect, SideEffectQueue},
-        write_coordinator::WriteCoordinator,
-    },
+    service::entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue},
     worker_instance_id::WorkerInstanceId,
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    batch_side_effect_job::BatchSideEffectJob,
+    change_event::ChangeEvent,
+    committer::ContextCommitter,
+    entity_mutation::EntityMutation,
+    history_record::HistoryRecord,
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
@@ -50,7 +50,7 @@ pub struct WorkerConfig {
 /// Background worker that drains the durable side-effect queue.
 pub struct PendingSideEffectsWorker {
     repo: Arc<dyn SideEffectQueue>,
-    writes: Arc<dyn WriteCoordinator>,
+    writes: Arc<dyn ContextCommitter>,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     config: WorkerConfig,
 }
@@ -59,7 +59,7 @@ impl PendingSideEffectsWorker {
     /// Create a new worker bound to the tenant's write coordinator.
     pub const fn new(
         repo: Arc<dyn SideEffectQueue>,
-        writes: Arc<dyn WriteCoordinator>,
+        writes: Arc<dyn ContextCommitter>,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         config: WorkerConfig,
     ) -> PendingSideEffectsWorker {

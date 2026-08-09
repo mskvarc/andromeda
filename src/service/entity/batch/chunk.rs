@@ -7,17 +7,16 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::ChangeEvent,
-    service::entity::{
-        EntityService,
-        atomic_write::AtomicWrite,
-        batch::prepare::PreparedEntity,
-        entity_mutation::{EntityMutation, EntityRecord},
-        history_record::HistoryRecord,
-        precondition::{AfterAttempt, Precondition, after_attempt},
-        side_effect::{BatchSideEffectJob, BatchSideEffectMode},
-        write_outcome::WriteOutcome,
-    },
+    service::entity::{EntityService, batch::prepare::PreparedEntity, side_effect::BatchSideEffectMode},
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    batch_side_effect_job::BatchSideEffectJob,
+    change_event::ChangeEvent,
+    entity_mutation::{EntityMutation, EntityRecord},
+    history_record::HistoryRecord,
+    precondition::{AfterAttempt, Precondition, after_attempt},
+    write_outcome::WriteOutcome,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
@@ -271,7 +270,7 @@ impl EntityService {
 #[cfg(test)]
 mod tests {
     use super::{error_of, trigger_of};
-    use crate::service::entity::{
+    use andromeda_context_commit::{
         entity_mutation::{EntityMutation, EntityRecord},
         write_outcome::WriteOutcome,
     };

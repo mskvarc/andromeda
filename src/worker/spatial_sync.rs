@@ -14,7 +14,8 @@
 //! itself. Events without a payload (background expiration sweeps) still
 //! fall back to fetching from the entity store.
 
-use crate::{event::change_event::ChangeEvent, service::entity::store::EntityStore};
+use crate::service::entity::store::EntityStore;
+use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;

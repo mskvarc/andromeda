@@ -6,9 +6,10 @@
 //! matching) and the entity service (outbox entry generation).
 
 use crate::{
-    event::{change_event::ChangeEvent, subscription_change::SubscriptionChange},
+    event::subscription_change::SubscriptionChange,
     service::{compiled_subscription::CompiledSubscription, subscription::store::SubscriptionStore, subscription_matching::find_matching},
 };
+use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};

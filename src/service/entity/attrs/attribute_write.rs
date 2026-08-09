@@ -5,7 +5,7 @@
 //! share is what the merge produced for the notification, which is why there are
 //! two result types rather than one bag of optional fields.
 
-use crate::service::entity::{
+use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     entity_mutation::{EntityMutation, EntityRecord},
     history_record::HistoryRecord,

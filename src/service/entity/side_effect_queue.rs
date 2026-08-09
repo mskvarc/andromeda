@@ -8,7 +8,8 @@
 //! Leasing rather than reading is what makes the drain at-least-once: a lease
 //! that expires unacknowledged becomes claimable again.
 
-use crate::{error::AndromedaError, service::entity::BatchSideEffectJob, worker_instance_id::WorkerInstanceId};
+use crate::{error::AndromedaError, worker_instance_id::WorkerInstanceId};
+use andromeda_context_commit::batch_side_effect_job::BatchSideEffectJob;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use uuid::Uuid;

@@ -1,6 +1,7 @@
 //! Background worker that periodically deletes entities whose expiresAt has passed (§4.22).
 
-use crate::{event::change_event::ChangeEvent, service::entity::store::EntityStore};
+use crate::service::entity::store::EntityStore;
+use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;

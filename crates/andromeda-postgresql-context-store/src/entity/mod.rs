@@ -4,8 +4,6 @@
 pub mod attribute_summary;
 /// Binary COPY path for bulk entity inserts.
 pub mod copy;
-/// One entity as it stood at the moment it was deleted.
-pub mod deleted;
 /// The clause 5.7.3 type and attribute discovery aggregations.
 pub mod discovery;
 /// Removing entities and attribute instances whose `expiresAt` has passed.

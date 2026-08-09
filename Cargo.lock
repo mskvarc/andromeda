@@ -83,6 +83,7 @@ dependencies = [
 name = "andromeda"
 version = "0.1.0"
 dependencies = [
+ "andromeda-context-commit",
  "andromeda-delivery",
  "andromeda-health",
  "andromeda-jsonld",
@@ -97,6 +98,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-encoding",
@@ -158,6 +160,22 @@ dependencies = [
  "urlencoding",
  "urn-rs",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-context-commit"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "chrono",
+ "derive_more",
+ "pretty_assertions",
+ "serde_json",
+ "thiserror 2.0.19",
+ "typed-builder",
 ]
 
 [[package]]
@@ -450,6 +468,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-postgresql-atomic-write"
+version = "0.1.0"
+dependencies = [
+ "andromeda-context-commit",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-context-store",
+ "andromeda-postgresql-query",
+ "andromeda-postgresql-temporal-store",
+ "chrono",
+ "pretty_assertions",
+ "serde_json",
+ "sqlx",
+ "tracing",
+]
+
+[[package]]
 name = "andromeda-postgresql-context-query"
 version = "0.1.0"
 dependencies = [
@@ -472,6 +508,7 @@ dependencies = [
 name = "andromeda-postgresql-context-store"
 version = "0.1.0"
 dependencies = [
+ "andromeda-context-commit",
  "andromeda-health",
  "andromeda-jsonld",
  "andromeda-layer-guard",

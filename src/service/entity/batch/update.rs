@@ -11,10 +11,10 @@ use crate::{
         EntityService,
         batch::{BatchResult, chunk::ChunkWrite},
         expanded_member::unwrap_expanded_ref,
-        precondition::Precondition,
         side_effect::BatchSideEffectMode,
     },
 };
+use andromeda_context_commit::precondition::Precondition;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{

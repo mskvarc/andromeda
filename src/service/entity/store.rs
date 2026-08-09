@@ -12,11 +12,11 @@
 //!
 //! The write path is absent for a different reason: a write that must land
 //! atomically with its history, outbox and side-effect rows is described by an
-//! [`AtomicWrite`] and committed through a [`WriteCoordinator`], not by calling
+//! [`AtomicWrite`] and committed through a [`ContextCommitter`], not by calling
 //! this port method by method.
 //!
-//! [`AtomicWrite`]: crate::service::entity::atomic_write::AtomicWrite
-//! [`WriteCoordinator`]: crate::service::entity::write_coordinator::WriteCoordinator
+//! [`AtomicWrite`]: andromeda_context_commit::atomic_write::AtomicWrite
+//! [`ContextCommitter`]: andromeda_context_commit::committer::ContextCommitter
 
 use crate::error::AndromedaError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};

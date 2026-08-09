@@ -54,30 +54,6 @@ pub struct OutboxEntry {
     pub next_attempt_at: DateTime<Utc>,
 }
 
-/// Data required to insert a new notification outbox entry.
-///
-/// Contains only the fields known at insert time; delivery tracking fields
-/// (claimed_at, delivered_at, etc.) are populated by the database or the
-/// delivery worker.
-#[derive(Debug, TypedBuilder)]
-pub struct NewOutboxEntry {
-    /// Subscription that matched the entity change.
-    pub subscription_id: Uri,
-    /// Entity that triggered the notification.
-    pub entity_id: Uri,
-    /// Mutation trigger reason.
-    pub trigger: NotificationTrigger,
-    /// Expanded entity snapshot at the time of the mutation.
-    #[builder(default)]
-    pub entity_snapshot: Option<Value>,
-    /// Entity state before the mutation.
-    #[builder(default)]
-    pub previous_snapshot: Option<Value>,
-    /// Names of the attributes the mutation changed.
-    #[builder(default)]
-    pub changed_attrs: Vec<AttributeName>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

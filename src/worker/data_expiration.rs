@@ -1,19 +1,15 @@
 //! Expiring entities and attribute instances whose `expiresAt` has passed
 //! (clause 4.22).
 
-use crate::{
-    batch_activity::BatchActivityTracker,
-    error::AndromedaError,
-    event::change_event::ChangeEvent,
-    service::entity::{
-        atomic_write::AtomicWrite,
-        entity_mutation::{EntityMutation, EntityRecord},
-        history_record::HistoryRecord,
-        precondition::Precondition,
-        store::EntityStore,
-        write_coordinator::WriteCoordinator,
-        write_outcome::WriteOutcome,
-    },
+use crate::{batch_activity::BatchActivityTracker, error::AndromedaError, service::entity::store::EntityStore};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    change_event::ChangeEvent,
+    committer::ContextCommitter,
+    entity_mutation::{EntityMutation, EntityRecord},
+    history_record::HistoryRecord,
+    precondition::Precondition,
+    write_outcome::WriteOutcome,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
@@ -29,7 +25,7 @@ use tracing::{debug, error, info};
 /// Combined worker that expires both entities and attribute instances.
 pub struct DataExpirationWorker {
     entity_repo: Arc<dyn EntityStore>,
-    writes: Arc<dyn WriteCoordinator>,
+    writes: Arc<dyn ContextCommitter>,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     interval: Duration,
     batch_activity: BatchActivityTracker,
@@ -39,7 +35,7 @@ impl DataExpirationWorker {
     /// Create the worker for one tenant.
     pub const fn new(
         entity_repo: Arc<dyn EntityStore>,
-        writes: Arc<dyn WriteCoordinator>,
+        writes: Arc<dyn ContextCommitter>,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         interval_secs: u64,
         batch_activity: BatchActivityTracker,
@@ -184,7 +180,7 @@ fn purge_write(id: &Uri, snapshot: EntitySnapshot, cutoff: chrono::DateTime<Utc>
 #[cfg(test)]
 mod tests {
     use super::{landed_ids, purge_write};
-    use crate::service::entity::{history_record::HistoryRecord, write_outcome::WriteOutcome};
+    use andromeda_context_commit::{history_record::HistoryRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_postgresql_context_store::entity::snapshot::EntitySnapshot;
     use chrono::{DateTime, Utc};

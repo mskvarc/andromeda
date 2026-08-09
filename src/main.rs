@@ -16,7 +16,6 @@ mod enforcement;
 mod error;
 mod event;
 mod http;
-mod repository;
 mod server;
 mod service;
 mod store_bridge;

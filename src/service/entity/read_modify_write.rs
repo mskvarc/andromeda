@@ -13,14 +13,11 @@
 //! their history rows land. The Entity API and the Temporal Evolution then
 //! disagree permanently, because nothing sweeps the difference away.
 
-use crate::{
-    error::AndromedaError,
-    service::entity::{
-        EntityService,
-        atomic_write::AtomicWrite,
-        precondition::{AfterAttempt, Precondition, WRITE_ATTEMPTS, after_attempt},
-        write_outcome::{WriteOutcome, single},
-    },
+use crate::{error::AndromedaError, service::entity::EntityService};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    precondition::{AfterAttempt, Precondition, WRITE_ATTEMPTS, after_attempt},
+    write_outcome::{WriteOutcome, single},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;

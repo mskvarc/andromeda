@@ -24,6 +24,7 @@ use crate::error::{
     TemporalStoreError,
     TenancyError,
 };
+use andromeda_context_commit::error::CommitError;
 
 impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
     fn from(error: andromeda_postgresql_encoding::ewkb::EwkbError) -> AndromedaError {
@@ -237,6 +238,12 @@ impl From<RenderError> for AndromedaError {
 impl From<ReqwestError> for AndromedaError {
     fn from(error: ReqwestError) -> AndromedaError {
         ErrorKind::ExternalRequest(error).into()
+    }
+}
+
+impl From<CommitError> for AndromedaError {
+    fn from(error: CommitError) -> AndromedaError {
+        AndromedaError::internal(error.to_string())
     }
 }
 

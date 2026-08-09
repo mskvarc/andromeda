@@ -19,7 +19,6 @@ use crate::{
             discovery::EntityDiscoveryService,
             query::EntityQueryService,
             store::EntityStore,
-            write_coordinator::WriteCoordinator,
         },
         entity_map::EntityMapService,
         jsonld_context::JsonLdContextService,
@@ -30,6 +29,7 @@ use crate::{
         temporal::TemporalService,
     },
 };
+use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
@@ -63,7 +63,7 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) snapshot_store: &'a Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: &'a Arc<SubscriptionCache>,
     pub(super) spatial_index: &'a Arc<SpatialEntityIndex>,
-    pub(super) writes: &'a Arc<dyn WriteCoordinator>,
+    pub(super) writes: &'a Arc<dyn ContextCommitter>,
     pub(super) batch_activity: &'a BatchActivityTracker,
 }
 

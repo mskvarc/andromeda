@@ -7,9 +7,9 @@ use crate::{
         attribute_envelope::validate_attribute_envelopes,
         attrs::attribute_write::{MutatedEntity, payload_write},
         expanded_member::{attr_name_of, unwrap_expanded_ref},
-        history_record::HistoryRecord,
     },
 };
+use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{

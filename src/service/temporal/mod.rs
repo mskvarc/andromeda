@@ -5,14 +5,7 @@ use crate::{
     http::response::content_range::build_content_range,
     service::{
         csource_forwarding::{outcome::ForwardedTemporalEntities, temporal_result::merge_temporal_query_results},
-        entity::{
-            atomic_write::AtomicWrite,
-            entity_mutation::{EntityMutation, EntityRecord},
-            history_record::HistoryRecord,
-            query::selector_compilation::compile_entity_selectors,
-            store::EntityStore,
-            write_coordinator::WriteCoordinator,
-        },
+        entity::{query::selector_compilation::compile_entity_selectors, store::EntityStore},
     },
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
@@ -20,6 +13,12 @@ use crate::{
         entity::TemporalEntityRenderer,
         values::TemporalValuesRenderer,
     },
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    committer::ContextCommitter,
+    entity_mutation::{EntityMutation, EntityRecord},
+    history_record::HistoryRecord,
 };
 use andromeda_jsonld::{
     compaction::compact_attr_iri,
@@ -141,7 +140,7 @@ pub struct TemporalService {
     reader: Arc<dyn TemporalHistoryReader>,
     mutator: Arc<dyn TemporalMutator>,
     recorder: Arc<TemporalRecorder>,
-    writes: Arc<dyn WriteCoordinator>,
+    writes: Arc<dyn ContextCommitter>,
     entity_repo: Arc<dyn EntityStore>,
     engine: JsonLdEngine,
     default_last_n: u32,
@@ -198,7 +197,7 @@ impl TemporalService {
         reader: Arc<dyn TemporalHistoryReader>,
         mutator: Arc<dyn TemporalMutator>,
         recorder: Arc<TemporalRecorder>,
-        writes: Arc<dyn WriteCoordinator>,
+        writes: Arc<dyn ContextCommitter>,
         engine: JsonLdEngine,
         default_last_n: u32,
     ) -> TemporalService {

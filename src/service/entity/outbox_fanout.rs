@@ -5,14 +5,11 @@
 //! are written in the same transaction as the mutation that raised them, which
 //! is what makes a notification crash-consistent with the change it describes.
 
-use crate::{
-    event::change_event::ChangeEvent,
-    service::{
-        entity::{EntityService, OutboxWriteConfig},
-        outbox::entry::NewOutboxEntry,
-        subscription_matching::matches_entity_filters,
-    },
+use crate::service::{
+    entity::{EntityService, OutboxWriteConfig},
+    subscription_matching::matches_entity_filters,
 };
+use andromeda_context_commit::{change_event::ChangeEvent, new_outbox_entry::NewOutboxEntry};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
 use chrono::Utc;

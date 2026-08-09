@@ -4,13 +4,12 @@ use crate::{
     batch_activity::BatchActivityTracker,
     config::runtime::RuntimeConfig,
     event::{
-        change_event::ChangeEvent,
         csr_change_event::CsrChangeEvent,
         subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
     },
     service::{
         csource_registration::store::RegistrationStore,
-        entity::{query::EntityQueryService, store::EntityStore, write_coordinator::WriteCoordinator},
+        entity::{query::EntityQueryService, store::EntityStore},
         snapshot::store::SnapshotStore,
         subscription_cache::SubscriptionCache,
     },
@@ -29,6 +28,7 @@ use crate::{
     },
     worker_instance_id::WorkerInstanceId,
 };
+use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextCommitter};
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
@@ -84,7 +84,7 @@ pub(super) struct WorkerSupervisionInputs<'a> {
     pub(super) registration_store: Arc<dyn RegistrationStore>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
-    pub(super) writes: Arc<dyn WriteCoordinator>,
+    pub(super) writes: Arc<dyn ContextCommitter>,
     pub(super) engine: JsonLdEngine,
     pub(super) spatial_index: Arc<SpatialEntityIndex>,
     pub(super) batch_activity: BatchActivityTracker,

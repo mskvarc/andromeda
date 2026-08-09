@@ -9,23 +9,22 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::ChangeEvent,
-    service::entity::{
-        EntityService,
-        atomic_write::AtomicWrite,
-        entity_mutation::EntityMutation,
-        expanded_member::extract_attribute_keys,
-        precondition::Precondition,
-        side_effect::{BatchSideEffectJob, BatchSideEffectMode},
-        write_outcome::WriteOutcome,
-    },
+    service::entity::{EntityService, expanded_member::extract_attribute_keys, side_effect::BatchSideEffectMode},
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    batch_side_effect_job::BatchSideEffectJob,
+    change_event::ChangeEvent,
+    deleted_entity::DeletedEntity,
+    entity_mutation::EntityMutation,
+    precondition::Precondition,
+    write_outcome::WriteOutcome,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
     notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
 };
-use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;

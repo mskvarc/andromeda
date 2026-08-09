@@ -1,10 +1,6 @@
 //! The entity policy: clause 5.6 write operations and clause 5.7 discovery,
 //! expressed against ports rather than against a database.
 
-/// The store that anchors an atomic write.
-pub mod anchor_store;
-/// Everything one entity's write must land together.
-pub mod atomic_write;
 /// Checking attribute instance envelopes (clause 5.2.5).
 pub mod attribute_envelope;
 /// Attribute-level writes (clauses 5.6.2 to 5.6.5 and 5.6.19).
@@ -14,20 +10,14 @@ pub mod batch;
 pub mod compiled_cache;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
-/// The change one write makes to the `entities` row.
-pub mod entity_mutation;
 /// Reading members out of an expanded JSON-LD entity.
 pub mod expanded_member;
-/// What a write adds to an entity's Temporal Evolution.
-pub mod history_record;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
 /// Turning one mutation into the outbox entries its subscribers need.
 pub mod outbox_fanout;
-/// Optimistic concurrency control for the write path.
-pub mod precondition;
 /// Provision (write) forwarding mode classification and multi-status helpers.
 pub mod provision_forwarding;
 /// Purging attributes from a set of entities.
@@ -46,25 +36,19 @@ pub mod side_effect_queue;
 pub mod store;
 /// Injecting the clause 4.8 system attributes into an expanded entity.
 pub mod sys_attrs;
-/// Committing atomic writes.
-pub mod write_coordinator;
-/// What one atomic write did to the entity it named.
-pub mod write_outcome;
-
 use crate::{
     batch_activity::BatchActivityTracker,
-    event::change_event::ChangeEvent,
     service::{
         entity::{
             batch::execution::BatchExecutionConfig,
             id_lock::{IdLockMap, acquire_id_locks_in, spawn_id_lock_gc},
-            side_effect::{BatchSideEffectJob, BatchSideEffectMode, resolve_side_effect_mode},
+            side_effect::{BatchSideEffectMode, resolve_side_effect_mode},
             store::EntityStore,
-            write_coordinator::WriteCoordinator,
         },
         subscription_cache::SubscriptionCache,
     },
 };
+use andromeda_context_commit::{batch_side_effect_job::BatchSideEffectJob, change_event::ChangeEvent, committer::ContextCommitter};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
@@ -90,7 +74,7 @@ pub struct EntityService {
     /// `datasetId`s an attribute has ever had. Step 11 of
     /// `docs/workspace-topology.md` replaces this with a temporal port.
     temporal_recorder: Arc<TemporalRecorder>,
-    writes: Arc<dyn WriteCoordinator>,
+    writes: Arc<dyn ContextCommitter>,
     engine: JsonLdEngine,
     change_tx: Option<broadcast::Sender<ChangeEvent>>,
     batch_activity: BatchActivityTracker,
@@ -112,7 +96,7 @@ impl EntityService {
     pub fn new(
         repo: Arc<dyn EntityStore>,
         temporal_recorder: Arc<TemporalRecorder>,
-        writes: Arc<dyn WriteCoordinator>,
+        writes: Arc<dyn ContextCommitter>,
         engine: JsonLdEngine,
         change_tx: Option<broadcast::Sender<ChangeEvent>>,
         batch_config: BatchExecutionConfig,

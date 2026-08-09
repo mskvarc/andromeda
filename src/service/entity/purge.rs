@@ -8,13 +8,12 @@
 
 use crate::{
     error::AndromedaError,
-    service::entity::{
-        EntityService,
-        atomic_write::AtomicWrite,
-        entity_mutation::{EntityMutation, EntityRecord},
-        expanded_member::attr_name_of,
-        history_record::HistoryRecord,
-    },
+    service::entity::{EntityService, expanded_member::attr_name_of},
+};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    entity_mutation::{EntityMutation, EntityRecord},
+    history_record::HistoryRecord,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};

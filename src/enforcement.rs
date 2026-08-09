@@ -26,6 +26,7 @@ mod boundary {
     /// The apex may name them all — this is the list of what "all" is, so a new
     /// workspace crate the binary starts depending on is added here on purpose.
     const ALLOWED_IN_WORKSPACE: &[&str] = &[
+        "andromeda-context-commit",
         "andromeda-delivery",
         "andromeda-health",
         "andromeda-jsonld",
@@ -40,6 +41,7 @@ mod boundary {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-postgresql-atomic-write",
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-encoding",

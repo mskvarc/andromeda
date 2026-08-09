@@ -1,7 +1,7 @@
 pub(crate) mod payload;
 
 use crate::{
-    event::{change_event::ChangeEvent, subscription_change::SubscriptionChange},
+    event::subscription_change::SubscriptionChange,
     service::{
         compiled_subscription::CompiledSubscription,
         entity::{query::EntityQueryService, store::EntityStore, sys_attrs::inject_sys_attrs},
@@ -10,6 +10,7 @@ use crate::{
         subscription_throttle::ceiling_for_throttle,
     },
 };
+use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;

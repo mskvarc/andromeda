@@ -8,6 +8,7 @@ edition = "2024"
 authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 
 [workspace.dependencies]
+andromeda-context-commit = { path = "crates/andromeda-context-commit" }
 andromeda-delivery = { path = "crates/andromeda-delivery" }
 andromeda-health = { path = "crates/andromeda-health" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
@@ -22,6 +23,7 @@ andromeda-ngsi-ld-render = { path = "crates/andromeda-ngsi-ld-render" }
 andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
+andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
@@ -58,6 +60,7 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
+andromeda-context-commit.workspace = true
 andromeda-delivery.workspace = true
 andromeda-health.workspace = true
 andromeda-jsonld.workspace = true
@@ -71,6 +74,7 @@ andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-encoding.workspace = true

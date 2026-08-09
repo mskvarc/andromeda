@@ -2,13 +2,10 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::ChangeEvent,
-    service::entity::{
-        side_effect::BatchSideEffectJob,
-        side_effect_queue::{LeasedSideEffect, SideEffectQueue},
-    },
+    service::entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue},
     worker_instance_id::WorkerInstanceId,
 };
+use andromeda_context_commit::{batch_side_effect_job::BatchSideEffectJob, change_event::ChangeEvent};
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_postgresql_context_store::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository};
 use async_trait::async_trait;

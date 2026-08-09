@@ -6,9 +6,9 @@ use crate::{
         EntityService,
         attrs::attribute_write::{MutatedEntity, payload_write},
         expanded_member::attr_name_of,
-        history_record::tombstone,
     },
 };
+use andromeda_context_commit::history_record::tombstone;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{

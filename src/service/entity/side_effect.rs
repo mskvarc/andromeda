@@ -5,24 +5,6 @@
 //! respond-async`. Either they run inline in the request that caused them, or
 //! they are persisted alongside the entity write and drained by a worker.
 
-use crate::event::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use serde_json::Value;
-use std::sync::Arc;
-
-/// The temporal writes and change events one write produced.
-///
-/// Identifiers and payloads are `Arc`-wrapped so they can be referenced both by
-/// the temporal writer, which reads them as borrows, and by the change events,
-/// without a deep copy of either.
-#[derive(Debug)]
-pub struct BatchSideEffectJob {
-    /// Entities whose observations still have to reach the Temporal Evolution.
-    pub temporal_entities: Vec<(Arc<Uri>, Arc<Value>)>,
-    /// Change events still to be emitted on the broadcast channel.
-    pub change_events: Vec<ChangeEvent>,
-}
-
 /// How a request's side effects are applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchSideEffectMode {

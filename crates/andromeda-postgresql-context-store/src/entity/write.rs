@@ -10,9 +10,10 @@
 //! the update statement enforces.
 
 use crate::{
-    entity::{deleted::DeletedEntity, mapper::stored_uri, params::PreparedEntityColumns, repo::EntityRepository},
+    entity::{mapper::stored_uri, params::PreparedEntityColumns, repo::EntityRepository},
     error::ContextStoreError,
 };
+use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Row, Transaction};

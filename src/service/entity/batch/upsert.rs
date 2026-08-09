@@ -19,10 +19,12 @@ use crate::{
         EntityService,
         batch::{BatchResult, chunk::ChunkWrite},
         expanded_member::extract_attribute_keys,
-        history_record::HistoryRecord,
-        precondition::{Precondition, WRITE_ATTEMPTS},
         side_effect::BatchSideEffectMode,
     },
+};
+use andromeda_context_commit::{
+    history_record::HistoryRecord,
+    precondition::{Precondition, WRITE_ATTEMPTS},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};

@@ -4,10 +4,8 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (outbox entry generation).
 
-use crate::{
-    event::change_event::ChangeEvent,
-    service::{compiled_subscription::CompiledSubscription, geo_filter::matches_geo_query},
-};
+use crate::service::{compiled_subscription::CompiledSubscription, geo_filter::matches_geo_query};
+use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{expanded::entity_member::extract_scopes, notification::ChangeOrigin, subscription::SubscriptionStatus};
 use andromeda_ngsi_ld_query::{filter::eval, scope::query::ScopeQuery};
@@ -164,7 +162,7 @@ pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::change_event::ChangeEvent;
+    use andromeda_context_commit::change_event::ChangeEvent;
     use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;

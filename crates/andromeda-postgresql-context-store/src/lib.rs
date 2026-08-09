@@ -54,6 +54,7 @@ mod boundary {
     fn this_crate_declares_only_what_its_layer_permits() {
         /// In-workspace crates this one may name, in any dependency table.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
+            "andromeda-context-commit",
             "andromeda-health",
             "andromeda-jsonld",
             "andromeda-layer-guard",

@@ -6,6 +6,5 @@
 //! [`andromeda_ngsi_ld_model::notification::CsourceNotification`]) are the
 //! serialisable shapes and stay in the model crate.
 
-pub mod change_event;
 pub mod csr_change_event;
 pub mod subscription_change;

@@ -17,12 +17,12 @@ use crate::{
         },
     },
     batch_activity::BatchActivityTracker,
-    config::runtime::RuntimeConfig,
+    config::{performance::BulkWriteMode, runtime::RuntimeConfig},
     error::AndromedaError,
-    repository::atomic_write::anchor::PostgresAnchorStore,
-    service::entity::write_coordinator::{AnchoredWriteCoordinator, WriteCoordinator},
 };
+use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
+use andromeda_postgresql_atomic_write::committer::{EntityInsertMode, PostgresAtomicCommitter};
 use andromeda_postgresql_context_store::tenant_database::DatabaseUrl;
 use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
 use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
@@ -130,15 +130,17 @@ async fn build_tenant_state(
     let temporal_recorder = Arc::new(TemporalRecorder::new(Arc::clone(&temporal_repo)));
 
     // Sole owner of the materializer producer handle: every write path reaches
-    // the projection through an atomic write, so no other service needs one.
-    // The anchor also owns the bulk-write mode, which is a statement shape
-    // rather than a caller's choice.
-    let writes: Arc<dyn WriteCoordinator> = Arc::new(AnchoredWriteCoordinator::new(PostgresAnchorStore::new(
+    // the projection through this complete atomic commit implementation.
+    let entity_insert_mode = match config.performance.bulk_write_mode {
+        BulkWriteMode::Unnest => EntityInsertMode::Unnest,
+        BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,
+    };
+    let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
         &pool,
         Arc::clone(&temporal_recorder),
-        config.performance.bulk_write_mode,
+        entity_insert_mode,
         storage.attribute_current_queue,
-    )));
+    ));
 
     let transports = construct_transports()?;
     let state = construct_services(
