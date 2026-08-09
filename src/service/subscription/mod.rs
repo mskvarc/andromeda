@@ -9,13 +9,15 @@ use crate::{
         subscription_core,
     },
 };
+use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::Subscription;
-use andromeda_postgresql_context_store::{jsonld_context::repo::JsonLdContextRepository, subscription::repo::SubscriptionRepository};
+use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 use url::Url;
@@ -23,7 +25,7 @@ use url::Url;
 /// Entity-subscription-specific behaviour.
 pub struct EntitySubscriptionVariant {
     engine: JsonLdEngine,
-    context_repo: JsonLdContextRepository,
+    contexts: Arc<ContextRegistryService>,
 }
 
 #[async_trait]
@@ -43,7 +45,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
                 Value::Array(arr) if arr.len() == 1 && arr[0].is_string() => Some(arr[0].clone()), // clone: extracting single element from array as owned Value
                 Value::Array(_) | Value::Object(_) => {
                     let hosted_payload = serde_json::json!({ "@context": ctx_val });
-                    match self.context_repo.create_implicitly(hosted_payload, base_url).await {
+                    match self.contexts.create_implicitly(hosted_payload, base_url).await {
                         Ok(urn) => {
                             let stored_value = match base_url {
                                 Some(base) => {
@@ -112,15 +114,15 @@ impl SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant> 
     pub fn new(
         pool: &PgPool,
         engine: JsonLdEngine,
+        contexts: Arc<ContextRegistryService>,
         sub_change_tx: Option<broadcast::Sender<SubscriptionChange>>,
     ) -> SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant> {
         let repo = SubscriptionRepository::new(pool);
-        let context_repo = JsonLdContextRepository::new(pool);
         debug!("Subscription service created!");
         SubscriptionServiceCore {
             repo,
             engine: engine.clone(), // clone: engine is shared between service and variant
-            variant: EntitySubscriptionVariant { engine, context_repo },
+            variant: EntitySubscriptionVariant { engine, contexts },
             change_tx: sub_change_tx,
         }
     }

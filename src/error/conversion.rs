@@ -25,6 +25,8 @@ use crate::error::{
     TenancyError,
 };
 use andromeda_context_commit::error::CommitError;
+use andromeda_context_registry::error::ContextRegistryError;
+use andromeda_entity_map::error::EntityMapError;
 
 impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
     fn from(error: andromeda_postgresql_encoding::ewkb::EwkbError) -> AndromedaError {
@@ -244,6 +246,38 @@ impl From<ReqwestError> for AndromedaError {
 impl From<CommitError> for AndromedaError {
     fn from(error: CommitError) -> AndromedaError {
         AndromedaError::internal(error.to_string())
+    }
+}
+
+impl From<EntityMapError> for AndromedaError {
+    fn from(error: EntityMapError) -> AndromedaError {
+        match error {
+            EntityMapError::NotFound { identifier } => AndromedaError::entity_map_not_found(identifier.to_string()),
+            EntityMapError::EntityNotInMap { entity_identifier, .. } => AndromedaError::entity_map_not_found(entity_identifier.to_string()),
+            EntityMapError::Persistence { detail } | EntityMapError::Invariant { detail } => AndromedaError::internal(detail),
+        }
+    }
+}
+
+impl From<ContextRegistryError> for AndromedaError {
+    fn from(error: ContextRegistryError) -> AndromedaError {
+        match error {
+            ContextRegistryError::MissingTopLevelContext => AndromedaError::malformed_request("Payload must contain a top-level @context field"),
+            ContextRegistryError::NotFound { identifier } => AndromedaError::context_not_found(identifier.to_string()),
+            ContextRegistryError::CoreContextDeletion => AndromedaError::jsonld_processing("Cannot delete a core context"),
+            ContextRegistryError::ReloadRequiresCached { identifier } => {
+                AndromedaError::jsonld_processing(format!("Cannot reload non-cached context: {identifier}"))
+            }
+            ContextRegistryError::MissingSourceUrl { identifier } => {
+                AndromedaError::jsonld_processing(format!("Cached context has no source URL: {identifier}"))
+            }
+            ContextRegistryError::ContextUnavailable { source_url, detail } => {
+                AndromedaError::context_not_available(format!("Failed to re-download context from {source_url}: {detail}"))
+            }
+            ContextRegistryError::Persistence { detail } | ContextRegistryError::Representation { detail } | ContextRegistryError::Invariant { detail } => {
+                AndromedaError::internal(detail)
+            }
+        }
     }
 }
 

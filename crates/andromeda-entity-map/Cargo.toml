@@ -1,0 +1,22 @@
+[package]
+name = "andromeda-entity-map"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+chrono = { version = "0.4.44", features = ["serde"] }
+dashmap = { version = "6.1.0", features = ["inline"] }
+iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
+thiserror = "2.0.18"
+uuid = { version = "1.23.1", features = ["v4"] }
+
+[dev-dependencies]
+andromeda-layer-guard.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }

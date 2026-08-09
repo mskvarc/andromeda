@@ -12,10 +12,8 @@ pub mod csource_merge;
 pub mod csource_registration;
 pub mod csource_subscription;
 pub mod entity;
-pub mod entity_map;
 /// Evaluating a clause 4.10 geo-query against an expanded entity payload.
 pub mod geo_filter;
-pub mod jsonld_context;
 /// The transactional notification outbox.
 pub mod outbox;
 pub mod snapshot;

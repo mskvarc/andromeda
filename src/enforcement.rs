@@ -27,7 +27,9 @@ mod boundary {
     /// workspace crate the binary starts depending on is added here on purpose.
     const ALLOWED_IN_WORKSPACE: &[&str] = &[
         "andromeda-context-commit",
+        "andromeda-context-registry",
         "andromeda-delivery",
+        "andromeda-entity-map",
         "andromeda-health",
         "andromeda-jsonld",
         "andromeda-layer-guard",

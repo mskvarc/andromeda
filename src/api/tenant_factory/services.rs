@@ -20,8 +20,6 @@ use crate::{
             query::EntityQueryService,
             store::EntityStore,
         },
-        entity_map::EntityMapService,
-        jsonld_context::JsonLdContextService,
         snapshot::{SnapshotService, store::SnapshotStore},
         subscription::EntitySubscriptionVariant,
         subscription_base::SubscriptionServiceCore,
@@ -30,10 +28,12 @@ use crate::{
     },
 };
 use andromeda_context_commit::committer::ContextCommitter;
+use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
+use andromeda_entity_map::{memory_store::InMemoryEntityMapStore, service::EntityMapService};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
-    entity_map::InMemoryEntityMapStore,
+    jsonld_context::repo::JsonLdContextRepository,
     subscription::repo::SubscriptionRepository,
 };
 use andromeda_postgresql_temporal_store::{
@@ -131,6 +131,8 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         config.info.source_alias.clone(), // clone: each forwarding service owns the validated alias.
         config.performance.forward_csr_concurrency,
     )?);
+    let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
+    let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
     let snapshots = Arc::new(SnapshotService::new(
         Arc::clone(snapshot_store),
         Some(Arc::clone(&transports.dispatcher)),
@@ -147,9 +149,10 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         subscriptions: Arc::new(SubscriptionServiceCore::<SubscriptionRepository, EntitySubscriptionVariant>::new(
             pool,
             engine.clone(),
+            Arc::clone(&contexts),
             Some(signals.subscription.clone()),
         )),
-        contexts: Arc::new(JsonLdContextService::new(pool, engine.clone())),
+        contexts,
         csr: Arc::new(CsourceRegistrationService::new(
             Arc::clone(registration_store),
             engine.clone(),

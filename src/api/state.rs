@@ -5,15 +5,15 @@ use crate::{
         csource_registration::CsourceRegistrationService,
         csource_subscription::CsrSubscriptionVariant,
         entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
-        entity_map::EntityMapService,
-        jsonld_context::JsonLdContextService,
         snapshot::SnapshotService,
         subscription::EntitySubscriptionVariant,
         subscription_base::SubscriptionServiceCore,
         temporal::TemporalService,
     },
 };
+use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
+use andromeda_entity_map::service::EntityMapService;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
@@ -30,7 +30,7 @@ pub struct AndromedaState {
     pub entity_discovery: Arc<EntityDiscoveryService>,
     pub temporal: Arc<TemporalService>,
     pub subscriptions: Arc<SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant>>,
-    pub contexts: Arc<JsonLdContextService>,
+    pub contexts: Arc<ContextRegistryService>,
     pub csr: Arc<CsourceRegistrationService>,
     pub csr_subscriptions: Arc<SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant>>,
     pub forwarding: Arc<CsourceForwardingService>,

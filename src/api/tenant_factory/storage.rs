@@ -11,6 +11,7 @@ use crate::{
         subscription_cache::SubscriptionCache,
     },
 };
+use andromeda_context_registry::hit_store::ContextHitStore;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
     attribute_current::{materializer::AttributeCurrentMaterializer, queue::AttributeCurrentQueue},
@@ -69,7 +70,7 @@ pub(super) async fn initialize_storage(config: &RuntimeConfig, database_url: &Ur
     let context_hit_flush = engine.hit_counter().map(|hit_counter| {
         ContextHitFlushWorker::spawn(
             hit_counter,
-            Arc::clone(&context_repo),
+            Arc::clone(&context_repo) as Arc<dyn ContextHitStore>,
             Duration::from_secs(config.performance.context_hit_flush_secs.max(1)),
         )
     });

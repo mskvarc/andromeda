@@ -9,10 +9,9 @@ use crate::{
         origin::request_origin,
     },
 };
-use andromeda_jsonld::core_context::is_ngsi_ld_core_context_url;
+use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
-use andromeda_postgresql_context_store::jsonld_context::params::DetailLevel;
 use axum::{
     Json,
     body::Bytes,
@@ -20,7 +19,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use iri_rs::Iri;
 use serde_json::Value;
 
 /// POST /ngsi-ld/v1/jsonldContexts -- Create a hosted JSON-LD context.
@@ -44,10 +42,9 @@ pub async fn query(
     let service = &state.contexts;
     let kind = params.kind;
 
-    let detail_level = if params.details.unwrap_or(false) {
-        DetailLevel::Full
-    } else {
-        DetailLevel::Summary
+    let detail_level = match params.details {
+        Some(true) => ContextDetailLevel::Full,
+        Some(false) | None => ContextDetailLevel::Summary,
     };
 
     let result = service.list(kind, detail_level).await.with_instance(&uri)?;
@@ -63,10 +60,9 @@ pub async fn get(
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
-    let detail_level = if params.details.unwrap_or(false) {
-        DetailLevel::Full
-    } else {
-        DetailLevel::Summary
+    let detail_level = match params.details {
+        Some(true) => ContextDetailLevel::Full,
+        Some(false) | None => ContextDetailLevel::Summary,
     };
 
     let result = service.get(&context_id, detail_level).await.with_instance(&uri)?;
@@ -82,20 +78,11 @@ pub async fn delete(
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
-    let reload = params.reload.unwrap_or(false);
-
-    // Check if attempting to delete a core context
-    if Iri::parse(context_id.as_str()).is_ok_and(is_ngsi_ld_core_context_url) {
-        if reload {
-            // Core contexts are embedded; reload is a no-op success.
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-        return Err(NgsiLdError::from(
-            AndromedaError::jsonld_processing("Cannot delete a core context").with_instance(&uri),
-        ));
-    }
-
-    service.delete(&context_id, reload).await.with_instance(&uri)?;
+    let removal = match params.reload {
+        Some(true) => ContextRemoval::Reload,
+        Some(false) | None => ContextRemoval::Delete,
+    };
+    service.remove(&context_id, removal).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

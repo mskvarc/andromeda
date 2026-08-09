@@ -1,14 +1,20 @@
 //! Persistence layer for JSON-LD context documents.
 //!
-//! - [`repo`] — SQL execution only.
+//! - [`repo`] — the shared repository handle.
 //! - [`rows`] — `sqlx::FromRow` structs.
-//! - [`params`] — repository input parameters.
 //! - [`mapper`] — row → domain parsing.
+//! - [`registry_store`] — hosted-context lifecycle persistence.
+//! - [`context_cache`] — JSON-LD resolver cache persistence.
+//! - [`hit_store`] — durable resolver-hit accounting.
 
+/// JSON-LD resolver cache persistence.
+pub mod context_cache;
+/// Durable resolver-hit accounting.
+pub mod hit_store;
 /// Row-to-domain conversions for JSON-LD context documents.
 pub mod mapper;
-/// Repository input parameters for JSON-LD context operations.
-pub mod params;
+/// Hosted-context lifecycle persistence.
+pub mod registry_store;
 /// The PostgreSQL JSON-LD context store.
 pub mod repo;
 /// Row structures for JSON-LD context documents.

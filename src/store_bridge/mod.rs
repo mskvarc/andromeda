@@ -7,7 +7,6 @@
 //! service-layer domain types) that the context-store cannot depend on.
 
 mod entity;
-mod entity_map;
 mod outbox;
 mod registration;
 mod side_effects;

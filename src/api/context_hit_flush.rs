@@ -1,7 +1,7 @@
 //! Durable flushing for one tenant's JSON-LD context hit counter.
 
+use andromeda_context_registry::hit_store::ContextHitStore;
 use andromeda_jsonld::hit_counter::{HitCounter, HitDelta};
-use andromeda_postgresql_context_store::jsonld_context::repo::JsonLdContextRepository;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -13,7 +13,7 @@ pub struct ContextHitFlushWorker {
 
 impl ContextHitFlushWorker {
     /// Start periodically transferring accumulated hits into the durable store.
-    pub fn spawn(counter: Arc<HitCounter>, repository: Arc<JsonLdContextRepository>, interval: Duration) -> ContextHitFlushWorker {
+    pub fn spawn(counter: Arc<HitCounter>, store: Arc<dyn ContextHitStore>, interval: Duration) -> ContextHitFlushWorker {
         let (shutdown, mut shutdown_rx) = watch::channel(());
         let handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -21,10 +21,10 @@ impl ContextHitFlushWorker {
             ticker.tick().await;
             loop {
                 tokio::select! {
-                    _ = ticker.tick() => flush_once(&counter, &repository).await,
+                    _ = ticker.tick() => flush_once(&counter, store.as_ref()).await,
                     changed = shutdown_rx.changed() => {
                         if changed.is_ok() {
-                            flush_until_durable(&counter, &repository, interval).await;
+                            flush_until_durable(&counter, store.as_ref(), interval).await;
                         }
                         break;
                     }
@@ -46,12 +46,12 @@ impl ContextHitFlushWorker {
 }
 
 /// Drain once, atomically restoring the entire delta set on failure.
-async fn flush_once(counter: &HitCounter, repository: &JsonLdContextRepository) {
+async fn flush_once(counter: &HitCounter, store: &dyn ContextHitStore) {
     let pending = counter.drain();
     if pending.is_empty() {
         return;
     }
-    if let Err(error) = repository.flush_hits(&pending).await {
+    if let Err(error) = store.flush_hits(&pending).await {
         let count = pending.len();
         counter.requeue(pending);
         tracing::warn!(error = %error, count, event = "context_hit_flush_failed");
@@ -59,13 +59,13 @@ async fn flush_once(counter: &HitCounter, repository: &JsonLdContextRepository) 
 }
 
 /// Retry the final drain until no pending delta remains.
-async fn flush_until_durable(counter: &HitCounter, repository: &JsonLdContextRepository, interval: Duration) {
+async fn flush_until_durable(counter: &HitCounter, store: &dyn ContextHitStore, interval: Duration) {
     loop {
         let pending = counter.drain();
         if pending.is_empty() {
             return;
         }
-        match repository.flush_hits(&pending).await {
+        match store.flush_hits(&pending).await {
             Ok(()) => {}
             Err(error) => {
                 restore(counter, pending);

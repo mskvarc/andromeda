@@ -18,8 +18,6 @@ pub mod csource_registration;
 pub mod csource_subscription;
 /// Persistence layer for NGSI-LD entities.
 pub mod entity;
-/// In-memory entity map store (ETSI GS CIM 009 clause 5.2.39).
-pub mod entity_map;
 /// The contract between a domain enum and the PostgreSQL enum it is stored as.
 pub mod enum_labels;
 /// Error types for the context store crate.
@@ -55,6 +53,7 @@ mod boundary {
         /// In-workspace crates this one may name, in any dependency table.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-context-commit",
+            "andromeda-context-registry",
             "andromeda-health",
             "andromeda-jsonld",
             "andromeda-layer-guard",

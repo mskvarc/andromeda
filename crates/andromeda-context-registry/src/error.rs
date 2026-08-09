@@ -1,0 +1,73 @@
+//! Failures reported by Context Registry policy and implementations.
+
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use iri_rs::IriBuf;
+use thiserror::Error;
+
+/// A hosted-context semantic failure or backend-neutral implementation failure.
+#[derive(Debug, Error)]
+pub enum ContextRegistryError {
+    /// A hosted Context payload omitted its required top-level `@context` member.
+    #[error("payload must contain a top-level @context field")]
+    MissingTopLevelContext,
+    /// The requested Context is not registered.
+    #[error("context not found: {identifier}")]
+    NotFound {
+        /// The requested Context identifier or URL.
+        identifier: Uri,
+    },
+    /// An embedded core Context cannot be deleted.
+    #[error("an embedded NGSI-LD core context cannot be deleted")]
+    CoreContextDeletion,
+    /// Reload was requested for a Context that was not populated by the cache.
+    #[error("only cached contexts can be reloaded: {identifier}")]
+    ReloadRequiresCached {
+        /// The non-cached Context identifier.
+        identifier: Uri,
+    },
+    /// A cached Context row has no remote source URL.
+    #[error("cached context has no source URL: {identifier}")]
+    MissingSourceUrl {
+        /// The malformed cached Context identifier.
+        identifier: Uri,
+    },
+    /// A remote Context could not be downloaded for reload.
+    #[error("context is not available from {source_url}: {detail}")]
+    ContextUnavailable {
+        /// The remote Context source.
+        source_url: IriBuf,
+        /// Human-readable resolver failure detail.
+        detail: String,
+    },
+    /// A persistence implementation could not complete an operation.
+    #[error("context registry persistence failed: {detail}")]
+    Persistence {
+        /// Human-readable backend-neutral failure detail.
+        detail: String,
+    },
+    /// A response could not be represented as JSON.
+    #[error("context registry representation failed: {detail}")]
+    Representation {
+        /// Human-readable serialization failure detail.
+        detail: String,
+    },
+    /// Policy or an implementation produced an invalid domain value.
+    #[error("context registry invariant failed: {detail}")]
+    Invariant {
+        /// Human-readable invariant failure detail.
+        detail: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::ContextRegistryError;
+
+    #[test]
+    fn persistence_error_does_not_expose_a_backend_type() {
+        let error = ContextRegistryError::Persistence {
+            detail: "connection closed".to_string(),
+        };
+        pretty_assertions::assert_eq!(error.to_string(), "context registry persistence failed: connection closed");
+    }
+}
