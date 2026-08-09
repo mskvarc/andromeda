@@ -14,9 +14,14 @@ use crate::{
             snapshot::SnapshotHeader,
             via::IncomingVia,
         },
+        handler::entity_provision_forwarding::ForwardingModes,
         response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse, render::start_rendering, sonic_json::SonicJson},
     },
-    service::entity::{provision_forwarding::ForwardingModes, query::EntityQueryService, side_effect::BatchSideEffectMode},
+};
+use andromeda_entity::{
+    batch::UpsertPolicy,
+    query::EntityQueryService,
+    side_effect::{AsyncPreference, BatchSideEffectMode},
 };
 use andromeda_federation::{
     entity_result::collect_warnings,
@@ -48,6 +53,13 @@ fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -
         response.headers_mut().typed_insert(PreferenceApplied::respond_async());
     }
     response
+}
+
+fn async_preference(prefer: &PreferHeader) -> AsyncPreference {
+    match prefer.respond_mode {
+        Some(RespondMode::Async) => AsyncPreference::Requested,
+        Some(RespondMode::Sync) | None => AsyncPreference::NotRequested,
+    }
 }
 
 /// Handles POST query requests for batch entity retrieval (NGSI-LD 5.7.2).

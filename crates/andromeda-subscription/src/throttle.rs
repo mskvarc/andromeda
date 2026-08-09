@@ -30,22 +30,18 @@ mod tests {
     use chrono::{Duration, TimeZone, Utc};
 
     #[test]
-    fn absent_or_non_positive_throttling_has_no_ceiling() {
-        match Utc.timestamp_opt(10, 0).single() {
-            Some(now) => {
-                assert_eq!(ceiling_for_throttle(now, None), None);
-                assert_eq!(ceiling_for_throttle(now, Some(0.0)), None);
-                assert_eq!(ceiling_for_throttle(now, Some(-1.0)), None);
-            }
-            None => assert!(false, "the fixture timestamp must be valid"),
-        }
+    fn absent_or_non_positive_throttling_has_no_ceiling() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(10, 0).single().ok_or("the fixture timestamp must be valid")?;
+        assert_eq!(ceiling_for_throttle(now, None), None);
+        assert_eq!(ceiling_for_throttle(now, Some(0.0)), None);
+        assert_eq!(ceiling_for_throttle(now, Some(-1.0)), None);
+        Ok(())
     }
 
     #[test]
-    fn fractional_throttling_preserves_subsecond_precision() {
-        match Utc.timestamp_opt(10, 0).single() {
-            Some(now) => assert_eq!(ceiling_for_throttle(now, Some(0.5)), Some(now - Duration::milliseconds(500))),
-            None => assert!(false, "the fixture timestamp must be valid"),
-        }
+    fn fractional_throttling_preserves_subsecond_precision() -> Result<(), &'static str> {
+        let now = Utc.timestamp_opt(10, 0).single().ok_or("the fixture timestamp must be valid")?;
+        assert_eq!(ceiling_for_throttle(now, Some(0.5)), Some(now - Duration::milliseconds(500)));
+        Ok(())
     }
 }

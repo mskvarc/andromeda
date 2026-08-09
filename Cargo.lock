@@ -86,6 +86,7 @@ dependencies = [
  "andromeda-context-commit",
  "andromeda-context-registry",
  "andromeda-delivery",
+ "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-federation",
  "andromeda-health",
@@ -234,6 +235,45 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-entity"
+version = "0.1.0"
+dependencies = [
+ "andromeda-context-commit",
+ "andromeda-federation",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-request",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-spatial-index",
+ "andromeda-subscription",
+ "andromeda-tenancy",
+ "async-lock",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "derive_more",
+ "futures",
+ "geo",
+ "iri-rs",
+ "jsonld",
+ "moka",
+ "pretty_assertions",
+ "serde_json",
+ "serde_urlencoded",
+ "strum",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "urn-rs",
  "uuid",
 ]
 
@@ -573,6 +613,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-context-commit",
  "andromeda-context-registry",
+ "andromeda-entity",
  "andromeda-health",
  "andromeda-jsonld",
  "andromeda-layer-guard",
@@ -671,6 +712,7 @@ dependencies = [
 name = "andromeda-postgresql-temporal-store"
 version = "0.1.0"
 dependencies = [
+ "andromeda-entity",
  "andromeda-layer-guard",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",

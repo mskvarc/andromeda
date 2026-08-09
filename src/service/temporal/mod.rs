@@ -3,7 +3,6 @@
 use crate::{
     error::AndromedaError,
     http::response::content_range::build_content_range,
-    service::entity::{query::selector_compilation::compile_entity_selectors, store::EntityStore},
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
         array_normalizer::TemporalArrayNormalizer,
@@ -17,6 +16,7 @@ use andromeda_context_commit::{
     entity_mutation::{EntityMutation, EntityRecord},
     history_record::HistoryRecord,
 };
+use andromeda_entity::{port::reader::EntityReader, query::selector_compilation::compile_entity_selectors};
 use andromeda_federation::{outcome::ForwardedTemporalEntities, temporal_result::merge_temporal_query_results};
 use andromeda_jsonld::{
     compaction::compact_attr_iri,
@@ -139,7 +139,7 @@ pub struct TemporalService {
     mutator: Arc<dyn TemporalMutator>,
     recorder: Arc<TemporalRecorder>,
     writes: Arc<dyn ContextCommitter>,
-    entity_repo: Arc<dyn EntityStore>,
+    entity_reader: Arc<dyn EntityReader>,
     engine: JsonLdEngine,
     default_last_n: u32,
 }
@@ -189,9 +189,9 @@ impl TemporalService {
     ///
     /// The reader and mutator ports decouple the service from the concrete
     /// store implementation. The recorder and write coordinator handle the
-    /// bulk-write path, while entity_repo provides base entity lookups.
+    /// bulk-write path, while the entity reader provides base entity lookups.
     pub fn new(
-        entity_repo: Arc<dyn EntityStore>,
+        entity_reader: Arc<dyn EntityReader>,
         reader: Arc<dyn TemporalHistoryReader>,
         mutator: Arc<dyn TemporalMutator>,
         recorder: Arc<TemporalRecorder>,
@@ -204,7 +204,7 @@ impl TemporalService {
             mutator,
             recorder,
             writes,
-            entity_repo,
+            entity_reader,
             engine,
             default_last_n,
         }

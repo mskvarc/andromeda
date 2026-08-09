@@ -1,6 +1,6 @@
 //! Notification attribute, dataset, and previous-value filtering.
 
-use crate::service::entity::sys_attrs::expanded_entity_object_mut;
+use andromeda_entity::sys_attrs::expanded_entity_object_mut;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};

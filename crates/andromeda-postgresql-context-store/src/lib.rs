@@ -35,7 +35,6 @@ pub mod repair_attribute_current;
 /// Persistence layer for snapshot records.
 pub mod snapshot;
 /// Filling the entity spatial index from the store.
-pub mod spatial_warmup;
 /// Repository for NGSI-LD entity subscriptions.
 pub mod subscription;
 /// Shared subscription persistence layer.
@@ -54,6 +53,7 @@ mod boundary {
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-context-commit",
             "andromeda-context-registry",
+            "andromeda-entity",
             "andromeda-health",
             "andromeda-jsonld",
             "andromeda-layer-guard",

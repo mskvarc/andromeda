@@ -1,19 +1,17 @@
 //! Notification payload building: showChanges, previous values, datasetId
 //! filtering, nullification, and format simplification.
 
-use crate::{
-    service::entity::{
-        query::EntityQueryService,
-        sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
-    },
-    worker::notification::payload::{
-        cache::{NotificationCompactionCache, compact_entity_with_cache, resolve_linked_cached},
-        context::{context_for_subscription, normalize_compacted_entity, strip_to_structural_keys},
-        deletion::{fix_null_language_maps, inject_deleted_attributes, nullify_entity_attributes},
-        filtering::{filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
-    },
+use crate::worker::notification::payload::{
+    cache::{NotificationCompactionCache, compact_entity_with_cache, resolve_linked_cached},
+    context::{context_for_subscription, normalize_compacted_entity, strip_to_structural_keys},
+    deletion::{fix_null_language_maps, inject_deleted_attributes, nullify_entity_attributes},
+    filtering::{filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
 };
 use andromeda_delivery::request::notification_media_type;
+use andromeda_entity::{
+    query::EntityQueryService,
+    sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
+};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
@@ -25,7 +23,7 @@ use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
-use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -100,8 +98,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
             let ca = obj.get(expanded_properties::CREATED_AT.as_str()).cloned();
             let ma = obj.get(expanded_properties::MODIFIED_AT.as_str()).cloned();
             if let (Some(ca), Some(ma)) = (ca, ma) {
-                let default_context_prefix = format!("{}default-context/", prefix::NGSI_LD.as_str());
-                inject_attr_sys_attrs(obj, &ca, &ma, &default_context_prefix);
+                inject_attr_sys_attrs(obj, &ca, &ma);
             }
         }
     }

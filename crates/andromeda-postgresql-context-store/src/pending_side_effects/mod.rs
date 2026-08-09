@@ -8,6 +8,8 @@
 
 /// Wire shapes for persisted side-effect payloads.
 pub mod payload;
+/// Direct entity-policy side-effect queue implementation.
+mod port;
 /// The Postgres-backed queue repository.
 pub mod repo;
 /// Row shapes returned by the side-effect repository.

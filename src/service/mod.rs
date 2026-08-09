@@ -5,7 +5,6 @@
 //! the core functionality for entity management, subscriptions, and context
 //! source registration.
 
-pub mod entity;
 /// The transactional notification outbox.
 pub mod outbox;
 pub mod snapshot;

@@ -29,6 +29,7 @@ mod boundary {
         "andromeda-context-commit",
         "andromeda-context-registry",
         "andromeda-delivery",
+        "andromeda-entity",
         "andromeda-entity-map",
         "andromeda-federation",
         "andromeda-health",

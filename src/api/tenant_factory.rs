@@ -16,12 +16,12 @@ use crate::{
             workers::{TenantSignals, WorkerSupervisionInputs, supervise_workers},
         },
     },
-    batch_activity::BatchActivityTracker,
     config::{performance::BulkWriteMode, runtime::RuntimeConfig},
     error::AndromedaError,
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
+use andromeda_entity::batch_activity::BatchActivityTracker;
 use andromeda_postgresql_atomic_write::committer::{EntityInsertMode, PostgresAtomicCommitter};
 use andromeda_postgresql_context_store::tenant_database::DatabaseUrl;
 use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
@@ -119,7 +119,7 @@ async fn build_tenant_state(
     let engine = storage.engine;
     let context_hit_flush = storage.context_hit_flush;
     let temporal_repo = storage.temporal_repo;
-    let entity_store = storage.entity_store;
+    let entity_ports = storage.entity_ports;
     let registration_store = storage.registration_store;
     let snapshot_store = storage.snapshot_store;
     let subscription_cache = storage.subscription_cache;
@@ -153,7 +153,9 @@ async fn build_tenant_state(
             .engine(&engine)
             .temporal_repo(&temporal_repo)
             .temporal_recorder(&temporal_recorder)
-            .entity_store(&entity_store)
+            .entity_reader(&entity_ports.reader)
+            .entity_query_store(&entity_ports.query)
+            .entity_discovery_store(&entity_ports.discovery)
             .registration_store(&registration_store)
             .snapshot_store(&snapshot_store)
             .subscription_cache(&subscription_cache)
@@ -162,6 +164,7 @@ async fn build_tenant_state(
             .batch_activity(&batch_activity)
             .build(),
     )?;
+    let entity_policy = Arc::clone(&state.entities); // clone: request handling and expiry scheduling share entity policy.
     let transport = transports.dispatcher;
     let supervision = supervise_workers(
         WorkerSupervisionInputs::builder()
@@ -170,7 +173,12 @@ async fn build_tenant_state(
             .tenant(tenant)
             .signals(signals)
             .materializer(storage.materializer)
-            .entity_store(entity_store)
+            .entity_policy(entity_policy)
+            .entity_reader(entity_ports.reader)
+            .entity_query_store(entity_ports.query)
+            .entity_discovery_store(entity_ports.discovery)
+            .entity_expiry_source(entity_ports.expiry)
+            .entity_spatial_snapshots(entity_ports.spatial_snapshots)
             .registration_store(registration_store)
             .snapshot_store(snapshot_store)
             .subscription_cache(subscription_cache)

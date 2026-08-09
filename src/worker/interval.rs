@@ -1,11 +1,12 @@
-use crate::{
-    service::entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
-    worker::notification::payload::{
-        context::{context_from_url, normalize_compacted_entity},
-        filtering::filter_entity_attributes,
-    },
+use crate::worker::notification::payload::{
+    context::{context_from_url, normalize_compacted_entity},
+    filtering::filter_entity_attributes,
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
+use andromeda_entity::{
+    port::{discovery::EntityDiscoveryStore, reader::EntityReader},
+    sys_attrs::inject_sys_attrs,
+};
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
@@ -48,7 +49,8 @@ const INTERVAL_ENTITY_PAGE: u16 = 500;
 
 pub struct IntervalWorker {
     sub_repo: SubscriptionRepository,
-    entity_repo: Arc<dyn EntityStore>,
+    entity_reader: Arc<dyn EntityReader>,
+    entity_discovery: Arc<dyn EntityDiscoveryStore>,
     transport: Arc<TransportDispatcher>,
     poll_interval: Duration,
     engine: JsonLdEngine,
@@ -58,14 +60,16 @@ pub struct IntervalWorker {
 impl IntervalWorker {
     pub const fn new(
         sub_repo: SubscriptionRepository,
-        entity_repo: Arc<dyn EntityStore>,
+        entity_reader: Arc<dyn EntityReader>,
+        entity_discovery: Arc<dyn EntityDiscoveryStore>,
         engine: JsonLdEngine,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
     ) -> Self {
         Self {
             sub_repo,
-            entity_repo,
+            entity_reader,
+            entity_discovery,
             transport,
             poll_interval: Duration::from_secs(1),
             engine,
@@ -249,8 +253,8 @@ impl IntervalWorker {
         let mut offset = 0_i64;
         loop {
             let page = match entity_type {
-                Some(type_name) => self.entity_repo.get_entities_by_type(type_name, Some(limit), Some(offset)).await?,
-                None => self.entity_repo.get_all_entities(Some(limit), Some(offset)).await?,
+                Some(type_name) => self.entity_discovery.get_entities_by_type(type_name, Some(limit), Some(offset)).await?,
+                None => self.entity_discovery.get_all_entities(Some(limit), Some(offset)).await?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
             kept.extend(page.into_iter().filter(|entity| keep(entity)));
@@ -266,7 +270,7 @@ impl IntervalWorker {
         for mut entity in entities {
             if sub.notification.sys_attrs.unwrap_or(false)
                 && let Some(id) = entity_id_of(&entity)
-                && let Ok(Some(sa)) = self.entity_repo.get_sys_attrs(&id).await
+                && let Ok(Some(sa)) = self.entity_reader.get_sys_attrs(&id).await
             {
                 inject_sys_attrs(&mut entity, sa.created_at, sa.modified_at, sa.expires_at);
             }

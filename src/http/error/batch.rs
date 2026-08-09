@@ -4,7 +4,8 @@
 //! the same decision [`crate::http::error::category`] makes for a
 //! single response, applied per entity.
 
-use crate::{error::AndromedaError, http::error::category, service::entity::batch::BatchResult};
+use crate::{error::AndromedaError, http::error::category};
+use andromeda_entity::batch::BatchResult;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::batch_operation::{BatchEntityError, BatchOperationResult};
 
@@ -31,7 +32,14 @@ pub fn entity_error(entity_id: Uri, error: &AndromedaError) -> BatchEntityError 
 
 /// Turn the outcome of a batch into the clause 6.17 response body.
 pub fn operation_result(result: BatchResult) -> BatchOperationResult {
-    let errors = result.errors.into_iter().map(|(entity_id, error)| entity_error(entity_id, &error)).collect();
+    let errors = result
+        .errors
+        .into_iter()
+        .map(|(entity_id, error)| {
+            let error = AndromedaError::from(error);
+            entity_error(entity_id, &error)
+        })
+        .collect();
     BatchOperationResult {
         success: result.success,
         errors,

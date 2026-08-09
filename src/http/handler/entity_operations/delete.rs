@@ -15,7 +15,6 @@ use crate::http::handler::entity_operations::{
     NgsiLdError,
     OriginalUri,
     PreferHeader,
-    RespondMode,
     Response,
     ResponsePayload,
     ResultInstanceExt,
@@ -23,6 +22,7 @@ use crate::http::handler::entity_operations::{
     StatusCode,
     TenantState,
     apply_preference_applied,
+    async_preference,
     operation_result,
     start_rendering,
 };
@@ -80,7 +80,7 @@ pub async fn batch_delete(
         return Ok(status.into_response());
     }
 
-    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entity_ids.len());
+    let mode = service.effective_side_effect_mode(async_preference(&prefer), entity_ids.len());
 
     if modes.has_exclusive {
         // Exclusive: delete locally AND forwarded (already done)

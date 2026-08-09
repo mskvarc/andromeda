@@ -1,6 +1,7 @@
 //! HTTP handling for the delete attribute entity operation.
 
 use crate::http::handler::entity::{
+    AndromedaError,
     AttributeName,
     ContextSpec,
     ContextUrl,
@@ -94,7 +95,7 @@ pub async fn delete_attr(
     }
 
     // Inclusive: delete locally and combine results
-    let local_result = service.delete_attr(&id, &attr_id, selection, &context).await;
+    let local_result = service.delete_attr(&id, &attr_id, selection, &context).await.map_err(AndromedaError::from);
 
     if local_result.is_ok() && !has_remote_errors(&forwarded) {
         return Ok(StatusCode::NO_CONTENT.into_response());

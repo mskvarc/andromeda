@@ -5,7 +5,7 @@
 //! that says the projection has caught up. Both are properties of this store,
 //! not of the policy above it, which is why they live here and not in the port.
 
-use crate::entity::storage_profile::StorageProfile;
+use andromeda_entity::storage_profile::StorageProfile;
 use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, projection_barrier::ProjectionBarrier};
 use sqlx::postgres::PgPool;
 use std::sync::Arc;

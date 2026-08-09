@@ -119,7 +119,7 @@ pub async fn append_attrs(
     // 207 Multi-Status for mixed results
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::to_value(entity_error(id.clone(), &err)).unwrap_or_default()); // clone: service call and error response both own the ID
+        errors.push(serde_json::to_value(entity_error(id.clone(), &AndromedaError::from(err))).unwrap_or_default()); // clone: service call and error response both own the ID
     }
     for r in &forwarded {
         if r.is_failure() {

@@ -9,7 +9,7 @@
 #![deny(missing_docs)]
 
 mod api;
-mod batch_activity;
+mod blocking_executor;
 mod cli;
 mod config;
 mod enforcement;

@@ -8,12 +8,12 @@
 
 use crate::{
     entity::{
-        attribute_summary::AttributeSummary,
         mapper::{stored_attribute_name, stored_type_name},
         repo::EntityRepository,
     },
     error::ContextStoreError,
 };
+use andromeda_entity::attribute_summary::AttributeSummary;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};

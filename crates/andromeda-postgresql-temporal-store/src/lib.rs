@@ -24,6 +24,7 @@ mod batch_write;
 pub mod bulk_write_mode;
 /// Binary COPY path for bulk attribute-history inserts.
 pub(crate) mod copy;
+mod entity_attribute_history;
 mod entity_history;
 /// One row of the temporal attribute catalogue.
 pub mod entry;
@@ -70,6 +71,7 @@ mod boundary {
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-layer-guard",
+            "andromeda-entity",
             "andromeda-ngsi-ld-geometry",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-model",

@@ -16,7 +16,6 @@ use crate::http::handler::entity_operations::{
     NgsiLdError,
     OriginalUri,
     PreferHeader,
-    RespondMode,
     Response,
     ResponsePayload,
     ResultInstanceExt,
@@ -24,6 +23,7 @@ use crate::http::handler::entity_operations::{
     StatusCode,
     TenantState,
     apply_preference_applied,
+    async_preference,
     operation_result,
     parse_batch_entities,
     start_rendering,
@@ -83,7 +83,7 @@ pub async fn batch_merge(
         return Ok(status.into_response());
     }
 
-    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
+    let mode = service.effective_side_effect_mode(async_preference(&prefer), entities.len());
     let batch = service.batch_merge(&entities, &context, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = operation_result(batch);
     result.errors.append(&mut parse_errors);

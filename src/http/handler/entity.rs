@@ -16,13 +16,11 @@ use crate::{
             typed_path::TypedPath,
             via::IncomingVia,
         },
+        handler::entity_provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
     },
-    service::entity::{
-        provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
-        query::EntityQueryService,
-    },
 };
+use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     entity_result::{collect_forwarded_exclusive_attrs, collect_warnings, merge_retrieve_results, strip_exclusive_attrs_from_value},
     operation::ForwardingOperation,

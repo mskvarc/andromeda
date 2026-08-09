@@ -1,12 +1,12 @@
 pub(crate) mod payload;
 
-use crate::service::entity::{query::EntityQueryService, store::EntityStore, sys_attrs::inject_sys_attrs};
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
     request::NotificationDelivery,
 };
+use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService, sys_attrs::inject_sys_attrs};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
@@ -60,7 +60,7 @@ pub struct NotificationWorker {
     change_rx: broadcast::Receiver<ChangeEvent>,
     sub_change_rx: broadcast::Receiver<SubscriptionChange>,
     sub_repo: SubscriptionRepository,
-    entity_repo: Arc<dyn EntityStore>,
+    entity_reader: Arc<dyn EntityReader>,
     entity_query: EntityQueryService,
     cache: Arc<SubscriptionCache>,
     transport: Arc<TransportDispatcher>,
@@ -70,7 +70,7 @@ pub struct NotificationWorker {
 
 pub struct NotificationWorkerDeps {
     pub sub_repo: SubscriptionRepository,
-    pub entity_repo: Arc<dyn EntityStore>,
+    pub entity_reader: Arc<dyn EntityReader>,
     pub entity_query: EntityQueryService,
     pub engine: JsonLdEngine,
     pub transport: Arc<TransportDispatcher>,
@@ -88,7 +88,7 @@ impl NotificationWorker {
             change_rx,
             sub_change_rx,
             sub_repo: deps.sub_repo,
-            entity_repo: deps.entity_repo,
+            entity_reader: deps.entity_reader,
             entity_query: deps.entity_query,
             cache: deps.subscription_cache,
             transport: deps.transport,
@@ -208,7 +208,7 @@ impl NotificationWorker {
 
         // Fetch entity data once for all matching subscriptions
         let entity_data = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
-            match self.entity_repo.get(&event.entity_id).await {
+            match self.entity_reader.get(&event.entity_id).await {
                 Ok(Some(data)) => Some(data),
                 Ok(None) => {
                     debug!("Entity {} no longer exists, skipping notification", event.entity_id);
@@ -220,7 +220,7 @@ impl NotificationWorker {
                 }
             }
         } else if matches!(event.trigger_reason, NotificationTrigger::AttributeDeleted) {
-            match self.entity_repo.get(&event.entity_id).await {
+            match self.entity_reader.get(&event.entity_id).await {
                 Ok(Some(data)) => Some(data),
                 _ => {
                     if let Some(ref snapshot) = event.entity_snapshot {
@@ -292,7 +292,7 @@ impl NotificationWorker {
             if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
                 fallback_sys_attrs
             } else {
-                match self.entity_repo.get_sys_attrs(&event.entity_id).await {
+                match self.entity_reader.get_sys_attrs(&event.entity_id).await {
                     Ok(Some(attrs)) => Some(attrs),
                     Ok(None) => fallback_sys_attrs,
                     Err(e) => {

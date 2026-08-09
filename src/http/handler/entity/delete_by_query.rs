@@ -92,7 +92,7 @@ pub async fn delete_by_query(
         if modes.has_exclusive {
             if let Err(e) = state
                 .entities
-                .batch_delete(&entity_ids, crate::service::entity::side_effect::BatchSideEffectMode::Inline)
+                .batch_delete(&entity_ids, andromeda_entity::side_effect::BatchSideEffectMode::Inline)
                 .await
             {
                 tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
@@ -103,7 +103,7 @@ pub async fn delete_by_query(
 
     let batch = state
         .entities
-        .batch_delete(&entity_ids, crate::service::entity::side_effect::BatchSideEffectMode::Inline)
+        .batch_delete(&entity_ids, andromeda_entity::side_effect::BatchSideEffectMode::Inline)
         .await
         .with_instance(&uri)?;
     let result: BatchOperationResult = operation_result(batch);

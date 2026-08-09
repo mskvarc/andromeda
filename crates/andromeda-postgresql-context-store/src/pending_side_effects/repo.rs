@@ -1,9 +1,8 @@
 //! Repository for the `pending_side_effects` durable queue.
 //!
-//! The `SideEffectQueue` trait impl lives in the binary crate, because the
-//! trait and its associated types are defined in the binary's service layer.
-//! This module provides the struct, constructor, and the `enqueue_in_tx`
-//! inherent method.
+//! The repository implements the entity policy's `SideEffectQueue` port in
+//! this crate and also exposes the transaction-scoped enqueue operation used
+//! by the PostgreSQL atomic committer.
 
 use crate::{error::ContextStoreError, pending_side_effects::payload::PersistedBatchSideEffectJob};
 use sqlx::{Postgres, Row, Transaction, postgres::PgPool};
@@ -22,7 +21,7 @@ impl PendingSideEffectsRepository {
         PendingSideEffectsRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
     }
 
-    /// Borrow the pool for trait impls defined outside this crate.
+    /// Borrow the pool for focused port implementations in this crate.
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }

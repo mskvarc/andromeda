@@ -1,0 +1,20 @@
+//! Historical dataset identifiers needed by attribute deletion.
+
+use crate::error::EntityError;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use futures::future::BoxFuture;
+
+/// Reads the dataset identifiers for which an entity attribute has history.
+pub trait AttributeDatasetHistory: Send + Sync + 'static {
+    /// Return historical dataset identifiers, using `None` for the default dataset.
+    fn dataset_identifiers<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        entity: &'life1 Uri,
+        attribute: &'life2 AttributeName,
+    ) -> BoxFuture<'async_trait, Result<Vec<Option<Uri>>, EntityError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
+}

@@ -9,11 +9,7 @@
 //! backoff and `nack`s the row, and dead-letters once the attempt count
 //! exceeds the configured maximum.
 
-use crate::{
-    error::AndromedaError,
-    service::entity::side_effect_queue::{LeasedSideEffect, SideEffectQueue},
-    worker_instance_id::WorkerInstanceId,
-};
+use crate::error::AndromedaError;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
@@ -22,6 +18,7 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
     history_record::HistoryRecord,
 };
+use andromeda_entity::side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue};
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
@@ -44,7 +41,7 @@ pub struct WorkerConfig {
     pub base_backoff: Duration,
     /// Stable identifier for this worker instance. Stored on leased rows so
     /// operators can trace stuck jobs back to a specific process.
-    pub worker_id: WorkerInstanceId,
+    pub worker_id: SideEffectLeaseOwner,
 }
 
 /// Background worker that drains the durable side-effect queue.

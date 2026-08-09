@@ -1,7 +1,6 @@
 //! Execution and persistence of individual snapshot queries.
 
 use crate::service::{
-    entity::query::EntityQueryService,
     snapshot::store::SnapshotEntityInput,
     snapshot_executor::{
         SnapshotExecutor,
@@ -9,6 +8,7 @@ use crate::service::{
         translation::{entity_parameters, temporal_parameters},
     },
 };
+use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     operation::ForwardingOperation,
     request::{CsrModeFilter, ForwardQueryRequest},

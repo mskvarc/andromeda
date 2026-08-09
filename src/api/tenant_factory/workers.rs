@@ -1,12 +1,8 @@
 //! Construction and supervision of one tenant's background workers.
 
 use crate::{
-    batch_activity::BatchActivityTracker,
     config::runtime::RuntimeConfig,
-    service::{
-        entity::{query::EntityQueryService, store::EntityStore},
-        snapshot::store::SnapshotStore,
-    },
+    service::snapshot::store::SnapshotStore,
     worker::{
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
@@ -20,10 +16,22 @@ use crate::{
         spatial_sync::SpatialSyncWorker,
         subscription_expiration::SubscriptionExpirationWorker,
     },
-    worker_instance_id::WorkerInstanceId,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextCommitter};
 use andromeda_delivery::dispatch::TransportDispatcher;
+use andromeda_entity::{
+    EntityService,
+    batch_activity::BatchActivityTracker,
+    port::{
+        discovery::EntityDiscoveryStore,
+        expiry::EntityExpirySource,
+        query::EntityQueryStore,
+        reader::EntityReader,
+        spatial_snapshot::EntitySpatialSnapshotSource,
+    },
+    query::EntityQueryService,
+    side_effect_queue::SideEffectLeaseOwner,
+};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_postgresql_context_store::{
@@ -80,7 +88,12 @@ pub(super) struct WorkerSupervisionInputs<'a> {
     pub(super) tenant: TenantRef,
     pub(super) signals: TenantSignals,
     pub(super) materializer: AttributeCurrentMaterializer,
-    pub(super) entity_store: Arc<dyn EntityStore>,
+    pub(super) entity_policy: Arc<EntityService>,
+    pub(super) entity_reader: Arc<dyn EntityReader>,
+    pub(super) entity_query_store: Arc<dyn EntityQueryStore>,
+    pub(super) entity_discovery_store: Arc<dyn EntityDiscoveryStore>,
+    pub(super) entity_expiry_source: Arc<dyn EntityExpirySource>,
+    pub(super) entity_spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
@@ -105,7 +118,12 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
         tenant,
         signals,
         materializer,
-        entity_store,
+        entity_policy,
+        entity_reader,
+        entity_query_store,
+        entity_discovery_store,
+        entity_expiry_source,
+        entity_spatial_snapshots,
         registration_store,
         snapshot_store,
         subscription_cache,
@@ -136,7 +154,7 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
                 batch_size,
                 max_attempts: config.performance.pending_side_effects_max_attempts.max(1),
                 base_backoff: Duration::from_secs(config.performance.pending_side_effects_base_backoff_secs.max(1)),
-                worker_id: WorkerInstanceId::pending_side_effects(&config.info.source_id, uuid::Uuid::new_v4()),
+                worker_id: SideEffectLeaseOwner::for_tenant(&config.info.source_id, uuid::Uuid::new_v4()),
             },
         );
         handles.push(tokio::spawn(worker.run()));
@@ -150,13 +168,19 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
         None
     };
     let spatial_change = entity.subscribe();
-    let notification_query = EntityQueryService::new(Arc::clone(&entity_store), engine.clone(), Arc::clone(&spatial_index), tenant.clone());
+    let notification_query = EntityQueryService::new(
+        Arc::clone(&entity_reader),
+        Arc::clone(&entity_query_store),
+        engine.clone(),
+        Arc::clone(&spatial_index),
+        tenant.clone(), // clone: the query service owns its tenant partition.
+    );
     let notification = NotificationWorker::new(
         entity.subscribe(),
         subscription.subscribe(),
         crate::worker::notification::NotificationWorkerDeps {
             sub_repo: SubscriptionRepository::new(pool),
-            entity_repo: Arc::clone(&entity_store),
+            entity_reader: Arc::clone(&entity_reader),
             entity_query: notification_query,
             engine: engine.clone(),
             transport: Arc::clone(&transport),
@@ -184,7 +208,8 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
     handles.push(tokio::spawn(
         IntervalWorker::new(
             SubscriptionRepository::new(pool),
-            Arc::clone(&entity_store),
+            Arc::clone(&entity_reader),
+            Arc::clone(&entity_discovery_store),
             engine,
             Arc::clone(&transport),
             tenant.clone(),
@@ -203,14 +228,14 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
         .run(),
     ));
     handles.push(tokio::spawn(
-        DataExpirationWorker::new(Arc::clone(&entity_store), writes, Some(entity), expiration_interval, batch_activity).run(),
+        DataExpirationWorker::new(entity_policy, entity_expiry_source, expiration_interval, batch_activity).run(),
     ));
     handles.push(tokio::spawn(SnapshotExpirationWorker::new(snapshot_store, expiration_interval).run()));
     handles.push(tokio::spawn(
         SpatialSyncWorker::new(
             spatial_change,
             Arc::clone(&spatial_index),
-            Arc::clone(&entity_store),
+            entity_reader,
             tenant.clone(),
             Duration::from_secs(config.spatial.lag_log_interval_secs.max(1)),
         )
@@ -219,7 +244,7 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
     if config.spatial.rebuild_interval_secs > 0 {
         handles.push(tokio::spawn(periodic_rebuild(
             spatial_index,
-            pool.clone(), // clone: the periodic task owns its pool handle.
+            entity_spatial_snapshots,
             tenant.clone(),
             Duration::from_secs(config.spatial.rebuild_interval_secs),
         )));

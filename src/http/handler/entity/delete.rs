@@ -1,6 +1,7 @@
 //! HTTP handling for the delete entity operation.
 
 use crate::http::handler::entity::{
+    AndromedaError,
     ContextSpec,
     ContextUrl,
     ForwardProvisionRequest,
@@ -79,7 +80,7 @@ pub async fn delete(
     }
 
     if modes.has_inclusive {
-        let local_result = service.delete(&id).await;
+        let local_result = service.delete(&id).await.map_err(AndromedaError::from);
         let local_ok = local_result.is_ok();
         let local_error = local_result.err();
 

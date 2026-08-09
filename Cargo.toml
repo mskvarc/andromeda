@@ -11,6 +11,7 @@ authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 andromeda-context-commit = { path = "crates/andromeda-context-commit" }
 andromeda-context-registry = { path = "crates/andromeda-context-registry" }
 andromeda-delivery = { path = "crates/andromeda-delivery" }
+andromeda-entity = { path = "crates/andromeda-entity" }
 andromeda-entity-map = { path = "crates/andromeda-entity-map" }
 andromeda-federation = { path = "crates/andromeda-federation" }
 andromeda-health = { path = "crates/andromeda-health" }
@@ -68,6 +69,7 @@ workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-registry.workspace = true
 andromeda-delivery.workspace = true
+andromeda-entity.workspace = true
 andromeda-entity-map.workspace = true
 andromeda-federation.workspace = true
 andromeda-health.workspace = true

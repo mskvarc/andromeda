@@ -88,7 +88,7 @@ pub async fn create(
     }
 
     if modes.has_inclusive {
-        let local_result = service.create(&entity, &context).await;
+        let local_result = service.create(&entity, &context).await.map_err(AndromedaError::from);
         let local_ok = local_result.is_ok();
         let local_error = local_result.err();
 

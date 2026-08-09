@@ -1,9 +1,10 @@
 //! The statements that read the `entities` table.
 
 use crate::{
-    entity::{mapper::stored_uri, pushdown, query_outcome::QueryOutcome, repo::EntityRepository, snapshot::EntitySnapshot},
+    entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
     error::ContextStoreError,
 };
+use andromeda_entity::{entity_snapshot::EntitySnapshot, query_outcome::QueryOutcome};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
@@ -128,7 +129,7 @@ impl EntityRepository {
     /// Execute a compiled entity query and return matching payloads.
     ///
     /// What is sent and what is handed back are decided by this store's
-    /// [`StorageProfile`](crate::entity::storage_profile::StorageProfile).
+    /// [`StorageProfile`](andromeda_entity::storage_profile::StorageProfile).
     /// With PostGIS and `ltree` every predicate is sent and nothing is handed
     /// back, so the residual is always empty here -- but the decision is read
     /// off the profile rather than assumed, which is what a store without

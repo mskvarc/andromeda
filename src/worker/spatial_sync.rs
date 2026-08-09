@@ -14,8 +14,8 @@
 //! itself. Events without a payload (background expiration sweeps) still
 //! fall back to fetching from the entity store.
 
-use crate::service::entity::store::EntityStore;
 use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_entity::port::reader::EntityReader;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
@@ -36,7 +36,7 @@ use urn_rs::Urn;
 pub struct SpatialSyncWorker {
     rx: broadcast::Receiver<ChangeEvent>,
     index: Arc<SpatialEntityIndex>,
-    repo: Arc<dyn EntityStore>,
+    reader: Arc<dyn EntityReader>,
     tenant: TenantRef,
     lag_log_interval: Duration,
 }
@@ -51,14 +51,14 @@ impl SpatialSyncWorker {
     pub fn new(
         rx: broadcast::Receiver<ChangeEvent>,
         index: Arc<SpatialEntityIndex>,
-        repo: Arc<dyn EntityStore>,
+        reader: Arc<dyn EntityReader>,
         tenant: TenantRef,
         lag_log_interval: Duration,
     ) -> SpatialSyncWorker {
         SpatialSyncWorker {
             rx,
             index,
-            repo,
+            reader,
             tenant,
             lag_log_interval,
         }
@@ -137,7 +137,7 @@ impl SpatialSyncWorker {
             Some(p) => Arc::clone(p),
             None => {
                 let uri = Uri::from(urn.clone()); // clone: owned Urn -> Uri; the store is keyed by Uri
-                match self.repo.get(&uri).await {
+                match self.reader.get(&uri).await {
                     Ok(Some(v)) => Arc::new(v),
                     Ok(None) => {
                         self.index.remove(urn);
@@ -289,7 +289,7 @@ mod tests {
     /// The test exercises only the payload-aware path, which never reaches the
     /// store; a pool that cannot connect is what turns a regression there into
     /// a failure instead of a silent round trip.
-    fn unreachable_store() -> Arc<dyn EntityStore> {
+    fn unreachable_reader() -> Arc<dyn EntityReader> {
         let pool = PgPool::connect_lazy("postgres://localhost/nonexistent").expect("connect_lazy should not fail");
         let (_materializer, _queue, barrier) = AttributeCurrentMaterializer::new(Arc::new(pool.clone()), Duration::from_secs(60));
         Arc::new(EntityRepository::new(
@@ -348,7 +348,7 @@ mod tests {
         let index = Arc::new(SpatialEntityIndex::new());
         let (tx, rx) = broadcast::channel::<ChangeEvent>(16);
 
-        let worker = SpatialSyncWorker::new(rx, Arc::clone(&index), unreachable_store(), TenantRef::UnnamedDefault, Duration::from_secs(60));
+        let worker = SpatialSyncWorker::new(rx, Arc::clone(&index), unreachable_reader(), TenantRef::UnnamedDefault, Duration::from_secs(60));
         let driver = tokio::spawn(worker.run());
 
         for i in 0..10 {

@@ -1,6 +1,7 @@
 //! Per-event memoization for notification compaction and linked-entity resolution.
 
-use crate::{error::AndromedaError, service::entity::query::EntityQueryService};
+use crate::error::AndromedaError;
+use andromeda_entity::query::EntityQueryService;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{

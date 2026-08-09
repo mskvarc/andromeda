@@ -6,9 +6,9 @@
 //! is the same branch a store without those extensions takes, which is what
 //! makes the residual machinery above the port real rather than notional.
 //!
-//! [`StorageProfile`]: crate::entity::storage_profile::StorageProfile
+//! [`StorageProfile`]: andromeda_entity::storage_profile::StorageProfile
 
-use crate::entity::{pagination_outcome::PaginationOutcome, query_outcome::QueryOutcome, residual_filter::ResidualFilter, storage_profile::StorageProfile};
+use andromeda_entity::{pagination_outcome::PaginationOutcome, query_outcome::QueryOutcome, query_residual::ResidualFilter, storage_profile::StorageProfile};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     pagination::{CountPolicy, Pagination},
@@ -72,9 +72,9 @@ impl Pushdown<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity::{
+    use crate::entity::pushdown::plan;
+    use andromeda_entity::{
         pagination_outcome::PaginationOutcome,
-        pushdown::plan,
         residual_predicate::ResidualPredicate,
         storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
     };

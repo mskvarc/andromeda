@@ -17,6 +17,7 @@ use crate::{
         response::{render::start_rendering, single::NgsiLdResponse},
     },
 };
+use andromeda_entity::discovery::AttributeCollectionRepresentation;
 use andromeda_federation::discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -59,7 +60,11 @@ pub async fn query(
 
     let is_local = params.local.unwrap_or(false);
 
-    let local_result = service.attributes(params.details, &context).await.with_instance(&uri)?;
+    let representation = match params.details {
+        true => AttributeCollectionRepresentation::Detailed,
+        false => AttributeCollectionRepresentation::List,
+    };
+    let local_result = service.attributes(representation, &context).await.with_instance(&uri)?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())

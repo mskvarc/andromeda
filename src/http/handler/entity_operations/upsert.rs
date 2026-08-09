@@ -16,7 +16,6 @@ use crate::http::handler::entity_operations::{
     NgsiLdError,
     OriginalUri,
     PreferHeader,
-    RespondMode,
     Response,
     ResponsePayload,
     ResultInstanceExt,
@@ -25,8 +24,10 @@ use crate::http::handler::entity_operations::{
     TenantState,
     UpsertMode,
     UpsertParams,
+    UpsertPolicy,
     ValidatedQuery,
     apply_preference_applied,
+    async_preference,
     operation_result,
     parse_batch_entities,
     start_rendering,
@@ -52,7 +53,10 @@ pub async fn batch_upsert(
             .into());
     }
 
-    let update_mode = params.options == Some(UpsertMode::Update);
+    let upsert_policy = match params.options {
+        Some(UpsertMode::Update) => UpsertPolicy::Update,
+        Some(UpsertMode::Replace) | None => UpsertPolicy::Replace,
+    };
 
     // Distributed forwarding: forward to matching context sources
     // Per spec 5.6.8: iterate CSRs, forward matching entities
@@ -92,8 +96,8 @@ pub async fn batch_upsert(
     }
 
     // Inclusive or no match: upsert locally
-    let mode = service.effective_side_effect_mode(prefer.respond_mode == Some(RespondMode::Async), entities.len());
-    let (batch, created_ids) = service.batch_upsert(&entities, &context, update_mode, mode).await.with_instance(&uri)?;
+    let mode = service.effective_side_effect_mode(async_preference(&prefer), entities.len());
+    let (batch, created_ids) = service.batch_upsert(&entities, &context, upsert_policy, mode).await.with_instance(&uri)?;
     let mut result: BatchOperationResult = operation_result(batch);
     result.errors.append(&mut parse_errors);
 

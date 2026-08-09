@@ -100,7 +100,7 @@ pub async fn update_attrs(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    let local_result = service.update_attrs(&id, local_fragment, &context).await;
+    let local_result = service.update_attrs(&id, local_fragment, &context).await.map_err(AndromedaError::from);
 
     if local_result.is_ok() && !has_remote_errors(&forwarded) {
         return Ok(StatusCode::NO_CONTENT.into_response());

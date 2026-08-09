@@ -7,7 +7,6 @@ use crate::{
     error::AndromedaError,
     http::error::batch::entity_error,
     service::{
-        entity::query::EntityQueryService,
         snapshot::{
             query_validation::validate_snapshot_query_shapes,
             store::{SnapshotAttributeInfo, SnapshotStore, SnapshotTypeInfo},
@@ -18,6 +17,7 @@ use crate::{
     },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
+use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
