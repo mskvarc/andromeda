@@ -10,4 +10,3 @@ mod entity;
 mod outbox;
 mod side_effects;
 mod snapshot;
-mod subscription;

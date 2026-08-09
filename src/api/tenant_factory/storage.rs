@@ -4,7 +4,7 @@ use crate::{
     api::context_hit_flush::ContextHitFlushWorker,
     config::{performance::BulkWriteMode, runtime::RuntimeConfig},
     error::AndromedaError,
-    service::{entity::store::EntityStore, snapshot::store::SnapshotStore, subscription_cache::SubscriptionCache},
+    service::{entity::store::EntityStore, snapshot::store::SnapshotStore},
 };
 use andromeda_context_registry::hit_store::ContextHitStore;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -23,6 +23,7 @@ use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, pro
 use andromeda_postgresql_temporal_store::{repo::TemporalRepository, timescale_features::TimescaleFeatures};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
+use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};

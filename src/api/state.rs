@@ -1,11 +1,8 @@
 use crate::{
     api::tenant_factory::BrokerTenantFactory,
     service::{
-        csource_subscription::CsrSubscriptionVariant,
         entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
         snapshot::SnapshotService,
-        subscription::EntitySubscriptionVariant,
-        subscription_base::SubscriptionServiceCore,
         temporal::TemporalService,
     },
 };
@@ -14,12 +11,9 @@ use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificat
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
-use andromeda_postgresql_context_store::{
-    csource_subscription::repo::CsourceSubscriptionRepository,
-    subscription::repo::SubscriptionRepository,
-    tenant_registry::PostgresTenantRegistry,
-};
+use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_registration::RegistrationService;
+use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
 use andromeda_tenancy::runtime::TenantRuntimeManager;
 use std::sync::Arc;
 
@@ -29,10 +23,10 @@ pub struct AndromedaState {
     pub entity_query: Arc<EntityQueryService>,
     pub entity_discovery: Arc<EntityDiscoveryService>,
     pub temporal: Arc<TemporalService>,
-    pub subscriptions: Arc<SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant>>,
+    pub subscriptions: Arc<SubscriptionService<EntitySubscriptionVariant>>,
     pub contexts: Arc<ContextRegistryService>,
     pub csr: Arc<RegistrationService>,
-    pub csr_subscriptions: Arc<SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant>>,
+    pub csr_subscriptions: Arc<SubscriptionService<CsrSubscriptionVariant>>,
     pub forwarding: Arc<FederationService>,
     pub entity_maps: Arc<EntityMapService>,
     pub snapshots: Arc<SnapshotService>,

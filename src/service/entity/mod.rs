@@ -38,14 +38,11 @@ pub mod store;
 pub mod sys_attrs;
 use crate::{
     batch_activity::BatchActivityTracker,
-    service::{
-        entity::{
-            batch::execution::BatchExecutionConfig,
-            id_lock::{IdLockMap, acquire_id_locks_in, spawn_id_lock_gc},
-            side_effect::{BatchSideEffectMode, resolve_side_effect_mode},
-            store::EntityStore,
-        },
-        subscription_cache::SubscriptionCache,
+    service::entity::{
+        batch::execution::BatchExecutionConfig,
+        id_lock::{IdLockMap, acquire_id_locks_in, spawn_id_lock_gc},
+        side_effect::{BatchSideEffectMode, resolve_side_effect_mode},
+        store::EntityStore,
     },
 };
 use andromeda_context_commit::{batch_side_effect_job::BatchSideEffectJob, change_event::ChangeEvent, committer::ContextCommitter};
@@ -53,6 +50,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
 use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
+use andromeda_subscription::cache::SubscriptionCache;
 use chrono::Utc;
 use dashmap::DashMap;
 use serde_json::Value;

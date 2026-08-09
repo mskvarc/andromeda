@@ -1,8 +1,7 @@
 //! Repository for NGSI-LD context source subscriptions.
 //!
-//! The `create`, `update`, and `SubscriptionStore` trait impl blocks live in the
-//! binary crate, because they depend on `SubscriptionFields` and the
-//! `impl_subscription_store!` macro which reference binary-side service types.
+//! The persistence-port implementation lives beside this repository in the
+//! shared subscription-store module.
 
 use sqlx::postgres::PgPool;
 
@@ -10,7 +9,7 @@ use sqlx::postgres::PgPool;
 #[derive(Debug)]
 pub struct CsourceSubscriptionRepository {
     /// The tenant connection pool.
-    pub pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl CsourceSubscriptionRepository {

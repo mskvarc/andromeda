@@ -1,7 +1,8 @@
 //! Subscription persistence normalization.
 
-use crate::service::subscription_core::{Utc, Value};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use chrono::Utc;
+use serde_json::Value;
 
 pub fn fixup_integer_fields(value: &mut Value) {
     if let Some(obj) = value.as_object_mut() {
@@ -91,6 +92,25 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
                 *attr = Value::String(compacted);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::normalization::{fixup_default_notification_trigger, fixup_integer_fields};
+
+    #[test]
+    fn integral_delivery_intervals_serialize_as_json_integers() {
+        let mut value = serde_json::json!({"timeInterval": 5.0, "throttling": 2.0});
+        fixup_integer_fields(&mut value);
+        assert_eq!(value, serde_json::json!({"timeInterval": 5, "throttling": 2}));
+    }
+
+    #[test]
+    fn absent_notification_trigger_receives_the_clause_default() {
+        let mut value = serde_json::json!({});
+        fixup_default_notification_trigger(&mut value);
+        assert_eq!(value["notificationTrigger"], serde_json::json!(["attributeCreated", "attributeUpdated"]));
     }
 }
 

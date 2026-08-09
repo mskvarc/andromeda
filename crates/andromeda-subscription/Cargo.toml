@@ -1,0 +1,40 @@
+[package]
+name = "andromeda-subscription"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-context-commit.workspace = true
+andromeda-context-registry.workspace = true
+andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-geometry.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-representation.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-spatial-index.workspace = true
+andromeda-tenancy.workspace = true
+async-trait = "0.1.89"
+chrono = { version = "0.4.44", features = ["serde"] }
+dashmap = { version = "6.1.0", features = ["inline"] }
+futures = "0.3.32"
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+langtag = { version = "1.1.0", features = ["serde"] }
+mediatype = "0.23.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.18"
+tracing = "0.1.44"
+url = { version = "2.5.8", features = ["serde"] }
+urn-rs = { version = "0.9.2", features = ["serde"] }
+uuid = { version = "1.23.1", features = ["fast-rng", "serde", "v4"] }
+
+[dev-dependencies]
+andromeda-layer-guard.workspace = true
+pretty_assertions = "1.4.1"

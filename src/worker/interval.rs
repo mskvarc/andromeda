@@ -1,11 +1,5 @@
 use crate::{
-    service::{
-        entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
-        geo_filter::matches_geo_query,
-        subscription::store::SubscriptionStore,
-        subscription_cache::compile_geo_q,
-        subscription_matching::matches_scope_query,
-    },
+    service::entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
     worker::notification::payload::{
         context::{context_from_url, normalize_compacted_entity},
         filtering::filter_entity_attributes,
@@ -28,6 +22,11 @@ use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscr
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
 use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
+use andromeda_subscription::{
+    compilation::compile_geo_q,
+    matching::{matches_geo_query, matches_scope_query},
+    store::SubscriptionStore,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};

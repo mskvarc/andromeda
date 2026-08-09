@@ -1,9 +1,9 @@
 //! Notification context selection and compacted-entity normalization.
 
-use crate::service::compiled_subscription::CompiledSubscription;
 use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_subscription::compiled::CompiledSubscription;
 use iri_rs::IriRefBuf;
 use serde_json::Value;
 use url::Url;

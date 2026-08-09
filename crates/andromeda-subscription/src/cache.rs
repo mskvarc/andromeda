@@ -6,20 +6,16 @@
 //! matching) and the entity service (outbox entry generation).
 
 use crate::{
-    event::subscription_change::SubscriptionChange,
-    service::{compiled_subscription::CompiledSubscription, subscription::store::SubscriptionStore, subscription_matching::find_matching},
+    change::SubscriptionChange,
+    compilation::compile_subscription,
+    compiled::CompiledSubscription,
+    error::SubscriptionError,
+    matching::find_matching,
+    store::SubscriptionStore,
 };
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    notification::NotificationTrigger,
-    subscription::{EntitySelector, Subscription, SubscriptionStatus},
-};
-use andromeda_ngsi_ld_query::geo::query::GeoQuery;
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_spatial_index::{
     key::SpatialKey,
     subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
@@ -28,7 +24,6 @@ use andromeda_tenancy::tenant_ref::TenantRef;
 use dashmap::DashMap;
 use iri_rs::IriBuf;
 use std::{collections::HashSet, sync::Arc};
-use strum::IntoEnumIterator;
 use tracing::debug;
 
 /// Thread-safe, lock-free subscription cache for fast event matching.
@@ -77,32 +72,30 @@ impl SubscriptionCache {
     ///
     /// Clears existing entries and replaces them with all currently active
     /// subscriptions. Failed compilations are logged and skipped.
-    pub async fn reload(&self, repo: &impl SubscriptionStore) -> Result<(), crate::error::AndromedaError> {
+    pub async fn reload(&self, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         let subscriptions = repo.list_active().await?;
         self.inner.clear();
         self.by_type.clear();
         self.untyped.clear();
         for sub in subscriptions {
-            if let Some(compiled) = compile_subscription(&sub) {
-                self.index_insert(&compiled);
-                self.inner.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
-            }
+            let compiled = compile_subscription(&sub);
+            self.index_insert(&compiled);
+            self.inner.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
         }
         Ok(())
     }
 
     /// Handle a single subscription change event (upsert or removal).
-    pub async fn handle_change(&self, change: &SubscriptionChange, repo: &impl SubscriptionStore) {
+    pub async fn handle_change(&self, change: &SubscriptionChange, repo: &(impl SubscriptionStore + ?Sized)) {
         match change {
             SubscriptionChange::Upserted(id) => {
                 match repo.get(id).await {
                     Ok(Some(sub)) => {
                         if sub.lifecycle.status == SubscriptionStatus::Active {
-                            if let Some(compiled) = compile_subscription(&sub) {
-                                self.index_remove(id);
-                                self.index_insert(&compiled);
-                                self.inner.insert(id.clone(), Arc::new(compiled)); // clone: the map owns its key
-                            }
+                            let compiled = compile_subscription(&sub);
+                            self.index_remove(id);
+                            self.index_insert(&compiled);
+                            self.inner.insert(id.clone(), Arc::new(compiled)); // clone: the map owns its key
                         } else {
                             self.index_remove(id);
                             self.inner.remove(id);
@@ -205,6 +198,11 @@ impl SubscriptionCache {
         self.inner.len()
     }
 
+    /// Whether the cache contains no compiled subscriptions.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
     fn spatial_insert(&self, compiled: &CompiledSubscription) {
         let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
             return;
@@ -253,133 +251,39 @@ impl SubscriptionCache {
     }
 }
 
-/// Compile a domain subscription into a pre-compiled form for fast matching.
-///
-/// Returns `None` if the subscription's endpoint transport cannot be parsed
-/// (logged at debug level).
-pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> {
-    // clone: the compiled form outlives the borrowed subscription and every
-    // selector member is already parsed, so there is nothing left to compile
-    let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
-
-    // Clause 5.3.3: an absent `notificationTrigger` defaults to every trigger,
-    // derived from the enum rather than a hand-written token list.
-    let triggers: Vec<NotificationTrigger> = sub
-        .selection
-        .notification_trigger
-        .as_deref()
-        .map_or_else(|| NotificationTrigger::iter().collect(), <[NotificationTrigger]>::to_vec);
-
-    let watched_attrs = sub.selection.watched_attributes.as_ref().cloned().map(HashSet::from_iter);
-
-    let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
-        Ok(t) => t,
-        Err(e) => {
-            debug!("Failed to parse endpoint transport for subscription {}: {}", sub.id, e);
-            return None;
-        }
-    };
-
-    Some(CompiledSubscription {
-        // clone: the compiled form outlives the borrowed subscription
-        id: sub.id.clone(),
-        status: sub.lifecycle.status,
-        endpoint_uri: sub.notification.endpoint.uri.clone(),
-        // clone: the compiled form outlives the subscription it was built from
-        endpoint_accept: sub.notification.endpoint.accept.clone(),
-        endpoint_receiver_info: sub.notification.endpoint.receiver_info.clone(),
-        endpoint_transport,
-        triggers,
-        watched_attrs,
-        selectors,
-        throttling_secs: sub.delivery.throttling,
-        time_interval_secs: sub.delivery.time_interval,
-        notification_attributes: sub.notification.attributes.clone(),
-        notification_format: sub.notification.format,
-        notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
-            SysAttrsInclusion::Include
-        } else {
-            SysAttrsInclusion::Strip
-        },
-        notification_show_changes: sub.notification.show_changes.unwrap_or(false),
-        jsonld_context: sub.delivery.jsonld_context.clone(),
-        expires_at: sub.lifecycle.expires_at,
-        // clone: the compiled form owns its filters, and the subscription it was
-        // built from is borrowed and outlives it
-        compiled_q: sub.filters.q.clone(),
-        compiled_geo_q: sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref())),
-        compiled_scope_q: sub.filters.scope_q.clone(),
-        dataset_id: sub.filters.dataset_id.clone(), // clone: the compiled cache owns its dataset URI selectors.
-        notification_join: sub.notification.join,
-        notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
-        compiled_csf: sub.filters.csf.clone(),
-        local_only: sub.delivery.local_only.unwrap_or(false),
-    })
-}
-
-/// Pre-parse a subscription's stored `geoQ` into the same [`GeoQuery`] a
-/// request-borne geo filter compiles to (clause 4.10).
-///
-/// Returns `None` when any member is missing or malformed, logged at debug
-/// level. The subscription then never matches through `geoQ` at all, which is
-/// the same answer re-parsing on every event would give and costs nothing per
-/// event to reach.
-pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery> {
-    let geo_obj = geo_q.as_object()?;
-    let georel_str = geo_obj.get("georel").and_then(serde_json::Value::as_str)?;
-    let geometry_str = geo_obj.get("geometry").and_then(serde_json::Value::as_str)?;
-    let coordinates = match geo_obj.get("coordinates")? {
-        serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok()?,
-        // clone: the compiled query owns its reference geometry
-        other => other.clone(),
-    };
-    let geoproperty_iri = match geo_obj.get("geoproperty").and_then(serde_json::Value::as_str) {
-        Some(raw) => match IriBuf::new(raw.to_owned()) {
-            Ok(iri) => iri,
-            Err(_) => {
-                debug!("geoQ for subscription {} names a geoproperty that is not an IRI: '{}'", sub_id, raw);
-                return None;
-            }
-        },
-        None => expanded_properties::LOCATION.into(),
-    };
-
-    let geometry = match Geometry::from_geojson_value(&serde_json::json!({ "type": geometry_str, "coordinates": coordinates })) {
-        Ok(geometry) => geometry,
-        Err(error) => {
-            debug!("Failed to parse geoQ geometry for subscription {}: {}", sub_id, error);
-            return None;
-        }
-    };
-
-    Some(GeoQuery {
-        georel: georel_str.parse().ok()?,
-        geometry,
-        geoproperty_iri,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_delivery::endpoint::transport::EndpointTransport;
-    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use crate::error::SubscriptionError;
+    use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use url::Url;
 
-    fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> CompiledSubscription {
-        CompiledSubscription {
-            id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI"),
+    fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {
+        Ok(CompiledSubscription {
+            id: format!("urn:ngsi-ld:Subscription:{id}")
+                .parse()
+                .map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription URI: {error}")))?,
             status: SubscriptionStatus::Active,
-            endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
+            endpoint_uri: Url::parse("http://example.com/notify")
+                .map_err(|error| SubscriptionError::internal(format!("invalid fixture endpoint URI: {error}")))?,
             endpoint_accept: None,
             endpoint_receiver_info: None,
-            endpoint_transport: EndpointTransport::Http,
-            triggers: triggers.into_iter().map(|t| t.parse().expect("valid trigger")).collect(),
+            endpoint_notifier_info: None,
+            triggers: triggers
+                .into_iter()
+                .map(|trigger| {
+                    trigger
+                        .parse()
+                        .map_err(|error| SubscriptionError::internal(format!("invalid fixture trigger: {error}")))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
             watched_attrs: None,
             selectors: vec![EntitySelector {
                 id: None,
                 id_pattern: None,
-                type_: type_.parse().expect("valid type selection expression"),
+                type_: type_
+                    .parse()
+                    .map_err(|error| SubscriptionError::internal(format!("invalid fixture type expression: {error}")))?,
             }],
             throttling_secs: None,
             time_interval_secs: None,
@@ -397,20 +301,22 @@ mod tests {
             notification_join_level: 1,
             compiled_csf: None,
             local_only: false,
-        }
+        })
     }
 
     #[test]
-    fn len_reflects_cache_size() {
+    fn len_reflects_cache_size() -> Result<(), SubscriptionError> {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        assert!(cache.is_empty());
         assert_eq!(cache.len(), 0);
 
-        let sub1 = make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"]);
+        let sub1 = make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"])?;
         cache.inner.insert(sub1.id.clone(), Arc::new(sub1)); // clone: the map owns its key
         assert_eq!(cache.len(), 1);
 
-        let sub2 = make_compiled_sub("sub2", "Building", vec!["entityCreated"]);
+        let sub2 = make_compiled_sub("sub2", "Building", vec!["entityCreated"])?;
         cache.inner.insert(sub2.id.clone(), Arc::new(sub2)); // clone: the map owns its key
         assert_eq!(cache.len(), 2);
+        Ok(())
     }
 }

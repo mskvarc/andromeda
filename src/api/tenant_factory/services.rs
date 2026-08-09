@@ -8,9 +8,12 @@ use crate::{
     batch_activity::BatchActivityTracker,
     config::runtime::RuntimeConfig,
     error::AndromedaError,
-    event::registration_change_sink::BroadcastRegistrationChangeSink,
+    event::{
+        registration_change_sink::BroadcastRegistrationChangeSink,
+        subscription_change_sink::BroadcastSubscriptionChangeSink,
+        subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
+    },
     service::{
-        csource_subscription::CsrSubscriptionVariant,
         entity::{
             EntityService,
             OutboxWriteConfig,
@@ -20,9 +23,6 @@ use crate::{
             store::EntityStore,
         },
         snapshot::{SnapshotService, store::SnapshotStore},
-        subscription::EntitySubscriptionVariant,
-        subscription_base::SubscriptionServiceCore,
-        subscription_cache::SubscriptionCache,
         temporal::TemporalService,
     },
 };
@@ -43,6 +43,12 @@ use andromeda_postgresql_temporal_store::{
 };
 use andromeda_registration::{RegistrationService, store::RegistrationStore};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
+use andromeda_subscription::{
+    cache::SubscriptionCache,
+    csource::CsrSubscriptionVariant,
+    entity::EntitySubscriptionVariant,
+    lifecycle::{SubscriptionEndpointValidator, SubscriptionService},
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -142,16 +148,18 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         Arc::clone(&forwarding),
         config.performance.snapshot_concurrency,
     ));
+    let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     Ok(AndromedaState {
         entities,
         entity_query,
         entity_discovery: Arc::new(EntityDiscoveryService::new(Arc::clone(entity_store), engine.clone())),
         temporal,
-        subscriptions: Arc::new(SubscriptionServiceCore::<SubscriptionRepository, EntitySubscriptionVariant>::new(
-            pool,
+        subscriptions: Arc::new(SubscriptionService::new(
+            Arc::new(SubscriptionRepository::new(pool)),
             engine.clone(),
-            Arc::clone(&contexts),
-            Some(signals.subscription.clone()),
+            EntitySubscriptionVariant::new(engine.clone(), Arc::clone(&contexts)),
+            Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.subscription.clone()))),
+            Arc::clone(&subscription_endpoint_validator),
         )),
         contexts,
         csr: Arc::new(RegistrationService::new(
@@ -159,10 +167,12 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
             engine.clone(),
             Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
         )),
-        csr_subscriptions: Arc::new(SubscriptionServiceCore::<CsourceSubscriptionRepository, CsrSubscriptionVariant>::new(
-            pool,
+        csr_subscriptions: Arc::new(SubscriptionService::new(
+            Arc::new(CsourceSubscriptionRepository::new(pool)),
             engine.clone(),
-            Some(signals.csource_subscription.clone()),
+            CsrSubscriptionVariant::new(engine.clone()),
+            Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))),
+            subscription_endpoint_validator,
         )),
         forwarding,
         entity_maps: Arc::new(EntityMapService::new(Arc::new(InMemoryEntityMapStore::new()))),

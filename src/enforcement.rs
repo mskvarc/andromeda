@@ -53,6 +53,7 @@ mod boundary {
         "andromeda-postgresql-temporal-store",
         "andromeda-registration",
         "andromeda-spatial-index",
+        "andromeda-subscription",
         "andromeda-tenancy",
         "andromeda-test-common",
     ];

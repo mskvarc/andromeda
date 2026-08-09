@@ -2,12 +2,9 @@
 //! filtering, nullification, and format simplification.
 
 use crate::{
-    service::{
-        compiled_subscription::CompiledSubscription,
-        entity::{
-            query::EntityQueryService,
-            sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
-        },
+    service::entity::{
+        query::EntityQueryService,
+        sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
     },
     worker::notification::payload::{
         cache::{NotificationCompactionCache, compact_entity_with_cache, resolve_linked_cached},
@@ -29,6 +26,7 @@ use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger}
 use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};
+use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tracing::debug;

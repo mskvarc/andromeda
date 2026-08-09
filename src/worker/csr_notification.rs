@@ -1,26 +1,31 @@
-use crate::{
-    event::subscription_change::CsourceSubscriptionChange,
-    service::{compiled_subscription::CompiledCsrSubscription, subscription::store::SubscriptionStore, subscription_throttle::ceiling_for_throttle},
-    worker::csr_notification::matching::{compile_csr_subscription, filter_csr_for_subscription, find_matching_csr_subscriptions, matches_csr_subscription},
+use crate::worker::csr_notification::matching::filter_csr_for_subscription;
+use andromeda_delivery::{
+    dispatch::TransportDispatcher,
+    endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    request::NotificationDelivery,
 };
-use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsrChangeEvent, CsrTriggerReason},
-    subscription::{EntitySelector, Subscription, SubscriptionStatus},
+    subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::{
-    filter::eval,
-    pagination::{CountPolicy, Pagination},
-};
+use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_postgresql_context_store::csource_subscription::repo::CsourceSubscriptionRepository;
 use andromeda_registration::store::RegistrationStore;
+use andromeda_subscription::{
+    change::CsourceSubscriptionChange,
+    compilation::compile_csource_subscription,
+    compiled::CompiledCsrSubscription,
+    csource_cache::CsourceSubscriptionCache,
+    matching::matches_csource_subscription,
+    store::SubscriptionStore,
+    throttle::ceiling_for_throttle,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
-use dashmap::DashMap;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
@@ -32,12 +37,22 @@ mod matching;
 
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
+fn compiled_transport(subscription: &CompiledCsrSubscription) -> Option<EndpointTransport> {
+    match parse_endpoint_transport(&subscription.endpoint_uri, subscription.endpoint_notifier_info.as_deref()) {
+        Ok(transport) => Some(transport),
+        Err(error) => {
+            debug!(subscription = %subscription.id, %error, "Compiled context-source subscription endpoint is no longer deliverable");
+            None
+        }
+    }
+}
+
 pub struct CsrNotificationWorker {
     csr_change_rx: broadcast::Receiver<CsrChangeEvent>,
     sub_change_rx: broadcast::Receiver<CsourceSubscriptionChange>,
     sub_repo: CsourceSubscriptionRepository,
     csr_repo: Arc<dyn RegistrationStore>,
-    cache: DashMap<Uri, Arc<CompiledCsrSubscription>>,
+    cache: CsourceSubscriptionCache,
     transport: Arc<TransportDispatcher>,
     tenant: TenantRef,
 }
@@ -56,7 +71,7 @@ impl CsrNotificationWorker {
             sub_change_rx,
             sub_repo,
             csr_repo,
-            cache: DashMap::new(),
+            cache: CsourceSubscriptionCache::new(),
             transport,
             tenant,
         }
@@ -131,9 +146,8 @@ impl CsrNotificationWorker {
         let subscriptions = self.sub_repo.list_active().await?;
         self.cache.clear();
         for sub in subscriptions {
-            if let Some(compiled) = compile_csr_subscription(&sub) {
-                self.cache.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
-            }
+            let compiled = compile_csource_subscription(&sub);
+            self.cache.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
         }
         Ok(())
     }
@@ -166,7 +180,7 @@ impl CsrNotificationWorker {
                 match self.sub_repo.get(&id).await {
                     Ok(Some(sub)) => {
                         let compiled = if sub.lifecycle.status == SubscriptionStatus::Active {
-                            compile_csr_subscription(&sub).map(Arc::new)
+                            Some(Arc::new(compile_csource_subscription(&sub)))
                         } else {
                             None
                         };
@@ -237,7 +251,7 @@ impl CsrNotificationWorker {
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                if matches_csr_subscription(compiled_sub, &csr_value) {
+                if matches_csource_subscription(compiled_sub, &csr_value) {
                     let filtered = filter_csr_for_subscription(&csr_value, compiled_sub);
                     matching_csrs.push(filtered);
                 }
@@ -292,8 +306,11 @@ impl CsrNotificationWorker {
             }
         };
 
+        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
+            return;
+        };
         let request = self.delivery_for(compiled_sub, &payload, sub_id).assemble();
-        let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
+        let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
         if success {
             if let Err(e) = self.sub_repo.mark_success(sub_id).await {
@@ -337,7 +354,7 @@ impl CsrNotificationWorker {
             None => return,
         };
 
-        let matching = find_matching_csr_subscriptions(&self.cache, &csr_data);
+        let matching = self.cache.find_matching(&csr_data);
 
         if matching.is_empty() {
             return;
@@ -392,8 +409,11 @@ impl CsrNotificationWorker {
                         }
                     };
 
+                    let Some(endpoint_transport) = compiled_transport(&compiled_sub) else {
+                        return;
+                    };
                     let request = self.delivery_for(&compiled_sub, &payload, &sub_id).assemble();
-                    let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
+                    let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
                     if success {
                         if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
@@ -426,8 +446,8 @@ impl CsrNotificationWorker {
             }
         };
 
-        let matched_before = find_matching_csr_subscriptions(&self.cache, pre_update);
-        let matched_after = find_matching_csr_subscriptions(&self.cache, &post_update);
+        let matched_before = self.cache.find_matching(pre_update);
+        let matched_after = self.cache.find_matching(&post_update);
 
         let after_ids: HashSet<&Uri> = matched_after.iter().map(|subscription| &subscription.id).collect();
         let before_ids: HashSet<&Uri> = matched_before.iter().map(|subscription| &subscription.id).collect();
@@ -513,8 +533,11 @@ impl CsrNotificationWorker {
             }
         };
 
+        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
+            return;
+        };
         let request = self.delivery_for(compiled_sub, &payload, sub_id).assemble();
-        let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
+        let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
         if success {
             if let Err(e) = self.sub_repo.mark_success(sub_id).await {

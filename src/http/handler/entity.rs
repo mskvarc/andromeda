@@ -18,13 +18,9 @@ use crate::{
         },
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
     },
-    service::{
-        entity::{
-            provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
-            query::EntityQueryService,
-        },
-        geo_filter::matches_geo_query,
-        subscription_matching::matches_scope_query,
+    service::entity::{
+        provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
+        query::EntityQueryService,
     },
 };
 use andromeda_federation::{
@@ -59,6 +55,7 @@ use andromeda_ngsi_ld_request::{
     local::LocalOnlyParams,
     options::OverwritePolicy as RequestOverwritePolicy,
 };
+use andromeda_subscription::matching::{matches_geo_query, matches_scope_query};
 use axum::{
     Json,
     extract::OriginalUri,

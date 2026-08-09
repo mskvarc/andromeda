@@ -6,9 +6,8 @@
 //! on [`matches_geo_query`] which is a service-layer concern above the store.
 //!
 //! [`ResidualFilter`]: andromeda_postgresql_context_store::entity::residual_filter::ResidualFilter
-//! [`matches_geo_query`]: crate::service::geo_filter::matches_geo_query
+//! [`matches_geo_query`]: andromeda_subscription::matching::matches_geo_query
 
-use crate::service::geo_filter::matches_geo_query;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     entity_member::{extract_id, extract_scopes, extract_types},
@@ -23,6 +22,7 @@ use andromeda_ngsi_ld_query::{
     type_selection::grammar::TypeExpr,
 };
 use andromeda_postgresql_context_store::entity::residual_filter::ResidualFilter;
+use andromeda_subscription::matching::matches_geo_query;
 use iri_rs::IriBuf;
 use serde_json::Value;
 

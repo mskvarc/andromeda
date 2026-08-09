@@ -3,11 +3,9 @@
 use crate::{
     batch_activity::BatchActivityTracker,
     config::runtime::RuntimeConfig,
-    event::subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
     service::{
         entity::{query::EntityQueryService, store::EntityStore},
         snapshot::store::SnapshotStore,
-        subscription_cache::SubscriptionCache,
     },
     worker::{
         csr_interval::CsrIntervalWorker,
@@ -37,6 +35,10 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_registration::store::RegistrationStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
+use andromeda_subscription::{
+    cache::SubscriptionCache,
+    change::{CsourceSubscriptionChange, SubscriptionChange},
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};

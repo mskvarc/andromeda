@@ -1,8 +1,7 @@
 //! Repository for NGSI-LD entity subscriptions.
 //!
-//! The `create`, `update`, and `SubscriptionStore` trait impl blocks live in the
-//! binary crate, because they depend on `SubscriptionFields` and the
-//! `impl_subscription_store!` macro which reference binary-side service types.
+//! The persistence-port implementation lives beside this repository in the
+//! shared subscription-store module.
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
@@ -14,7 +13,7 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct SubscriptionRepository {
     /// The tenant connection pool.
-    pub pool: PgPool,
+    pub(crate) pool: PgPool,
 }
 
 impl SubscriptionRepository {

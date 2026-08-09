@@ -1,17 +1,12 @@
 pub(crate) mod payload;
 
-use crate::{
-    event::subscription_change::SubscriptionChange,
-    service::{
-        compiled_subscription::CompiledSubscription,
-        entity::{query::EntityQueryService, store::EntityStore, sys_attrs::inject_sys_attrs},
-        subscription::store::SubscriptionStore,
-        subscription_cache::SubscriptionCache,
-        subscription_throttle::ceiling_for_throttle,
-    },
-};
+use crate::service::entity::{query::EntityQueryService, store::EntityStore, sys_attrs::inject_sys_attrs};
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
+use andromeda_delivery::{
+    dispatch::TransportDispatcher,
+    endpoint::transport::{EndpointTransport, parse_endpoint_transport},
+    request::NotificationDelivery,
+};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
@@ -26,6 +21,14 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
+use andromeda_subscription::{
+    cache::SubscriptionCache,
+    change::SubscriptionChange,
+    compiled::CompiledSubscription,
+    matching::matches_entity_filters,
+    store::SubscriptionStore,
+    throttle::ceiling_for_throttle,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};
@@ -35,7 +38,6 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::service::subscription_matching::matches_entity_filters;
 use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
@@ -43,6 +45,16 @@ use std::collections::{HashMap, HashSet};
 use tokio::sync::broadcast::error::TryRecvError;
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
+
+fn compiled_transport(subscription: &CompiledSubscription) -> Option<EndpointTransport> {
+    match parse_endpoint_transport(&subscription.endpoint_uri, subscription.endpoint_notifier_info.as_deref()) {
+        Ok(transport) => Some(transport),
+        Err(error) => {
+            debug!(subscription = %subscription.id, %error, "Compiled subscription endpoint is no longer deliverable");
+            None
+        }
+    }
+}
 
 pub struct NotificationWorker {
     change_rx: broadcast::Receiver<ChangeEvent>,
@@ -134,7 +146,7 @@ impl NotificationWorker {
     }
 
     async fn reload_cache(&self) -> Result<(), crate::error::AndromedaError> {
-        self.cache.reload(&self.sub_repo).await
+        self.cache.reload(&self.sub_repo).await.map_err(Into::into)
     }
 
     /// Apply every already-published subscription change before matching an entity change.
@@ -171,10 +183,11 @@ impl NotificationWorker {
         if let SubscriptionChange::Upserted(ref id) = change
             && let Some(compiled) = self.cache.get(id)
         {
-            if !matches!(compiled.endpoint_transport, EndpointTransport::Sse) {
+            let endpoint_transport = compiled_transport(&compiled);
+            if !matches!(endpoint_transport, Some(EndpointTransport::Sse)) {
                 self.transport.sse_registry().close(id);
             }
-            if !matches!(compiled.endpoint_transport, EndpointTransport::WebSocket) {
+            if !matches!(endpoint_transport, Some(EndpointTransport::WebSocket)) {
                 self.transport.ws_registry().close(id);
             }
         }
@@ -369,6 +382,9 @@ impl NotificationWorker {
                         }
                     };
 
+                    let Some(endpoint_transport) = compiled_transport(&compiled_sub) else {
+                        return;
+                    };
                     let request = (NotificationDelivery {
                         payload: &notification_payload,
                         endpoint_uri: &compiled_sub.endpoint_uri,
@@ -379,7 +395,7 @@ impl NotificationWorker {
                         subscription_id: &sub_id,
                     })
                     .assemble();
-                    let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
+                    let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
                     if success {
                         if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
@@ -466,13 +482,13 @@ impl NotificationWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{service::subscription_matching::matches_subscription, worker::notification::payload::filtering::filter_entity_attributes};
-    use andromeda_delivery::endpoint::transport::EndpointTransport;
+    use crate::worker::notification::payload::filtering::filter_entity_attributes;
     use andromeda_ngsi_ld_model::{
         notification::ChangeOrigin,
         subscription::{EntitySelector, SubscriptionStatus},
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
+    use andromeda_subscription::matching::matches_subscription;
     use url::Url;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: NotificationTrigger, attrs: Vec<&str>) -> ChangeEvent {
@@ -493,7 +509,7 @@ mod tests {
             endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
             endpoint_accept: None,
             endpoint_receiver_info: None,
-            endpoint_transport: EndpointTransport::Http,
+            endpoint_notifier_info: None,
             triggers: triggers.into_iter().map(|t| t.parse().expect("valid trigger")).collect(),
             watched_attrs: watched.map(|attributes| {
                 attributes
@@ -793,7 +809,7 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = crate::service::subscription_cache::compile_geo_q(
+        sub.compiled_geo_q = andromeda_subscription::compilation::compile_geo_q(
             &serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
             "test",
         );
@@ -803,7 +819,7 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near_too_far() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = crate::service::subscription_cache::compile_geo_q(
+        sub.compiled_geo_q = andromeda_subscription::compilation::compile_geo_q(
             &serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
             "test",
         );

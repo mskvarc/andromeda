@@ -1,6 +1,6 @@
 //! Typed subscription persistence values and update merging.
 
-use crate::{error::AndromedaError, service::subscription::store::SubscriptionFields};
+use crate::{error::SubscriptionError, lifecycle::DatasetIdPolicy, store::SubscriptionFields};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
@@ -87,7 +87,7 @@ impl SubscriptionWriteValues {
     }
 }
 
-fn deserialize_member<T>(payload: &Value, member: &str) -> Result<Option<T>, AndromedaError>
+fn deserialize_member<T>(payload: &Value, member: &str) -> Result<Option<T>, SubscriptionError>
 where
     T: DeserializeOwned,
 {
@@ -97,26 +97,26 @@ where
             serde_json::from_value(value.clone()).map_err(|error| {
                 // clone: serde owns the selected JSON member while the request
                 // payload remains available to the other field parsers.
-                AndromedaError::subscription_validation(format!("Invalid '{member}' value: {error}"))
+                SubscriptionError::validation(format!("Invalid '{member}' value: {error}"))
             })
         })
         .transpose()
 }
 
-fn expiration(payload: &Value) -> Result<Option<DateTime<Utc>>, AndromedaError> {
+fn expiration(payload: &Value) -> Result<Option<DateTime<Utc>>, SubscriptionError> {
     payload
         .get("expiresAt")
         .and_then(Value::as_str)
         .map(|raw| {
             DateTime::parse_from_rfc3339(raw)
                 .map(|date_time| date_time.with_timezone(&Utc))
-                .map_err(|error| AndromedaError::subscription_validation(format!("Invalid 'expiresAt' value '{raw}': {error}")))
+                .map_err(|error| SubscriptionError::validation(format!("Invalid 'expiresAt' value '{raw}': {error}")))
         })
         .transpose()
 }
 
 /// Parse a create payload into validated persistence values.
-pub fn extract_create_fields(payload: &Value, use_dataset_id: bool) -> Result<SubscriptionWriteValues, AndromedaError> {
+pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
     Ok(SubscriptionWriteValues {
         subscription_name: payload.get("subscriptionName").and_then(Value::as_str).map(String::from),
         description: payload.get("description").and_then(Value::as_str).map(String::from),
@@ -128,7 +128,10 @@ pub fn extract_create_fields(payload: &Value, use_dataset_id: bool) -> Result<Su
         geo_q: payload.get("geoQ").cloned(), // clone: the write values own request JSON across the database await.
         scope_q: deserialize_member(payload, "scopeQ")?,
         csf: deserialize_member(payload, "csf")?,
-        dataset_id: if use_dataset_id { deserialize_member(payload, "datasetId")? } else { None },
+        dataset_id: match dataset_id_policy {
+            DatasetIdPolicy::Retain => deserialize_member(payload, "datasetId")?,
+            DatasetIdPolicy::Discard => None,
+        },
         is_active: payload.get("isActive").and_then(Value::as_bool).unwrap_or(true),
         notification: deserialize_member(payload, "notification")?,
         expires_at: expiration(payload)?,
@@ -142,7 +145,7 @@ pub fn extract_create_fields(payload: &Value, use_dataset_id: bool) -> Result<Su
 
 /// Merge an update fragment with an existing subscription into validated
 /// persistence values.
-pub fn merge_update_fields(payload: &Value, existing: Subscription, use_dataset_id: bool) -> Result<SubscriptionWriteValues, AndromedaError> {
+pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_policy: DatasetIdPolicy) -> Result<SubscriptionWriteValues, SubscriptionError> {
     let Subscription {
         subscription_name,
         description,
@@ -169,10 +172,9 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, use_dataset_
             .filter(|value| !value.is_null()),
         scope_q: deserialize_member(payload, "scopeQ")?.or(filters.scope_q),
         csf: deserialize_member(payload, "csf")?.or(filters.csf),
-        dataset_id: if use_dataset_id {
-            deserialize_member(payload, "datasetId")?.or(filters.dataset_id)
-        } else {
-            None
+        dataset_id: match dataset_id_policy {
+            DatasetIdPolicy::Retain => deserialize_member(payload, "datasetId")?.or(filters.dataset_id),
+            DatasetIdPolicy::Discard => None,
         },
         is_active: payload.get("isActive").and_then(Value::as_bool).or(lifecycle.is_active).unwrap_or(true),
         notification: deserialize_member(payload, "notification")?.or(Some(notification)),
@@ -187,4 +189,38 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, use_dataset_
         jsonld_context: deserialize_member(payload, "jsonldContext")?.or(delivery.jsonld_context),
         local_only: payload.get("localOnly").and_then(Value::as_bool).or(delivery.local_only).unwrap_or(false),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{error::SubscriptionError, fields::extract_create_fields, lifecycle::DatasetIdPolicy};
+
+    #[test]
+    fn entity_subscription_creation_retains_dataset_identifiers() -> Result<(), SubscriptionError> {
+        let values = extract_create_fields(&serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Retain)?;
+
+        assert_eq!(
+            values
+                .dataset_id
+                .as_deref()
+                .and_then(|identifiers| identifiers.first())
+                .map(AsRef::<str>::as_ref),
+            Some("urn:ngsi-ld:Dataset:one")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn context_source_subscription_creation_discards_dataset_identifiers() -> Result<(), SubscriptionError> {
+        let values = extract_create_fields(&serde_json::json!({"datasetId": ["urn:ngsi-ld:Dataset:one"]}), DatasetIdPolicy::Discard)?;
+
+        assert!(values.dataset_id.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_expiration_is_rejected() {
+        let result = extract_create_fields(&serde_json::json!({"expiresAt": "tomorrow"}), DatasetIdPolicy::Retain);
+        assert!(matches!(result, Err(SubscriptionError::Validation { .. })));
+    }
 }

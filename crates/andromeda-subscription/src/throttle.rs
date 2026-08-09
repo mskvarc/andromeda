@@ -1,7 +1,7 @@
 //! Throttling-window arithmetic for subscription notification slots.
 //!
 //! The persistence layer claims slots with a pure timestamp comparison; the
-//! service layer converts the subscription's configured throttling interval
+//! policy layer converts the subscription's configured throttling interval
 //! into the earliest `last_notification` that still permits a new slot.
 
 use chrono::{DateTime, Duration, Utc};
@@ -22,4 +22,30 @@ pub fn ceiling_for_throttle(now: DateTime<Utc>, throttling_secs: Option<f64>) ->
     }
     let nanos = (secs * 1_000_000_000.0).round() as i64;
     Some(now - Duration::nanoseconds(nanos))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::throttle::ceiling_for_throttle;
+    use chrono::{Duration, TimeZone, Utc};
+
+    #[test]
+    fn absent_or_non_positive_throttling_has_no_ceiling() {
+        match Utc.timestamp_opt(10, 0).single() {
+            Some(now) => {
+                assert_eq!(ceiling_for_throttle(now, None), None);
+                assert_eq!(ceiling_for_throttle(now, Some(0.0)), None);
+                assert_eq!(ceiling_for_throttle(now, Some(-1.0)), None);
+            }
+            None => assert!(false, "the fixture timestamp must be valid"),
+        }
+    }
+
+    #[test]
+    fn fractional_throttling_preserves_subsecond_precision() {
+        match Utc.timestamp_opt(10, 0).single() {
+            Some(now) => assert_eq!(ceiling_for_throttle(now, Some(0.5)), Some(now - Duration::milliseconds(500))),
+            None => assert!(false, "the fixture timestamp must be valid"),
+        }
+    }
 }

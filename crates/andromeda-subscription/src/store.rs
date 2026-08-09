@@ -4,7 +4,7 @@
 //! context-source subscriptions (clause 5.11): the two differ in what they
 //! select and how they are notified, not in how they are stored.
 
-use crate::error::AndromedaError;
+use crate::error::SubscriptionError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
@@ -75,9 +75,9 @@ pub struct StatusUpdateFields {
 
 /// Storing subscriptions, and the lifecycle bookkeeping the notification path
 /// writes back to them.
-pub trait SubscriptionStore: Send + Sync {
+pub trait SubscriptionStore: Send + Sync + 'static {
     /// Retrieve a subscription by identifier.
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Subscription>, AndromedaError>>
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Subscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -87,24 +87,24 @@ pub trait SubscriptionStore: Send + Sync {
         &'life0 self,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> BoxFuture<'async_trait, Result<(Vec<Subscription>, i64), AndromedaError>>
+    ) -> BoxFuture<'async_trait, Result<(Vec<Subscription>, i64), SubscriptionError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
     /// Delete a subscription by identifier. Returns rows affected.
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
     /// Check whether a subscription with the given identifier exists.
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
     /// List all subscriptions with active status.
-    fn list_active<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, AndromedaError>>
+    fn list_active<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
@@ -116,30 +116,30 @@ pub trait SubscriptionStore: Send + Sync {
         &'life0 self,
         id: &'life1 Uri,
         earliest_allowed_last_notification: Option<DateTime<Utc>>,
-    ) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    ) -> BoxFuture<'async_trait, Result<bool, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
     /// Record a successful notification delivery.
-    fn mark_success<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    fn mark_success<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
     /// Record a failed notification delivery.
-    fn mark_failure<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    fn mark_failure<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
     /// Expire subscriptions whose `expiresAt` has passed. Returns the identifiers.
-    fn expire_due<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Uri>, AndromedaError>>
+    fn expire_due<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Uri>, SubscriptionError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
     /// Find active interval-based subscriptions that are due for their next notification.
-    fn find_due_interval_subscriptions<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, AndromedaError>>
+    fn find_due_interval_subscriptions<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;
@@ -149,7 +149,7 @@ pub trait SubscriptionStore: Send + Sync {
         id: &'life1 Uri,
         fields: &'life2 SubscriptionFields<'life3>,
         status: SubscriptionStatus,
-    ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -162,7 +162,7 @@ pub trait SubscriptionStore: Send + Sync {
         id: &'life1 Uri,
         fields: &'life2 SubscriptionFields<'life3>,
         status: SubscriptionStatus,
-    ) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    ) -> BoxFuture<'async_trait, Result<u64, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

@@ -110,6 +110,7 @@ dependencies = [
  "andromeda-postgresql-temporal-store",
  "andromeda-registration",
  "andromeda-spatial-index",
+ "andromeda-subscription",
  "andromeda-tenancy",
  "andromeda-test-common",
  "async-trait",
@@ -585,6 +586,7 @@ dependencies = [
  "andromeda-postgresql-query",
  "andromeda-registration",
  "andromeda-spatial-index",
+ "andromeda-subscription",
  "andromeda-tenancy",
  "async-trait",
  "chrono",
@@ -734,6 +736,40 @@ dependencies = [
  "pretty_assertions",
  "rstar 0.12.2",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-subscription"
+version = "0.1.0"
+dependencies = [
+ "andromeda-context-commit",
+ "andromeda-context-registry",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-spatial-index",
+ "andromeda-tenancy",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "futures",
+ "iri-rs",
+ "langtag",
+ "mediatype",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum",
+ "thiserror 2.0.19",
+ "tracing",
+ "url",
+ "urn-rs",
+ "uuid",
 ]
 
 [[package]]

@@ -16,11 +16,7 @@ use crate::{
         },
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
     },
-    service::{
-        geo_filter::matches_geo_query,
-        subscription_matching::matches_scope_query,
-        temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
-    },
+    service::temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
 use andromeda_federation::{
@@ -44,6 +40,7 @@ use andromeda_ngsi_ld_request::{
     query::temporal::TemporalQueryParameters,
 };
 use andromeda_postgresql_temporal_store::params::DeleteScope;
+use andromeda_subscription::matching::{matches_geo_query, matches_scope_query};
 use axum::{
     extract::OriginalUri,
     http::StatusCode,

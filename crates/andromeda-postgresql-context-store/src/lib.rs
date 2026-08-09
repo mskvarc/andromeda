@@ -67,6 +67,7 @@ mod boundary {
             "andromeda-postgresql-query",
             "andromeda-registration",
             "andromeda-spatial-index",
+            "andromeda-subscription",
             "andromeda-tenancy",
         ];
         let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["sea-query", "sea-query-binder", "sonic-rs", "sqlx", "tokio"]);

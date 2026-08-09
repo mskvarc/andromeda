@@ -1,4 +1,3 @@
-use crate::service::subscription::store::SubscriptionStore;
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -8,6 +7,7 @@ use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::S
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_postgresql_context_store::csource_subscription::repo::CsourceSubscriptionRepository;
 use andromeda_registration::store::RegistrationStore;
+use andromeda_subscription::store::SubscriptionStore;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use serde_json::Value;

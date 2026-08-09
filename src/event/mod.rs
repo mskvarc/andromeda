@@ -7,4 +7,5 @@
 //! serialisable shapes and stay in the model crate.
 
 pub mod registration_change_sink;
-pub mod subscription_change;
+pub mod subscription_change_sink;
+pub mod subscription_endpoint_validator;

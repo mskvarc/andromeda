@@ -29,6 +29,7 @@ use andromeda_context_registry::error::ContextRegistryError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_registration::error::RegistrationError;
+use andromeda_subscription::error::SubscriptionError;
 
 impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
     fn from(error: andromeda_postgresql_encoding::ewkb::EwkbError) -> AndromedaError {
@@ -296,6 +297,22 @@ impl From<RegistrationError> for AndromedaError {
             RegistrationError::Representation(error) => error.into(),
             RegistrationError::Identifier(error) => error.into(),
             RegistrationError::Persistence { detail } | RegistrationError::Internal { detail } => AndromedaError::internal(detail),
+        }
+    }
+}
+
+// Manual conversion preserves the broker's HTTP-facing subscription categories.
+impl From<SubscriptionError> for AndromedaError {
+    fn from(error: SubscriptionError) -> AndromedaError {
+        match error {
+            SubscriptionError::Validation { detail } => AndromedaError::subscription_validation(detail),
+            SubscriptionError::NotFound { identifier } => AndromedaError::subscription_not_found(identifier.to_string()),
+            SubscriptionError::AlreadyExists { identifier } => AndromedaError::subscription_already_exists(identifier.to_string()),
+            SubscriptionError::JsonLd(error) => error.into(),
+            SubscriptionError::Query(error) => error.into(),
+            SubscriptionError::Representation(error) => error.into(),
+            SubscriptionError::Identifier(error) => error.into(),
+            SubscriptionError::Persistence { detail } | SubscriptionError::Internal { detail } => AndromedaError::internal(detail),
         }
     }
 }
