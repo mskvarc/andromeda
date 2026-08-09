@@ -44,9 +44,9 @@ impl DependencyKind {
     }
 }
 
-/// The third-party crates the workspace forbids by default, in one place.
+/// The third-party production dependencies the workspace forbids by default.
 ///
-/// Every layer derives its denylist from this list rather than restating its
+/// Every boundary derives its denylist from this list rather than restating its
 /// own, so no crate's can be quietly weaker than another's: the drivers and
 /// dialects (`sqlx`, `sea-query`, `sea-query-binder`, `geozero`), the transports
 /// and async runtime (`axum`, `reqwest`, `rumqttc`, `tokio`), the wire buffer
@@ -54,8 +54,8 @@ impl DependencyKind {
 /// alternate JSON parser (`sonic-rs`) and the global allocator (`mimalloc`) are
 /// all things a specification or storage-neutral crate has no business shipping.
 /// A crate that legitimately ships one subtracts it through
-/// [`baseline_forbidden_except`]; nothing adds to the list.
-pub const BASELINE_FORBIDDEN: &[&str] = &[
+/// [`forbidden_production_dependencies_except`]; nothing adds to the list.
+pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "axum",
     "bytes",
     "clap",
@@ -71,8 +71,8 @@ pub const BASELINE_FORBIDDEN: &[&str] = &[
     "tokio",
 ];
 
-/// [`BASELINE_FORBIDDEN`] without the crates a particular layer is entitled to
-/// ship.
+/// [`FORBIDDEN_PRODUCTION_DEPENDENCIES`] without the dependencies a particular
+/// crate is entitled to ship.
 ///
 /// A storage adapter ships `sea-query`; the delivery crate ships `tokio` and
 /// `rumqttc`. Such a crate names what it is entitled to here rather than
@@ -81,56 +81,54 @@ pub const BASELINE_FORBIDDEN: &[&str] = &[
 ///
 /// # Panics
 ///
-/// Panics when `permitted` names a crate the baseline does not forbid: carving
-/// out a crate that was never on the list is a silent no-op, so it is almost
-/// certainly a typo or a stale exception.
-pub fn baseline_forbidden_except(permitted: &[&str]) -> Vec<&'static str> {
+/// Panics when `permitted` names a crate the production denylist does not
+/// contain: allowing a crate that was never forbidden is a silent no-op.
+pub fn forbidden_production_dependencies_except(permitted: &[&str]) -> Vec<&'static str> {
     for allowed in permitted {
         assert!(
-            BASELINE_FORBIDDEN.contains(allowed),
-            "{allowed} is not in the baseline denylist, so carving it out does nothing"
+            FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(allowed),
+            "{allowed} is not in the production dependency denylist, so carving it out does nothing"
         );
     }
-    BASELINE_FORBIDDEN
+    FORBIDDEN_PRODUCTION_DEPENDENCIES
         .iter()
         .copied()
         .filter(|dependency| !permitted.contains(dependency))
         .collect()
 }
 
-/// Assert that a crate declares only what its layer permits.
+/// Assert that a crate declares only what its architecture permits.
 ///
-/// `forbidden` is the third-party denylist, applied to everything the crate
-/// ships. `allowed_in_workspace` is the positive list of in-workspace edges,
-/// applied to **every** table including `[dev-dependencies]` — a layering edge
-/// is a layering edge whichever table declares it, and reading only
-/// `[dependencies]` is precisely how `andromeda-ngsi-ld-query` depending on the
-/// data model stayed invisible while a dev-dependency held the other end of it.
+/// `forbidden` is the third-party production denylist. Normal and build
+/// workspace dependencies must appear in `allowed_workspace_dependencies`;
+/// workspace dev-dependencies must appear in
+/// `allowed_workspace_dev_dependencies`.
 ///
 /// # Panics
 ///
 /// Panics when the crate declares a forbidden dependency, an in-workspace edge
 /// its layer does not permit, or when its manifest cannot be read.
-pub fn assert_layer(crate_root: &str, forbidden: &[&str], allowed_in_workspace: &[&str]) {
+pub fn assert_dependency_boundary(crate_root: &str, forbidden: &[&str], allowed_workspace_dependencies: &[&str], allowed_workspace_dev_dependencies: &[&str]) {
     let path = Path::new(crate_root).join("Cargo.toml");
     let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
-    assert_permitted(&declarations(&manifest), forbidden, allowed_in_workspace);
+    assert_permitted(
+        &declarations(&manifest),
+        forbidden,
+        allowed_workspace_dependencies,
+        allowed_workspace_dev_dependencies,
+    );
 }
 
 /// Assert that an in-workspace dependency is declared only for tests.
 ///
-/// [`assert_layer`]'s allow-list permits an edge in *any* table, so it cannot
-/// express an edge that a layer admits for its tests but must never ship — the
-/// section 8 model→representation edge is one such: `andromeda-jsonld` builds
-/// its tests against `andromeda-ngsi-ld-representation` but must not depend on
-/// it. A crate that restricts an edge to `[dev-dependencies]` pins that here, so
-/// promoting the edge to a normal dependency fails the crate's own boundary test.
+/// This remains available to direct callers; the dependency macro expresses
+/// the same rule through its separate development allow-list.
 ///
 /// # Panics
 ///
 /// Panics when `dependency` is declared under any non-development table, or when
 /// the manifest cannot be read.
-pub fn assert_dev_only(crate_root: &str, dependency: &str) {
+pub fn assert_development_only(crate_root: &str, dependency: &str) {
     let path = Path::new(crate_root).join("Cargo.toml");
     let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
     for (kind, name) in declarations(&manifest) {
@@ -143,17 +141,23 @@ pub fn assert_dev_only(crate_root: &str, dependency: &str) {
 
 /// The rule itself, over declarations already read.
 ///
-/// Separate from [`assert_layer`] so that what the rule rejects can be
+/// Separate from [`assert_dependency_boundary`] so that what the rule rejects can be
 /// exercised without a manifest on disk — a guard nothing has ever seen fail is
 /// a guard nobody knows works.
-fn assert_permitted(declared: &[(DependencyKind, &str)], forbidden: &[&str], allowed_in_workspace: &[&str]) {
+fn assert_permitted(
+    declared: &[(DependencyKind, &str)],
+    forbidden: &[&str],
+    allowed_workspace_dependencies: &[&str],
+    allowed_workspace_dev_dependencies: &[&str],
+) {
     for (kind, name) in declared {
         assert!(kind.admits_forbidden() || !forbidden.contains(name), "this crate must not depend on {name}");
         if name.starts_with("andromeda-") {
-            assert!(
-                allowed_in_workspace.contains(name),
-                "{name} is not an edge this crate's layer permits ({kind:?} dependency)"
-            );
+            let allowed = match kind {
+                DependencyKind::Normal | DependencyKind::Build => allowed_workspace_dependencies.contains(name),
+                DependencyKind::Development => *name == "andromeda-architecture-checks" || allowed_workspace_dev_dependencies.contains(name),
+            };
+            assert!(allowed, "{name} is not an edge this crate's architecture permits ({kind:?} dependency)");
         }
     }
 }
@@ -221,7 +225,7 @@ fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::manifest::{BASELINE_FORBIDDEN, DependencyKind, assert_permitted, baseline_forbidden_except, declarations};
+    use crate::dependencies::{DependencyKind, FORBIDDEN_PRODUCTION_DEPENDENCIES, assert_permitted, declarations, forbidden_production_dependencies_except};
 
     /// The layer a specification crate sits at, for the rejection tests below.
     const FORBIDDEN: &[&str] = &["sqlx", "sea-query", "tokio"];
@@ -231,26 +235,26 @@ mod tests {
     #[test]
     #[should_panic(expected = "must not depend on sqlx")]
     fn a_forbidden_dependency_is_rejected() {
-        assert_permitted(&[(DependencyKind::Normal, "sqlx")], FORBIDDEN, ALLOWED);
+        assert_permitted(&[(DependencyKind::Normal, "sqlx")], FORBIDDEN, ALLOWED, &[]);
     }
 
     #[test]
     #[should_panic(expected = "must not depend on sqlx")]
     fn a_forbidden_build_dependency_is_rejected() {
         // A build script's dependencies are compiled into what the crate ships.
-        assert_permitted(&[(DependencyKind::Build, "sqlx")], FORBIDDEN, ALLOWED);
+        assert_permitted(&[(DependencyKind::Build, "sqlx")], FORBIDDEN, ALLOWED, &[]);
     }
 
     #[test]
     fn a_forbidden_crate_is_admitted_as_a_dev_dependency() {
         // A grammar crate whose tests are async declares a runtime and ships none.
-        assert_permitted(&[(DependencyKind::Development, "tokio")], FORBIDDEN, ALLOWED);
+        assert_permitted(&[(DependencyKind::Development, "tokio")], FORBIDDEN, &[], &[]);
     }
 
     #[test]
     #[should_panic(expected = "andromeda-ngsi-ld-model is not an edge")]
     fn an_in_workspace_edge_outside_the_allow_list_is_rejected() {
-        assert_permitted(&[(DependencyKind::Normal, "andromeda-ngsi-ld-model")], FORBIDDEN, ALLOWED);
+        assert_permitted(&[(DependencyKind::Normal, "andromeda-ngsi-ld-model")], FORBIDDEN, ALLOWED, &[]);
     }
 
     #[test]
@@ -258,13 +262,13 @@ mod tests {
     fn an_in_workspace_edge_declared_only_for_tests_is_still_an_edge() {
         // The half the previous reader could not see: the model/query inversion
         // held one end of itself in a `[dev-dependencies]` table.
-        assert_permitted(&[(DependencyKind::Development, "andromeda-ngsi-ld-model")], FORBIDDEN, ALLOWED);
+        assert_permitted(&[(DependencyKind::Development, "andromeda-ngsi-ld-model")], FORBIDDEN, &[], ALLOWED);
     }
 
     #[test]
     fn a_permitted_edge_passes_in_every_table() {
         for kind in [DependencyKind::Normal, DependencyKind::Build, DependencyKind::Development] {
-            assert_permitted(&[(kind, "andromeda-ngsi-ld-lexicon")], FORBIDDEN, ALLOWED);
+            assert_permitted(&[(kind, "andromeda-ngsi-ld-lexicon")], FORBIDDEN, ALLOWED, ALLOWED);
         }
     }
 
@@ -345,22 +349,22 @@ workspace = true
         // The four the per-crate template omitted, which is what let an async
         // runtime into a passive crate and a dialect binder past every guard.
         for gap in ["rumqttc", "sea-query-binder", "sonic-rs", "mimalloc"] {
-            assert!(BASELINE_FORBIDDEN.contains(&gap), "{gap} must be forbidden by default");
+            assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&gap), "{gap} must be forbidden by default");
         }
     }
 
     #[test]
     fn a_carve_out_removes_only_the_named_crate_and_keeps_the_rest_of_the_baseline() {
-        let forbidden = baseline_forbidden_except(&["sea-query"]);
+        let forbidden = forbidden_production_dependencies_except(&["sea-query"]);
         assert!(!forbidden.contains(&"sea-query"), "the carved-out crate is still forbidden");
         assert!(forbidden.contains(&"sqlx"), "an uncarved baseline crate was dropped");
-        assert_eq!(forbidden.len(), BASELINE_FORBIDDEN.len() - 1);
+        assert_eq!(forbidden.len(), FORBIDDEN_PRODUCTION_DEPENDENCIES.len() - 1);
     }
 
     #[test]
-    #[should_panic(expected = "is not in the baseline denylist")]
+    #[should_panic(expected = "is not in the production dependency denylist")]
     fn carving_out_a_crate_the_baseline_never_forbade_is_rejected() {
         // A carve-out that subtracts nothing is a mistake, not a permission.
-        let _ = baseline_forbidden_except(&["serde"]);
+        let _ = forbidden_production_dependencies_except(&["serde"]);
     }
 }

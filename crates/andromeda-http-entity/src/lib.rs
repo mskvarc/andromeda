@@ -16,39 +16,28 @@ pub mod snapshot_scope;
 pub mod state;
 
 #[cfg(test)]
-mod boundary {
-    /// Assert that entity HTTP depends only on focused policies and shared HTTP/specification crates.
-    #[test]
-    fn this_crate_has_no_storage_or_lateral_route_dependency() {
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-entity",
-            "andromeda-entity-map",
-            "andromeda-federation",
-            "andromeda-http-extraction",
-            "andromeda-http-headers",
-            "andromeda-http-response",
-            "andromeda-jsonld",
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-model",
-            "andromeda-ngsi-ld-problem-details",
-            "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-render",
-            "andromeda-ngsi-ld-representation",
-            "andromeda-ngsi-ld-request",
-            "andromeda-tenancy",
-        ];
-
-        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["axum"]);
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-entity",
+        "andromeda-entity-map",
+        "andromeda-federation",
+        "andromeda-http-extraction",
+        "andromeda-http-headers",
+        "andromeda-http-response",
+        "andromeda-jsonld",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-problem-details",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-render",
+        "andromeda-ngsi-ld-representation",
+        "andromeda-ngsi-ld-request",
+        "andromeda-tenancy",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: ["axum"],
 }
 
 #[cfg(test)]
-mod dialect {
-    /// Assert that no entity HTTP source emits a storage dialect.
-    #[test]
-    fn no_source_file_in_this_crate_emits_a_storage_dialect() {
-        andromeda_layer_guard::dialect::assert_no_dialect(env!("CARGO_MANIFEST_DIR"));
-    }
-}
+andromeda_architecture_checks::forbid_sql!();

@@ -44,33 +44,15 @@ pub mod type_predicate;
 pub mod value_binding;
 
 #[cfg(test)]
-mod boundary {
-    /// The layer rule this crate is on the inside of.
-    ///
-    /// Asserted here rather than by a central test so the failure names the
-    /// crate that broke the rule, and so a crate added to the workspace cannot
-    /// be forgotten by a table it was never added to. The rule itself is read
-    /// once, in `andromeda-layer-guard`, which every crate carries as a
-    /// dev-dependency and which declares nothing of its own.
-    /// The data model is absent by design: this crate renders a compiled query,
-    /// and a compiled query is a query-crate type. Assembling a resource here
-    /// would mean a statement fragment had taken a job that belongs above it.
-    #[test]
-    fn this_crate_declares_only_what_its_layer_permits() {
-        /// In-workspace crates this one may name, in any dependency table.
-        /// Anything else is an upward or sideways edge.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-geometry",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-vocabulary",
-            "andromeda-postgresql-encoding",
-        ];
-
-        // This is the SQL statement layer, so it ships `sea-query`; every other
-        // driver, transport and runtime on the baseline stays forbidden.
-        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["sea-query"]);
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-vocabulary",
+        "andromeda-postgresql-encoding",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: ["sea-query"],
 }

@@ -19,6 +19,6 @@ sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "ch
 tracing = "0.1.44"
 
 [dev-dependencies]
-andromeda-layer-guard.workspace = true
+andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 pretty_assertions = "1.4.1"

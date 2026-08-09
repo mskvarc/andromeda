@@ -52,23 +52,16 @@ impl RegistrationService {
 }
 
 #[cfg(test)]
-mod boundary {
-    use andromeda_layer_guard::manifest::{assert_layer, baseline_forbidden_except};
-
-    /// Registration policy remains independent of runtimes, transports, and storage dialects.
-    #[test]
-    fn this_crate_declares_only_registration_policy_dependencies() {
-        /// In-workspace crates this policy may name in dependency tables.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-jsonld",
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-geometry",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-model",
-            "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-request",
-        ];
-        let forbidden = baseline_forbidden_except(&[]);
-        assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-jsonld",
+        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-request",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: [],
 }

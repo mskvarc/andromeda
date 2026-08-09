@@ -182,28 +182,23 @@ impl EntityService {
 }
 
 #[cfg(test)]
-mod boundary {
-    use andromeda_layer_guard::manifest::{assert_layer, baseline_forbidden_except};
-
-    #[test]
-    fn entity_policy_has_no_transport_or_storage_adapter_dependencies() {
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-context-commit",
-            "andromeda-federation",
-            "andromeda-jsonld",
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-geometry",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-model",
-            "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-representation",
-            "andromeda-ngsi-ld-request",
-            "andromeda-ngsi-ld-vocabulary",
-            "andromeda-spatial-index",
-            "andromeda-subscription",
-            "andromeda-tenancy",
-        ];
-        let forbidden = baseline_forbidden_except(&[]);
-        assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-context-commit",
+        "andromeda-federation",
+        "andromeda-jsonld",
+        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-representation",
+        "andromeda-ngsi-ld-request",
+        "andromeda-ngsi-ld-vocabulary",
+        "andromeda-spatial-index",
+        "andromeda-subscription",
+        "andromeda-tenancy",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: [],
 }

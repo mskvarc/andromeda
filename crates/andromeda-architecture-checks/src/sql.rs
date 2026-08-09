@@ -1,5 +1,4 @@
-//! That a specification crate does not spell a storage dialect, read from a
-//! crate's own sources.
+//! That a specification crate does not spell SQL, read from its own sources.
 
 use std::{fs, path::Path};
 
@@ -10,7 +9,7 @@ use std::{fs, path::Path};
 /// statement composition; `<>` is a second spelling of an operator clause 4.9
 /// writes `!=`, which is what one resource's enum returned while every other
 /// renderer in the tree emitted the clause's own token.
-const DIALECT: &[&str] = &[
+const SQL_FRAGMENTS: &[&str] = &[
     "::numeric",
     "::boolean",
     "::timestamptz",
@@ -30,9 +29,9 @@ const DIALECT: &[&str] = &[
     "<>",
 ];
 
-/// Assert that no source file under `crate_root/src` writes a storage dialect.
+/// Assert that no source file under `crate_root/src` writes SQL fragments.
 ///
-/// The manifest guard reads dependency names, which is exactly what a dialect
+/// The dependency check reads dependency names, which is exactly what SQL
 /// emitted as a string constant slips past: a specification crate can spell an
 /// entire SQL predicate without declaring `sea-query`. Six items did — a
 /// comparison operator, a POSIX regex operator, an `AND` composer, a JSONB
@@ -47,14 +46,14 @@ const DIALECT: &[&str] = &[
 ///
 /// Panics when a source file contains a dialect fragment outside a comment, or
 /// when the source tree cannot be read.
-pub fn assert_no_dialect(crate_root: &str) {
+pub fn assert_no_sql(crate_root: &str) {
     let root = Path::new(crate_root).join("src");
     let sources = rust_sources(&root);
     assert!(!sources.is_empty(), "{} holds no source files to scan", root.display());
 
     for (path, source) in sources {
         let code = code_of(&source);
-        for fragment in DIALECT {
+        for fragment in SQL_FRAGMENTS {
             assert!(
                 !contains_fragment(&code, fragment),
                 "{path} emits '{fragment}'; how a value is spelled in a store belongs to that backend"
@@ -306,7 +305,7 @@ fn is_ident_char(character: char) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::dialect::{code_of, contains_fragment};
+    use crate::sql::{code_of, contains_fragment};
 
     #[test]
     fn a_fragment_that_opens_with_an_identifier_character_is_matched_at_a_word_boundary() {

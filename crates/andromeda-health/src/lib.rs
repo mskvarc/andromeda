@@ -23,42 +23,14 @@ pub mod report;
 pub mod status;
 
 #[cfg(test)]
-mod boundary {
-    /// The layer rule this crate is on the inside of.
-    ///
-    /// Asserted here rather than by a central test so the failure names the
-    /// crate that broke the rule, and so a crate added to the workspace cannot
-    /// be forgotten by a table it was never added to. The rule itself is read
-    /// once, in `andromeda-layer-guard`, which every crate carries as a
-    /// dev-dependency and which declares nothing of its own.
-    ///
-    /// The forbidden list is the sharp end here. An indicator that probed a
-    /// database from inside this crate would make "healthy" mean whatever
-    /// PostgreSQL says, and the port exists precisely so it does not: the
-    /// probe lives with the pool, not with the word.
-    #[test]
-    fn this_crate_declares_only_what_its_layer_permits() {
-        /// In-workspace crates this one may name, in any dependency table.
-        /// Anything else is an upward or sideways edge.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-lexicon"];
-
-        andromeda_layer_guard::manifest::assert_layer(
-            env!("CARGO_MANIFEST_DIR"),
-            andromeda_layer_guard::manifest::BASELINE_FORBIDDEN,
-            ALLOWED_IN_WORKSPACE,
-        );
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-ngsi-ld-lexicon",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: [],
 }
 
 #[cfg(test)]
-mod dialect {
-    /// No storage dialect may be written here, in any form.
-    ///
-    /// The manifest guard above reads dependency names, which is exactly what a
-    /// dialect emitted as a string constant slips past: a crate can spell an
-    /// entire SQL predicate without declaring `sea-query`.
-    #[test]
-    fn no_source_file_in_this_crate_emits_a_storage_dialect() {
-        andromeda_layer_guard::dialect::assert_no_dialect(env!("CARGO_MANIFEST_DIR"));
-    }
-}
+andromeda_architecture_checks::forbid_sql!();

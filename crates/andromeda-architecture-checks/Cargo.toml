@@ -1,5 +1,5 @@
 [package]
-name = "andromeda-layer-guard"
+name = "andromeda-architecture-checks"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

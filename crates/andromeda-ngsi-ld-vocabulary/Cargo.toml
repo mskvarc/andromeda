@@ -12,5 +12,5 @@ iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 jsonld = { version = "0.22.0", features = ["vocab"] }
 
 [dev-dependencies]
-andromeda-layer-guard.workspace = true
+andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"

@@ -17,5 +17,5 @@ strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.18"
 
 [dev-dependencies]
-andromeda-layer-guard.workspace = true
+andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"

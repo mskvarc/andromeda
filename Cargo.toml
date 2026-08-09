@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/*", "lib/andromeda-layer-guard", "lib/andromeda-test-common"]
+members = [".", "crates/*", "lib/andromeda-test-common"]
 resolver = "3"
 
 [workspace.package]
@@ -20,7 +20,7 @@ andromeda-http-extraction = { path = "crates/andromeda-http-extraction" }
 andromeda-http-headers = { path = "crates/andromeda-http-headers" }
 andromeda-http-response = { path = "crates/andromeda-http-response" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
-andromeda-layer-guard = { path = "lib/andromeda-layer-guard" }
+andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" }
 andromeda-ngsi-ld-geometry = { path = "crates/andromeda-ngsi-ld-geometry" }
 andromeda-ngsi-ld-lexicon = { path = "crates/andromeda-ngsi-ld-lexicon" }
 andromeda-ngsi-ld-model = { path = "crates/andromeda-ngsi-ld-model" }
@@ -153,7 +153,7 @@ uuid = { version = "1.23.1", features = ["fast-rng", "serde", "v4"] }
 shadow-rs = "2.0.0"
 
 [dev-dependencies]
-andromeda-layer-guard.workspace = true
+andromeda-architecture-checks.workspace = true
 andromeda-test-common.workspace = true
 futures = "0.3.32"
 pretty_assertions = "1.4.1"

@@ -45,32 +45,27 @@ pub mod tenant_database;
 pub mod tenant_registry;
 
 #[cfg(test)]
-mod boundary {
-    /// The layer rule this crate is on the inside of.
-    #[test]
-    fn this_crate_declares_only_what_its_layer_permits() {
-        /// In-workspace crates this one may name, in any dependency table.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-context-commit",
-            "andromeda-context-registry",
-            "andromeda-entity",
-            "andromeda-health",
-            "andromeda-jsonld",
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-geometry",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-model",
-            "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-vocabulary",
-            "andromeda-postgresql-context-query",
-            "andromeda-postgresql-encoding",
-            "andromeda-postgresql-query",
-            "andromeda-registration",
-            "andromeda-spatial-index",
-            "andromeda-subscription",
-            "andromeda-tenancy",
-        ];
-        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["sea-query", "sea-query-binder", "sonic-rs", "sqlx", "tokio"]);
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-context-commit",
+        "andromeda-context-registry",
+        "andromeda-entity",
+        "andromeda-health",
+        "andromeda-jsonld",
+        "andromeda-ngsi-ld-geometry",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-vocabulary",
+        "andromeda-postgresql-context-query",
+        "andromeda-postgresql-encoding",
+        "andromeda-postgresql-query",
+        "andromeda-registration",
+        "andromeda-spatial-index",
+        "andromeda-subscription",
+        "andromeda-tenancy",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: ["sea-query", "sea-query-binder", "sonic-rs", "sqlx", "tokio"],
 }

@@ -31,21 +31,14 @@ pub mod store;
 pub mod stored_context;
 
 #[cfg(test)]
-mod boundary {
-    use andromeda_layer_guard::manifest::{assert_layer, baseline_forbidden_except};
-
-    /// Context Registry policy names only domain and JSON-LD capability crates.
-    #[test]
-    fn this_crate_declares_only_what_its_layer_permits() {
-        /// In-workspace crates this policy may name in dependency tables.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-jsonld",
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-model",
-            "andromeda-ngsi-ld-vocabulary",
-        ];
-        let forbidden = baseline_forbidden_except(&[]);
-        assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-jsonld",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-vocabulary",
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: [],
 }

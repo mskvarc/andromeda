@@ -24,35 +24,24 @@ pub mod typed_path;
 pub mod via;
 
 #[cfg(test)]
-mod boundary {
-    /// Assert that centralized extraction reaches no route, storage, API, or server crate.
-    #[test]
-    fn this_crate_declares_only_extraction_input_and_response_dependencies() {
-        const ALLOWED_IN_WORKSPACE: &[&str] = &[
-            "andromeda-http-headers",
-            "andromeda-http-response",
-            "andromeda-jsonld",
-            "andromeda-layer-guard",
-            "andromeda-ngsi-ld-lexicon",
-            "andromeda-ngsi-ld-model",
-            "andromeda-ngsi-ld-problem-details",
-            "andromeda-ngsi-ld-query",
-            "andromeda-ngsi-ld-render",
-            "andromeda-ngsi-ld-request",
-            "andromeda-ngsi-ld-vocabulary",
-            "andromeda-tenancy",
-        ];
-
-        let forbidden = andromeda_layer_guard::manifest::baseline_forbidden_except(&["axum", "sonic-rs"]);
-        andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &forbidden, ALLOWED_IN_WORKSPACE);
-    }
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+        "andromeda-http-headers",
+        "andromeda-http-response",
+        "andromeda-jsonld",
+        "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-problem-details",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-render",
+        "andromeda-ngsi-ld-request",
+        "andromeda-tenancy",
+    ],
+    allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-vocabulary",
+    ],
+    allow_production_dependencies: ["axum", "sonic-rs"],
 }
 
 #[cfg(test)]
-mod dialect {
-    /// Assert that centralized extraction emits no storage dialect.
-    #[test]
-    fn no_source_file_in_this_crate_emits_a_storage_dialect() {
-        andromeda_layer_guard::dialect::assert_no_dialect(env!("CARGO_MANIFEST_DIR"));
-    }
-}
+andromeda_architecture_checks::forbid_sql!();
