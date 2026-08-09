@@ -147,8 +147,8 @@ where
 
 /// Deserialize an optional comma-separated list of dataset selectors.
 ///
-/// Clause 4.5.5 defines `datasetId` as a list of URNs. Empty entries and
-/// non-URN values are malformed request data at the extraction boundary.
+/// Clause 4.5.5 defines `datasetId` as a list of URIs. Empty entries and
+/// non-URI values are malformed request data at the extraction boundary.
 pub fn deserialize_optional_dataset_selectors<'de, D>(deserializer: D) -> Result<Option<Vec<DatasetSelector>>, D::Error>
 where
     D: Deserializer<'de>,

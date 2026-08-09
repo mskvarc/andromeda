@@ -6,11 +6,13 @@
 
 use crate::{error::AndromedaError, service::csource_registration::store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
+use mediatype::MediaTypeBuf;
 use serde_json::Value;
+use url::Url;
 
 /// Fully-resolved CSR update values for a single row. Every field carries
 /// the final value that will be written, with merge semantics already
@@ -22,7 +24,7 @@ pub struct ResolvedCsrUpdate {
     /// New `description` value (nullable).
     pub description: Option<String>,
     /// New `information` array, serialised as JSON.
-    pub information: Value,
+    pub information: Vec<RegistrationInfo>,
     /// New `tenant` value.
     pub tenant: Option<TenantName>,
     /// New `observation_interval` object.
@@ -32,15 +34,15 @@ pub struct ResolvedCsrUpdate {
     /// New `expires_at` timestamp.
     pub expires_at: Option<DateTime<Utc>>,
     /// New `endpoint` (required).
-    pub endpoint: String,
+    pub endpoint: Url,
     /// New `accept` MIME type.
-    pub accept: Option<String>,
+    pub accept: Option<MediaTypeBuf>,
     /// New forwarding mode.
     pub mode: ForwardingMode,
     /// New supported operations list.
     pub operations: Option<Vec<CsrOperation>>,
     /// New scope strings.
-    pub scope: Option<Vec<String>>,
+    pub scope: Option<Vec<ScopeBuf>>,
     /// New refresh-rate duration string.
     pub refresh_rate: Option<Iso8601Duration>,
     /// New management object.
@@ -48,9 +50,9 @@ pub struct ResolvedCsrUpdate {
     /// New context-source-info object.
     pub context_source_info: Option<Value>,
     /// New JSON-LD context identifier.
-    pub jsonld_context: Option<String>,
+    pub jsonld_context: Option<Url>,
     /// New Via alias pseudonym.
-    pub context_source_alias: Option<String>,
+    pub context_source_alias: Option<ContextSourcePseudonym>,
     /// New non-standard-properties blob (after shallow merge).
     pub additional_properties: Option<Value>,
     /// New `location` geometry.
@@ -73,35 +75,23 @@ pub struct ResolvedCsrUpdate {
 pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateFragment) -> Result<ResolvedCsrUpdate, AndromedaError> {
     let registration_name = fragment.registration_name.clone().unwrap_or(existing.registration_name); // clone: own fragment side; existing moves
     let description = fragment.description.clone().unwrap_or(existing.description); // clone: own fragment side; existing moves
-    let information: Value = match fragment.information.as_ref() {
-        Some(v) => v.clone(), // clone: own fragment Value; existing path serialises typed info
-        None => serde_json::to_value(&existing.coverage.information)?,
-    };
+    let information = fragment.information.clone().unwrap_or(existing.coverage.information); // clone: own the borrowed update fragment when it supplied information.
     let tenant = fragment.tenant.clone().unwrap_or(existing.tenant); // clone: own fragment side; existing moves
     let observation_interval = fragment.observation_interval.clone().unwrap_or(existing.coverage.observation_interval); // clone: own fragment side
     let management_interval = fragment.management_interval.clone().unwrap_or(existing.coverage.management_interval); // clone: own fragment side
     let expires_at = fragment.expires_at.unwrap_or(existing.lifecycle.expires_at);
-    let endpoint = fragment.endpoint.clone().unwrap_or_else(|| existing.access.endpoint.to_string()); // clone: own fragment side; existing renders to the persisted form
-    let accept = fragment
-        .accept
-        .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or_else(|| existing.access.accept.map(|media_type| media_type.to_string()));
+    let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint); // clone: own the borrowed update fragment when it supplied the URL.
+    let accept = fragment.accept.clone().unwrap_or(existing.access.accept); // clone: own the borrowed update fragment when it supplied the media type.
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
     let operations = fragment
         .operations
         .clone() // clone: own fragment side; existing path moves the typed operations
         .unwrap_or(existing.access.operations);
-    let scope = fragment
-        .scope
-        .clone() // clone: own fragment side; existing path constructs fresh Vec<String>
-        .unwrap_or_else(|| existing.coverage.scope.map(|v| v.into_iter().map(|s| s.to_string()).collect()));
+    let scope = fragment.scope.clone().unwrap_or(existing.coverage.scope); // clone: own the borrowed update fragment when it supplied scopes.
     let refresh_rate = fragment.refresh_rate.unwrap_or(existing.access.refresh_rate);
     let management = fragment.management.clone().unwrap_or(existing.access.management); // clone: own fragment side
     let context_source_info = fragment.context_source_info.clone().unwrap_or(existing.access.context_source_info); // clone: own fragment side
-    let jsonld_context = fragment
-        .jsonld_context
-        .clone() // clone: own fragment side; existing renders to the persisted form
-        .unwrap_or_else(|| existing.access.jsonld_context.map(|url| url.to_string()));
+    let jsonld_context = fragment.jsonld_context.clone().unwrap_or(existing.access.jsonld_context); // clone: own the borrowed update fragment when it supplied the URL.
     let context_source_alias = fragment.context_source_alias.clone().unwrap_or(existing.access.context_source_alias); // clone: own fragment side
 
     let additional_properties = match (existing.additional_properties, &fragment.additional_properties) {

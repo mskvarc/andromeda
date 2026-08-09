@@ -145,13 +145,13 @@ async fn temporal_attrs_modify_instance_invalid_attribute_name_returns_400() {
 
 #[tokio::test]
 #[serial]
-async fn temporal_attrs_modify_instance_empty_attribute_name_returns_405() {
+async fn temporal_attrs_modify_instance_empty_attribute_name_returns_400() {
     clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_06").await;
 
     let fragment = modify_instance_fragment();
     let (status, _) = request_temporal_attrs(&c, Method::PATCH, &format!("/temporal/entities/{id}/attrs//{instance_id}"), Some(&fragment)).await;
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "empty attr name should return 405");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "empty attr name should return 400");
 }
 
 // ---------------------------------------------------------------------------

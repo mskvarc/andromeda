@@ -1,5 +1,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
+    db::TRUNCATE_ALL,
+};
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
@@ -8,8 +11,6 @@ use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
-
-pub use andromeda_test_common::config::{BASE_URL, CORE_CONTEXT};
 
 pub fn client() -> Client {
     Client::new()

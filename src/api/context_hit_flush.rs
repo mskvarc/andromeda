@@ -39,6 +39,8 @@ impl ContextHitFlushWorker {
         let _receivers = self.shutdown.send(());
         if let Err(error) = self.handle.await {
             tracing::error!(error = %error, event = "context_hit_flush_worker_join_failed");
+        } else {
+            tracing::info!(event = "context_hit_final_flush_complete");
         }
     }
 }

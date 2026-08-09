@@ -6,7 +6,8 @@
 
 use crate::{
     error::AndromedaError,
-    service::outbox::entry::{OutboxEntry, OutboxEntryId, WorkerInstanceId},
+    service::outbox::entry::{OutboxEntry, OutboxEntryId},
+    worker_instance_id::WorkerInstanceId,
 };
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;

@@ -2,7 +2,7 @@
 
 use crate::value_type::ValueType;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, scope::grammar::ScopeBuf, uri::Uri};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -31,7 +31,7 @@ pub struct HistoryValues<'a> {
     /// DateTime attribute value.
     pub value_datetime: Option<DateTime<Utc>>,
     /// URI attribute value.
-    pub value_uri: Option<&'a str>,
+    pub value_uri: Option<&'a Uri>,
     /// Additional metadata associated with the attribute instance.
     pub metadata: Option<&'a Value>,
 }
@@ -40,11 +40,11 @@ pub struct HistoryValues<'a> {
 #[derive(Debug)]
 pub struct UpdateInstanceParams<'a> {
     /// Identifier of the attribute instance to update.
-    pub instance_id: &'a str,
+    pub instance_id: &'a InstanceId,
     /// Entity that owns the attribute.
-    pub entity_id: &'a str,
+    pub entity_id: &'a Uri,
     /// Expanded attribute name.
-    pub attribute_name: &'a str,
+    pub attribute_name: &'a AttributeName,
     /// New typed value columns for this instance.
     pub values: HistoryValues<'a>,
     /// Updated observation timestamp, if provided.
@@ -55,13 +55,13 @@ pub struct UpdateInstanceParams<'a> {
 #[derive(Debug)]
 pub struct TeaBatchEntry {
     /// Entity identifier.
-    pub entity_id: String,
+    pub entity_id: Uri,
     /// Expanded IRI of the attribute.
-    pub attribute_name: String,
+    pub attribute_name: AttributeName,
     /// NGSI-LD attribute meta-type.
     pub attribute_type: AttributeType,
     /// Multi-attribute discriminator; `None` for the default instance.
-    pub dataset_id: Option<String>,
+    pub dataset_id: Option<Uri>,
     /// Runtime value type discriminator.
     pub value_type: ValueType,
 }
@@ -72,9 +72,9 @@ pub struct ScopeHistoryEntry {
     /// Observation timestamp.
     pub time: DateTime<Utc>,
     /// The entity this scope belongs to.
-    pub entity_id: String,
+    pub entity_id: Uri,
     /// Scope path in ltree dot notation (slashes converted to dots).
-    pub scope_path: String,
+    pub scope_path: ScopeBuf,
     /// Unique identifier for this scope observation instance.
-    pub instance_id: String,
+    pub instance_id: InstanceId,
 }

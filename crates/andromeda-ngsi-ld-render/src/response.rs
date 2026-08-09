@@ -23,6 +23,7 @@ use crate::{
     version::{VersionAdaptation, VersionRenderer},
 };
 use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriRefBuf;
 use serde_json::Value;
 use std::sync::Arc;
@@ -94,7 +95,7 @@ pub struct ResponseRenderer<'a> {
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
     requested_version: Option<NgsiLdVersion>,
     /// The attribute a GeoJSON geometry is taken from.
-    geometry_property: Option<&'a str>,
+    geometry_property: Option<&'a AttributeName>,
 }
 
 /// A fully-configured renderer with its payload attached, ready to run.
@@ -151,7 +152,7 @@ impl<'a> ResponseRenderer<'a> {
     }
 
     /// Set the attribute a GeoJSON geometry is taken from (clause 4.5.16).
-    pub const fn with_geometry_property(mut self, geometry_property: Option<&'a str>) -> Self {
+    pub const fn with_geometry_property(mut self, geometry_property: Option<&'a AttributeName>) -> Self {
         self.geometry_property = geometry_property;
         self
     }

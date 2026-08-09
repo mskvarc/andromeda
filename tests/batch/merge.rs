@@ -1,4 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+use andromeda_test_common::config::COMPOUND_CONTEXT;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -163,7 +164,7 @@ async fn batch_merge_invalid_json_ld_returns_207() {
     let fragments = json!([{
         "id": "urn:ngsi-ld:Building:invalid_ld",
         "invalidField": "not a valid NGSI-LD structure",
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     }]);
 
     let (status, _) = batch_merge(&c, &fragments).await;

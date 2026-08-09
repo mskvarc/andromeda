@@ -5,7 +5,7 @@ use crate::{
     error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery, typed_path::TypedPath},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -15,6 +15,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
@@ -22,7 +23,7 @@ use andromeda_ngsi_ld_render::{
 };
 use andromeda_ngsi_ld_request::{csource_subscription::ListParams, empty::EmptyParams};
 use axum::{
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -44,7 +45,7 @@ pub async fn create(
 
     let id = service.create(payload, &context, None).await.with_instance(&uri)?;
 
-    Ok((StatusCode::CREATED, [("Location", id)]).into_response())
+    Ok((StatusCode::CREATED, [("Location", id.to_string())]).into_response())
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.
@@ -53,7 +54,7 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    Path(subscription_id): Path<String>,
+    TypedPath(subscription_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.csr_subscriptions;
@@ -134,7 +135,7 @@ pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path(subscription_id): Path<String>,
+    TypedPath(subscription_id): TypedPath<Uri>,
     JsonLd {
         value: payload,
         context: body_context,
@@ -149,7 +150,11 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
+pub async fn delete(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    TypedPath(subscription_id): TypedPath<Uri>,
+) -> Result<Response, NgsiLdError> {
     let service = &state.csr_subscriptions;
     service.delete(&subscription_id).await.with_instance(&uri)?;
 

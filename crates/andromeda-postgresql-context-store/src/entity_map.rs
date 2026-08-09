@@ -4,7 +4,7 @@
 //! The `EntityMapStore` trait impl lives in the binary crate, because the trait
 //! is defined in the binary's service layer.
 
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityMapId;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use dashmap::DashMap;
 
@@ -12,7 +12,7 @@ use dashmap::DashMap;
 #[derive(Debug, Default)]
 pub struct InMemoryEntityMapStore {
     /// The concurrent map from entity map identifier to stored map.
-    maps: DashMap<EntityMapId, EntityMap>,
+    maps: DashMap<Uri, EntityMap>,
 }
 
 impl InMemoryEntityMapStore {
@@ -23,7 +23,7 @@ impl InMemoryEntityMapStore {
 
     /// Returns a reference to the underlying map, for trait impls defined
     /// outside this crate.
-    pub const fn maps(&self) -> &DashMap<EntityMapId, EntityMap> {
+    pub const fn maps(&self) -> &DashMap<Uri, EntityMap> {
         &self.maps
     }
 }

@@ -15,19 +15,19 @@ use crate::http::handler::entity::{
     NgsiLdError,
     OriginalUri,
     OverwritePolicy,
-    Path,
     RequestOverwritePolicy,
     Response,
     ResultInstanceExt,
     StatusCode,
     TenantState,
+    TypedPath,
+    Uri,
     ValidatedQuery,
     Value,
     collect_forwarded_exclusive_attrs,
     entity_error,
     first_forwarded_status,
     has_remote_errors,
-    parse_entity_id,
     strip_exclusive_attrs_from_value,
 };
 
@@ -35,7 +35,7 @@ pub async fn append_attrs(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path(id): Path<String>,
+    TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
     IncomingVia(incoming_via): IncomingVia,
     JsonLd {
@@ -44,7 +44,6 @@ pub async fn append_attrs(
     }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
-    let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let no_overwrite = params.options == Some(RequestOverwritePolicy::NoOverwrite);
     let overwrite = if no_overwrite {
@@ -54,16 +53,15 @@ pub async fn append_attrs(
     };
 
     // Forward to matching context sources
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
+    let context_url = context.link_contexts().first();
     let fragment_body =
         serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(&uri))?;
-    let entity_id = id.to_string();
     let qs = if no_overwrite { "options=noOverwrite" } else { "" };
 
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
-            entity_id: Some(&entity_id),
+            entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
             method: reqwest::Method::POST,
@@ -85,7 +83,7 @@ pub async fn append_attrs(
         if not_appended.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
-        let updated: Vec<&AttributeName> = all_attrs.iter().filter(|a| !not_appended.contains(&a.to_string())).collect();
+        let updated: Vec<&AttributeName> = all_attrs.iter().filter(|attribute| !not_appended.contains(attribute)).collect();
         let not_updated_details: Vec<serde_json::Value> = not_appended
             .iter()
             .map(|attr| serde_json::json!({ "attributeName": attr, "reason": "Already exists" }))
@@ -121,7 +119,7 @@ pub async fn append_attrs(
     // 207 Multi-Status for mixed results
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::to_value(entity_error(&entity_id, &err)).unwrap_or_default());
+        errors.push(serde_json::to_value(entity_error(id.clone(), &err)).unwrap_or_default()); // clone: service call and error response both own the ID
     }
     for r in &forwarded {
         if r.is_failure() {
@@ -129,9 +127,9 @@ pub async fn append_attrs(
                 .body()
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({ "status": r.status(), "title": "Error from context source" }));
-            errors.push(serde_json::json!({ "entityId": entity_id, "error": error_body }));
+            errors.push(serde_json::json!({ "entityId": id, "error": error_body }));
         }
     }
-    let body = serde_json::json!({ "success": [entity_id], "errors": errors });
+    let body = serde_json::json!({ "success": [id], "errors": errors });
     Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
 }

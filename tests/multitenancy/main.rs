@@ -9,8 +9,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, callback_url},
     db::{TRUNCATE_ALL, pool as shared_pool},
-    prelude::*,
+    error,
 };
 use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
@@ -20,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
-const NONEXISTENT_TENANT_ERROR: &str = error::NONEXISTENT_TENANT;
+const NONEXISTENT_TENANT_ERROR: &iri_rs::Iri<&str> = error::NONEXISTENT_TENANT;
 
 fn client() -> Client {
     Client::new()
@@ -367,7 +368,7 @@ async fn multitenancy_non_create_on_unknown_tenant_returns_nonexistent_tenant_er
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(
         body["type"],
-        NONEXISTENT_TENANT_ERROR,
+        NONEXISTENT_TENANT_ERROR.as_str(),
         "accessing unknown tenant via non-create operation must return NonexistentTenant"
     );
     pretty_assertions::assert_eq!(
@@ -524,7 +525,7 @@ async fn multitenancy_cross_tenant_entity_access_returns_not_found() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
     pretty_assertions::assert_eq!(
         body["type"],
-        NONEXISTENT_TENANT_ERROR,
+        NONEXISTENT_TENANT_ERROR.as_str(),
         "cross-tenant access to entity in non-existent tenant B must return NonexistentTenant"
     );
 }

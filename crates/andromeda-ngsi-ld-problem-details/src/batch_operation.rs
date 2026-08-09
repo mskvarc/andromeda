@@ -2,6 +2,8 @@
 //! (clauses 5.2.16 and 6.17).
 
 use crate::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use iri_rs::IriRefBuf;
 use serde::{
     Deserialize,
     Deserializer,
@@ -20,7 +22,7 @@ use std::fmt;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BatchOperationResult {
     /// Identifiers of the entities the operation applied to.
-    pub success: Vec<String>,
+    pub success: Vec<Uri>,
     /// One entry per entity the operation could not apply to.
     pub errors: Vec<BatchEntityError>,
 }
@@ -30,16 +32,20 @@ pub struct BatchOperationResult {
 pub struct BatchEntityError {
     /// The entity the failure is about.
     #[serde(rename = "entityId")]
-    pub entity_id: String,
+    pub entity_id: Uri,
+    /// Registration responsible for a failed distributed operation.
+    #[serde(rename = "registrationId", skip_serializing_if = "Option::is_none")]
+    pub registration_id: Option<Uri>,
     /// What went wrong with it.
     pub error: BatchProblemDetail,
 }
 
 impl BatchEntityError {
     /// Report `error_type` against `entity_id`, with a human-readable detail.
-    pub fn new(entity_id: &str, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
+    pub fn new(entity_id: Uri, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
         BatchEntityError {
-            entity_id: entity_id.to_string(),
+            entity_id,
+            registration_id: None,
             error: BatchProblemDetail {
                 error_type: BatchErrorKind::Known(error_type),
                 detail: detail.to_string(),
@@ -59,7 +65,7 @@ pub enum BatchErrorKind {
     /// One of the twelve ETSI error categories (clause 5.5.2).
     Known(NgsiLdErrorType),
     /// Any other RFC 7807 type URI.
-    Other(String),
+    Other(IriRefBuf),
 }
 
 /// An RFC 7807 problem detail inside a batch error.
@@ -80,7 +86,7 @@ impl Serialize for BatchProblemDetail {
         match &self.error_type {
             BatchErrorKind::Known(category) => {
                 let mut state = serializer.serialize_struct("BatchProblemDetail", 4)?;
-                state.serialize_field("type", category.type_uri())?;
+                state.serialize_field("type", &category.type_iri())?;
                 state.serialize_field("title", category.title())?;
                 state.serialize_field("status", &category.status_code().as_u16())?;
                 state.serialize_field("detail", &self.detail)?;
@@ -119,7 +125,7 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
     }
 
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<BatchProblemDetail, M::Error> {
-        let mut type_uri: Option<String> = None;
+        let mut type_uri: Option<IriRefBuf> = None;
         let mut detail: Option<String> = None;
 
         while let Some(key) = map.next_key::<&str>()? {
@@ -140,7 +146,7 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
         let detail = detail.ok_or_else(|| de::Error::missing_field("detail"))?;
         // A recognised category keeps its typed convenience; any other URI is
         // accepted verbatim, since RFC 7807 clause 3 permits arbitrary type URIs.
-        let error_type = match NgsiLdErrorType::from_type_uri(&type_uri) {
+        let error_type = match NgsiLdErrorType::from_type_iri(&type_uri) {
             Some(category) => BatchErrorKind::Known(category),
             None => BatchErrorKind::Other(type_uri),
         };
@@ -155,15 +161,25 @@ mod tests {
         batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
         error_type::NgsiLdErrorType,
     };
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use iri_rs::IriRefBuf;
     use serde_json::json;
     use strum::IntoEnumIterator;
+
+    fn uri(value: &str) -> Uri {
+        value.parse().expect("valid test URI")
+    }
+
+    fn iri_ref(value: &str) -> IriRefBuf {
+        IriRefBuf::new(value.to_string()).expect("valid test IRI reference")
+    }
 
     #[test]
     fn a_batch_result_serialises_its_successes_and_its_failures() {
         let result = BatchOperationResult {
-            success: vec!["urn:ngsi-ld:Entity:1".to_string()],
+            success: vec![uri("urn:ngsi-ld:Entity:1")],
             errors: vec![BatchEntityError::new(
-                "urn:ngsi-ld:Entity:2",
+                uri("urn:ngsi-ld:Entity:2"),
                 NgsiLdErrorType::AlreadyExists,
                 "Entity already exists",
             )],
@@ -216,9 +232,9 @@ mod tests {
     #[test]
     fn a_batch_result_survives_a_round_trip() {
         let original = BatchOperationResult {
-            success: vec!["urn:ngsi-ld:Entity:A".to_string(), "urn:ngsi-ld:Entity:B".to_string()],
+            success: vec![uri("urn:ngsi-ld:Entity:A"), uri("https://example.com/entities/B")],
             errors: vec![BatchEntityError::new(
-                "urn:ngsi-ld:Entity:C",
+                uri("urn:ngsi-ld:Entity:C"),
                 NgsiLdErrorType::InternalError,
                 "Something went wrong",
             )],
@@ -235,7 +251,7 @@ mod tests {
         let parsed = serde_json::from_str::<BatchProblemDetail>(&rendered).expect("a foreign type URI is accepted");
         pretty_assertions::assert_eq!(
             parsed.error_type,
-            BatchErrorKind::Other("https://uri.etsi.org/ngsi-ld/errors/Invented".to_string())
+            BatchErrorKind::Other(iri_ref("https://uri.etsi.org/ngsi-ld/errors/Invented"))
         );
     }
 
@@ -253,7 +269,7 @@ mod tests {
         })
         .to_string();
         let parsed = serde_json::from_str::<BatchProblemDetail>(&rendered).expect("a foreign problem detail deserialises");
-        pretty_assertions::assert_eq!(parsed.error_type, BatchErrorKind::Other("https://scorpio.example/errors/Custom".to_string()));
+        pretty_assertions::assert_eq!(parsed.error_type, BatchErrorKind::Other(iri_ref("https://scorpio.example/errors/Custom")));
         pretty_assertions::assert_eq!(parsed.detail, "brewing");
     }
 

@@ -9,7 +9,7 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,
@@ -23,7 +23,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
-    notification::{NotificationTrigger, SysAttrsSnapshot},
+    notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
 };
 use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
 use chrono::Utc;
@@ -31,36 +31,31 @@ use serde_json::Value;
 use std::sync::Arc;
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
-pub(super) type DeleteChunkOutcome = (Vec<String>, Vec<(String, AndromedaError)>);
+pub(super) type DeleteChunkOutcome = (Vec<Uri>, Vec<(Uri, AndromedaError)>);
 
 impl EntityService {
-    pub(super) async fn batch_delete_chunk(&self, chunk: &[String], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, AndromedaError> {
-        let chunk_ids: Vec<String> = chunk.to_vec();
-        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
+    pub(super) async fn batch_delete_chunk(&self, chunk: &[Uri], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, AndromedaError> {
+        let _id_guards = self.acquire_id_locks(chunk).await;
 
         // Only the asynchronous path needs the payloads up front; inline mode
         // reads them off the delete.
         let prior = match mode {
             BatchSideEffectMode::Inline => None,
-            BatchSideEffectMode::Enqueue => {
-                let chunk_uris: Vec<Uri> = chunk.iter().filter_map(|id| id.parse::<Uri>().ok()).collect();
-                Some((self.repo.get_batch(&chunk_uris).await?, self.repo.get_sys_attrs_batch(&chunk_uris).await?))
-            }
+            BatchSideEffectMode::Enqueue => Some((self.repo.get_batch(chunk).await?, self.repo.get_sys_attrs_batch(chunk).await?)),
         };
 
         let mut writes = Vec::with_capacity(chunk.len());
         for id in chunk {
             let side_effects = prior.as_ref().and_then(|(payloads, sys_attrs)| {
-                let uri = id.parse::<Uri>().ok()?;
-                let payload = payloads.get(&uri)?;
+                let payload = payloads.get(id)?;
                 Some(BatchSideEffectJob {
                     temporal_entities: Vec::new(),
-                    change_events: deletion_events(&uri, payload, sys_attrs.get(&uri)),
+                    change_events: deletion_events(id, payload, sys_attrs.get(id)),
                 })
             });
             writes.push(
                 AtomicWrite::builder()
-                    .entity_id(Arc::from(id.as_str()))
+                    .entity_id(Arc::new(id.clone())) // clone: each write owns a shared validated identifier.
                     .entity(EntityMutation::Delete)
                     .side_effects(side_effects)
                     .precondition(Precondition::MustExist)
@@ -86,7 +81,7 @@ impl EntityService {
                     if matches!(mode, BatchSideEffectMode::Inline) {
                         events.extend(inline_deletion_events(&deleted));
                     }
-                    success.push(deleted.id.to_string());
+                    success.push(deleted.id);
                 }
                 WriteOutcome::NotFound
                 | WriteOutcome::AlreadyExists
@@ -95,7 +90,7 @@ impl EntityService {
                 | WriteOutcome::Created
                 | WriteOutcome::Updated
                 | WriteOutcome::NoEntityChange => {
-                    errors.push((id.clone(), AndromedaError::entity_not_found(id))); // clone: the identifier is reported alongside the error
+                    errors.push((id.clone(), AndromedaError::entity_not_found(id.as_str()))); // clone: error result owns the entity ID
                 }
             }
         }

@@ -10,9 +10,9 @@ use crate::{
     error::AndromedaError,
     service::entity::{atomic_write::AtomicWrite, history_record::HistoryRecord},
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
 use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
-use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
@@ -24,7 +24,7 @@ pub(super) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     landed: &[&AtomicWrite],
 ) -> Result<Vec<HistoryBatchEntry>, AndromedaError> {
-    let observations: Vec<(Arc<str>, Arc<Value>)> = landed
+    let observations: Vec<(Arc<Uri>, Arc<Value>)> = landed
         .iter()
         .flat_map(|write| {
             write.history.iter().filter_map(|record| match record {
@@ -48,7 +48,7 @@ pub(super) async fn apply(
                 continue;
             };
             let tombstone = recorder
-                .record_attribute_deletion_in_tx(tx, &write.entity_id, key.attr.as_str(), key.dataset_id.as_ref().map(IriBuf::as_str))
+                .record_attribute_deletion_in_tx(tx, &write.entity_id, &key.attr, key.dataset_id.as_ref())
                 .await?;
             written.extend(tombstone);
         }

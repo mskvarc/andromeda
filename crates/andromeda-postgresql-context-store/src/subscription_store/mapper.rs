@@ -9,67 +9,130 @@ use crate::{
     subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    notification::NotificationTrigger,
-    subscription::{
-        NotificationParams,
-        NotificationStatus,
-        Subscription,
-        SubscriptionDelivery,
-        SubscriptionFilters,
-        SubscriptionLifecycle,
-        SubscriptionSelection,
-    },
+use andromeda_ngsi_ld_model::subscription::{
+    EntitySelector,
+    NotificationParams,
+    NotificationStatus,
+    Subscription,
+    SubscriptionDelivery,
+    SubscriptionFilters,
+    SubscriptionLifecycle,
+    SubscriptionSelection,
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
+use serde_json::Value;
 use sqlx::Row;
 use tracing::warn;
 use url::Url;
 
+/// Parse a subscription identifier read from PostgreSQL.
+pub fn stored_subscription_uri(raw: String) -> Result<Uri, ContextStoreError> {
+    raw.parse()
+        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription id '{raw}': {error}")))
+}
+
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
 pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
-    let dataset_id: Option<Vec<String>> = match dataset_id_presence {
-        DatasetIdPresence::Present => row.get("dataset_id"),
+    let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
+        DatasetIdPresence::Present => row.try_get("dataset_id")?,
         DatasetIdPresence::Absent => None,
     };
-    let local_only: bool = match row.try_get("local_only") {
-        Ok(v) => v,
-        Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => false,
-        Err(e) => return Err(ContextStoreError::Internal(format!("Failed to read local_only column: {e}"))),
-    };
-    let status_label: String = row.get("status");
+    let dataset_id = dataset_id_raw.map(|ids| ids.into_iter().map(stored_subscription_uri).collect()).transpose()?;
+    let id = stored_subscription_uri(row.try_get("id")?)?;
+    let entities_json: Option<Value> = row.try_get("entities")?;
+    let entities = entities_json
+        .map(|value| {
+            serde_json::from_value::<Vec<EntitySelector>>(value)
+                .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription entities: {error}")))
+        })
+        .transpose()?;
+    let watched_attribute_names: Option<Vec<String>> = row.try_get("watched_attributes")?;
+    let watched_attributes = watched_attribute_names
+        .map(|names| {
+            names
+                .into_iter()
+                .map(|raw| {
+                    raw.parse()
+                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored watched attribute '{raw}': {error}")))
+                })
+                .collect()
+        })
+        .transpose()?;
+    let trigger_labels: Option<Vec<String>> = row.try_get("notification_trigger")?;
+    let notification_trigger = trigger_labels
+        .map(|labels| {
+            labels
+                .into_iter()
+                .map(|raw| {
+                    raw.parse()
+                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored notification trigger '{raw}': {error}")))
+                })
+                .collect()
+        })
+        .transpose()?;
+    let q_raw: Option<String> = row.try_get("q")?;
+    let q = q_raw
+        .map(|raw| {
+            raw.parse()
+                .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription q filter '{raw}': {error}")))
+        })
+        .transpose()?;
+    let scope_q_raw: Option<String> = row.try_get("scope_q")?;
+    let scope_q = scope_q_raw
+        .map(|raw| ScopeQuery::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription scopeQ '{raw}': {error}"))))
+        .transpose()?;
+    let csf_raw: Option<String> = row.try_get("csf")?;
+    let csf = csf_raw
+        .map(|raw| {
+            raw.parse()
+                .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription csf filter '{raw}': {error}")))
+        })
+        .transpose()?;
+    let notification_json: Value = row.try_get("notification")?;
+    let notification =
+        serde_json::from_value(notification_json).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription notification: {error}")))?;
+    let lang_raw: Option<String> = row.try_get("lang")?;
+    let lang = lang_raw
+        .map(LangTagBuf::new)
+        .transpose()
+        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription lang: {error}")))?;
+    let jsonld_context_raw: Option<String> = row.try_get("jsonld_context")?;
+    let jsonld_context = jsonld_context_raw
+        .map(|raw| Url::parse(&raw).map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription jsonldContext '{raw}': {error}"))))
+        .transpose()?;
+    let status_label: String = row.try_get("status")?;
     Ok(SubscriptionRow {
-        id: row.get("id"),
-        subscription_name: row.get("subscription_name"),
-        description: row.get("description"),
-        entities_json: row.get("entities"),
-        watched_attributes: row.get("watched_attributes"),
-        notification_trigger_strs: row.get("notification_trigger"),
-        time_interval: row.get("time_interval"),
-        q: row.get("q"),
-        geo_q: row.get("geo_q"),
-        scope_q: row.get("scope_q"),
-        csf: row.get("csf"),
+        id,
+        subscription_name: row.try_get("subscription_name")?,
+        description: row.try_get("description")?,
+        entities,
+        watched_attributes,
+        notification_trigger,
+        time_interval: row.try_get("time_interval")?,
+        q,
+        geo_q: row.try_get("geo_q")?,
+        scope_q,
+        csf,
         dataset_id,
-        is_active: row.get("is_active"),
-        notification_json: row.get("notification"),
-        expires_at: row.get("expires_at"),
-        throttling: row.get("throttling"),
+        is_active: row.try_get("is_active")?,
+        notification,
+        expires_at: row.try_get("expires_at")?,
+        throttling: row.try_get("throttling")?,
         status: status_label
             .parse()
             .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription status '{status_label}': {e}")))?,
-        temporal_q: row.get("temporal_q"),
-        lang: row.get("lang"),
-        jsonld_context: row.get("jsonld_context"),
-        local_only,
-        times_sent: row.get("times_sent"),
-        last_notification: row.get("last_notification"),
-        last_success: row.get("last_success"),
-        last_failure: row.get("last_failure"),
-        created_at: row.get("created_at"),
-        modified_at: row.get("modified_at"),
+        temporal_q: row.try_get("temporal_q")?,
+        lang,
+        jsonld_context,
+        local_only: row.try_get("local_only")?,
+        times_sent: row.try_get("times_sent")?,
+        last_notification: row.try_get("last_notification")?,
+        last_success: row.try_get("last_success")?,
+        last_failure: row.try_get("last_failure")?,
+        created_at: row.try_get("created_at")?,
+        modified_at: row.try_get("modified_at")?,
     })
 }
 
@@ -107,15 +170,7 @@ pub fn rows_to_subscriptions(rows: &[sqlx::postgres::PgRow], dataset_id_presence
 /// Parses JSON columns into typed domain values and derives the notification
 /// delivery status from the `last_success`/`last_failure` timestamps.
 pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStoreError> {
-    let notification_trigger: Option<Vec<NotificationTrigger>> = row.notification_trigger_strs.map(|v| v.into_iter().filter_map(|s| s.parse().ok()).collect());
-
-    let entities = row
-        .entities_json
-        .map(|v| serde_json::from_value(v).map_err(|e| ContextStoreError::Internal(format!("Failed to parse entities: {e}"))))
-        .transpose()?;
-
-    let mut notification: NotificationParams =
-        serde_json::from_value(row.notification_json).map_err(|e| ContextStoreError::Internal(format!("Failed to parse notification: {e}")))?;
+    let mut notification: NotificationParams = row.notification;
 
     notification.times_sent = Some(row.times_sent);
     notification.last_notification = row.last_notification;
@@ -123,69 +178,24 @@ pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, Context
     notification.last_failure = row.last_failure;
     notification.status = notification_status_from_timestamps(row.last_success, row.last_failure);
 
-    let id: Uri = row
-        .id
-        .parse()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription id '{}': {e}", row.id)))?;
-    let watched_attributes = row
-        .watched_attributes
-        .map(|names| names.iter().map(|raw| raw.parse()).collect::<Result<Vec<_>, _>>())
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid watched attribute name: {e}")))?;
-    let dataset_id = row
-        .dataset_id
-        .map(|ids| ids.iter().map(|raw| raw.parse()).collect::<Result<Vec<_>, _>>())
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription datasetId: {e}")))?;
-    let lang = row
-        .lang
-        .map(LangTagBuf::new)
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription lang: {e}")))?;
-    let jsonld_context = row
-        .jsonld_context
-        .as_deref()
-        .map(Url::parse)
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid subscription jsonldContext: {e}")))?;
-
-    let q = row
-        .q
-        .as_deref()
-        .map(str::parse)
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid stored subscription q filter: {e}")))?;
-    let scope_q = row
-        .scope_q
-        .as_deref()
-        .map(ScopeQuery::parse)
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid stored subscription scopeQ: {e}")))?;
-    let csf = row
-        .csf
-        .as_deref()
-        .map(str::parse)
-        .transpose()
-        .map_err(|e| ContextStoreError::Internal(format!("Invalid stored subscription csf filter: {e}")))?;
-
     Ok(Subscription::builder()
-        .id(id)
+        .id(row.id)
         .subscription_name(row.subscription_name)
         .description(row.description)
         .selection(
             SubscriptionSelection::builder()
-                .entities(entities)
-                .watched_attributes(watched_attributes)
-                .notification_trigger(notification_trigger)
+                .entities(row.entities)
+                .watched_attributes(row.watched_attributes)
+                .notification_trigger(row.notification_trigger)
                 .build(),
         )
         .filters(
             SubscriptionFilters::builder()
-                .q(q)
+                .q(row.q)
                 .geo_q(row.geo_q)
-                .scope_q(scope_q)
-                .csf(csf)
-                .dataset_id(dataset_id)
+                .scope_q(row.scope_q)
+                .csf(row.csf)
+                .dataset_id(row.dataset_id)
                 .temporal_q(row.temporal_q)
                 .build(),
         )
@@ -194,8 +204,8 @@ pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, Context
             SubscriptionDelivery::builder()
                 .time_interval(row.time_interval)
                 .throttling(row.throttling)
-                .lang(lang)
-                .jsonld_context(jsonld_context)
+                .lang(row.lang)
+                .jsonld_context(row.jsonld_context)
                 .local_only(if row.local_only { Some(true) } else { None })
                 .build(),
         )

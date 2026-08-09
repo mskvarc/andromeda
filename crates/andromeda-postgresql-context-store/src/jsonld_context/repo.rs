@@ -3,6 +3,7 @@
 use crate::{
     error::ContextStoreError,
     jsonld_context::{
+        mapper::{row_to_identifier, row_to_metadata},
         params::{DetailLevel, ListContextsParams},
         rows::{ContextMetadataRow, ContextSummaryRow},
     },
@@ -11,32 +12,32 @@ use andromeda_jsonld::{
     context_cache::{ContextCache, ContextCacheError},
     hit_counter::HitDelta,
 };
-use andromeda_ngsi_ld_lexicon::uri::NGSI_LD_URN_NID;
-use andromeda_ngsi_ld_model::jsonld_context::ContextKind;
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use async_trait::async_trait;
 use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{postgres::PgPool, types::Json};
+use url::Url;
 use urn_rs::{Urn, UrnBuilder};
 use uuid::Uuid;
 
 /// Summary-projection list output: either detailed rows or summary rows.
 ///
-/// The repository returns this raw; the service layer assembles the public
-/// [`andromeda_ngsi_ld_model::jsonld_context::ContextListResult`].
+/// Every database value is validated before this result leaves persistence.
 #[derive(Debug)]
 pub enum ListedContexts {
     /// Full metadata projection.
-    Detailed(Vec<ContextMetadataRow>),
+    Detailed(Vec<ContextMetadata>),
     /// Identifier-only projection.
-    Summary(Vec<ContextSummaryRow>),
+    Summary(Vec<Uri>),
 }
 
 /// Single-row fetch output: either detailed row or raw payload.
 #[derive(Debug)]
 pub enum FetchedContext {
     /// Full metadata row.
-    Detailed(Box<ContextMetadataRow>),
+    Detailed(Box<ContextMetadata>),
     /// Raw `@context` payload JSON.
     Payload(Value),
 }
@@ -55,35 +56,39 @@ impl JsonLdContextRepository {
     }
 
     /// Stores a user-provided hosted JSON-LD context and returns its URN.
-    pub async fn create_hosted(&self, payload: Value, base_url: Option<&str>) -> Result<Urn, ContextStoreError> {
-        self.insert_with_kind(payload, base_url, "Hosted").await
+    pub async fn create_hosted(&self, payload: Value, base_url: Option<&Url>) -> Result<Urn, ContextStoreError> {
+        self.insert_with_kind(payload, base_url, ContextKind::Hosted).await
     }
 
     /// Stores an implicitly created JSON-LD context and returns its URN.
-    pub async fn create_implicitly(&self, payload: Value, base_url: Option<&str>) -> Result<Urn, ContextStoreError> {
-        self.insert_with_kind(payload, base_url, "ImplicitlyCreated").await
+    pub async fn create_implicitly(&self, payload: Value, base_url: Option<&Url>) -> Result<Urn, ContextStoreError> {
+        self.insert_with_kind(payload, base_url, ContextKind::ImplicitlyCreated).await
     }
 
     /// Insert a context with the given kind label.
-    async fn insert_with_kind(&self, payload: Value, base_url: Option<&str>, kind: &str) -> Result<Urn, ContextStoreError> {
+    async fn insert_with_kind(&self, payload: Value, base_url: Option<&Url>, kind: ContextKind) -> Result<Urn, ContextStoreError> {
         let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4()))
             .build()
             .map_err(|e| ContextStoreError::Internal(format!("failed to build URN: {e}")))?;
-        let serving_url = base_url.map(|b| format!("{}/ngsi-ld/v1/jsonldContexts/{}", b.trim_end_matches('/'), local_id));
+        let serving_url = base_url.map(|base| {
+            let mut serving = base.clone(); // clone: the request origin remains reusable.
+            serving.set_path(&format!("/ngsi-ld/v1/jsonldContexts/{local_id}"));
+            serving
+        });
 
         let sql = match kind {
-            "Hosted" => {
+            ContextKind::Hosted => {
                 "INSERT INTO jsonld_contexts (id, url, kind, payload, created_at, last_usage, number_of_hits) VALUES ($1, $2, 'Hosted', $3, NOW(), NOW(), 0)"
             }
-            "ImplicitlyCreated" => {
+            ContextKind::ImplicitlyCreated => {
                 "INSERT INTO jsonld_contexts (id, url, kind, payload, created_at, last_usage, number_of_hits) VALUES ($1, $2, 'ImplicitlyCreated', $3, NOW(), NOW(), 0)"
             }
-            other => return Err(ContextStoreError::Internal(format!("invalid insert kind: {other}"))),
+            ContextKind::Cached => return Err(ContextStoreError::Internal("cached contexts use the cache insertion path".to_string())),
         };
 
         sqlx::query(sql)
             .bind(local_id.to_string())
-            .bind(&serving_url)
+            .bind(serving_url.as_ref().map(Url::as_str))
             .bind(payload)
             .execute(&self.pool)
             .await?;
@@ -92,7 +97,7 @@ impl JsonLdContextRepository {
     }
 
     /// Inserts a cached context or increments its hit count if already present.
-    pub async fn ensure_cached(&self, url: &str, payload: Value) -> Result<Urn, ContextStoreError> {
+    pub async fn ensure_cached(&self, url: &Url, payload: Value) -> Result<Urn, ContextStoreError> {
         let local_id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("Context:{}", Uuid::new_v4()))
             .build()
             .map_err(|e| ContextStoreError::Internal(format!("failed to build URN: {e}")))?;
@@ -101,7 +106,7 @@ impl JsonLdContextRepository {
             "INSERT INTO jsonld_contexts (id, url, kind, payload, created_at, last_usage, number_of_hits) VALUES ($1, $2, 'Cached', $3, NOW(), NOW(), 0) ON CONFLICT (url) DO UPDATE SET last_usage = NOW(), number_of_hits = jsonld_contexts.number_of_hits + 1 RETURNING id",
         )
         .bind(local_id.to_string())
-        .bind(url)
+        .bind(url.as_str())
         .bind(payload)
         .fetch_one(&self.pool)
         .await?;
@@ -142,7 +147,7 @@ impl JsonLdContextRepository {
                 .fetch_all(&self.pool)
                 .await?;
 
-                Ok(ListedContexts::Detailed(rows))
+                Ok(ListedContexts::Detailed(rows.into_iter().map(row_to_metadata).collect::<Result<Vec<_>, _>>()?))
             }
             DetailLevel::Summary => {
                 let rows: Vec<ContextSummaryRow> = sqlx::query_as(
@@ -161,13 +166,13 @@ impl JsonLdContextRepository {
                 .fetch_all(&self.pool)
                 .await?;
 
-                Ok(ListedContexts::Summary(rows))
+                Ok(ListedContexts::Summary(rows.into_iter().map(row_to_identifier).collect::<Result<Vec<_>, _>>()?))
             }
         }
     }
 
     /// Fetches a JSON-LD context by ID or URL.
-    pub async fn get(&self, identifier: &str, detail_level: DetailLevel) -> Result<Option<FetchedContext>, ContextStoreError> {
+    pub async fn get(&self, identifier: &Uri, detail_level: DetailLevel) -> Result<Option<FetchedContext>, ContextStoreError> {
         match detail_level {
             DetailLevel::Full => {
                 let row_opt: Option<ContextMetadataRow> = sqlx::query_as(
@@ -185,15 +190,18 @@ impl JsonLdContextRepository {
                     WHERE id = $1 OR url = $1
                     "#,
                 )
-                .bind(identifier)
+                .bind(identifier.as_str())
                 .fetch_optional(&self.pool)
                 .await?;
 
-                Ok(row_opt.map(|r| FetchedContext::Detailed(Box::new(r))))
+                Ok(row_opt
+                    .map(row_to_metadata)
+                    .transpose()?
+                    .map(|metadata| FetchedContext::Detailed(Box::new(metadata))))
             }
             DetailLevel::Summary => {
                 let row_opt: Option<(Json<Value>,)> = sqlx::query_as("SELECT payload FROM jsonld_contexts WHERE id = $1 OR url = $1")
-                    .bind(identifier)
+                    .bind(identifier.as_str())
                     .fetch_optional(&self.pool)
                     .await?;
 
@@ -203,18 +211,18 @@ impl JsonLdContextRepository {
     }
 
     /// Record an access hit.
-    pub async fn record_access(&self, identifier: &str) -> Result<u64, ContextStoreError> {
+    pub async fn record_access(&self, identifier: &Uri) -> Result<u64, ContextStoreError> {
         let result = sqlx::query("UPDATE jsonld_contexts SET last_usage = NOW(), number_of_hits = number_of_hits + 1 WHERE id = $1 OR url = $1")
-            .bind(identifier)
+            .bind(identifier.as_str())
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
     }
 
     /// Deletes a JSON-LD context by ID or URL. Returns rows affected.
-    pub async fn delete(&self, identifier: &str) -> Result<u64, ContextStoreError> {
+    pub async fn delete(&self, identifier: &Uri) -> Result<u64, ContextStoreError> {
         let result = sqlx::query("DELETE FROM jsonld_contexts WHERE id = $1 OR url = $1")
-            .bind(identifier)
+            .bind(identifier.as_str())
             .execute(&self.pool)
             .await?;
 
@@ -222,7 +230,7 @@ impl JsonLdContextRepository {
     }
 
     /// Looks up internal id, kind, and optional URL for a context.
-    pub async fn get_kind_and_url(&self, identifier: &str) -> Result<Option<(String, ContextKind, Option<IriBuf>)>, ContextStoreError> {
+    pub async fn get_kind_and_url(&self, identifier: &Uri) -> Result<Option<(Uri, ContextKind, Option<IriBuf>)>, ContextStoreError> {
         let row_opt: Option<(String, String, Option<String>)> = sqlx::query_as(
             r#"
                 SELECT id, kind::text AS kind, url
@@ -230,7 +238,7 @@ impl JsonLdContextRepository {
                 WHERE id = $1 OR url = $1
                 "#,
         )
-        .bind(identifier)
+        .bind(identifier.as_str())
         .fetch_optional(&self.pool)
         .await?;
 
@@ -242,13 +250,18 @@ impl JsonLdContextRepository {
                 let url = url
                     .map(|raw| IriBuf::new(raw).map_err(|error| ContextStoreError::Internal(format!("stored context URL is invalid: {}", error.0))))
                     .transpose()?;
-                Ok((id, kind, url))
+                Ok((
+                    id.parse()
+                        .map_err(|error| ContextStoreError::Internal(format!("stored context ID is invalid: {error}")))?,
+                    kind,
+                    url,
+                ))
             })
             .transpose()
     }
 
     /// Replaces the JSON-LD payload for a context identified by its internal ID.
-    pub async fn replace_payload(&self, identifier: &str, payload: Value) -> Result<u64, ContextStoreError> {
+    pub async fn replace_payload(&self, identifier: &Uri, payload: Value) -> Result<u64, ContextStoreError> {
         let result = sqlx::query(
             r#"
                 UPDATE jsonld_contexts
@@ -256,7 +269,7 @@ impl JsonLdContextRepository {
                 WHERE id = $1
                 "#,
         )
-        .bind(identifier)
+        .bind(identifier.as_str())
         .bind(payload)
         .execute(&self.pool)
         .await?;

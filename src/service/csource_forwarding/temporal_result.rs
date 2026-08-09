@@ -1,19 +1,22 @@
 //! Merging context-source temporal entity responses.
 
 use crate::service::csource_forwarding::outcome::ForwardedTemporalEntities;
+use andromeda_ngsi_ld_lexicon::{instance_id::InstanceId, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use indexmap::IndexMap;
 use serde_json::Value;
+use std::collections::HashSet;
 
 pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedTemporalEntities>) -> Vec<Value> {
     if remote_results.is_empty() {
         return local_entities;
     }
 
-    let mut entity_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+    let mut entity_map: IndexMap<Uri, Value> = IndexMap::new();
 
     for entity in local_entities {
-        if let Some(id) = entity.get("id").and_then(|v| v.as_str()) {
-            entity_map.insert(id.to_string(), entity);
+        if let Some(id) = entity.get("id").and_then(|v| v.as_str()).and_then(|id| id.parse().ok()) {
+            entity_map.insert(id, entity);
         }
     }
 
@@ -21,8 +24,8 @@ pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: 
         match forwarded.mode {
             ForwardingMode::Auxiliary => {
                 for remote_entity in forwarded.entities {
-                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str())
-                        && let Some(local_entity) = entity_map.get_mut(remote_id)
+                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()).and_then(|id| id.parse::<Uri>().ok())
+                        && let Some(local_entity) = entity_map.get_mut(&remote_id)
                     {
                         merge_temporal_entity_attributes(local_entity, &remote_entity);
                     }
@@ -30,11 +33,11 @@ pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: 
             }
             ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
                 for remote_entity in forwarded.entities {
-                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()) {
-                        if let Some(local_entity) = entity_map.get_mut(remote_id) {
+                    if let Some(remote_id) = remote_entity.get("id").and_then(|v| v.as_str()).and_then(|id| id.parse::<Uri>().ok()) {
+                        if let Some(local_entity) = entity_map.get_mut(&remote_id) {
                             merge_temporal_entity_attributes(local_entity, &remote_entity);
                         } else {
-                            entity_map.insert(remote_id.to_string(), remote_entity);
+                            entity_map.insert(remote_id, remote_entity);
                         }
                     }
                 }
@@ -94,13 +97,17 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
     };
 
     // Collect existing instanceIds for deduplication
-    let existing_ids: std::collections::HashSet<String> = local_arr
+    let existing_ids: HashSet<InstanceId> = local_arr
         .iter()
-        .filter_map(|v| v.get("instanceId").and_then(|id| id.as_str()).map(String::from))
+        .filter_map(|v| v.get("instanceId").and_then(|id| id.as_str()).and_then(|id| id.parse().ok()))
         .collect();
 
     for item in remote_items {
-        let dominated = item.get("instanceId").and_then(|id| id.as_str()).is_some_and(|id| existing_ids.contains(id));
+        let dominated = item
+            .get("instanceId")
+            .and_then(|id| id.as_str())
+            .and_then(|id| id.parse::<InstanceId>().ok())
+            .is_some_and(|id| existing_ids.contains(&id));
         if !dominated {
             local_arr.push(item.clone()); // clone: adding remote temporal instance to merged array
         }

@@ -26,6 +26,7 @@
 //! how a broker built on an off-the-shelf JSON-LD processor meets clause 5.5.7.
 
 use crate::core_context::is_ngsi_ld_core_context_url;
+use iri_rs::{Iri, IriBuf};
 use serde_json::Value;
 
 /// A loaded context document with any embedded Core @context reference removed,
@@ -34,8 +35,8 @@ use serde_json::Value;
 ///
 /// The Core @context document itself is returned untouched — that one *is* the
 /// definition, not a redundant import of it.
-pub(crate) fn without_embedded_core_context(url: &str, value: jsonld_syntax::Value) -> jsonld_syntax::Value {
-    if is_ngsi_ld_core_context_url(url) {
+pub(crate) fn without_embedded_core_context(url: &IriBuf, value: jsonld_syntax::Value) -> jsonld_syntax::Value {
+    if is_ngsi_ld_core_context_url(url.as_ref()) {
         return value;
     }
 
@@ -70,11 +71,11 @@ fn remove_embedded_core_references(value: &mut Value) {
 /// with none: the broker supplies the one authoritative copy, last.
 fn strip_core_references_from_context_slot(context: &mut Value) {
     match context {
-        Value::String(url) if is_ngsi_ld_core_context_url(url) => {
+        Value::String(url) if is_core_context_json_string(url) => {
             *context = Value::Array(Vec::new());
         }
         Value::Array(items) => {
-            items.retain(|item| !item.as_str().is_some_and(is_ngsi_ld_core_context_url));
+            items.retain(|item| !item.as_str().is_some_and(is_core_context_json_string));
             for item in items {
                 remove_embedded_core_references(item);
             }
@@ -86,9 +87,15 @@ fn strip_core_references_from_context_slot(context: &mut Value) {
     }
 }
 
+/// Whether a JSON string contains a validated NGSI-LD Core Context IRI.
+fn is_core_context_json_string(value: &str) -> bool {
+    Iri::parse(value).is_ok_and(is_ngsi_ld_core_context_url)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::core_context_precedence::without_embedded_core_context;
+    use iri_rs::{IriBuf, iri};
     use serde_json::json;
 
     #[test]
@@ -103,7 +110,7 @@ mod tests {
             ]
         }));
 
-        let normalized = without_embedded_core_context("https://example.com/compound.jsonld", input);
+        let normalized = without_embedded_core_context(&IriBuf::from(iri!("https://example.com/compound.jsonld")), input);
 
         pretty_assertions::assert_eq!(
             jsonld_syntax::Value::into_serde_json(normalized),
@@ -123,7 +130,7 @@ mod tests {
             ]
         }));
 
-        let normalized = without_embedded_core_context("https://example.com/twice.jsonld", input);
+        let normalized = without_embedded_core_context(&IriBuf::from(iri!("https://example.com/twice.jsonld")), input);
 
         pretty_assertions::assert_eq!(
             jsonld_syntax::Value::into_serde_json(normalized),
@@ -133,16 +140,16 @@ mod tests {
 
     #[test]
     fn the_core_context_document_itself_is_left_alone() {
-        let core_url = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld";
+        let core_url = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"));
         let payload = json!({
             "@context": [
-                core_url,
+                core_url.as_str(),
                 { "location": "https://example.com/location" }
             ]
         });
         let input = jsonld_syntax::Value::from_serde_json(payload.clone()); // clone: the expectation compares against the input
 
-        let normalized = without_embedded_core_context(core_url, input);
+        let normalized = without_embedded_core_context(&core_url, input);
 
         pretty_assertions::assert_eq!(jsonld_syntax::Value::into_serde_json(normalized), payload);
     }

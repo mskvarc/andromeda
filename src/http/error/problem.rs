@@ -99,7 +99,7 @@ impl IntoResponse for NgsiLdError {
         let status = self.status;
 
         let problem = ProblemDetails::new()
-            .with_type(Uri::from_static(self.error_type.type_uri()))
+            .with_type(Uri::from_static(self.error_type.type_iri().into_inner()))
             .with_title(self.error_type.title())
             .with_status(status)
             .with_detail(self.detail)

@@ -9,7 +9,7 @@
 
 use crate::{entity::serialize_value, error::RenderError};
 use andromeda_ngsi_ld_http_headers::language::{LanguageFilter, LanguageRange};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339, uri::Uri};
 use andromeda_ngsi_ld_model::attribute::{
     instance::{Attribute, AttributeValue},
     language_property::{LanguageMapKey, LanguageMapValue, LanguageProperty},
@@ -178,11 +178,11 @@ enum AvailableLanguageRange {
 struct NegotiatedProperty<'a> {
     #[serde(rename = "type")]
     /// Always `Property`: negotiation replaces the language map with one value.
-    type_: &'static str,
+    type_: AttributeType,
     /// The text selected out of the language map.
     value: &'a LanguageMapValue,
     /// The tag it was keyed by, or `@none`.
-    lang: String,
+    lang: LanguageMapKey,
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     /// The observation instant, when the attribute carried one.
     observed_at: Option<DateTime<Utc>>,
@@ -198,11 +198,11 @@ impl<'a> NegotiatedProperty<'a> {
     /// Build the answer from a language property and the entry chosen from it.
     fn from_language_property(language_property: &'a LanguageProperty, selected: &AvailableLanguage<'a>) -> NegotiatedProperty<'a> {
         NegotiatedProperty {
-            type_: "Property",
+            type_: AttributeType::Property,
             value: selected.value,
             lang: match &selected.range {
-                AvailableLanguageRange::Default => "@none".to_string(),
-                AvailableLanguageRange::Tag(tag) => tag.to_string(),
+                AvailableLanguageRange::Default => LanguageMapKey::None,
+                AvailableLanguageRange::Tag(tag) => LanguageMapKey::Tag(tag.clone()),
             },
             observed_at: language_property.common.observed_at,
             dataset_id: &language_property.common.dataset_id,

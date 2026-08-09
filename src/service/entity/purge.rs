@@ -23,6 +23,7 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -39,14 +40,14 @@ impl EntityService {
     /// `modifiedAt` it assumed and is re-read if a concurrent writer got in.
     ///
     /// Returns the number of entities modified.
-    pub async fn purge_attrs(&self, entity_ids: &[String], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, AndromedaError> {
+    pub async fn purge_attrs(&self, entity_ids: &[Uri], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, AndromedaError> {
         let prepared_context = self.engine.prepare_term_context(context);
-        let attr_iris: Vec<String> = match mode {
+        let attr_iris: Vec<IriBuf> = match mode {
             PurgeMode::DeleteEntities => return Ok(0),
             PurgeMode::Drop(attrs) | PurgeMode::Keep(attrs) => {
                 let mut expanded = Vec::with_capacity(attrs.len());
                 for attr in attrs {
-                    expanded.push(self.engine.expand_term(attr.as_str(), &prepared_context).await?.to_string());
+                    expanded.push(self.engine.expand_term(attr.as_str(), &prepared_context).await?);
                 }
                 expanded
             }
@@ -55,17 +56,10 @@ impl EntityService {
         let mut modified_count = 0u32;
 
         for entity_id in entity_ids {
-            // The store is keyed by `Uri`, so an identifier that is not one names
-            // no entity and is skipped -- the same outcome the read-modify-write
-            // would have reached against an absent row.
-            let Ok(entity_uri) = entity_id.parse::<Uri>() else {
-                tracing::error!(entity_id = %entity_id, event = "entity_uri_parse_failed");
-                continue;
-            };
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
-                .commit_read_modify_write(&entity_uri, |previous| {
-                    let Some((write, removed)) = build_purge_write(entity_uri.as_str(), previous, mode, &attr_iris)? else {
+                .commit_read_modify_write(entity_id, |previous| {
+                    let Some((write, removed)) = build_purge_write(entity_id, previous, mode, &attr_iris)? else {
                         return Ok(None);
                     };
                     purged = Some(removed);
@@ -88,7 +82,7 @@ impl EntityService {
                 removed_names,
             } = purged;
             self.emit_attr_change(
-                entity_uri,
+                entity_id.clone(), // clone: the notification side effect owns its entity identifier.
                 extract_types(&merged),
                 NotificationTrigger::AttributeDeleted,
                 removed_names,
@@ -114,7 +108,7 @@ struct PurgedEntity {
 
 /// The write that purges `previous` of the attributes `mode` selects, together
 /// with what it removed, or `None` when the entity holds none of them.
-fn build_purge_write(entity_id: &str, previous: &Value, mode: &PurgeMode, attr_iris: &[String]) -> Result<Option<(AtomicWrite, PurgedEntity)>, AndromedaError> {
+fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_iris: &[IriBuf]) -> Result<Option<(AtomicWrite, PurgedEntity)>, AndromedaError> {
     let mut purged = previous.clone(); // clone: the "before" side stays intact for the removal diff
     let obj = match &mut purged {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
@@ -127,14 +121,16 @@ fn build_purge_write(entity_id: &str, previous: &Value, mode: &PurgeMode, attr_i
     };
 
     let keys_to_remove: Vec<String> = match mode {
-        PurgeMode::Drop(_) => {
-            attr_iris.iter().filter(|iri| obj.contains_key(iri.as_str())).cloned().collect() // clone: owned keys for removal
-        }
+        PurgeMode::Drop(_) => attr_iris
+            .iter()
+            .filter(|iri| obj.contains_key(iri.as_str()))
+            .map(|iri| iri.as_str().to_owned())
+            .collect(),
         PurgeMode::Keep(_) => obj
             .keys()
             .filter(|k| {
                 // Preserve JSON-LD structural keys and NGSI-LD system attrs
-                !k.starts_with('@') && !attr_iris.iter().any(|iri| k.as_str() == iri)
+                !k.starts_with('@') && !attr_iris.iter().any(|iri| k.as_str() == iri.as_str())
             })
             .cloned() // clone: owned keys for removal
             .collect(),
@@ -162,7 +158,7 @@ fn build_purge_write(entity_id: &str, previous: &Value, mode: &PurgeMode, attr_i
 
     let merged = Arc::new(purged);
     let write = AtomicWrite::builder()
-        .entity_id(Arc::from(entity_id))
+        .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
         .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged)))) // clone: Arc ref-count bump; the payload is also the notification's
         .history(history)
         .build();

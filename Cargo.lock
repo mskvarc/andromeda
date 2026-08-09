@@ -243,6 +243,10 @@ dependencies = [
 [[package]]
 name = "andromeda-layer-guard"
 version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "andromeda-ngsi-ld-geometry"
@@ -267,6 +271,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
  "derive_more",
  "headers",
  "http",
@@ -341,6 +346,7 @@ name = "andromeda-ngsi-ld-problem-details"
 version = "0.1.0"
 dependencies = [
  "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
  "http",
  "iri-rs",
  "pretty_assertions",
@@ -629,6 +635,7 @@ dependencies = [
  "andromeda-layer-guard",
  "axum",
  "dashmap",
+ "iri-rs",
  "pretty_assertions",
  "reqwest",
  "rumqttc",

@@ -5,7 +5,7 @@ use serde_json::Value;
 
 /// Full metadata row (detailed projection).
 #[derive(Debug, sqlx::FromRow)]
-pub struct ContextMetadataRow {
+pub(crate) struct ContextMetadataRow {
     /// Internal identifier (URN/URL text).
     pub local_id: String,
     /// Public URL, if any.
@@ -28,7 +28,7 @@ pub struct ContextMetadataRow {
 
 /// Summary row (id + url only).
 #[derive(Debug, sqlx::FromRow)]
-pub struct ContextSummaryRow {
+pub(crate) struct ContextSummaryRow {
     /// Internal identifier.
     pub id: String,
     /// Public URL, if any.

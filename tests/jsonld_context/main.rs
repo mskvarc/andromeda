@@ -15,7 +15,11 @@ mod delete;
 mod list;
 mod serve;
 
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
+    db::TRUNCATE_ALL,
+    error,
+};
 use axum::response::IntoResponse;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
@@ -28,10 +32,10 @@ use std::{
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
-const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
-const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
-const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = error::LD_CONTEXT_NOT_AVAILABLE;
+const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
+const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
+const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
+const LD_CONTEXT_NOT_AVAILABLE_TYPE: &iri_rs::Iri<&str> = error::LD_CONTEXT_NOT_AVAILABLE;
 
 fn client() -> Client {
     Client::new()

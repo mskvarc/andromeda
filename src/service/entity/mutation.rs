@@ -5,7 +5,7 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,
@@ -22,13 +22,12 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{entity_member::extract_types, mutation::entity::merge_entity},
-    notification::NotificationTrigger,
+    notification::{ChangeOrigin, NotificationTrigger},
 };
 use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
 use chrono::Utc;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
-use urn_rs::Urn;
 
 /// What one clause 5.6.2 merge produced, beyond the write itself.
 ///
@@ -51,9 +50,9 @@ struct MergedEntity {
 }
 
 impl EntityService {
-    /// Create a new NGSI-LD entity, returning its URN on success (clause 5.6.1).
-    pub async fn create(&self, entity: &Entity, context: &ContextSpec) -> Result<Urn, AndromedaError> {
-        let id = entity.id.to_string();
+    /// Create a new NGSI-LD entity, returning its URI on success (clause 5.6.1).
+    pub async fn create(&self, entity: &Entity, context: &ContextSpec) -> Result<Uri, AndromedaError> {
+        let id = &entity.id;
 
         let mut entity_json = serde_json::to_value(entity).map_err(|err| AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))?;
         normalize_entity_attributes(&mut entity_json);
@@ -66,7 +65,7 @@ impl EntityService {
         let outbox = self.build_outbox_entries(&entity.id, &types, NotificationTrigger::EntityCreated, &changed_attrs, Some(&payload), None);
 
         let write = AtomicWrite::builder()
-            .entity_id(Arc::from(id.as_str()))
+            .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
             .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump; the payload is also the change event's
             .history(vec![HistoryRecord::Observations(Arc::clone(&payload))]) // clone: Arc ref-count bump
             .outbox(outbox)
@@ -77,7 +76,7 @@ impl EntityService {
         // precondition failure rather than a duplicate-key error, which is what
         // lets the same statement serve a partially-succeeding batch.
         if single(self.writes.commit(vec![write]).await?)?.is_already_exists() {
-            return Err(AndromedaError::entity_already_exists(&id));
+            return Err(AndromedaError::entity_already_exists(id.as_str()));
         }
 
         self.emit_change(
@@ -92,7 +91,7 @@ impl EntityService {
                 .build(),
         );
 
-        Ok(id.parse::<Urn>()?)
+        Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
     }
 
     /// Merge a partial update into an existing entity (NGSI-LD 5.6.2).
@@ -100,9 +99,8 @@ impl EntityService {
     /// The merge is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
-    pub async fn merge(&self, id: &Urn, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+    pub async fn merge(&self, id: &Uri, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
+        let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
         normalize_merge_fragment(&mut patch_json);
@@ -151,11 +149,11 @@ impl EntityService {
 
                 let mut history = vec![HistoryRecord::Observations(Arc::clone(&patch_expanded))]; // clone: Arc ref-count bump
                 for deleted_attr in &deleted_attrs {
-                    history.push(tombstone(deleted_attr.as_str(), None)?);
+                    history.push(tombstone(deleted_attr, None));
                 }
 
                 let write = AtomicWrite::builder()
-                    .entity_id(Arc::from(id.as_str()))
+                    .entity_id(Arc::new(entity_uri.clone())) // clone: the computed write owns its validated identifier.
                     .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged)))) // clone: Arc ref-count bump
                     .history(history)
                     .outbox(outbox)
@@ -204,14 +202,14 @@ impl EntityService {
     /// the entity actually had when the write landed. The write therefore
     /// states the `modifiedAt` its diff assumed; a writer that got in first
     /// makes the store refuse it, and the entity is read again.
-    pub async fn replace_entity(&self, id: &Urn, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+    pub async fn replace_entity(&self, id: &Uri, patch: &EntityPatch, context: &ContextSpec) -> Result<(), AndromedaError> {
+        let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
+        let id = id.as_str();
 
         // Read before expanding so a request against a missing entity reports
         // 404 rather than a payload-validation error.
         if self.repo.get_snapshot(&entity_uri).await?.is_none() {
-            return Err(AndromedaError::entity_not_found(&id));
+            return Err(AndromedaError::entity_not_found(id));
         }
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| AndromedaError::entity_validation(format!("Invalid patch payload: {}", err)))?;
@@ -221,7 +219,7 @@ impl EntityService {
 
         let payload = Arc::new(expanded);
         let changed_attrs = extract_attribute_keys(&payload);
-        let entity_id: Arc<str> = Arc::from(id.as_str());
+        let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.
 
         // The types the notification carries are the stored ones, read off the
         // payload the replacement actually superseded rather than off an earlier
@@ -255,12 +253,12 @@ impl EntityService {
         Ok(())
     }
 
-    /// Delete an entity by its URN (NGSI-LD 5.6.6).
-    pub async fn delete(&self, id: &Urn) -> Result<(), AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+    /// Delete an entity by its URI (NGSI-LD 5.6.6).
+    pub async fn delete(&self, id: &Uri) -> Result<(), AndromedaError> {
+        let entity_uri = id.clone(); // clone: delete events and persistence work own the identifier
+        let id = id.as_str();
 
-        let entity_snapshot = self.repo.get(&entity_uri).await?.ok_or_else(|| AndromedaError::entity_not_found(&id))?;
+        let entity_snapshot = self.repo.get(&entity_uri).await?.ok_or_else(|| AndromedaError::entity_not_found(id))?;
         let entity_types = extract_types(&entity_snapshot);
 
         // Captured before the delete so the notification can carry them: once
@@ -296,7 +294,7 @@ impl EntityService {
         ));
 
         let write = AtomicWrite::builder()
-            .entity_id(Arc::from(id.as_str()))
+            .entity_id(Arc::new(entity_uri.clone())) // clone: the delete write owns its validated identifier.
             .entity(EntityMutation::Delete)
             .outbox(outbox)
             .precondition(Precondition::MustExist)

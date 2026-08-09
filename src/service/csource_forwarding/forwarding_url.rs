@@ -2,9 +2,10 @@
 
 use crate::error::AndromedaError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use url::{Url, form_urlencoded};
 
-pub(crate) fn build_forwarding_query_string(entity_type: Option<&str>, entity_ids: Option<&[Uri]>) -> String {
+pub(crate) fn build_forwarding_query_string(entity_type: Option<&TypeExprRaw>, entity_ids: Option<&[Uri]>) -> String {
     let mut serializer = form_urlencoded::Serializer::new(String::new());
     if let Some(ids) = entity_ids
         && !ids.is_empty()
@@ -13,7 +14,7 @@ pub(crate) fn build_forwarding_query_string(entity_type: Option<&str>, entity_id
         serializer.append_pair("id", &ids);
     }
     if let Some(t) = entity_type {
-        serializer.append_pair("type", t);
+        serializer.append_pair("type", &t.to_string());
     }
     serializer.finish()
 }
@@ -46,8 +47,8 @@ pub(crate) fn build_query_url(endpoint: &Url, query_string: &str) -> Result<Url,
 }
 
 /// Build a forwarding URL for entity retrieval by ID.
-pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &str, query_string: &str) -> Result<Url, AndromedaError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "entities", entity_id], query_string)
+pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: &str) -> Result<Url, AndromedaError> {
+    forwarding_url(endpoint, &["ngsi-ld", "v1", "entities", entity_id.as_str()], query_string)
 }
 
 /// Build a forwarding URL for discovery queries (types, attributes).
@@ -63,6 +64,6 @@ pub(crate) fn build_temporal_query_url(endpoint: &Url, query_string: &str) -> Re
 }
 
 /// Build a forwarding URL for temporal entity retrieval by ID.
-pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &str, query_string: &str) -> Result<Url, AndromedaError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "temporal", "entities", entity_id], query_string)
+pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: &str) -> Result<Url, AndromedaError> {
+    forwarding_url(endpoint, &["ngsi-ld", "v1", "temporal", "entities", entity_id.as_str()], query_string)
 }

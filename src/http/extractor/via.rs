@@ -39,6 +39,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use axum::{extract::FromRequestParts, http::Request};
 
     #[tokio::test]
@@ -59,8 +60,8 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let result = IncomingVia::from_request_parts(&mut parts, &()).await.expect("infallible");
         let via = result.into_inner().expect("should have value");
-        assert!(via.contains_pseudonym("broker-a"));
-        assert!(via.contains_pseudonym("broker-b"));
+        assert!(via.contains_pseudonym(&ContextSourcePseudonym::new("broker-a").expect("valid pseudonym")));
+        assert!(via.contains_pseudonym(&ContextSourcePseudonym::new("broker-b").expect("valid pseudonym")));
     }
 
     #[tokio::test]

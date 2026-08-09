@@ -5,9 +5,7 @@ use crate::{
     geo::{input::GeoQueryInput, query::GeoQuery},
     term_expander::TermExpander,
 };
-
-/// The GeoProperty a geo query addresses when the request names none.
-const DEFAULT_GEOPROPERTY: &str = "location";
+use andromeda_ngsi_ld_vocabulary::compact::properties;
 
 /// Compile geo query parameters into a [`GeoQuery`].
 ///
@@ -20,7 +18,7 @@ pub async fn compile_geo_query(input: Option<&GeoQueryInput>, expander: &impl Te
     let Some(input) = input else {
         return Ok(None);
     };
-    let geoproperty = input.geoproperty.as_ref().map_or(DEFAULT_GEOPROPERTY, AsRef::<str>::as_ref);
+    let geoproperty = input.geoproperty.as_ref().map_or(properties::LOCATION, AsRef::<str>::as_ref);
     Ok(Some(GeoQuery {
         georel: input.georel.clone(),
         geometry: input.geometry.clone(),

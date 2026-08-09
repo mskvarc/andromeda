@@ -12,27 +12,26 @@ use crate::http::handler::entity::{
     LocalOnlyParams,
     NgsiLdError,
     OriginalUri,
-    Path,
     Response,
     ResultInstanceExt,
     StatusCode,
     TenantState,
+    TypedPath,
+    Uri,
     ValidatedQuery,
     build_multi_status_body,
     has_remote_errors,
-    parse_entity_id,
 };
 
 pub async fn delete(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path(id): Path<String>,
+    TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
-    let id = parse_entity_id(&id, &uri)?;
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
@@ -41,13 +40,12 @@ pub async fn delete(
     }
 
     let context: ContextSpec = context.into_inner();
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let entity_id = id.to_string();
+    let context_url = context.link_contexts().first();
 
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
-            entity_id: Some(&entity_id),
+            entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
             method: reqwest::Method::DELETE,
@@ -89,7 +87,7 @@ pub async fn delete(
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
 
-        let body = build_multi_status_body(&entity_id, local_ok, local_error.as_ref(), &forwarded);
+        let body = build_multi_status_body(&id, local_ok, local_error.as_ref(), &forwarded);
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 

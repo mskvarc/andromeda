@@ -4,7 +4,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::{client::NgsiLdClient, config::TEST_SUITE_CONTEXT, error, scope::TestScope};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -182,7 +182,7 @@ async fn entity_order_dist_ordering_without_any_reference_returns_bad_request() 
 
     let (status, body) = query(&client, &format!("type=Building&id={filter}&orderBy=location;dist-asc")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"].as_str().unwrap(), error::BAD_REQUEST_DATA);
+    assert_eq!(body["type"].as_str().unwrap(), error::BAD_REQUEST_DATA.as_str());
     scope.cleanup().await.expect("cleanup failed");
 }
 
@@ -204,7 +204,7 @@ async fn entity_order_geometry_collection_as_order_geometry_returns_bad_request(
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["type"].as_str().unwrap(), error::BAD_REQUEST_DATA);
+    assert_eq!(body["type"].as_str().unwrap(), error::BAD_REQUEST_DATA.as_str());
 }
 
 #[tokio::test]

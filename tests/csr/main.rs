@@ -15,16 +15,19 @@ mod query;
 mod retrieve;
 mod update;
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::{
+    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL},
+    error,
+};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
-const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
-const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
-const COMPOUND_CONTEXT_URL: &str = COMPOUND_CONTEXT;
+const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
+const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
+const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
+const COMPOUND_CONTEXT_URL: &iri_rs::Iri<&str> = COMPOUND_CONTEXT;
 
 fn client() -> Client {
     Client::new()

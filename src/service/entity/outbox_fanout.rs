@@ -6,7 +6,7 @@
 //! is what makes a notification crash-consistent with the change it describes.
 
 use crate::{
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::{
         entity::{EntityService, OutboxWriteConfig},
         outbox::entry::NewOutboxEntry,
@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
 use chrono::Utc;
 use serde_json::Value;
 

@@ -161,10 +161,13 @@ impl SpatialSyncWorker {
         // Remove existing entries before reinserting the latest ones.
         self.index.remove(urn);
 
-        let candidate_iris: Vec<String> = {
-            // clone: the index keys by owned IRI strings and the event is borrowed
-            let mut v: Vec<String> = event.changed_attributes.iter().map(ToString::to_string).collect();
-            let location = expanded_properties::LOCATION.as_str().to_string();
+        let candidate_iris: Vec<IriBuf> = {
+            let mut v: Vec<IriBuf> = event
+                .changed_attributes
+                .iter()
+                .filter_map(|name| IriBuf::new(name.as_str().to_owned()).ok())
+                .collect();
+            let location: IriBuf = expanded_properties::LOCATION.to_owned().into();
             if !v.contains(&location) {
                 v.push(location);
             }
@@ -172,21 +175,18 @@ impl SpatialSyncWorker {
         };
 
         for iri in candidate_iris {
-            let Some(geojson_str) = extract_geoproperty_geojson(obj, &iri) else {
+            let Some(geojson_str) = extract_geoproperty_geojson(obj, iri.as_str()) else {
                 continue;
             };
             let Some(wkb) = parse_geometry(&geojson_str) else {
                 continue;
             };
-            let Ok(geoproperty_iri) = IriBuf::new(iri) else {
-                continue;
-            };
 
             for type_iri in &event.entity_types {
-                let Ok(type_iri) = IriBuf::new(type_iri.clone()) else {
+                let Ok(type_iri) = IriBuf::new(type_iri.as_str().to_owned()) else {
                     continue;
                 };
-                let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
+                let key = SpatialKey::new(self.tenant.clone(), type_iri, iri.clone());
                 self.index.insert(key, urn.clone(), wkb.clone());
             }
         }
@@ -264,9 +264,9 @@ fn parse_geometry(raw: &str) -> Option<Geometry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::change_event::ChangeOrigin;
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_model::notification::ChangeOrigin;
     use andromeda_postgresql_context_store::{
         attribute_current::materializer::AttributeCurrentMaterializer,
         attribute_names::AttributeNameCache,

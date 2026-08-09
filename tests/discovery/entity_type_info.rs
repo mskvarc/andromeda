@@ -41,7 +41,7 @@ async fn retrieve_entity_type_info_unknown_type_returns_404() {
     // "Building" is a compacted name; without a context it cannot be expanded to a known IRI
     let (status, body) = retrieve_entity_type(&c, "Building", None).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
     assert!(body["title"].as_str().is_some_and(|t| !t.is_empty()), "title should be a non-empty string");
 
     delete_entity(&c, &id).await;

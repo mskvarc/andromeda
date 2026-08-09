@@ -3,9 +3,21 @@
 //! [`TemporalValuesRenderer`] transforms a compacted temporal entity into the
 //! `temporalValues` simplified representation.
 
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use indexmap::IndexMap;
 use serde_json::{Value, json};
+use thiserror::Error;
+
+/// A compacted temporal entity contains a malformed typed member.
+#[derive(Debug, Error)]
+pub enum TemporalValuesError {
+    /// A `datasetId` is not a URI as required by clause 4.5.5.
+    #[error("temporal value contains an invalid datasetId URI")]
+    InvalidDatasetId,
+    /// An attribute instance has an unknown NGSI-LD attribute type.
+    #[error("temporal value contains an invalid attribute type")]
+    InvalidAttributeType,
+}
 
 /// Transforms a compacted temporal entity into `temporalValues` form
 /// (NGSI-LD clause 4.5.5).
@@ -26,12 +38,11 @@ impl TemporalValuesRenderer {
 
     /// Collapse each attribute into the clause 4.5.5 `temporalValues` pairs.
     ///
-    /// Collapsing cannot fail, so this answers with the value rather than a
-    /// `Result` no caller could act on.
-    pub fn render(self) -> Value {
+    /// Returns an error when a compacted typed member is malformed.
+    pub fn render(self) -> Result<Value, TemporalValuesError> {
         let obj = match self.payload {
             Value::Object(m) => m,
-            other => return other,
+            other => return Ok(other),
         };
 
         const RESERVED: &[&str] = &["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"];
@@ -61,9 +72,13 @@ impl TemporalValuesRenderer {
                 continue;
             }
 
-            let mut groups: IndexMap<Option<String>, Vec<&Value>> = IndexMap::new();
+            let mut groups: IndexMap<Option<Uri>, Vec<&Value>> = IndexMap::new();
             for inst in instances {
-                let dataset_id = inst.get("datasetId").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let dataset_id = inst
+                    .get("datasetId")
+                    .and_then(Value::as_str)
+                    .map(|raw| raw.parse::<Uri>().map_err(|_error| TemporalValuesError::InvalidDatasetId))
+                    .transpose()?;
                 groups.entry(dataset_id).or_default().push(inst);
             }
 
@@ -71,17 +86,20 @@ impl TemporalValuesRenderer {
 
             for (dataset_id, insts) in &groups {
                 let first = insts[0];
-                let attr_type = first.get("type").and_then(|v| v.as_str()).unwrap_or("Property");
-
-                let parsed_attr_type: Option<AttributeType> = attr_type.parse().ok();
-                let (value_key, extract_key) = parsed_attr_type.map_or(("values", "value"), |t| t.temporal_values_keys());
+                let attr_type = first
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(|raw| raw.parse::<AttributeType>().map_err(|_error| TemporalValuesError::InvalidAttributeType))
+                    .transpose()?
+                    .unwrap_or(AttributeType::Property);
+                let (value_key, extract_key) = attr_type.temporal_values_keys();
 
                 let mut pairs: Vec<Value> = Vec::new();
                 for inst in insts {
                     let val = inst.get(extract_key).cloned().unwrap_or(Value::Null);
                     let val = if matches!(
-                        parsed_attr_type,
-                        Some(AttributeType::LanguageProperty) | Some(AttributeType::JsonProperty) | Some(AttributeType::VocabProperty)
+                        attr_type,
+                        AttributeType::LanguageProperty | AttributeType::JsonProperty | AttributeType::VocabProperty
                     ) {
                         json!({extract_key: val})
                     } else {
@@ -109,7 +127,7 @@ impl TemporalValuesRenderer {
             }
         }
 
-        Value::Object(result)
+        Ok(Value::Object(result))
     }
 }
 
@@ -118,7 +136,7 @@ mod tests {
     use super::*;
 
     fn transform(input: Value) -> Value {
-        TemporalValuesRenderer::new(input).render()
+        TemporalValuesRenderer::new(input).render().expect("valid temporal values payload")
     }
 
     #[test]
@@ -183,5 +201,27 @@ mod tests {
         let objects = result["isParked"]["objects"].as_array().expect("objects array");
         pretty_assertions::assert_eq!(objects.len(), 2);
         pretty_assertions::assert_eq!(objects[0][0], "urn:p1");
+    }
+
+    #[test]
+    fn temporal_values_rejects_a_malformed_dataset_uri() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "speed": [{"type": "Property", "value": 25, "observedAt": "t1", "datasetId": "not a URI"}]
+        });
+        let error = TemporalValuesRenderer::new(input).render().expect_err("malformed datasetId is rejected");
+        assert!(matches!(error, TemporalValuesError::InvalidDatasetId));
+    }
+
+    #[test]
+    fn temporal_values_rejects_an_unknown_attribute_type() {
+        let input = json!({
+            "id": "urn:x",
+            "type": "Vehicle",
+            "speed": [{"type": "Unknown", "value": 25, "observedAt": "t1"}]
+        });
+        let error = TemporalValuesRenderer::new(input).render().expect_err("unknown attribute type is rejected");
+        assert!(matches!(error, TemporalValuesError::InvalidAttributeType));
     }
 }

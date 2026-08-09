@@ -104,6 +104,7 @@ mod tests {
         entity_mutation::{EntityMutation, EntityRecord},
         precondition::Precondition,
     };
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_postgresql_context_store::entity::deleted::DeletedEntity;
     use chrono::Utc;
     use serde_json::json;
@@ -122,7 +123,10 @@ mod tests {
     }
 
     fn write(id: &str, entity: EntityMutation) -> AtomicWrite {
-        AtomicWrite::builder().entity_id(Arc::from(id)).entity(entity).build()
+        AtomicWrite::builder()
+            .entity_id(Arc::new(id.parse::<Uri>().expect("valid entity URI")))
+            .entity(entity)
+            .build()
     }
 
     #[test]

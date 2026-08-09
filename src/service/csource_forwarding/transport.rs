@@ -4,14 +4,7 @@ use crate::{
     error::AndromedaError,
     service::csource_forwarding::{CsourceForwardingService, outcome::ForwardGetOutcome},
 };
-use andromeda_ngsi_ld_http_headers::{
-    context_source_pseudonym::ContextSourcePseudonym,
-    link::header::Link,
-    ngsild_tenant::NgsiLdTenant,
-    ngsild_warning::NgsiLdWarning,
-    received_protocol::ReceivedProtocol,
-    via::Via,
-};
+use andromeda_ngsi_ld_http_headers::{link::header::Link, media_type::APPLICATION_JSON, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use headers::Header;
 use iri_rs::IriRefBuf;
@@ -23,7 +16,7 @@ impl CsourceForwardingService {
     pub(crate) async fn forward_get(
         &self,
         url: Result<Url, AndromedaError>,
-        context_url: Option<&str>,
+        context_url: Option<&IriRefBuf>,
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> ForwardGetOutcome {
@@ -34,8 +27,8 @@ impl CsourceForwardingService {
         debug!("CS forwarding GET {}", url);
 
         let request = self
-            .build_request(reqwest::Method::GET, url.as_str(), context_url, tenant, incoming_via)
-            .header("Accept", "application/json");
+            .build_request(reqwest::Method::GET, &url, context_url, tenant, incoming_via)
+            .header("Accept", APPLICATION_JSON.to_string());
 
         let (status, warning_header, bytes) = match self.send_request(request).await {
             Ok(result) => result,
@@ -72,17 +65,15 @@ impl CsourceForwardingService {
     pub(crate) fn build_request(
         &self,
         method: reqwest::Method,
-        url: &str,
-        context_url: Option<&str>,
+        url: &Url,
+        context_url: Option<&IriRefBuf>,
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> reqwest::RequestBuilder {
-        let mut request = self.http_client.request(method, url).header("Connection", "close");
+        let mut request = self.http_client.request(method, url.clone()).header("Connection", "close");
 
-        if let Some(ctx) = context_url
-            && let Ok(context_iri) = IriRefBuf::new(ctx.to_string())
-        {
-            let link = Link::jsonld_context(context_iri);
+        if let Some(context_iri) = context_url {
+            let link = Link::jsonld_context(context_iri.clone()); // clone: the header owns the validated IRI reference.
             if let Some(value) = link.to_header_value() {
                 request = request.header("Link", value);
             }
@@ -93,23 +84,17 @@ impl CsourceForwardingService {
             request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
         }
 
-        // Append our identity to the Via header chain (section 6.3.18). The
-        // protocol token and our identity are both fixed for a valid deployment,
-        // so this construction cannot fail in practice; were either malformed the
-        // chain is forwarded without our hop rather than the request aborted.
-        if let (Ok(protocol), Ok(pseudonym)) = (
-            ReceivedProtocol::try_from("1.1".to_string()),
-            ContextSourcePseudonym::try_from(self.source_identity.clone()), // clone: the pseudonym owns its string
-        ) {
-            let new_via = match incoming_via {
-                Some(existing) => existing.clone().append(protocol, pseudonym), // clone: need owned Via to append our identity
-                None => Via::with_entry(protocol, pseudonym),
-            };
-            let mut via_values = Vec::new();
-            headers::Header::encode(&new_via, &mut via_values);
-            if let Some(val) = via_values.into_iter().next() {
-                request = request.header("via", val);
-            }
+        // Clause 6.3.18 requires the existing chain to remain ordered and one
+        // local hop to be appended. Header entries own their values, so the
+        // validated service-level protocol and alias must be cloned here.
+        let new_via = match incoming_via {
+            Some(existing) => existing.clone().append(self.received_protocol.clone(), self.source_alias.clone()),
+            None => Via::with_entry(self.received_protocol.clone(), self.source_alias.clone()),
+        };
+        let mut via_values = Vec::new();
+        headers::Header::encode(&new_via, &mut via_values);
+        if let Some(value) = via_values.into_iter().next() {
+            request = request.header("via", value);
         }
 
         request

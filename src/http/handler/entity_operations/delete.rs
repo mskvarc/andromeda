@@ -26,6 +26,7 @@ use crate::http::handler::entity_operations::{
     operation_result,
     start_rendering,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 
 pub async fn batch_delete(
     TenantState(state): TenantState,
@@ -38,7 +39,7 @@ pub async fn batch_delete(
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
 
-    let entity_ids: Vec<String> = serde_json::from_slice(&body)
+    let entity_ids: Vec<Uri> = serde_json::from_slice(&body)
         .map_err(|e| AndromedaError::malformed_request(format!("Request body must be a JSON array of entity IDs: {}", e)).with_instance(&uri))?;
 
     if entity_ids.is_empty() {
@@ -49,7 +50,7 @@ pub async fn batch_delete(
 
     // Distributed forwarding per spec 5.6.10
     let context: andromeda_jsonld::context_spec::ContextSpec = context.into_inner();
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
+    let context_url = context.link_contexts().first();
     let forwarded = state
         .forwarding
         .forward_batch_provision(ForwardBatchProvisionRequest {

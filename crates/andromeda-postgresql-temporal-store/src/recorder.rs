@@ -11,11 +11,10 @@ use crate::{
     rows::TeaBatchResultRow,
     value_type::ValueType,
 };
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
 use chrono::{DateTime, Utc};
-use iri_rs::IriBuf;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use std::{slice::from_ref, sync::Arc};
@@ -40,7 +39,7 @@ impl TemporalRecorder {
     }
 
     /// Look up catalogue entries for a given entity and attribute IRI.
-    pub async fn get_teas_for_entity_attr(&self, entity_id: &str, attr_iri: &str) -> Result<Vec<TeaEntry>, TemporalStoreError> {
+    pub async fn get_teas_for_entity_attr(&self, entity_id: &Uri, attr_iri: &AttributeName) -> Result<Vec<TeaEntry>, TemporalStoreError> {
         self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await
     }
 
@@ -58,9 +57,9 @@ impl TemporalRecorder {
     pub async fn record_entities_batch_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        entities: &[(Arc<str>, Arc<Value>)],
+        entities: &[(Arc<Uri>, Arc<Value>)],
     ) -> Result<Vec<HistoryBatchEntry>, TemporalStoreError> {
-        self.flush_prepared_in_tx(tx, prepare_from_shared(entities)).await
+        self.flush_prepared_in_tx(tx, prepare_from_shared(entities)?).await
     }
 
     async fn flush_prepared_in_tx(
@@ -91,9 +90,9 @@ impl TemporalRecorder {
     pub async fn record_attribute_deletion_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        entity_id: &str,
-        attr_iri: &str,
-        dataset_id: Option<&str>,
+        entity_id: &Uri,
+        attr_iri: &AttributeName,
+        dataset_id: Option<&Uri>,
     ) -> Result<Vec<HistoryBatchEntry>, TemporalStoreError> {
         let (tea_entry, history_entry) = self.build_deletion_entries(entity_id, attr_iri, dataset_id).await?;
         let tea_results = self.repo.upsert_tea_batch_in_tx(tx, from_ref(&tea_entry)).await?;
@@ -105,15 +104,12 @@ impl TemporalRecorder {
 
     async fn build_deletion_entries(
         &self,
-        entity_id: &str,
-        attr_iri: &str,
-        dataset_id: Option<&str>,
+        entity_id: &Uri,
+        attr_iri: &AttributeName,
+        dataset_id: Option<&Uri>,
     ) -> Result<(TeaBatchEntry, HistoryBatchEntry), TemporalStoreError> {
         let teas = self.repo.get_teas_for_entity_attr(entity_id, attr_iri).await?;
-        let existing = teas
-            .iter()
-            .find(|t| t.dataset_id.as_ref().map(IriBuf::as_str) == dataset_id)
-            .or_else(|| teas.first());
+        let existing = teas.iter().find(|entry| entry.dataset_id.as_ref() == dataset_id).or_else(|| teas.first());
         let attr_type = existing.map_or(AttributeType::Property, |t| t.attribute_type);
         // Keep the catalogue describing what the attribute *is*, not what the
         // tombstone row happens to store. The tombstone lives in `value_string`,
@@ -125,10 +121,10 @@ impl TemporalRecorder {
         let value_type = existing.map_or(ValueType::String, |t| t.value_type);
 
         let tea_entry = TeaBatchEntry {
-            entity_id: entity_id.to_owned(),
-            attribute_name: attr_iri.to_owned(),
+            entity_id: entity_id.clone(),     // clone: the catalogue row owns its entity URI.
+            attribute_name: attr_iri.clone(), // clone: the catalogue row owns its attribute name.
             attribute_type: attr_type,
-            dataset_id: dataset_id.map(ToOwned::to_owned),
+            dataset_id: dataset_id.cloned(), // clone: the catalogue row owns its dataset URI.
             value_type,
         };
         let now = Utc::now();
@@ -142,7 +138,7 @@ impl TemporalRecorder {
             value_object: None,
             value_datetime: None,
             value_uri: None,
-            instance_id: generated_instance_id(),
+            instance_id: generated_instance_id()?,
             observed_at: None,
             metadata: None,
             recorded_at: now,
@@ -152,7 +148,13 @@ impl TemporalRecorder {
     }
 
     /// Update an existing attribute instance (full replacement, preserves `createdAt`).
-    pub async fn update_attribute_instance(&self, entity_id: &str, attr_name: &str, instance_id: &str, instance: &Value) -> Result<(), TemporalStoreError> {
+    pub async fn update_attribute_instance(
+        &self,
+        entity_id: &Uri,
+        attr_name: &AttributeName,
+        instance_id: &InstanceId,
+        instance: &Value,
+    ) -> Result<(), TemporalStoreError> {
         let (owned, observed_at) = build_update_instance_state(instance)?;
         let params = build_update_instance_params(instance_id, entity_id, attr_name, &owned, observed_at);
         self.repo.update_instance(params).await
@@ -169,7 +171,7 @@ struct UpdateInstanceOwned {
 fn build_update_instance_state(instance: &Value) -> Result<(UpdateInstanceOwned, Option<DateTime<Utc>>), TemporalStoreError> {
     let attribute_type = detect_attribute_type(instance);
     let attribute_value = extract_attribute_value(instance, attribute_type)?;
-    let observed_at = extract_observed_at(instance).and_then(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)).ok());
+    let observed_at = extract_observed_at(instance)?;
     let metadata = collect_metadata(instance);
     Ok((
         UpdateInstanceOwned {
@@ -181,9 +183,9 @@ fn build_update_instance_state(instance: &Value) -> Result<(UpdateInstanceOwned,
 }
 
 fn build_update_instance_params<'a>(
-    instance_id: &'a str,
-    entity_id: &'a str,
-    attribute_name: &'a str,
+    instance_id: &'a InstanceId,
+    entity_id: &'a Uri,
+    attribute_name: &'a AttributeName,
     owner: &'a UpdateInstanceOwned,
     observed_at: Option<DateTime<Utc>>,
 ) -> UpdateInstanceParams<'a> {
@@ -198,7 +200,7 @@ fn build_update_instance_params<'a>(
             value_geo: owner.columns.value_geo.as_ref(),
             value_object: owner.columns.value_object.as_ref(),
             value_datetime: owner.columns.value_datetime,
-            value_uri: owner.columns.value_uri.as_deref(),
+            value_uri: owner.columns.value_uri.as_ref(),
             metadata: owner.metadata.as_ref(),
         },
         observed_at,

@@ -18,6 +18,7 @@ use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
+use url::Url;
 
 /// Entity-subscription-specific behaviour.
 pub struct EntitySubscriptionVariant {
@@ -29,7 +30,7 @@ pub struct EntitySubscriptionVariant {
 impl SubscriptionVariant for EntitySubscriptionVariant {
     type Change = SubscriptionChange;
 
-    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
+    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<(), AndromedaError> {
         // Preserve body @context as jsonldContext — entity subs host compound contexts.
         // The body context comes from ContextSpec (set by the JsonLd extractor), not
         // from the payload directly, since the extractor strips @context before
@@ -45,7 +46,11 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
                     match self.context_repo.create_implicitly(hosted_payload, base_url).await {
                         Ok(urn) => {
                             let stored_value = match base_url {
-                                Some(b) => format!("{}/ngsi-ld/v1/jsonldContexts/{}", b.trim_end_matches('/'), urn),
+                                Some(base) => {
+                                    let mut hosted = base.clone(); // clone: the request origin remains reusable.
+                                    hosted.set_path(&format!("/ngsi-ld/v1/jsonldContexts/{urn}"));
+                                    hosted.to_string()
+                                }
                                 None => urn.to_string(),
                             };
                             Some(Value::String(stored_value))

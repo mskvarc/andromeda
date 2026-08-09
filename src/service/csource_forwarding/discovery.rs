@@ -6,6 +6,8 @@ use crate::service::csource_forwarding::{
     outcome::{ForwardGetOutcome, ForwardedDiscoveryResult},
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use iri_rs::IriRefBuf;
 use tracing::{debug, warn};
 
 impl CsourceForwardingService {
@@ -14,7 +16,7 @@ impl CsourceForwardingService {
         &self,
         path: &str,
         query_string: &str,
-        context_url: Option<&str>,
+        context_url: Option<&IriRefBuf>,
         incoming_via: Option<&Via>,
     ) -> Vec<ForwardedDiscoveryResult> {
         if self.is_loop_detected(incoming_via) {
@@ -26,10 +28,17 @@ impl CsourceForwardingService {
         // consider every registration, but the repository caps each round-trip
         // so a runaway CSR table cannot blow up memory.
         const PAGE: u32 = 500;
+        let page_capacity = match usize::try_from(PAGE) {
+            Ok(value) => value,
+            Err(error) => {
+                warn!(%error, "discovery forwarding page size does not fit this platform");
+                return Vec::new();
+            }
+        };
         let mut csrs = Vec::new();
-        let mut cursor: Option<String> = None;
+        let mut cursor: Option<Uri> = None;
         loop {
-            let page = match self.csr_repo.find_all_active(cursor.as_deref(), PAGE).await {
+            let page = match self.csr_repo.find_all_active(cursor.as_ref(), PAGE).await {
                 Ok(page) => page,
                 Err(e) => {
                     warn!("Failed to load active CSRs for discovery forwarding: {}", e);
@@ -39,9 +48,10 @@ impl CsourceForwardingService {
             if page.is_empty() {
                 break;
             }
-            cursor = page.last().map(|c| c.id.to_string());
+            let page_len = page.len();
+            cursor = page.last().map(|registration| registration.id.clone()); // clone: the cursor must outlive the page moved below.
             csrs.extend(page);
-            if csrs.len() % usize::try_from(PAGE).unwrap_or(usize::MAX) != 0 {
+            if page_len < page_capacity {
                 break;
             }
         }

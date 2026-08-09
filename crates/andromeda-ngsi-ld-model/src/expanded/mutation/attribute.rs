@@ -8,11 +8,9 @@ use crate::expanded::{
     node::expanded_object_mut,
     null_sentinel::instance_is_null_sentinel,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use iri_rs::IriBuf;
 use serde_json::Value;
-use std::str::FromStr;
 
 /// Partial update of a single attribute (clause 5.6.4): merge `fragment` into the
 /// attribute identified by `attr_iri`, optionally targeting a specific
@@ -38,35 +36,19 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
     let effective_ds = dataset_id;
 
     if instance_is_null_sentinel(fragment) {
-        // Instances record the datasetId as its raw `@id`; the target URI is
-        // rendered once to that form to select by string equality.
-        let effective_ds = effective_ds.map(ToString::to_string);
-        remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds.as_deref());
+        remove_instances_by_dataset(entity_obj, attr_iri.as_str(), effective_ds);
         return Ok(());
     }
 
     // Extract the fragment's @type (if present) for type-mismatch validation
-    let fragment_types: Vec<&str> = fragment
-        .get("@type")
-        .and_then(|t| t.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
+    let fragment_types = attribute_types(fragment)?;
 
     if let Some(ds_id) = effective_ds {
         let Some(Value::Array(instances)) = entity_obj.get_mut(attr_iri.as_str()) else {
             return Err(ExpandedEntityError::AttributeHasNoInstances { attribute: attr_iri.clone() });
         };
 
-        let ds_id_str = ds_id.to_string();
-        let found = instances.iter_mut().find(|instance| {
-            instance
-                .get(properties::DATASET_ID.as_str())
-                .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
-                .and_then(|obj| obj.get("@id"))
-                .and_then(|id| id.as_str())
-                == Some(ds_id_str.as_str())
-        });
+        let found = instances.iter_mut().find(|instance| get_instance_dataset_id(instance).as_ref() == Some(ds_id));
 
         match found {
             Some(instance) => {
@@ -110,15 +92,11 @@ pub fn partial_update_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Op
 }
 
 /// Check that the fragment's `@type` (if specified) matches the instance's `@type`.
-fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &IriBuf) -> Result<(), ExpandedEntityError> {
+fn validate_type_match(fragment_types: &[AttributeType], instance: &Value, attr_iri: &IriBuf) -> Result<(), ExpandedEntityError> {
     if fragment_types.is_empty() {
         return Ok(());
     }
-    let instance_types: Vec<&str> = instance
-        .get("@type")
-        .and_then(|t| t.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
+    let instance_types = attribute_types(instance)?;
     if instance_types.is_empty() {
         return Ok(());
     }
@@ -127,10 +105,26 @@ fn validate_type_match(fragment_types: &[&str], instance: &Value, attr_iri: &Iri
     } else {
         Err(ExpandedEntityError::AttributeTypeMismatch {
             attribute: attr_iri.clone(),
-            fragment_types: fragment_types.iter().map(|t| (*t).to_string()).collect(),
-            instance_types: instance_types.into_iter().map(str::to_string).collect(),
+            fragment_types: fragment_types.to_vec(),
+            instance_types,
         })
     }
+}
+
+/// Parses every JSON-LD type assigned to an expanded attribute.
+fn attribute_types(value: &Value) -> Result<Vec<AttributeType>, ExpandedEntityError> {
+    value
+        .get("@type")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|value| {
+            value
+                .as_str()
+                .and_then(AttributeType::from_expanded_iri)
+                .ok_or(ExpandedEntityError::InvalidAttributeType)
+        })
+        .collect()
 }
 
 /// Delete a single attribute (clause 5.6.5).
@@ -160,8 +154,7 @@ pub fn delete_attr(entity: &mut Value, attr_iri: &IriBuf, selection: DatasetSele
         DatasetSelection::Single(dataset_id) => {
             // Instances record the datasetId as its raw `@id`; the target URI is
             // rendered once to that form to select by string equality.
-            let dataset_id_str = dataset_id.to_string();
-            if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), Some(dataset_id_str.as_str())) {
+            if remove_instances_by_dataset(entity_obj, attr_iri.as_str(), Some(dataset_id)) {
                 Ok(())
             } else {
                 Err(ExpandedEntityError::DatasetNotFound {
@@ -200,9 +193,9 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
 
     // Query param datasetId takes precedence over value's datasetId. Matching is
     // by the raw `@id` the document records, so the target URI is rendered to it.
-    let target_ds: Option<String> = match dataset_id {
-        Some(ds) => Some(ds.to_string()),
-        None => get_instance_dataset_id(value).map(ToOwned::to_owned),
+    let target_ds: Option<Uri> = match dataset_id {
+        Some(ds) => Some(ds.clone()),
+        None => get_instance_dataset_id(value),
     };
 
     let existing_instances = existing.as_array();
@@ -213,7 +206,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
 
         for inst in instances {
             let inst_ds = get_instance_dataset_id(inst);
-            if inst_ds == target_ds.as_deref() {
+            if inst_ds == target_ds {
                 // clone: the replacement is borrowed and the rebuilt array owns its elements.
                 new_instances.push(value.clone());
                 replaced = true;
@@ -232,7 +225,7 @@ pub fn replace_attr(entity: &mut Value, attr_iri: &IriBuf, dataset_id: Option<&U
                     attribute: attr_iri.clone(),
                     dataset_id: ds.clone(),
                 }),
-                None => match get_instance_dataset_id(value).and_then(|raw| Uri::from_str(raw).ok()) {
+                None => match get_instance_dataset_id(value) {
                     Some(dataset_id) => Err(ExpandedEntityError::DatasetNotFound {
                         attribute: attr_iri.clone(),
                         dataset_id,
@@ -259,7 +252,7 @@ mod tests {
         selection::DatasetSelection,
         speed_entity,
     };
-    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
     use iri_rs::IriBuf;
     use serde_json::json;
     use std::str::FromStr;
@@ -361,8 +354,8 @@ mod tests {
             error,
             ExpandedEntityError::AttributeTypeMismatch {
                 attribute: iri("https://example.com/speed"),
-                fragment_types: vec!["https://uri.etsi.org/ngsi-ld/Relationship".to_string()],
-                instance_types: vec!["https://uri.etsi.org/ngsi-ld/Property".to_string()],
+                fragment_types: vec![AttributeType::Relationship],
+                instance_types: vec![AttributeType::Property],
             }
         );
     }

@@ -5,16 +5,16 @@ use crate::{
     error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
-        extractor::{json_body::invalid_json_body, snapshot_purge_q::SnapshotPurgeQ},
-        validation::parse_snapshot_id,
+        extractor::{json_body::invalid_json_body, snapshot_purge_q::SnapshotPurgeQ, typed_path::TypedPath},
     },
     service::snapshot::PurgeOutcome,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
 use axum::{
     Json,
-    extract::{OriginalUri, Path, rejection::JsonRejection},
+    extract::{OriginalUri, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -41,8 +41,7 @@ pub async fn create(
 }
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
-pub async fn get(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
-    let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
+pub async fn get(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, TypedPath(snapshot_id): TypedPath<Uri>) -> Result<Response, NgsiLdError> {
     let snapshot = state.snapshots.get(&snapshot_id).await.with_instance(&uri)?;
 
     let body = serde_json::to_value(&snapshot).map_err(|e| AndromedaError::internal(format!("Failed to serialize snapshot: {}", e)).with_instance(&uri))?;
@@ -53,11 +52,10 @@ pub async fn get(TenantState(state): TenantState, OriginalUri(uri): OriginalUri,
 pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
-    Path(snapshot_id): Path<String>,
+    TypedPath(snapshot_id): TypedPath<Uri>,
     patch: Result<Json<SnapshotPatch>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
     let Json(patch) = patch.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::snapshot_validation))?;
-    let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_instance(&uri)?;
 
     let body = serde_json::to_value(&updated).map_err(|e| AndromedaError::internal(format!("Failed to serialize snapshot: {}", e)).with_instance(&uri))?;
@@ -65,8 +63,7 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
-    let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
+pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, TypedPath(snapshot_id): TypedPath<Uri>) -> Result<Response, NgsiLdError> {
     state.snapshots.delete(&snapshot_id).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -97,7 +94,7 @@ pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUr
         }
         PurgeOutcome::Partial { successes, failures } => {
             let body = BatchOperationResult {
-                success: successes.iter().map(|id| id.as_str().to_string()).collect(),
+                success: successes,
                 errors: failures,
             };
             Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
@@ -106,8 +103,7 @@ pub async fn purge(TenantState(state): TenantState, OriginalUri(uri): OriginalUr
 }
 
 /// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.
-pub async fn clone(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(snapshot_id): Path<String>) -> Result<Response, NgsiLdError> {
-    let snapshot_id = parse_snapshot_id(&snapshot_id, &uri)?;
+pub async fn clone(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, TypedPath(snapshot_id): TypedPath<Uri>) -> Result<Response, NgsiLdError> {
     let cloned = state.snapshots.clone_snapshot(&snapshot_id).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", cloned.id);

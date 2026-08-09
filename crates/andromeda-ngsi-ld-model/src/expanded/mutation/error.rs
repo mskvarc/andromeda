@@ -1,6 +1,6 @@
 //! Failures raised by the entity- and attribute-level mutation operations.
 
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use iri_rs::IriBuf;
 use thiserror::Error;
 
@@ -11,11 +11,8 @@ use thiserror::Error;
 /// each one onto the ProblemDetails type NGSI-LD clause 5.5.2 requires instead
 /// of reporting one undifferentiated failure.
 ///
-/// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Urn`], the domain
-/// types they carry across the API boundary. The type lists in
-/// [`ExpandedEntityError::AttributeTypeMismatch`] stay plain strings: they are a
-/// diagnostic rendering of the two `@type` arrays, read only to build the
-/// mismatch message.
+/// The attribute IRI is an [`IriBuf`] and the `datasetId` a [`Uri`], the domain
+/// types they carry across the API boundary.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ExpandedEntityError {
     /// The entity value was not an expanded JSON-LD node (nor an array wrapping one).
@@ -27,6 +24,12 @@ pub enum ExpandedEntityError {
     /// The attribute fragment was not a JSON object.
     #[error("attributes must be a JSON object")]
     AttributesNotObject,
+    /// An attribute member did not satisfy the clause-4.6.2 name grammar.
+    #[error("invalid attribute name")]
+    InvalidAttributeName,
+    /// An attribute instance declared a type outside the clause-5.2.4 set.
+    #[error("attribute instance has an invalid attribute type")]
+    InvalidAttributeType,
     /// The entity carries no attribute under this IRI.
     #[error("attribute {attribute} not found")]
     AttributeNotFound {
@@ -59,8 +62,8 @@ pub enum ExpandedEntityError {
         /// Expanded IRI of the attribute that was looked up.
         attribute: IriBuf,
         /// Expanded type IRIs declared by the incoming fragment.
-        fragment_types: Vec<String>,
+        fragment_types: Vec<AttributeType>,
         /// Expanded type IRIs carried by the stored instance.
-        instance_types: Vec<String>,
+        instance_types: Vec<AttributeType>,
     },
 }

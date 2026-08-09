@@ -1,7 +1,15 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
 use crate::subscription::EntitySelector;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    constant_string,
+    context_source_pseudonym::ContextSourcePseudonym,
+    rfc3339,
+    scope::grammar::ScopeBuf,
+    tenant::TenantName,
+    uri::Uri,
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -231,7 +239,7 @@ pub struct ContextSourceAccess {
     /// Unique pseudonym for this context source, used for Via-based loop detection (clause 5.2.9).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    pub context_source_alias: Option<String>,
+    pub context_source_alias: Option<ContextSourcePseudonym>,
 }
 
 /// What the broker has observed about a context source's availability

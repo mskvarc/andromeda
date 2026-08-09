@@ -8,6 +8,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-ngsi-ld-lexicon.workspace = true
 http = "1.4.0"
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 serde = { version = "1.0.228", features = ["derive"] }

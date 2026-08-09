@@ -7,7 +7,7 @@
 //! `UNNEST` binds or a binary `COPY` into a staging table.
 
 use crate::{
-    config::BulkWriteMode,
+    config::performance::BulkWriteMode,
     error::AndromedaError,
     repository::atomic_write::{
         columns::{columns_for, expectations},
@@ -20,10 +20,11 @@ use crate::{
         write_outcome::WriteOutcome,
     },
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_context_store::{
     attribute_current::queue::AttributeCurrentQueue,
     entity::{copy::create_batch_via_copy_in_tx, deleted::DeletedEntity, repo::EntityRepository},
-    outbox::repo::{OutboxInsertRow, OutboxRepository},
+    outbox::repo::{OutboxInsertRecord, OutboxRepository},
     pending_side_effects::{
         payload::{PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
         repo::PendingSideEffectsRepository,
@@ -107,9 +108,9 @@ impl PostgresAnchorStore {
             BulkWriteMode::Unnest => EntityRepository::create_batch_in_tx(tx, &columns).await?,
             BulkWriteMode::CopyStaging => create_batch_via_copy_in_tx(tx, &columns).await?,
         };
-        let inserted: HashSet<String> = inserted.into_iter().collect();
+        let inserted: HashSet<Uri> = inserted.into_iter().collect();
         for (index, write) in inserts {
-            let returned = returned_flag(&inserted, &write.entity_id);
+            let returned = returned_flag(&inserted, write.entity_id.as_ref());
             outcomes[*index] = Some(insert_outcome(write.precondition, returned));
         }
         Ok(())
@@ -127,9 +128,9 @@ impl PostgresAnchorStore {
         }
         let columns = columns_for(updates)?;
         let expected = expectations(updates);
-        let saved: HashSet<String> = EntityRepository::save_batch_in_tx(tx, &columns, &expected).await?.into_iter().collect();
+        let saved: HashSet<Uri> = EntityRepository::save_batch_in_tx(tx, &columns, &expected).await?.into_iter().collect();
         for (index, write) in updates {
-            let returned = returned_flag(&saved, &write.entity_id);
+            let returned = returned_flag(&saved, write.entity_id.as_ref());
             outcomes[*index] = Some(update_outcome(write.precondition, returned));
         }
         Ok(())
@@ -146,12 +147,15 @@ impl PostgresAnchorStore {
         if deletes.is_empty() {
             return Ok(());
         }
-        let ids: Vec<String> = deletes.iter().map(|(_, write)| write.entity_id.to_string()).collect();
+        let ids: Vec<Uri> = deletes
+            .iter()
+            .map(|(_, write)| write.entity_id.as_ref().clone()) // clone: the bind list owns IDs borrowed from the writes.
+            .collect();
         let expected = expectations(deletes);
-        let mut deleted: HashMap<String, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, &ids, &expected)
+        let mut deleted: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, &ids, &expected)
             .await?
             .into_iter()
-            .map(|entity| (entity.id.to_string(), entity)) // the identifier keys the map as text and stays typed on the value the caller receives
+            .map(|entity| (entity.id.clone(), entity)) // clone: the map key and returned entity both own the identifier.
             .collect();
         for (index, write) in deletes {
             outcomes[*index] = Some(delete_outcome(write.precondition, deleted.remove(write.entity_id.as_ref())));
@@ -161,7 +165,7 @@ impl PostgresAnchorStore {
 }
 
 /// Whether a fused statement returned `id`.
-fn returned_flag(returned: &HashSet<String>, id: &str) -> RowReturned {
+fn returned_flag(returned: &HashSet<Uri>, id: &Uri) -> RowReturned {
     if returned.contains(id) { RowReturned::Yes } else { RowReturned::No }
 }
 
@@ -221,22 +225,21 @@ impl AnchorStore for PostgresAnchorStore {
             return Ok(());
         }
         let null = serde_json::Value::Null;
-        let trigger_strs: Vec<String> = entries.iter().map(|e| e.trigger.to_string()).collect();
-        let attr_strs: Vec<Vec<String>> = entries.iter().map(|e| e.changed_attrs.iter().map(ToString::to_string).collect()).collect();
-        let rows: Vec<OutboxInsertRow<'_>> = entries
+        let rows: Vec<OutboxInsertRecord<'_>> = entries
             .iter()
-            .zip(&trigger_strs)
-            .zip(&attr_strs)
-            .map(|((e, trig), attrs)| OutboxInsertRow {
-                subscription_id: e.subscription_id.as_str(),
-                entity_id: e.entity_id.as_str(),
-                trigger: trig,
-                entity_snapshot: e.entity_snapshot.as_ref().unwrap_or(&null),
-                previous_snapshot: &e.previous_snapshot,
-                changed_attrs: attrs,
+            .map(|entry| OutboxInsertRecord {
+                subscription_id: &entry.subscription_id,
+                entity_id: &entry.entity_id,
+                trigger: entry.trigger,
+                entity_snapshot: match entry.entity_snapshot.as_ref() {
+                    Some(snapshot) => snapshot,
+                    None => &null,
+                },
+                previous_snapshot: &entry.previous_snapshot,
+                changed_attrs: &entry.changed_attrs,
             })
             .collect();
-        OutboxRepository::insert_batch_raw_in_tx(tx.tx_mut()?, &rows).await?;
+        OutboxRepository::insert_batch_in_tx(tx.tx_mut()?, &rows).await?;
         Ok(())
     }
 
@@ -252,14 +255,14 @@ impl AnchorStore for PostgresAnchorStore {
             merged
                 .temporal_entities
                 .extend(job.temporal_entities.iter().map(|(id, expanded)| PersistedTemporalEntity {
-                    id: id.to_string(),
+                    id: id.as_ref().clone(), // clone: the persisted DTO owns its validated entity URI.
                     expanded: Value::clone(expanded),
                 }));
             merged.change_events.extend(job.change_events.iter().map(|ce| PersistedChangeEvent {
-                entity_id: ce.entity_id.to_string(),
-                entity_types: ce.entity_types.iter().map(ToString::to_string).collect(),
-                trigger_reason: ce.trigger_reason.to_string(),
-                changed_attributes: ce.changed_attributes.iter().map(ToString::to_string).collect(),
+                entity_id: ce.entity_id.clone(),       // clone: the persisted DTO owns its entity URI.
+                entity_types: ce.entity_types.clone(), // clone: persistence owns the event's type list.
+                trigger_reason: ce.trigger_reason,
+                changed_attributes: ce.changed_attributes.clone(), // clone: persistence owns the event's attribute list.
                 occurred_at: ce.occurred_at,
                 entity_snapshot: ce.entity_snapshot.as_deref().cloned(),
                 previous_attributes: ce.previous_attributes.as_deref().cloned(),
@@ -268,10 +271,7 @@ impl AnchorStore for PostgresAnchorStore {
                     modified_at: s.modified_at,
                     expires_at: s.expires_at,
                 }),
-                origin: match ce.origin {
-                    crate::event::change_event::ChangeOrigin::Local => "local".to_string(),
-                    crate::event::change_event::ChangeOrigin::Forwarded => "forwarded".to_string(),
-                },
+                origin: ce.origin,
             }));
         }
         if merged.temporal_entities.is_empty() && merged.change_events.is_empty() {

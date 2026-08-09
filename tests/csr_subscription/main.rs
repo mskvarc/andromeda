@@ -5,16 +5,20 @@ mod query;
 mod retrieve;
 mod update;
 
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL},
+    db::TRUNCATE_ALL,
+    error,
+};
 use reqwest::{Client, Method, StatusCode, header::LOCATION};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
-const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
-const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
-const ALREADY_EXISTS_TYPE: &str = error::ALREADY_EXISTS;
+const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
+const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
+const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
+const ALREADY_EXISTS_TYPE: &iri_rs::Iri<&str> = error::ALREADY_EXISTS;
 
 fn client() -> Client {
     Client::new()

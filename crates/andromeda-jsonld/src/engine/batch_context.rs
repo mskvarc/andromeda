@@ -192,7 +192,7 @@ mod tests {
         for spec in [
             ContextSpec::none(),
             ContextSpec::core_only(),
-            ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL), iri_ref(ANDROMEDA_CORE_CONTEXT_URL)]),
+            ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str()), iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str())]),
         ] {
             assert!(
                 engine.batch_context_handle(&spec).await.fast_eligible(),

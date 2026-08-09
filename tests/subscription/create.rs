@@ -41,7 +41,7 @@ async fn subscription_create_invalid_json_returns_bad_request() {
     let (status, body) = raw_subscription_request(&http_client, Method::POST, "/subscriptions", Some(raw.as_bytes()), Some("application/ld+json")).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -53,7 +53,7 @@ async fn subscription_create_empty_payload_returns_bad_request_data() {
     let (status, _, body) = create_subscription(&http_client, &json!({})).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -67,7 +67,7 @@ async fn subscription_create_invalid_id_returns_bad_request_data() {
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -81,7 +81,7 @@ async fn subscription_create_empty_id_returns_bad_request_data() {
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -97,7 +97,7 @@ async fn subscription_create_duplicate_id_returns_conflict() {
 
     let (status, _, body) = create_subscription(&http_client, &payload).await;
     pretty_assertions::assert_eq!(status, StatusCode::CONFLICT);
-    pretty_assertions::assert_eq!(body["type"], ALREADY_EXISTS_TYPE);
+    pretty_assertions::assert_eq!(body["type"], ALREADY_EXISTS_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -111,7 +111,7 @@ async fn subscription_create_throttling_and_time_interval_returns_bad_request_da
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -125,7 +125,7 @@ async fn subscription_create_negative_throttling_returns_bad_request_data() {
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -152,7 +152,7 @@ async fn subscription_create_invalid_jsonld_context_returns_bad_request_data() {
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -166,5 +166,5 @@ async fn subscription_create_unavailable_jsonld_context_returns_gateway_timeout(
     let (status, _, body) = create_subscription(&http_client, &payload).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }

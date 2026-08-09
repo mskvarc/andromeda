@@ -5,7 +5,7 @@ use crate::http::response::{
     sonic_json::SonicJson,
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
@@ -17,7 +17,7 @@ use headers::HeaderMapExt;
 pub struct NgsiLdBatchResponse {
     status: StatusCode,
     rendered: RenderedOutput,
-    snapshot_uri: Option<SnapshotId>,
+    snapshot_uri: Option<Uri>,
     warnings: Vec<NgsiLdWarning>,
 }
 

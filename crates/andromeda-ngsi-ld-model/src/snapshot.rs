@@ -3,8 +3,9 @@
 use crate::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
-    ngsi_ld_urn::{SnapshotId, SnapshotNotificationId},
+    ngsi_ld_urn::SnapshotNotificationId,
     rfc3339::{datetime, optional_datetime},
+    uri::Uri,
 };
 use chrono::{DateTime, Utc};
 use derive_more::{Display, Into};
@@ -114,7 +115,7 @@ pub struct Snapshot {
     #[builder(default)]
     pub type_: SnapshotType,
     /// Generated identifier of this snapshot.
-    pub id: SnapshotId,
+    pub id: Uri,
     /// Entity queries the snapshot materialises.
     #[builder(default)]
     pub snapshot_queries: Option<Vec<crate::query::body::Query>>,
@@ -184,7 +185,7 @@ pub struct SnapshotNotification {
     #[serde(with = "datetime")]
     pub notified_at: DateTime<Utc>,
     /// Identifier of the snapshot whose status change triggered the notification.
-    pub snapshot_id: SnapshotId,
+    pub snapshot_id: Uri,
     /// Priority of the snapshot (1..=10).
     pub snapshot_priority: SnapshotPriority,
     /// Per-query execution details, if available.
@@ -241,7 +242,7 @@ pub struct SnapshotInput {
     pub type_: SnapshotType,
     /// Client-supplied identifier; the broker generates one when absent.
     #[serde(default)]
-    pub id: Option<SnapshotId>,
+    pub id: Option<Uri>,
     /// Entity queries to materialise.
     #[serde(default)]
     pub snapshot_queries: Option<Vec<crate::query::body::Query>>,
@@ -284,7 +285,7 @@ mod tests {
         snapshot::{Snapshot, SnapshotPriority, SnapshotStatus},
     };
     use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
-    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, ngsi_ld_urn::SnapshotId, time_prop::TimeProp, time_rel::TimeRel};
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
     use chrono::{DateTime, Utc};
     use iso8601_duration::Duration as Iso8601Duration;
 
@@ -295,12 +296,12 @@ mod tests {
 
     #[test]
     fn snapshot_urn_accepts_snapshot_prefix() {
-        assert!("urn:ngsi-ld:Snapshot:abc".parse::<SnapshotId>().is_ok());
+        assert!("urn:ngsi-ld:Snapshot:abc".parse::<Uri>().is_ok());
     }
 
     #[test]
     fn snapshot_urn_rejects_other_prefix() {
-        assert!("urn:ngsi-ld:EntityMap:abc".parse::<SnapshotId>().is_err());
+        assert!("https://example.com/snapshots/abc".parse::<Uri>().is_ok());
     }
 
     #[test]
@@ -399,7 +400,7 @@ mod tests {
     fn a_snapshot_builder_defaults_every_optional_field() {
         let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
         let snapshot = Snapshot::builder()
-            .id("urn:ngsi-ld:Snapshot:1".parse::<SnapshotId>().expect("valid snapshot id"))
+            .id("urn:ngsi-ld:Snapshot:1".parse::<Uri>().expect("valid snapshot id"))
             .snapshot_priority(SnapshotPriority::DEFAULT)
             .status(SnapshotStatus::Preparing)
             .created_at(instant)
@@ -416,7 +417,7 @@ mod tests {
     fn snapshot_timestamps_serialize_with_whole_second_precision() {
         let instant = "2024-01-01T00:00:00.750Z".parse::<DateTime<Utc>>().expect("valid instant");
         let snapshot = Snapshot::builder()
-            .id("urn:ngsi-ld:Snapshot:1".parse::<SnapshotId>().expect("valid snapshot id"))
+            .id("urn:ngsi-ld:Snapshot:1".parse::<Uri>().expect("valid snapshot id"))
             .snapshot_priority(SnapshotPriority::DEFAULT)
             .status(SnapshotStatus::Preparing)
             .created_at(instant)

@@ -14,7 +14,7 @@ use crate::{
     simplify::{simplify_entity, simplify_value},
 };
 use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_lexicon::{rfc3339::whole_seconds, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde::Serialize;
@@ -35,7 +35,7 @@ pub struct EntityRenderer<'a> {
     /// The `lang` filter to negotiate language properties against, if any.
     language_filter: Option<&'a LanguageFilter>,
     /// The entities `join=inline` resolves relationships against, if any.
-    inline_linked_entities: Option<&'a HashMap<String, Entity>>,
+    inline_linked_entities: Option<&'a HashMap<Uri, Entity>>,
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
 }
@@ -61,7 +61,7 @@ impl<'a> EntityRenderer<'a> {
     }
 
     /// Set linked entities for `join=inline` expansion (NGSI-LD clause 4.5.23).
-    pub const fn with_inline_linked_entities(mut self, linked: &'a HashMap<String, Entity>) -> Self {
+    pub const fn with_inline_linked_entities(mut self, linked: &'a HashMap<Uri, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self
     }

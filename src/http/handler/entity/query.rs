@@ -3,7 +3,6 @@
 use crate::http::handler::entity::{
     AcceptFormat,
     AndromedaError,
-    AttributeName,
     ContextSpec,
     ContextUrl,
     ContextualExpander,
@@ -14,7 +13,6 @@ use crate::http::handler::entity::{
     EntityRenderer,
     ForwardQueryRequest,
     ForwardingOperation,
-    FromStr,
     HashSet,
     IntoResponse,
     JoinMode,
@@ -68,8 +66,7 @@ pub async fn query(
         if let Some(snapshot_id) = snapshot.into_inner() {
             let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-            let entity_type = query.entity_type.as_ref().map(ToString::to_string);
-            let entity_type = entity_type.as_deref();
+            let entity_type = query.entity_type.as_ref();
             let entity_ids = query.id.clone();
             let limit = query.limit.unwrap_or(100) as i64;
             let offset = query.offset.unwrap_or(0) as i64;
@@ -81,19 +78,18 @@ pub async fn query(
                 .with_instance(&uri)?;
 
             let opts = query.parse_options();
-            let attrs: Option<Vec<&str>> = query.attrs.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect());
             let filtered: Vec<Value> = entities
                 .into_iter()
                 .map(|v| {
                     SnapshotRenderer::new(v)
-                        .with_attrs_filter(attrs.as_deref())
+                        .with_attrs_filter(query.attrs.as_deref())
                         .with_mode(opts.render_mode)
                         .render()
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
             let rendered = start_rendering(accept.media_type(), &context, prefer)
-                .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
+                .with_geometry_property(query.geometry_property.as_ref())
                 .with_payload(ResponsePayload::Collection(filtered))
                 .render()?;
             let response = NgsiLdCollectionResponse::ok(rendered)
@@ -133,13 +129,12 @@ pub async fn query(
         let (local_entities, total_count) = service.query(&query, &context).await.with_instance(&uri)?;
 
         // Distributed forwarding: query matching context sources unless local=true
-        let mut remote_ids: Vec<String> = Vec::new();
+        let mut remote_ids: Vec<Uri> = Vec::new();
         let (mut entities, warnings) = if is_local {
             (local_entities, Vec::new())
         } else {
-            let context_url = context.link_contexts().first().map(|s| s.as_str());
-            let entity_type = query.entity_type.as_ref().map(ToString::to_string);
-            let entity_type = entity_type.as_deref();
+            let context_url = context.link_contexts().first();
+            let entity_type = query.entity_type.as_ref();
             let entity_ids = query.id.clone();
             let entity_ids_ref = entity_ids.as_deref();
 
@@ -169,7 +164,11 @@ pub async fn query(
             let mut warnings = collect_warnings(&forwarded);
 
             // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
-            remote_ids = forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
+            remote_ids = forwarded
+                .iter()
+                .flat_map(|result| result.entities.iter())
+                .map(|entity| entity.id.clone())
+                .collect();
 
             let merged = if forwarded.is_empty() {
                 local_entities
@@ -194,7 +193,11 @@ pub async fn query(
                 .unwrap_or_default();
             if !aux_forwarded.is_empty() {
                 warnings.extend(collect_warnings(&aux_forwarded));
-                let aux_remote_ids: Vec<String> = aux_forwarded.iter().flat_map(|f| f.entities.iter()).map(|e| e.id.to_string()).collect();
+                let aux_remote_ids: Vec<Uri> = aux_forwarded
+                    .iter()
+                    .flat_map(|result| result.entities.iter())
+                    .map(|entity| entity.id.clone())
+                    .collect();
                 remote_ids.extend(aux_remote_ids);
                 let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
                 (merged, warnings)
@@ -245,15 +248,10 @@ pub async fn query(
             let mut all_ids = service.query_ids(&compiled).await.with_instance(&uri)?;
             // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
             all_ids.extend(remote_ids);
-            all_ids.sort_unstable();
+            all_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
             all_ids.dedup();
-            let typed_ids: Vec<Uri> = all_ids
-                .iter()
-                .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_validation(format!("Invalid entity id URI '{}'", id))))
-                .collect::<Result<Vec<_>, _>>()
-                .with_instance(&uri)?;
             let lifetime = query.entity_map_lifetime.as_ref();
-            let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+            let map = state.entity_maps.create(all_ids, lifetime).await.with_instance(&uri)?;
             Some(map.id)
         } else if entity_map_header.is_some() {
             // Echo the same map back in the response header
@@ -282,7 +280,7 @@ pub async fn query(
                     let all_values =
                         render_flat_join(entities.iter().chain(linked.values()), language_filter.as_ref(), opts.render_mode).with_instance(&uri)?;
                     let rendered = start_rendering(accept.media_type(), &context, prefer)
-                        .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
+                        .with_geometry_property(query.geometry_property.as_ref())
                         .with_payload(ResponsePayload::Collection(all_values))
                         .render()?;
                     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -308,7 +306,7 @@ pub async fn query(
                         );
                     }
                     let rendered = start_rendering(accept.media_type(), &context, prefer)
-                        .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
+                        .with_geometry_property(query.geometry_property.as_ref())
                         .with_payload(ResponsePayload::Collection(entity_values))
                         .render()?;
                     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
@@ -326,7 +324,7 @@ pub async fn query(
 
         let rendered = render_flat_join(entities.iter(), language_filter.as_ref(), opts.render_mode).with_instance(&uri)?;
         let rendered_output = start_rendering(accept.media_type(), &context, prefer)
-            .with_geometry_property(query.geometry_property.as_ref().map(AttributeName::as_str))
+            .with_geometry_property(query.geometry_property.as_ref())
             .with_payload(ResponsePayload::Collection(rendered))
             .render()?;
         let mut response = NgsiLdCollectionResponse::ok(rendered_output).with_status(status).with_warnings(warnings);

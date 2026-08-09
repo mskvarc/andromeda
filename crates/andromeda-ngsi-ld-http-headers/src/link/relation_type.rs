@@ -1,6 +1,9 @@
 //! Link relation types (RFC 8288 section 2.1).
 
-use std::{convert::Infallible, fmt, str::FromStr};
+use andromeda_ngsi_ld_vocabulary::expanded::properties::JSONLD_CONTEXT_REL;
+use iri_rs::IriRefBuf;
+use std::{fmt, str::FromStr};
+use thiserror::Error;
 
 /// A link relation type.
 ///
@@ -25,21 +28,23 @@ pub enum RelationType {
     /// `last` -- last page in a paginated result (clause 6.3.10).
     Last,
     /// Any other relation type: a registered name or an extension URI.
-    ExtRelType(String),
+    ExtRelType(IriRefBuf),
 }
 
-impl RelationType {
-    /// The JSON-LD context relation IRI.
-    pub const JSONLD_CONTEXT: &str = "http://www.w3.org/ns/json-ld#context";
+/// An extension relation that is not a valid RFC 3987 IRI reference.
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("invalid Link relation type")]
+pub struct RelationTypeParseError;
 
+impl RelationType {
     /// The JSON-LD context relation type.
     pub fn jsonld_context() -> RelationType {
-        RelationType::ExtRelType(Self::JSONLD_CONTEXT.to_owned())
+        RelationType::ExtRelType(IriRefBuf::from(*JSONLD_CONTEXT_REL.as_iri_ref()))
     }
 
     /// Whether this is the JSON-LD context relation type.
     pub fn is_jsonld_context(&self) -> bool {
-        matches!(self, RelationType::ExtRelType(uri) if uri == Self::JSONLD_CONTEXT)
+        matches!(self, RelationType::ExtRelType(uri) if uri == JSONLD_CONTEXT_REL.as_str())
     }
 }
 
@@ -56,11 +61,9 @@ impl fmt::Display for RelationType {
 }
 
 impl FromStr for RelationType {
-    /// Infallible: anything that is not a named relation is an extension URI,
-    /// which RFC 8288 permits to be any token.
-    type Err = Infallible;
+    type Err = RelationTypeParseError;
 
-    fn from_str(raw: &str) -> Result<RelationType, Infallible> {
+    fn from_str(raw: &str) -> Result<RelationType, RelationTypeParseError> {
         Ok(if raw.eq_ignore_ascii_case("next") {
             RelationType::Next
         } else if raw.eq_ignore_ascii_case("prev") {
@@ -70,7 +73,7 @@ impl FromStr for RelationType {
         } else if raw.eq_ignore_ascii_case("last") {
             RelationType::Last
         } else {
-            RelationType::ExtRelType(String::from(raw))
+            RelationType::ExtRelType(raw.parse().map_err(|_| RelationTypeParseError)?)
         })
     }
 }
@@ -97,7 +100,7 @@ mod tests {
     fn an_unnamed_relation_is_carried_verbatim() {
         pretty_assertions::assert_eq!(
             "http://www.w3.org/ns/json-ld#context".parse::<RelationType>(),
-            Ok(RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".to_owned()))
+            Ok(RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".parse().expect("IRI reference")))
         );
     }
 
@@ -105,7 +108,7 @@ mod tests {
     fn the_json_ld_context_relation_is_recognised_only_as_itself() {
         pretty_assertions::assert_eq!(
             RelationType::jsonld_context(),
-            RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".to_owned())
+            RelationType::ExtRelType("http://www.w3.org/ns/json-ld#context".parse().expect("IRI reference"))
         );
         assert!(RelationType::jsonld_context().is_jsonld_context());
         assert!(!RelationType::Next.is_jsonld_context());

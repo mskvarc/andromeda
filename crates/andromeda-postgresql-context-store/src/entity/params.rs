@@ -8,6 +8,7 @@
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -16,7 +17,7 @@ use serde_json::Value;
 #[derive(Debug)]
 pub struct PreparedEntityColumns {
     /// Entity identifiers.
-    pub ids: Vec<String>,
+    pub ids: Vec<Uri>,
     /// Type arrays as JSON.
     pub types_json: Vec<Value>,
     /// Scope arrays as JSON, already in `ltree` dot notation.

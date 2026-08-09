@@ -12,6 +12,7 @@ use crate::{
     store::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
     value_type::ValueType,
 };
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use chrono::{DateTime, Utc};
@@ -39,7 +40,10 @@ pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryRow, Temp
 
     let observed_at = row.try_get::<Option<DateTime<Utc>>, _>("observed_at").unwrap_or(None);
     let time: DateTime<Utc> = row.try_get("time").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let instance_id: String = row.try_get("instance_id").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
+    let instance_id_raw: String = row.try_get("instance_id").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
+    let instance_id = instance_id_raw
+        .parse::<InstanceId>()
+        .map_err(|error| TemporalStoreError::Decode(format!("Invalid attribute_history.instance_id '{instance_id_raw}': {error}")))?;
     let metadata: Option<Value> = row.try_get("metadata").unwrap_or(None);
     let partition_total: Option<i64> = row.try_get("partition_total").ok();
 
@@ -58,9 +62,21 @@ pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryRow, Temp
 
 /// Decode one aggregation row into a [`TemporalAggregationRow`].
 pub(crate) fn decode_aggregation_row(row: &PgRow) -> Result<TemporalAggregationRow, TemporalStoreError> {
-    let attribute_name: String = row.try_get("attribute_name").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let attribute_type: String = row.try_get("attribute_type").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let dataset_id: Option<String> = row.try_get("dataset_id").unwrap_or(None);
+    let attribute_name_raw: String = row.try_get("attribute_name").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
+    let attribute_name = attribute_name_raw
+        .parse::<AttributeName>()
+        .map_err(|error| TemporalStoreError::Decode(format!("Invalid aggregation attribute_name '{attribute_name_raw}': {error}")))?;
+    let attribute_type_raw: String = row.try_get("attribute_type").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
+    let attribute_type = AttributeType::from_str(&attribute_type_raw)
+        .map_err(|error| TemporalStoreError::Decode(format!("Invalid aggregation attribute_type '{attribute_type_raw}': {error}")))?;
+    let dataset_id = row
+        .try_get::<Option<String>, _>("dataset_id")
+        .map_err(|error| TemporalStoreError::Decode(error.to_string()))?
+        .map(|raw| {
+            raw.parse::<Uri>()
+                .map_err(|error| TemporalStoreError::Decode(format!("Invalid aggregation dataset_id '{raw}': {error}")))
+        })
+        .transpose()?;
 
     let value_type_raw: String = row.try_get("value_type").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
     let value_type = ValueType::from_str(&value_type_raw).map_err(|e| TemporalStoreError::Decode(format!("Invalid value type '{}': {}", value_type_raw, e)))?;
@@ -101,7 +117,10 @@ fn decode_typed_value(row: &PgRow, declared: ValueType) -> Result<TemporalValue,
         return Ok(TemporalValue::DateTime(v));
     }
     if let Some(v) = row.try_get::<Option<String>, _>("value_uri").ok().flatten() {
-        return Ok(TemporalValue::Uri(v));
+        let uri = v
+            .parse::<Uri>()
+            .map_err(|error| TemporalStoreError::Decode(format!("Invalid attribute_history.value_uri '{v}': {error}")))?;
+        return Ok(TemporalValue::Uri(uri));
     }
     if let Some(v) = row.try_get::<Option<Value>, _>("value_object").ok().flatten() {
         return Ok(TemporalValue::Object(v));
@@ -118,15 +137,9 @@ fn decode_typed_value(row: &PgRow, declared: ValueType) -> Result<TemporalValue,
         return Ok(TemporalValue::String(v));
     }
 
-    match declared {
-        ValueType::Number => Ok(TemporalValue::Number(0.0)),
-        ValueType::String => Ok(TemporalValue::String(String::new())),
-        ValueType::Boolean => Ok(TemporalValue::Boolean(false)),
-        ValueType::Geometry => Ok(TemporalValue::Geometry(Value::Null)),
-        ValueType::Object => Ok(TemporalValue::Object(Value::Null)),
-        ValueType::DateTime => Ok(TemporalValue::DateTime(DateTime::<Utc>::default())),
-        ValueType::Uri => Ok(TemporalValue::Uri(String::new())),
-    }
+    Err(TemporalStoreError::Decode(format!(
+        "attribute_history row declares {declared} but contains no typed value"
+    )))
 }
 
 /// Decode a typed min/max aggregation column into [`AggregationMinMax`].

@@ -46,9 +46,9 @@ impl<A: AnchorStore> AnchoredWriteCoordinator<A> {
 /// statement, and a part the anchor does not own would silently vanish; both
 /// are caller errors rather than conditions to report per entity.
 fn validate<A: AnchorStore>(anchor: &A, writes: &[AtomicWrite]) -> Result<(), AndromedaError> {
-    let mut seen: HashSet<&str> = HashSet::with_capacity(writes.len());
+    let mut seen = HashSet::with_capacity(writes.len());
     for write in writes {
-        if !seen.insert(&write.entity_id) {
+        if !seen.insert(write.entity_id.as_ref()) {
             return Err(AndromedaError::internal(format!(
                 "atomic write batch names {} twice; identifiers must be distinct within one commit",
                 write.entity_id
@@ -233,7 +233,7 @@ mod tests {
 
     fn write(id: &str) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::from(id))
+            .entity_id(Arc::new(id.parse().expect("valid entity URI")))
             .entity(EntityMutation::Delete)
             .history(vec![HistoryRecord::Observations(Arc::new(json!([{}])))])
             .build()
@@ -305,7 +305,7 @@ mod tests {
     async fn a_write_with_no_effects_still_reports_its_outcome() {
         let anchor = Arc::new(RecordingAnchor::new(vec![WriteOutcome::Updated]));
         let bare = AtomicWrite::builder()
-            .entity_id(Arc::from("urn:ngsi-ld:A"))
+            .entity_id(Arc::new("urn:ngsi-ld:A".parse().expect("valid entity URI")))
             .entity(EntityMutation::Delete)
             .build();
 

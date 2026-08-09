@@ -1,8 +1,14 @@
 use crate::{
-    error::AndromedaError,
     service::{
         entity::{store::EntityStore, sys_attrs::inject_sys_attrs},
+        geo_filter::matches_geo_query,
         subscription::store::SubscriptionStore,
+        subscription_cache::compile_geo_q,
+        subscription_matching::matches_scope_query,
+    },
+    worker::notification::payload::{
+        context::{context_from_url, normalize_compacted_entity},
+        filtering::filter_entity_attributes,
     },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
@@ -28,16 +34,7 @@ use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{sync::Arc, time::Duration};
 use tracing::{debug, error, info};
-use url::Url;
 use uuid::Uuid;
-
-use crate::{
-    service::{geo_filter::matches_geo_query, subscription_cache::compile_geo_q, subscription_matching::matches_scope_query},
-    worker::notification::payload::{
-        context::{context_for_subscription_raw, normalize_compacted_entity},
-        filtering::filter_entity_attributes,
-    },
-};
 
 const INTERVAL_NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -101,7 +98,7 @@ impl IntervalWorker {
                         Ok(e) => e,
                         Err(e) => {
                             error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
-                            if let Err(e) = this.sub_repo.mark_failure(sub.id.as_ref()).await {
+                            if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
                                 debug!("Failed to mark failure for {}: {}", sub.id, e);
                             }
                             return;
@@ -129,7 +126,7 @@ impl IntervalWorker {
                     }
 
                     // Claim slot only once we know we are actually going to send a notification.
-                    let claimed = match this.sub_repo.claim_notification_slot(sub.id.as_ref(), None).await {
+                    let claimed = match this.sub_repo.claim_notification_slot(&sub.id, None).await {
                         Ok(c) => c,
                         Err(e) => {
                             debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, e);
@@ -165,7 +162,7 @@ impl IntervalWorker {
                         }
                     };
 
-                    let endpoint_uri = sub.notification.endpoint.uri.as_str();
+                    let endpoint_uri = &sub.notification.endpoint.uri;
 
                     let endpoint_transport = match parse_endpoint_transport(endpoint_uri, sub.notification.endpoint.notifier_info.as_deref()) {
                         Ok(t) => t,
@@ -189,10 +186,10 @@ impl IntervalWorker {
                     let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
                     if success {
-                        if let Err(e) = this.sub_repo.mark_success(sub.id.as_ref()).await {
+                        if let Err(e) = this.sub_repo.mark_success(&sub.id).await {
                             debug!("Failed to mark success for {}: {}", sub.id, e);
                         }
-                    } else if let Err(e) = this.sub_repo.mark_failure(sub.id.as_ref()).await {
+                    } else if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
                         debug!("Failed to mark failure for {}: {}", sub.id, e);
                     }
                 })
@@ -221,13 +218,15 @@ impl IntervalWorker {
                     if single_type.is_none() && !selector.type_.matches(&entity_types(entity)) {
                         return false;
                     }
-                    let entity_id = entity_id_of(entity);
+                    let Some(entity_id) = entity_id_of(entity) else {
+                        return false;
+                    };
                     if let Some(id) = selector.id.as_ref()
-                        && entity_id != id.as_ref()
+                        && &entity_id != id
                     {
                         return false;
                     }
-                    selector.id_pattern.as_ref().is_none_or(|pattern| pattern.is_match(entity_id))
+                    selector.id_pattern.as_ref().is_none_or(|pattern| pattern.is_match(entity_id.as_str()))
                 })
                 .await?;
             all_entities.extend(matched);
@@ -241,18 +240,17 @@ impl IntervalWorker {
     /// `type_iri` narrows the read to one entity type when the selector names
     /// exactly one; otherwise every entity is a candidate and the predicate is
     /// the only filter. See [`INTERVAL_ENTITY_PAGE`] for why this pages.
-    async fn collect_pages(&self, type_iri: Option<&str>, mut keep: impl FnMut(&Value) -> bool) -> Result<Vec<Value>, crate::error::AndromedaError> {
+    async fn collect_pages(
+        &self,
+        entity_type: Option<&EntityTypeName>,
+        mut keep: impl FnMut(&Value) -> bool,
+    ) -> Result<Vec<Value>, crate::error::AndromedaError> {
         let limit = i64::from(INTERVAL_ENTITY_PAGE);
         let mut kept = Vec::new();
         let mut offset = 0_i64;
         loop {
-            let page = match type_iri {
-                Some(iri) => {
-                    let type_name = iri
-                        .parse::<EntityTypeName>()
-                        .map_err(|error| AndromedaError::internal(format!("subscription type is not a valid NGSI-LD name: {error}")))?;
-                    self.entity_repo.get_entities_by_type(&type_name, Some(limit), Some(offset)).await?
-                }
+            let page = match entity_type {
+                Some(type_name) => self.entity_repo.get_entities_by_type(type_name, Some(limit), Some(offset)).await?,
                 None => self.entity_repo.get_all_entities(Some(limit), Some(offset)).await?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
@@ -268,7 +266,7 @@ impl IntervalWorker {
         let mut results = Vec::new();
         for mut entity in entities {
             if sub.notification.sys_attrs.unwrap_or(false)
-                && let Some(id) = extract_entity_id(&entity)
+                && let Some(id) = entity_id_of(&entity)
                 && let Ok(Some(sa)) = self.entity_repo.get_sys_attrs(&id).await
             {
                 inject_sys_attrs(&mut entity, sa.created_at, sa.modified_at, sa.expires_at);
@@ -280,7 +278,7 @@ impl IntervalWorker {
                 entity
             };
 
-            let context = context_for_subscription_raw(sub.delivery.jsonld_context.as_ref().map(Url::as_str));
+            let context = context_from_url(sub.delivery.jsonld_context.as_ref());
             let include_context = sub
                 .notification
                 .endpoint
@@ -347,27 +345,23 @@ fn entity_node(entity: &Value) -> Option<&Value> {
 }
 
 /// The expanded type IRIs an entity payload declares.
-fn entity_types(entity: &Value) -> Vec<&str> {
+fn entity_types(entity: &Value) -> Vec<EntityTypeName> {
     entity_node(entity)
         .and_then(|node| node.get("@type"))
         .and_then(Value::as_array)
-        .map(|types| types.iter().filter_map(Value::as_str).collect())
+        .map(|types| {
+            types
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|raw| raw.parse::<EntityTypeName>().ok())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
-/// The `@id` an entity payload carries, or the empty string when it carries
-/// none — which no selector id or pattern matches.
-fn entity_id_of(entity: &Value) -> &str {
-    entity_node(entity).and_then(|node| node.get("@id")).and_then(Value::as_str).unwrap_or_default()
-}
-
-fn extract_entity_id(entity: &Value) -> Option<Uri> {
-    let raw = match entity {
-        Value::Array(arr) => arr.first().and_then(|v| v.get("@id")).and_then(|v| v.as_str()),
-        Value::Object(obj) => obj.get("@id").and_then(|v| v.as_str()),
-        _ => None,
-    }?;
-    raw.parse::<Uri>().ok()
+/// The validated `@id` an expanded entity payload carries.
+fn entity_id_of(entity: &Value) -> Option<Uri> {
+    entity_node(entity)?.get("@id")?.as_str()?.parse().ok()
 }
 
 /// Apply q, geoQ, and scopeQ filters from a subscription to a list of expanded entities.

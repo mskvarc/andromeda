@@ -9,19 +9,23 @@ use crate::{
     service::{
         csource_forwarding::CsourceForwardingService,
         entity::query::EntityQueryService,
-        snapshot::{query_validation::validate_snapshot_query_shapes, store::SnapshotStore},
+        snapshot::{
+            query_validation::validate_snapshot_query_shapes,
+            store::{SnapshotAttributeInfo, SnapshotStore, SnapshotTypeInfo},
+        },
         snapshot_executor::SnapshotExecutor,
         snapshot_prepare::to_insert_params,
         temporal::TemporalService,
     },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::SnapshotId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
@@ -123,7 +127,7 @@ impl SnapshotService {
     }
 
     /// Retrieve a snapshot by its identifier, returning 404 if expired.
-    pub async fn get(&self, id: &SnapshotId) -> Result<Snapshot, AndromedaError> {
+    pub async fn get(&self, id: &Uri) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
             .get(id)
@@ -146,7 +150,7 @@ impl SnapshotService {
     }
 
     /// Partially update a snapshot's lifetime or priority.
-    pub async fn update(&self, id: &SnapshotId, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
+    pub async fn update(&self, id: &Uri, patch: SnapshotPatch) -> Result<Snapshot, AndromedaError> {
         let existing = self.get(id).await?;
 
         let patch_priority = patch.snapshot_priority;
@@ -168,7 +172,7 @@ impl SnapshotService {
     }
 
     /// Delete a snapshot by its identifier.
-    pub async fn delete(&self, id: &SnapshotId) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, id: &Uri) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await?;
         if deleted == 0 {
             return Err(AndromedaError::snapshot_not_found(format!("Snapshot {} not found", id)));
@@ -200,11 +204,11 @@ impl SnapshotService {
             match self.repo.delete_one(&id).await {
                 Ok(n) if n > 0 => successes.push(id),
                 Ok(_) => failures.push(BatchEntityError::new(
-                    id.as_str(),
+                    id.clone(), // clone: the failure result owns the snapshot identifier
                     NgsiLdErrorType::ResourceNotFound,
                     "Snapshot removed concurrently before purge",
                 )),
-                Err(error) => failures.push(entity_error(id.as_str(), &error)),
+                Err(error) => failures.push(entity_error(id, &error)),
             }
         }
 
@@ -221,7 +225,7 @@ impl SnapshotService {
     ///
     /// The snapshot must exist, not be expired, and have a queryable status
     /// (`Success` or `Partial`). Touches `last_used_at` on success.
-    pub async fn validate_for_scoping(&self, id: &SnapshotId) -> Result<Snapshot, AndromedaError> {
+    pub async fn validate_for_scoping(&self, id: &Uri) -> Result<Snapshot, AndromedaError> {
         let snapshot = self
             .repo
             .get(id)
@@ -253,15 +257,15 @@ impl SnapshotService {
     }
 
     /// Retrieve a single entity from a snapshot's frozen data.
-    pub async fn get_snapshot_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_entity(&self, snapshot_id: &Uri, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_entity(snapshot_id, entity_id).await
     }
 
     /// Query entities from a snapshot's frozen data with optional filtering and pagination.
     pub async fn query_snapshot_entities(
         &self,
-        snapshot_id: &SnapshotId,
-        entity_type: Option<&str>,
+        snapshot_id: &Uri,
+        entity_type: Option<&TypeExprRaw>,
         entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
@@ -271,38 +275,38 @@ impl SnapshotService {
 
     /// Return distinct entity types present in a snapshot's frozen data
     /// (ETSI GS CIM 009 clause 5.7.5, scoped via 5.5.15).
-    pub async fn snapshot_types(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+    pub async fn snapshot_types(&self, snapshot_id: &Uri) -> Result<Vec<EntityTypeName>, AndromedaError> {
         self.repo.snapshot_distinct_types(snapshot_id).await
     }
 
     /// Return `(entity_count, attribute_names)` for a type within a snapshot,
     /// or `None` if the type is absent (clause 5.7.6).
-    pub async fn snapshot_type_info(&self, snapshot_id: &SnapshotId, type_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+    pub async fn snapshot_type_info(&self, snapshot_id: &Uri, type_name: &EntityTypeName) -> Result<Option<SnapshotTypeInfo>, AndromedaError> {
         self.repo.snapshot_type_info(snapshot_id, type_name).await
     }
 
     /// Return distinct attribute names present across a snapshot's frozen
     /// entities (clause 5.7.7).
-    pub async fn snapshot_attributes(&self, snapshot_id: &SnapshotId) -> Result<Vec<String>, AndromedaError> {
+    pub async fn snapshot_attributes(&self, snapshot_id: &Uri) -> Result<Vec<AttributeName>, AndromedaError> {
         self.repo.snapshot_distinct_attributes(snapshot_id).await
     }
 
     /// Return `(entity_count, type_names)` for an attribute within a snapshot,
     /// or `None` if the attribute is absent (clause 5.7.8).
-    pub async fn snapshot_attribute_info(&self, snapshot_id: &SnapshotId, attr_name: &str) -> Result<Option<(i64, Vec<String>)>, AndromedaError> {
+    pub async fn snapshot_attribute_info(&self, snapshot_id: &Uri, attr_name: &AttributeName) -> Result<Option<SnapshotAttributeInfo>, AndromedaError> {
         self.repo.snapshot_attribute_info(snapshot_id, attr_name).await
     }
 
     /// Retrieve a single temporal entity from a snapshot's frozen data.
-    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &SnapshotId, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
+    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &Uri, entity_id: &Uri) -> Result<Option<Value>, AndromedaError> {
         self.repo.get_temporal_entity(snapshot_id, entity_id).await
     }
 
     /// Query temporal entities from a snapshot's frozen data with optional filtering and pagination.
     pub async fn query_snapshot_temporal_entities(
         &self,
-        snapshot_id: &SnapshotId,
-        entity_type: Option<&str>,
+        snapshot_id: &Uri,
+        entity_type: Option<&TypeExprRaw>,
         entity_ids: Option<&[Uri]>,
         limit: i64,
         offset: i64,
@@ -311,7 +315,7 @@ impl SnapshotService {
     }
 
     /// Clone an existing snapshot, producing a new snapshot with a fresh ID and expiration.
-    pub async fn clone_snapshot(&self, source_id: &SnapshotId) -> Result<Snapshot, AndromedaError> {
+    pub async fn clone_snapshot(&self, source_id: &Uri) -> Result<Snapshot, AndromedaError> {
         let source = self.get(source_id).await?;
 
         let new_id = build_snapshot_id()?;
@@ -358,7 +362,7 @@ impl SnapshotService {
         // The snapshot notification has no subscription; its own id is the
         // routing and logging label the delivery carries. clone: the conversion
         // consumes the id and the snapshot is borrowed here.
-        let subscription_id = Uri::from(snapshot.id.clone());
+        let subscription_id = snapshot.id.clone();
         let request = (NotificationDelivery {
             payload: &payload,
             endpoint_uri: endpoint,
@@ -393,16 +397,17 @@ pub enum PurgeOutcome {
     /// Some succeeded and some failed (maps to 207 Multi-Status).
     Partial {
         /// Identifiers of successfully deleted snapshots.
-        successes: Vec<SnapshotId>,
+        successes: Vec<Uri>,
         /// Per-snapshot error entries for the multi-status body.
         failures: Vec<BatchEntityError>,
     },
 }
 
-fn build_snapshot_id() -> Result<SnapshotId, AndromedaError> {
+fn build_snapshot_id() -> Result<Uri, AndromedaError> {
     let value = format!("urn:ngsi-ld:Snapshot:{}", uuid::Uuid::new_v4());
-    let id = value.parse::<SnapshotId>()?;
-    Ok(id)
+    value
+        .parse()
+        .map_err(|error| AndromedaError::internal(format!("Generated snapshot id is not a valid URI: {error}")))
 }
 
 fn compute_snapshot_expires_at(created_at: chrono::DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<chrono::DateTime<Utc>, AndromedaError> {

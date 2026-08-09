@@ -60,7 +60,7 @@ pub async fn delete_by_query(
     if !is_local {
         let body =
             serde_json::to_vec(&entity_ids).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity IDs: {}", e)).with_instance(&uri))?;
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let context_url = context.link_contexts().first();
         let forwarded = state
             .forwarding
             .forward_batch_provision(ForwardBatchProvisionRequest {

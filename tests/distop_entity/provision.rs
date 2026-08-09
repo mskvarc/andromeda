@@ -9,6 +9,7 @@
 //! - Multi-status responses for partial success/failure
 //! - local=true parameter to skip forwarding
 
+use andromeda_test_common::config::BASE_URL;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
 use serial_test::serial;
@@ -251,7 +252,7 @@ async fn distop_entity_create_existing_locally_returns_207() {
     // Create same entity again -> 207 (local conflict, remote success)
     let entity = vehicle_entity(&entity_id);
     let resp = c
-        .post(format!("{}/entities", crate::helpers::BASE_URL))
+        .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/ld+json")
         .json(&entity)
         .send()
@@ -298,7 +299,7 @@ async fn distop_entity_create_existing_on_both_returns_207() {
     // Create same entity again -> 207 (both conflict)
     let entity = vehicle_entity(&entity_id);
     let resp = c
-        .post(format!("{}/entities", crate::helpers::BASE_URL))
+        .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/ld+json")
         .json(&entity)
         .send()
@@ -337,7 +338,7 @@ async fn distop_entity_create_existing_remotely_returns_207() {
     // Create entity -> 207 (local success, remote conflict)
     let entity = vehicle_entity(&entity_id);
     let resp = c
-        .post(format!("{}/entities", crate::helpers::BASE_URL))
+        .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/ld+json")
         .json(&entity)
         .send()
@@ -826,7 +827,7 @@ async fn distop_entity_replace_inclusive_replaces_local_and_forwards() {
     // Create entity with JSON content type
     let entity = vehicle_entity_json(&entity_id);
     let resp = c
-        .post(format!("{}/entities", crate::helpers::BASE_URL))
+        .post(format!("{BASE_URL}/entities"))
         .header("Content-Type", "application/json")
         .header("Link", jsonld_link_value())
         .json(&entity)

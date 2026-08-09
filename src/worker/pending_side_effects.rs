@@ -20,6 +20,7 @@ use crate::{
         side_effect_queue::{LeasedSideEffect, SideEffectQueue},
         write_coordinator::WriteCoordinator,
     },
+    worker_instance_id::WorkerInstanceId,
 };
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
@@ -43,7 +44,7 @@ pub struct WorkerConfig {
     pub base_backoff: Duration,
     /// Stable identifier for this worker instance. Stored on leased rows so
     /// operators can trace stuck jobs back to a specific process.
-    pub worker_id: String,
+    pub worker_id: WorkerInstanceId,
 }
 
 /// Background worker that drains the durable side-effect queue.

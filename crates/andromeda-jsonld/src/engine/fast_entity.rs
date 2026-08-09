@@ -9,8 +9,10 @@
 
 use crate::{
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, same_core_context_document},
-    engine::{expanded_key, fast_attribute::expand_attribute, term_map::BatchTermMap},
+    engine::{fast_attribute::expand_attribute, term_map::BatchTermMap},
 };
+use andromeda_ngsi_ld_vocabulary::expanded::{classes, properties};
+use iri_rs::Iri;
 use serde_json::{Map, Value};
 
 /// Expand a document holding one entity or an array of them.
@@ -53,7 +55,7 @@ fn expand_entity(entity: &Map<String, Value>, term_map: &BatchTermMap) -> Option
                 expanded.insert("@type".to_string(), expand_entity_types(value, term_map)?);
             }
             "scope" => {
-                expanded.insert(expanded_key::SCOPE.clone(), expand_scope(value)?);
+                expanded.insert(properties::SCOPE.as_str().to_owned(), expand_scope(value)?);
             }
             // Clause 5.2.4 entity-level temporal metadata: the core context
             // coerces these to a dateTime. They are not attribute slots, so
@@ -101,7 +103,7 @@ fn expand_entity_types(value: &Value, term_map: &BatchTermMap) -> Option<Value> 
 /// an inline reference to a different release (v1.6 under a v1.9 deployment)
 /// would be expanded against the wrong table. Anything else redefines terms
 /// this walker resolved from the batch table, so it falls to the processor.
-fn names_core_contexts_only(context: &Value, effective_core_url: &str) -> bool {
+fn names_core_contexts_only(context: &Value, effective_core_url: Iri<&str>) -> bool {
     match context {
         Value::String(url) => is_effective_core_context(url, effective_core_url),
         Value::Array(items) => items
@@ -113,8 +115,8 @@ fn names_core_contexts_only(context: &Value, effective_core_url: &str) -> bool {
 
 /// Whether a URL names Andromeda's own context, or a core context that resolves
 /// to the same document the deployment pinned.
-fn is_effective_core_context(url: &str, effective_core_url: &str) -> bool {
-    url == ANDROMEDA_CORE_CONTEXT_URL || same_core_context_document(url, effective_core_url)
+fn is_effective_core_context(url: &str, effective_core_url: Iri<&str>) -> bool {
+    ANDROMEDA_CORE_CONTEXT_URL == url || Iri::parse(url).is_ok_and(|url| same_core_context_document(url, effective_core_url))
 }
 
 /// Expand `scope`, which clause 4.18 allows to be one path or several.
@@ -136,7 +138,7 @@ fn expand_scope(value: &Value) -> Option<Value> {
 /// The expanded form of a value the core context coerces to a dateTime.
 fn typed_date_time(timestamp: &str) -> Value {
     let mut node = Map::with_capacity(2);
-    node.insert("@type".to_owned(), Value::String(expanded_key::DATE_TIME.clone()));
+    node.insert("@type".to_owned(), Value::String(classes::DATE_TIME.as_str().to_owned()));
     node.insert("@value".to_owned(), Value::String(timestamp.to_owned()));
     Value::Array(vec![Value::Object(node)])
 }

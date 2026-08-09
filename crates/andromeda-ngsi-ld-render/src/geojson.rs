@@ -6,6 +6,7 @@
 //! because it is an NGSI-LD extension absent from the GeoJSON spec.
 
 use crate::error::{RenderError, RenderedShape};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::{compact::properties as compact_properties, expanded::properties as expanded_properties};
 use geojson::{Feature, FeatureCollection, feature::Id};
 use serde_json::{Map, Value};
@@ -28,7 +29,7 @@ pub(crate) struct GeoJsonRenderer<'a> {
     /// The `@context` to inject into the envelope, if it goes in the body.
     context_value: Option<Value>,
     /// The attribute the geometry is taken from; `location` when absent.
-    geometry_property: Option<&'a str>,
+    geometry_property: Option<&'a AttributeName>,
     /// Which envelope to build.
     shape: GeoJsonShape,
 }
@@ -51,7 +52,7 @@ impl<'a> GeoJsonRenderer<'a> {
     }
 
     /// Set a custom geometry property name (e.g. `observationSpace`).
-    pub const fn with_geometry_property(mut self, prop: Option<&'a str>) -> Self {
+    pub const fn with_geometry_property(mut self, prop: Option<&'a AttributeName>) -> Self {
         self.geometry_property = prop;
         self
     }
@@ -99,7 +100,7 @@ impl<'a> GeoJsonRenderer<'a> {
 }
 
 /// Convert a single NGSI-LD entity JSON object into a GeoJSON [`Feature`].
-fn entity_to_feature(entity: &Value, geometry_property: Option<&str>) -> Feature {
+fn entity_to_feature(entity: &Value, geometry_property: Option<&AttributeName>) -> Feature {
     let Some(obj) = entity.as_object() else {
         return Feature {
             bbox: None,
@@ -130,8 +131,8 @@ fn entity_to_feature(entity: &Value, geometry_property: Option<&str>) -> Feature
 
 /// Extract a GeoJSON [`geojson::Geometry`] from an entity object using the
 /// configured geometry property name.
-fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&str>) -> Option<geojson::Geometry> {
-    let geom_key = geometry_property.unwrap_or(compact_properties::LOCATION);
+fn extract_geometry(obj: &Map<String, Value>, geometry_property: Option<&AttributeName>) -> Option<geojson::Geometry> {
+    let geom_key = geometry_property.map_or(compact_properties::LOCATION, AttributeName::as_str);
     let location_keys: &[&str] = &[compact_properties::LOCATION, expanded_properties::LOCATION.as_str()];
     let keys: &[&str] = if geom_key == compact_properties::LOCATION {
         location_keys
@@ -235,8 +236,9 @@ mod tests {
                 "value": {"type": "Polygon", "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]}
             }
         });
+        let geometry_property = "observationSpace".parse().ok();
         let geo = GeoJsonRenderer::new(entity)
-            .with_geometry_property(Some("observationSpace"))
+            .with_geometry_property(geometry_property.as_ref())
             .render()
             .expect("GeoJSON entity");
         pretty_assertions::assert_eq!(geo["geometry"]["type"], "Polygon");

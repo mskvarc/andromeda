@@ -37,7 +37,7 @@ use uuid::Uuid;
 use crate::service::subscription_matching::matches_entity_filters;
 use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
-use payload::{NotificationBuildParams, NotificationCompactionCache, build_notification_data};
+use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
 use std::collections::{HashMap, HashSet};
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -304,7 +304,7 @@ impl NotificationWorker {
 
                     match self
                         .sub_repo
-                        .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
                         .await
                     {
                         Ok(true) => {}
@@ -381,10 +381,10 @@ impl NotificationWorker {
                     let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
                     if success {
-                        if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
+                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
                             debug!("Failed to mark notification success for {}: {}", sub_id, e);
                         }
-                    } else if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
+                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
                         debug!("Failed to mark notification failure for {}: {}", sub_id, e);
                     }
                 }
@@ -465,13 +465,12 @@ impl NotificationWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        event::change_event::ChangeOrigin,
-        service::subscription_matching::matches_subscription,
-        worker::notification::payload::filtering::filter_entity_attributes,
-    };
+    use crate::{service::subscription_matching::matches_subscription, worker::notification::payload::filtering::filter_entity_attributes};
     use andromeda_delivery::endpoint::transport::EndpointTransport;
-    use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
+    use andromeda_ngsi_ld_model::{
+        notification::ChangeOrigin,
+        subscription::{EntitySelector, SubscriptionStatus},
+    };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
     use url::Url;
 
@@ -495,7 +494,12 @@ mod tests {
             endpoint_receiver_info: None,
             endpoint_transport: EndpointTransport::Http,
             triggers: triggers.into_iter().map(|t| t.parse().expect("valid trigger")).collect(),
-            watched_attrs: watched.map(|w| w.into_iter().map(String::from).collect()),
+            watched_attrs: watched.map(|attributes| {
+                attributes
+                    .into_iter()
+                    .map(|attribute| attribute.parse().expect("valid test attribute name"))
+                    .collect()
+            }),
             selectors,
             throttling_secs: None,
             time_interval_secs: None,

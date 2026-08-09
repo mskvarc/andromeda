@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
-use urn_rs::Urn;
 
 impl EntityService {
     /// Update the attributes an entity already carries (clause 5.6.2).
@@ -31,9 +30,8 @@ impl EntityService {
     /// The update is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
-    pub async fn update_attrs(&self, id: &Urn, mut fragment: Value, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+    pub async fn update_attrs(&self, id: &Uri, mut fragment: Value, context: &ContextSpec) -> Result<Vec<AttributeName>, AndromedaError> {
+        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
@@ -60,11 +58,11 @@ impl EntityService {
 
                 let mut history = vec![HistoryRecord::Observations(Arc::clone(&expanded))]; // clone: Arc ref-count bump
                 for deleted_attr in &deleted {
-                    history.push(tombstone(deleted_attr.as_str(), None)?);
+                    history.push(tombstone(deleted_attr, None));
                 }
 
                 let merged = Arc::new(existing);
-                let write = payload_write(&id, &merged, history);
+                let write = payload_write(&entity_uri, &merged, history);
                 Ok((
                     write,
                     UpdatedAttrs {

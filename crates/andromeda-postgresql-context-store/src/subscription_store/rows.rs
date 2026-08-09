@@ -7,9 +7,16 @@
 //!
 //! [`DatasetIdPresence`]: crate::subscription_store::params::DatasetIdPresence
 
-use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
+    notification::NotificationTrigger,
+    subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
+};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
 use chrono::{DateTime, Utc};
+use langtag::LangTagBuf;
 use serde_json::Value;
+use url::Url;
 
 /// A subscription row read from the `subscriptions` table. Column presence
 /// matches the macro-generated projection list; optional/nullable columns
@@ -17,33 +24,33 @@ use serde_json::Value;
 #[derive(Debug)]
 pub struct SubscriptionRow {
     /// Subscription identifier.
-    pub id: String,
+    pub id: Uri,
     /// Optional human-readable name.
     pub subscription_name: Option<String>,
     /// Optional free-text description.
     pub description: Option<String>,
     /// Entity selector JSON (nullable in DB).
-    pub entities_json: Option<Value>,
+    pub entities: Option<Vec<EntitySelector>>,
     /// Watched attribute IRIs.
-    pub watched_attributes: Option<Vec<String>>,
-    /// Notification trigger strings (parsed by the mapper).
-    pub notification_trigger_strs: Option<Vec<String>>,
+    pub watched_attributes: Option<Vec<AttributeName>>,
+    /// Validated notification triggers.
+    pub notification_trigger: Option<Vec<NotificationTrigger>>,
     /// Periodic notification interval seconds.
     pub time_interval: Option<f64>,
     /// NGSI-LD q expression.
-    pub q: Option<String>,
+    pub q: Option<Expr>,
     /// Geo query JSON (nullable).
     pub geo_q: Option<Value>,
     /// Scope query expression.
-    pub scope_q: Option<String>,
+    pub scope_q: Option<ScopeQuery>,
     /// Context source filter.
-    pub csf: Option<String>,
+    pub csf: Option<Expr>,
     /// Dataset IDs (entity subscriptions only; `None` when absent).
-    pub dataset_id: Option<Vec<String>>,
+    pub dataset_id: Option<Vec<Uri>>,
     /// Whether the subscription is active.
     pub is_active: bool,
     /// Notification endpoint configuration JSON.
-    pub notification_json: Value,
+    pub notification: NotificationParams,
     /// Expiry timestamp.
     pub expires_at: Option<DateTime<Utc>>,
     /// Throttling seconds.
@@ -53,9 +60,9 @@ pub struct SubscriptionRow {
     /// Temporal query JSON.
     pub temporal_q: Option<Value>,
     /// Preferred language.
-    pub lang: Option<String>,
+    pub lang: Option<LangTagBuf>,
     /// Associated JSON-LD context URI.
-    pub jsonld_context: Option<String>,
+    pub jsonld_context: Option<Url>,
     /// Local-only scope flag.
     pub local_only: bool,
     /// Counter for notifications sent.

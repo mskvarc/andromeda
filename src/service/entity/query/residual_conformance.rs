@@ -77,8 +77,7 @@ mod tests {
                     let types = extract_types(entity);
                     type_expr.matches(&types.iter().map(|name| name.as_str()).collect::<Vec<&str>>())
                 });
-                let id_ok =
-                    selector.ids.is_empty() || extract_id(entity).is_some_and(|id| selector.ids.iter().any(|wanted| AsRef::<str>::as_ref(wanted) == id));
+                let id_ok = selector.ids.is_empty() || extract_id(entity).is_some_and(|id| selector.ids.contains(&id));
                 type_ok && id_ok
             });
         q_holds && geo_holds && scope_holds && selectors_hold
@@ -109,11 +108,7 @@ mod tests {
             let mut pushed = compiled.selection.clone(); // clone: the store runs a narrowed copy of the caller's query
             unapplied.strip_from(&mut pushed);
 
-            let admitted = self
-                .entities
-                .iter()
-                .filter(|entity| reference_matches(&pushed, entity))
-                .filter_map(|entity| extract_id(entity).and_then(|id| id.parse::<Uri>().ok()));
+            let admitted = self.entities.iter().filter(|entity| reference_matches(&pushed, entity)).filter_map(extract_id);
 
             if unapplied.is_empty() {
                 let all: Vec<Uri> = admitted.collect();
@@ -154,14 +149,14 @@ mod tests {
 
         async fn get(&self, id: &Uri) -> Result<Option<Value>, AndromedaError> {
             // clone: the double hands out owned payloads, as a real store does
-            Ok(self.entities.iter().find(|entity| extract_id(entity) == Some(id.as_str())).cloned())
+            Ok(self.entities.iter().find(|entity| extract_id(entity).as_ref() == Some(id)).cloned())
         }
 
         async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, AndromedaError> {
             Ok(self
                 .entities
                 .iter()
-                .filter_map(|entity| extract_id(entity).and_then(|id| id.parse::<Uri>().ok()).map(|id| (id, entity)))
+                .filter_map(|entity| extract_id(entity).map(|id| (id, entity)))
                 .filter(|(id, _)| ids.contains(id))
                 .map(|(id, entity)| (id, entity.clone())) // clone: as above
                 .collect())

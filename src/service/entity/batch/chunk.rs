@@ -7,7 +7,7 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::entity::{
         EntityService,
         atomic_write::AtomicWrite,
@@ -20,7 +20,7 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
@@ -49,12 +49,12 @@ pub(super) struct ChunkWrite {
 #[derive(Debug, Default)]
 pub(super) struct ChunkOutcome {
     /// Identifiers whose write landed.
-    pub success: Vec<String>,
+    pub success: Vec<Uri>,
     /// Identifiers whose write created the entity (clause 5.6.8 reports these
     /// separately so the response can carry 201).
-    pub created: Vec<String>,
+    pub created: Vec<Uri>,
     /// Per-entity failures a re-read cannot fix.
-    pub errors: Vec<(String, AndromedaError)>,
+    pub errors: Vec<(Uri, AndromedaError)>,
     /// Refusals a caller that read the entity first can fix by reading again:
     /// the entity moved on, or an identifier it read as absent now exists.
     /// A caller that read nothing has no reason to retry and folds these into
@@ -66,7 +66,7 @@ pub(super) struct ChunkOutcome {
 impl ChunkOutcome {
     /// Treat every refusal as final.
     pub(super) fn settled(mut self) -> ChunkOutcome {
-        self.errors.extend(self.retryable.drain(..).map(|(id, error)| (id.to_string(), error)));
+        self.errors.append(&mut self.retryable);
         self
     }
 }
@@ -150,10 +150,10 @@ const fn trigger_of(entity: &EntityMutation) -> NotificationTrigger {
 /// `Skipped` is silent on purpose: an unconditional insert that met an existing
 /// row neither succeeded nor failed, and the upsert path that issues one has
 /// always left such entities out of both lists.
-fn error_of(id: &str, outcome: &WriteOutcome) -> Option<AndromedaError> {
+fn error_of(id: &Uri, outcome: &WriteOutcome) -> Option<AndromedaError> {
     match outcome {
-        WriteOutcome::AlreadyExists => Some(AndromedaError::entity_already_exists(id)),
-        WriteOutcome::NotFound => Some(AndromedaError::entity_not_found(id)),
+        WriteOutcome::AlreadyExists => Some(AndromedaError::entity_already_exists(id.to_string())),
+        WriteOutcome::NotFound => Some(AndromedaError::entity_not_found(id.to_string())),
         WriteOutcome::Superseded => Some(AndromedaError::internal(format!("entity {id} was modified by another writer"))),
         WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => None,
     }
@@ -200,7 +200,7 @@ impl EntityService {
             } = entry;
             let creates = entity.is_insert();
             let event = Some(change_event(&id, types, changed_attributes, Arc::clone(&observed), trigger_of(&entity))); // clone: Arc ref-count bump
-            let entity_id: Arc<str> = Arc::from(id.as_str());
+            let entity_id = Arc::new(id.clone()); // clone: the write and deferred side effect share this identifier.
 
             let builder = AtomicWrite::builder()
                 .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump
@@ -243,10 +243,10 @@ impl EntityService {
         let mut chunk = ChunkOutcome::default();
         let mut events = Vec::with_capacity(settled.len());
         for ((id, creates, event), outcome) in settled.into_iter().zip(&outcomes) {
-            if let Some(error) = error_of(id.as_str(), outcome) {
+            if let Some(error) = error_of(&id, outcome) {
                 match after_attempt(outcome) {
                     AfterAttempt::Reread => chunk.retryable.push((id, error)),
-                    AfterAttempt::Settled | AfterAttempt::Vanished => chunk.errors.push((id.to_string(), error)),
+                    AfterAttempt::Settled | AfterAttempt::Vanished => chunk.errors.push((id, error)),
                 }
                 continue;
             }
@@ -254,9 +254,9 @@ impl EntityService {
                 continue;
             }
             if creates {
-                chunk.created.push(id.to_string()); // the identifier is reported in both lists as text
+                chunk.created.push(id.clone()); // clone: upsert reports a created identifier in both result lists
             }
-            chunk.success.push(id.to_string());
+            chunk.success.push(id);
             events.extend(event);
         }
 
@@ -293,8 +293,9 @@ mod tests {
     #[test]
     fn a_conflicting_insert_reports_409_and_a_missing_update_reports_404() {
         // NGSI-LD 6.4.3.1 for the conflict; clause 5.6.9 for the absent entity.
-        assert!(error_of("urn:ngsi-ld:A", &WriteOutcome::AlreadyExists).is_some_and(|error| !error.is_not_found()));
-        assert!(error_of("urn:ngsi-ld:A", &WriteOutcome::NotFound).is_some_and(|error| error.is_not_found()));
+        let id = "urn:ngsi-ld:A".parse().expect("URI");
+        assert!(error_of(&id, &WriteOutcome::AlreadyExists).is_some_and(|error| !error.is_not_found()));
+        assert!(error_of(&id, &WriteOutcome::NotFound).is_some_and(|error| error.is_not_found()));
     }
 
     #[test]
@@ -305,7 +306,8 @@ mod tests {
             WriteOutcome::NoEntityChange,
             WriteOutcome::Skipped,
         ] {
-            assert!(error_of("urn:ngsi-ld:A", &outcome).is_none());
+            let id = "urn:ngsi-ld:A".parse().expect("URI");
+            assert!(error_of(&id, &outcome).is_none());
         }
     }
 }

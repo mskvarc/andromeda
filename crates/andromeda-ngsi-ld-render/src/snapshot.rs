@@ -11,10 +11,11 @@
 //!    being delivered.
 
 use crate::{concise::concise_value, error::RenderError, inline_join::apply_inline_join, simplify::simplify_value};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Renders a pre-compacted NGSI-LD JSON value with optional attribute
 /// filtering, inline-join expansion, and representation-mode transformation.
@@ -23,11 +24,11 @@ pub struct SnapshotRenderer<'a> {
     /// The already-compacted payload to render.
     payload: Value,
     /// The attribute keys the response is narrowed to, if it is narrowed.
-    attrs_filter: Option<&'a [&'a str]>,
+    attrs_filter: Option<&'a [AttributeName]>,
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
     /// The entities `join=inline` resolves relationships against, if any.
-    inline_linked_entities: Option<&'a HashMap<String, Entity>>,
+    inline_linked_entities: Option<&'a HashMap<Uri, Entity>>,
 }
 
 impl<'a> SnapshotRenderer<'a> {
@@ -42,7 +43,7 @@ impl<'a> SnapshotRenderer<'a> {
     }
 
     /// Restrict the output to the given attribute keys (plus `id`, `type`, `@context`).
-    pub const fn with_attrs_filter(mut self, attrs: Option<&'a [&'a str]>) -> Self {
+    pub const fn with_attrs_filter(mut self, attrs: Option<&'a [AttributeName]>) -> Self {
         self.attrs_filter = attrs;
         self
     }
@@ -54,7 +55,7 @@ impl<'a> SnapshotRenderer<'a> {
     }
 
     /// Provide linked entities for `join=inline` expansion.
-    pub const fn with_inline_linked_entities(mut self, linked: &'a HashMap<String, Entity>) -> Self {
+    pub const fn with_inline_linked_entities(mut self, linked: &'a HashMap<Uri, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
         self
     }
@@ -80,8 +81,7 @@ impl<'a> SnapshotRenderer<'a> {
             // named members plus the mandatory id/type (and the JSON-LD
             // `@context`). Match keys exactly -- a suffix match kept `surname`
             // for `attrs=name` and kept any key ending in `id`/`type`.
-            let keys_to_keep: HashSet<&str> = ["id", "type", "@context"].iter().copied().chain(requested.iter().copied()).collect();
-            obj.retain(|k, _| keys_to_keep.contains(k.as_str()));
+            obj.retain(|key, _| matches!(key.as_str(), "id" | "type" | "@context") || requested.iter().any(|name| name.as_str() == key));
         }
 
         if let Some(linked) = inline_linked_entities {
@@ -104,7 +104,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn render(payload: Value, attrs: Option<&[&str]>, mode: ResponseFormat) -> Value {
+    fn render(payload: Value, attrs: Option<&[AttributeName]>, mode: ResponseFormat) -> Value {
         SnapshotRenderer::new(payload)
             .with_attrs_filter(attrs)
             .with_mode(mode)
@@ -130,7 +130,8 @@ mod tests {
     #[test]
     fn filters_attrs() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "x"}, "temp": {"type": "Property", "value": 25}});
-        let result = render(value, Some(&["name"]), ResponseFormat::Normalized);
+        let attrs = ["name".parse().expect("attribute name")];
+        let result = render(value, Some(&attrs), ResponseFormat::Normalized);
         assert!(result.get("name").is_some());
         assert!(result.get("temp").is_none());
         assert!(result.get("id").is_some());
@@ -151,7 +152,8 @@ mod tests {
             "surname": {"type": "Property", "value": "Lovelace"},
             "scope": "/Madrid"
         });
-        let result = render(value, Some(&["name"]), ResponseFormat::Normalized);
+        let attrs = ["name".parse().expect("attribute name")];
+        let result = render(value, Some(&attrs), ResponseFormat::Normalized);
         assert!(result.get("name").is_some());
         assert!(result.get("surname").is_none(), "a suffix match must not keep surname for attrs=name");
         assert!(result.get("id").is_some());
@@ -186,7 +188,8 @@ mod tests {
     #[test]
     fn filters_then_transforms() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}, "temp": {"type": "Property", "value": 25}});
-        let result = render(value, Some(&["name"]), ResponseFormat::Simplified);
+        let attrs = ["name".parse().expect("attribute name")];
+        let result = render(value, Some(&attrs), ResponseFormat::Simplified);
         pretty_assertions::assert_eq!(result["name"], "Tower");
         assert!(result.get("temp").is_none());
     }
@@ -200,7 +203,7 @@ mod tests {
         }))
         .expect("entity");
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:ngsi-ld:Room:1".to_string(), linked_entity);
+        linked_map.insert("urn:ngsi-ld:Room:1".parse().expect("valid URI"), linked_entity);
 
         let entity = json!({
             "id": "urn:ngsi-ld:Building:1",

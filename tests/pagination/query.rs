@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::{client::NgsiLdClient, config::CORE_CONTEXT, scope::TestScope};
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};

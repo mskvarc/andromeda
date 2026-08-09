@@ -35,7 +35,7 @@ async fn retrieve_attribute_info_unknown_attribute_returns_404() {
     // "airQualityLevel" is a compacted name; without a context it cannot be expanded to a known IRI
     let (status, body) = retrieve_attribute(&c, "airQualityLevel", None).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
     assert!(body["title"].as_str().is_some_and(|t| !t.is_empty()), "title should be a non-empty string");
 
     delete_entity(&c, &id).await;

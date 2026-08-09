@@ -76,10 +76,10 @@ fn identifier_matches(ids: &[Uri], id_pattern: Option<&Pattern>, expanded: &Valu
     let Some(id) = extract_id(expanded) else {
         return false;
     };
-    if !ids.is_empty() && !ids.iter().any(|wanted| AsRef::<str>::as_ref(wanted) == id) {
+    if !ids.is_empty() && !ids.contains(&id) {
         return false;
     }
-    id_pattern.is_none_or(|pattern| pattern.is_match(id))
+    id_pattern.is_none_or(|pattern| pattern.is_match(id.as_str()))
 }
 
 /// Clause 4.17 type selection.

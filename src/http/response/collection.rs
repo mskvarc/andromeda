@@ -5,7 +5,7 @@ use crate::http::response::{
     sonic_json::SonicJson,
 };
 use andromeda_ngsi_ld_http_headers::{ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{EntityMapId, SnapshotId};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
@@ -30,8 +30,8 @@ pub struct NgsiLdCollectionResponse {
     rendered: RenderedOutput,
     total_count: Option<usize>,
     content_range: Option<String>,
-    entity_map_uri: Option<EntityMapId>,
-    snapshot_uri: Option<SnapshotId>,
+    entity_map_uri: Option<Uri>,
+    snapshot_uri: Option<Uri>,
     warnings: Vec<NgsiLdWarning>,
 }
 
@@ -68,7 +68,7 @@ impl NgsiLdCollectionResponse {
     }
 
     /// Set the NGSILD-EntityMap header URI.
-    pub fn with_entity_map_uri(mut self, uri: EntityMapId) -> Self {
+    pub fn with_entity_map_uri(mut self, uri: Uri) -> Self {
         self.entity_map_uri = Some(uri);
         self
     }
@@ -80,7 +80,7 @@ impl NgsiLdCollectionResponse {
     }
 
     /// Set the NGSILD-Snapshot header for snapshot-scoped responses (clause 6.3.22).
-    pub fn with_snapshot_uri(mut self, uri: SnapshotId) -> Self {
+    pub fn with_snapshot_uri(mut self, uri: Uri) -> Self {
         self.snapshot_uri = Some(uri);
         self
     }

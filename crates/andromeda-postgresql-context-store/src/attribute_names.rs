@@ -29,7 +29,7 @@ pub struct AttributeNameCache {
     /// The tenant database pool.
     pool: PgPool,
     /// Cached mappings from expanded IRI text to dictionary id.
-    ids: DashMap<String, AttributeNameId>,
+    ids: DashMap<AttributeName, AttributeNameId>,
 }
 
 impl AttributeNameCache {
@@ -49,7 +49,10 @@ impl AttributeNameCache {
         let rows = sqlx::query("SELECT id, name FROM attribute_names").fetch_all(&self.pool).await?;
         for row in rows {
             let id: i16 = row.get("id");
-            let name: String = row.get("name");
+            let name_raw: String = row.get("name");
+            let name = name_raw
+                .parse::<AttributeName>()
+                .map_err(|error| ContextStoreError::Internal(format!("Invalid attribute_names.name '{name_raw}': {error}")))?;
             self.ids.insert(name, AttributeNameId::from(id));
         }
         Ok(())
@@ -59,17 +62,17 @@ impl AttributeNameCache {
     ///
     /// The write path: recording an observation for a previously unseen
     /// attribute has to mint its dictionary key.
-    pub async fn resolve_or_create(&self, names: &[&str]) -> Result<HashMap<String, AttributeNameId>, ContextStoreError> {
+    pub async fn resolve_or_create(&self, names: &[AttributeName]) -> Result<HashMap<AttributeName, AttributeNameId>, ContextStoreError> {
         if names.is_empty() {
             return Ok(HashMap::new());
         }
 
         let mut resolved = HashMap::with_capacity(names.len());
-        let mut missing: Vec<&str> = Vec::new();
+        let mut missing: Vec<&AttributeName> = Vec::new();
         for name in names {
-            match self.ids.get(*name) {
+            match self.ids.get(name) {
                 Some(id) => {
-                    resolved.insert((*name).to_owned(), *id);
+                    resolved.insert(name.clone(), *id); // clone: the result map owns the validated name.
                 }
                 None => missing.push(name),
             }
@@ -79,22 +82,26 @@ impl AttributeNameCache {
             return Ok(resolved);
         }
 
+        let missing_text: Vec<&str> = missing.iter().map(|name| name.as_str()).collect();
         sqlx::query(
             "INSERT INTO attribute_names (name) \
              SELECT name FROM UNNEST($1::text[]) AS t(name) \
              ON CONFLICT (name) DO NOTHING",
         )
-        .bind(&missing)
+        .bind(&missing_text)
         .execute(&self.pool)
         .await?;
 
         let rows = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
-            .bind(&missing)
+            .bind(&missing_text)
             .fetch_all(&self.pool)
             .await?;
 
         for row in rows {
-            let name: String = row.get("name");
+            let name_raw: String = row.get("name");
+            let name = name_raw
+                .parse::<AttributeName>()
+                .map_err(|error| ContextStoreError::Internal(format!("Invalid attribute_names.name '{name_raw}': {error}")))?;
             let id = AttributeNameId::from(row.try_get::<i16, _>("id")?);
             self.ids.insert(name.clone(), id); // clone: the cache and the result map each need an owned key
             resolved.insert(name, id);
@@ -120,7 +127,7 @@ impl AttributeNameCache {
         let mut resolved: Vec<(AttributeName, AttributeNameId)> = Vec::with_capacity(names.len());
         let mut missing: Vec<&AttributeName> = Vec::new();
         for name in names {
-            match self.ids.get(name.as_str()) {
+            match self.ids.get(name) {
                 // clone: the returned map owns its keys; the name is a `CompactString`
                 Some(id) => resolved.push((name.clone(), *id)),
                 None => missing.push(name),
@@ -136,15 +143,18 @@ impl AttributeNameCache {
             // The row's `name` is the text that was bound, so each hit is matched
             // back to the typed name that produced it rather than reparsed: an
             // `AttributeName` that reached the dictionary was valid on the way in.
-            let mut ids_by_text: HashMap<String, AttributeNameId> = HashMap::with_capacity(rows.len());
+            let mut ids_by_name: HashMap<AttributeName, AttributeNameId> = HashMap::with_capacity(rows.len());
             for row in rows {
-                let name: String = row.get("name");
+                let name_raw: String = row.get("name");
+                let name = name_raw
+                    .parse::<AttributeName>()
+                    .map_err(|error| ContextStoreError::Internal(format!("Invalid attribute_names.name '{name_raw}': {error}")))?;
                 let id = AttributeNameId::from(row.try_get::<i16, _>("id")?);
                 self.ids.insert(name.clone(), id); // clone: cache keeps its own key
-                ids_by_text.insert(name, id);
+                ids_by_name.insert(name, id);
             }
             for name in missing {
-                if let Some(id) = ids_by_text.get(name.as_str()) {
+                if let Some(id) = ids_by_name.get(name) {
                     // clone: as above
                     resolved.push((name.clone(), *id));
                 }
@@ -163,7 +173,7 @@ impl AttributeNameLookup for AttributeNameCache {
             .map_err(|e| AttributeNameLookupError::new(e.to_string()))
     }
 
-    async fn resolve_or_create(&self, names: &[&str]) -> Result<HashMap<String, AttributeNameId>, AttributeNameLookupError> {
+    async fn resolve_or_create(&self, names: &[AttributeName]) -> Result<HashMap<AttributeName, AttributeNameId>, AttributeNameLookupError> {
         AttributeNameCache::resolve_or_create(self, names)
             .await
             .map_err(|e| AttributeNameLookupError::new(e.to_string()))
@@ -212,7 +222,7 @@ mod tests {
     #[tokio::test]
     async fn lookup_serves_cached_hits_without_a_query() {
         let cache = cache();
-        cache.ids.insert("https://example.com/speed".to_string(), AttributeNameId::from(7));
+        cache.ids.insert(speed(), AttributeNameId::from(7));
         // The pool points nowhere, so this only succeeds if no query is issued.
         let resolved = cache.lookup(&[speed()]).await.ok().and_then(|names| names.get(&speed()));
         assert_eq!(resolved, Some(AttributeNameId::from(7)));
@@ -225,7 +235,8 @@ mod tests {
         // stay invisible to q filters for the lifetime of the process.
         let cache = cache();
         assert!(cache.ids.is_empty());
-        assert!(cache.ids.get("https://example.com/never-written").is_none());
+        let never_written = "https://example.com/never-written".parse::<AttributeName>().expect("valid attribute name");
+        assert!(cache.ids.get(&never_written).is_none());
         assert!(cache.ids.is_empty(), "a failed lookup must not populate the cache");
     }
 }

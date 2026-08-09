@@ -7,7 +7,7 @@ use crate::{
         csource_registration::store::{CreateCsrParams, RegistrationStore},
     },
 };
-use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use andromeda_postgresql_context_query::csr::{
@@ -49,16 +49,18 @@ fn operation_names(operations: Option<&[CsrOperation]>) -> Option<Vec<String>> {
 
 #[async_trait]
 impl RegistrationStore for CsourceRegistrationRepository {
-    async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
+    async fn exists(&self, id: &Uri) -> Result<bool, AndromedaError> {
         let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM context_source_registrations WHERE id = $1)")
-            .bind(id)
+            .bind(id.as_str())
             .fetch_one(self.pool())
             .await?;
         Ok(row.0)
     }
 
-    async fn create(&self, id: &str, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError> {
+    async fn create(&self, id: &Uri, params: &CreateCsrParams<'_>) -> Result<(), AndromedaError> {
+        let information = params.information.as_ref().map(serde_json::to_value).transpose()?;
         let operations = operation_names(params.operations.as_deref());
+        let scopes = params.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         sqlx::query(
             r#"
             INSERT INTO context_source_registrations (
@@ -84,36 +86,36 @@ impl RegistrationStore for CsourceRegistrationRepository {
             )
             "#,
         )
-        .bind(id)
+        .bind(id.as_str())
         .bind(params.registration_name)
         .bind(params.description)
-        .bind(params.information.cloned())
-        .bind(params.tenant)
+        .bind(information)
+        .bind(params.tenant.as_ref().map(TenantName::as_str))
         .bind(params.observation_interval.cloned())
         .bind(params.management_interval.cloned())
         .bind(geometry_bytes(params.location.as_ref())?)
         .bind(geometry_bytes(params.observation_space.as_ref())?)
         .bind(geometry_bytes(params.operation_space.as_ref())?)
         .bind(params.expires_at)
-        .bind(params.endpoint)
-        .bind(params.accept)
+        .bind(params.endpoint.as_ref().map(url::Url::as_str))
+        .bind(params.accept.as_ref().map(ToString::to_string))
         .bind(<&str>::from(params.mode))
         .bind(operations.as_deref())
-        .bind(params.scope.as_deref())
+        .bind(scopes.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
         .bind(params.management.cloned())
         .bind(params.context_source_info.cloned())
-        .bind(params.jsonld_context)
-        .bind(params.context_source_alias)
+        .bind(params.jsonld_context.as_ref().map(url::Url::as_str))
+        .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&params.additional_properties)
         .execute(self.pool())
         .await?;
         Ok(())
     }
 
-    async fn get(&self, id: &str) -> Result<Option<ContextSourceRegistration>, AndromedaError> {
+    async fn get(&self, id: &Uri) -> Result<Option<ContextSourceRegistration>, AndromedaError> {
         let mut select = csr_base_select();
-        select.and_where(SeaExpr::col(Alias::new("id")).eq(id));
+        select.and_where(SeaExpr::col(Alias::new("id")).eq(id.as_str()));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(&sql, values).fetch_optional(self.pool()).await?;
         match row {
@@ -157,8 +159,10 @@ impl RegistrationStore for CsourceRegistrationRepository {
         Ok((csrs, total))
     }
 
-    async fn update(&self, id: &str, values: &ResolvedCsrUpdate) -> Result<u64, AndromedaError> {
+    async fn update(&self, id: &Uri, values: &ResolvedCsrUpdate) -> Result<u64, AndromedaError> {
+        let information = serde_json::to_value(&values.information)?;
         let operations = operation_names(values.operations.as_deref());
+        let scopes = values.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         let result = sqlx::query(
             r#"
             UPDATE context_source_registrations SET
@@ -187,10 +191,10 @@ impl RegistrationStore for CsourceRegistrationRepository {
             WHERE id = $1
             "#,
         )
-        .bind(id)
+        .bind(id.as_str())
         .bind(values.registration_name.as_deref())
         .bind(values.description.as_deref())
-        .bind(&values.information)
+        .bind(information)
         .bind(values.tenant.as_ref().map(TenantName::as_str))
         .bind(&values.observation_interval)
         .bind(&values.management_interval)
@@ -199,37 +203,32 @@ impl RegistrationStore for CsourceRegistrationRepository {
         .bind(geometry_bytes(values.operation_space.as_ref())?)
         .bind(values.expires_at)
         .bind(values.endpoint.as_str())
-        .bind(values.accept.as_deref())
+        .bind(values.accept.as_ref().map(ToString::to_string))
         .bind(<&str>::from(values.mode))
         .bind(operations.as_deref())
-        .bind(values.scope.as_deref())
+        .bind(scopes.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
         .bind(&values.management)
         .bind(&values.context_source_info)
-        .bind(values.jsonld_context.as_deref())
-        .bind(values.context_source_alias.as_deref())
+        .bind(values.jsonld_context.as_ref().map(url::Url::as_str))
+        .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&values.additional_properties)
         .execute(self.pool())
         .await?;
         Ok(result.rows_affected())
     }
 
-    async fn find_matching(&self, entity_type: Option<&str>, entity_id: Option<&str>) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
+    async fn find_matching(&self, entity_type: Option<&IriBuf>, entity_id: Option<&Uri>) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
         use sea_query::Cond;
         let expires_at_col = Alias::new("expires_at");
         let not_expired = Cond::any().add(SeaExpr::col(expires_at_col).is_null()).add(SeaExpr::cust("expires_at > NOW()"));
         let mut select = csr_base_select();
         select.cond_where(not_expired);
         if let Some(entity_type) = entity_type {
-            let expanded = IriBuf::new(entity_type.to_string())
-                .map_err(|error| AndromedaError::internal(format!("Registration match received a malformed entity type IRI '{entity_type}': {error}")))?;
-            select.and_where(entity_type_coverage(&expanded));
+            select.and_where(entity_type_coverage(entity_type));
         }
         if let Some(entity_id) = entity_id {
-            let entity_uri: Uri = entity_id
-                .parse()
-                .map_err(|error| AndromedaError::internal(format!("Registration match received a malformed entity id '{entity_id}': {error}")))?;
-            select.and_where(entity_id_coverage(&entity_uri));
+            select.and_where(entity_id_coverage(entity_id));
         }
         select.order_by(Alias::new("created_at"), Order::Asc);
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
@@ -237,14 +236,14 @@ impl RegistrationStore for CsourceRegistrationRepository {
         rows.iter().map(|row| row_to_csr(row).map_err(AndromedaError::from)).collect()
     }
 
-    async fn find_all_active(&self, after: Option<&str>, limit: u32) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
+    async fn find_all_active(&self, after: Option<&Uri>, limit: u32) -> Result<Vec<ContextSourceRegistration>, AndromedaError> {
         use sea_query::Cond;
         let expires_at_col = Alias::new("expires_at");
         let not_expired = Cond::any().add(SeaExpr::col(expires_at_col).is_null()).add(SeaExpr::cust("expires_at > NOW()"));
         let mut select = csr_base_select();
         select.cond_where(not_expired);
         if let Some(after_id) = after {
-            select.and_where(SeaExpr::col(Alias::new("id")).gt(after_id));
+            select.and_where(SeaExpr::col(Alias::new("id")).gt(after_id.as_str()));
         }
         select.order_by(Alias::new("id"), Order::Asc).limit(u64::from(limit));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
@@ -252,9 +251,9 @@ impl RegistrationStore for CsourceRegistrationRepository {
         rows.iter().map(|row| row_to_csr(row).map_err(AndromedaError::from)).collect()
     }
 
-    async fn delete(&self, id: &str) -> Result<u64, AndromedaError> {
+    async fn delete(&self, id: &Uri) -> Result<u64, AndromedaError> {
         let result = sqlx::query("DELETE FROM context_source_registrations WHERE id = $1")
-            .bind(id)
+            .bind(id.as_str())
             .execute(self.pool())
             .await?;
         Ok(result.rows_affected())

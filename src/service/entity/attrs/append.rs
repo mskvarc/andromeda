@@ -2,7 +2,7 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::entity::{
         EntityService,
         attribute_envelope::validate_attribute_envelopes,
@@ -18,13 +18,12 @@ use andromeda_ngsi_ld_model::{
         entity_member::extract_types,
         mutation::{entity::append_entity_attrs, selection::OverwritePolicy},
     },
-    notification::NotificationTrigger,
+    notification::{ChangeOrigin, NotificationTrigger},
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
-use urn_rs::Urn;
 
 impl EntityService {
     /// Append attributes to an existing entity (clause 5.6.3).
@@ -39,13 +38,12 @@ impl EntityService {
     /// recomputed against a fresh read if a concurrent writer got in first.
     pub async fn append_attrs(
         &self,
-        id: &Urn,
+        id: &Uri,
         mut fragment: Value,
         overwrite: OverwritePolicy,
         context: &ContextSpec,
-    ) -> Result<(Vec<AttributeName>, Vec<String>), AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+    ) -> Result<(Vec<AttributeName>, Vec<AttributeName>), AndromedaError> {
+        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
@@ -56,7 +54,7 @@ impl EntityService {
                 let mut existing = previous.clone(); // clone: the append mutates its own copy of the stored payload
                 let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
                 let merged = Arc::new(existing);
-                let write = payload_write(&id, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))]); // clone: Arc ref-count bump
+                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))]); // clone: Arc ref-count bump
                 Ok((write, (merged, not_appended)))
             })
             .await?;

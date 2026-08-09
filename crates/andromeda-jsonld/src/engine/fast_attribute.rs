@@ -12,12 +12,13 @@
 //! rather than this module's, so a ninth attribute type cannot be added to the
 //! specification crate and forgotten here.
 
-use crate::engine::{
-    expanded_key,
-    term_map::{BatchTermMap, coercion::TermCoercion},
-};
+use crate::engine::term_map::{BatchTermMap, coercion::TermCoercion};
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_vocabulary::compact_to_expanded;
+use andromeda_ngsi_ld_vocabulary::{
+    compact_to_expanded,
+    expanded::{classes, properties},
+};
+use iri_rs::Iri;
 use serde_json::{Map, Value};
 use std::str::FromStr;
 
@@ -100,7 +101,7 @@ fn expand_value(instance: &Map<String, Value>, kind: AttributeType, term_map: &B
     let value = instance.get(kind.compact_value_key())?;
     match kind {
         AttributeType::Property => scalar_value(value),
-        AttributeType::Relationship => Some(Value::Array(vec![id_node(value.as_str()?)])),
+        AttributeType::Relationship => Some(Value::Array(vec![id_node(Iri::parse(value.as_str()?).ok()?)])),
         AttributeType::GeoProperty => Some(Value::Array(vec![expand_geometry(value.as_object()?)?])),
         AttributeType::LanguageProperty => expand_language_map(value.as_object()?),
         AttributeType::VocabProperty => expand_vocab(value, term_map),
@@ -153,9 +154,9 @@ fn scalar_value(value: &Value) -> Option<Value> {
 }
 
 /// A node naming an identifier.
-fn id_node(id: &str) -> Value {
+fn id_node(id: Iri<&str>) -> Value {
     let mut node = Map::with_capacity(1);
-    node.insert("@id".to_owned(), Value::String(id.to_owned()));
+    node.insert("@id".to_owned(), Value::String(id.as_str().to_owned()));
     Value::Object(node)
 }
 
@@ -170,10 +171,10 @@ fn expand_geometry(geometry: &Map<String, Value>) -> Option<Value> {
         match key.as_str() {
             "type" => {}
             "coordinates" => {
-                expanded.insert(expanded_key::COORDINATES.clone(), Value::Array(vec![expand_coordinates(value)?]));
+                expanded.insert(properties::COORDINATES.as_str().to_owned(), Value::Array(vec![expand_coordinates(value)?]));
             }
             "bbox" => {
-                expanded.insert(expanded_key::BBOX.clone(), Value::Array(vec![expand_coordinates(value)?]));
+                expanded.insert(properties::BBOX.as_str().to_owned(), Value::Array(vec![expand_coordinates(value)?]));
             }
             _other => return None,
         }
@@ -222,11 +223,15 @@ fn expand_language_map(map: &Map<String, Value>) -> Option<Value> {
 /// Expand a `VocabProperty` value, which resolves through the term table.
 fn expand_vocab(value: &Value, term_map: &BatchTermMap) -> Option<Value> {
     match value {
-        Value::String(term) => Some(Value::Array(vec![id_node(&term_map.expand_iri(term))])),
+        Value::String(term) => {
+            let expanded = term_map.expand_iri(term);
+            Some(Value::Array(vec![id_node(Iri::parse(expanded.as_ref()).ok()?)]))
+        }
         Value::Array(terms) => {
             let mut expanded = Vec::with_capacity(terms.len());
             for term in terms {
-                expanded.push(id_node(&term_map.expand_iri(term.as_str()?)));
+                let expanded_iri = term_map.expand_iri(term.as_str()?);
+                expanded.push(id_node(Iri::parse(expanded_iri.as_ref()).ok()?));
             }
             Some(Value::Array(expanded))
         }
@@ -257,7 +262,7 @@ fn expand_metadata(key: &str, value: &Value, term_map: &BatchTermMap) -> Option<
     }
 
     match value {
-        Value::String(text) => Some((iri, coerced_scalar(text, coercion, term_map))),
+        Value::String(text) => Some((iri, coerced_scalar(text, coercion, term_map)?)),
         // A coerced non-string has no expansion this walker can state, since
         // the coercion says how to read a lexical form.
         Value::Number(_) | Value::Bool(_) => match coercion {
@@ -289,31 +294,37 @@ fn expand_sub_attribute(sub: &Map<String, Value>, term_map: &BatchTermMap) -> Op
 
 /// The expanded form of a metadata string under the coercion its term
 /// declares.
-fn coerced_scalar(text: &str, coercion: Option<&TermCoercion>, term_map: &BatchTermMap) -> Value {
+fn coerced_scalar(text: &str, coercion: Option<&TermCoercion>, term_map: &BatchTermMap) -> Option<Value> {
     let node = match coercion {
-        Some(TermCoercion::DateTime) => typed_value(&expanded_key::DATE_TIME, text),
-        Some(TermCoercion::Id) => return Value::Array(vec![id_node(text)]),
+        Some(TermCoercion::DateTime) => typed_value(classes::DATE_TIME, text),
+        Some(TermCoercion::Id) => return Some(Value::Array(vec![id_node(Iri::parse(text).ok()?)])),
         // A `@type: @vocab` value is a term, expanded against the active
         // `@vocab` exactly as a VocabProperty value is (clause 4.5.5).
-        Some(TermCoercion::Vocab) => return Value::Array(vec![id_node(&term_map.expand_iri(text))]),
+        Some(TermCoercion::Vocab) => {
+            let expanded = term_map.expand_iri(text);
+            return Some(Value::Array(vec![id_node(Iri::parse(expanded.as_ref()).ok()?)]));
+        }
         // A `@type: @json` string is kept verbatim as a JSON literal; also
         // caught in `expand_metadata` before dispatch, so this arm is a
         // completeness guard rather than the live path.
-        Some(TermCoercion::Json) => return json_literal(&Value::String(text.to_owned())),
-        Some(TermCoercion::TypeIri(declared)) => typed_value(&term_map.expand_iri(declared.as_str()), text),
+        Some(TermCoercion::Json) => return Some(json_literal(&Value::String(text.to_owned()))),
+        Some(TermCoercion::TypeIri(declared)) => {
+            let expanded = term_map.expand_iri(declared.as_str());
+            typed_value(Iri::parse(expanded.as_ref()).ok()?, text)
+        }
         None => {
             let mut node = Map::with_capacity(1);
             node.insert("@value".to_owned(), Value::String(text.to_owned()));
             node
         }
     };
-    Value::Array(vec![Value::Object(node)])
+    Some(Value::Array(vec![Value::Object(node)]))
 }
 
 /// A `{"@type": …, "@value": …}` node.
-fn typed_value(type_iri: &str, text: &str) -> Map<String, Value> {
+fn typed_value(type_iri: Iri<&str>, text: &str) -> Map<String, Value> {
     let mut node = Map::with_capacity(2);
-    node.insert("@type".to_owned(), Value::String(type_iri.to_owned()));
+    node.insert("@type".to_owned(), Value::String(type_iri.as_str().to_owned()));
     node.insert("@value".to_owned(), Value::String(text.to_owned()));
     node
 }

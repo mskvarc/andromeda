@@ -12,7 +12,6 @@ use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
 use url::Url;
-use urn_rs::Urn;
 
 constant_string!(SubscriptionType, "Subscription");
 
@@ -175,7 +174,7 @@ pub struct SubscriptionFilters {
     pub csf: Option<Expr>,
     /// Dataset ids to subscribe to.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dataset_id: Option<Vec<Urn>>,
+    pub dataset_id: Option<Vec<Uri>>,
     /// Temporal query expression (clause 5.2.21).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_q: Option<Value>,

@@ -15,35 +15,33 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::{entity::compiled::CompiledEntityQuery, pagination::CountPolicy};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, entity::compiled::CompiledEntityQuery, pagination::CountPolicy};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use serde_json::Value;
 use std::collections::HashMap;
-use urn_rs::Urn;
 
 impl EntityQueryService {
     /// Retrieve a single entity by identifier (clause 5.6.3), optionally
     /// narrowing its attributes and attribute instances.
     pub async fn get_inner(
         &self,
-        id: &Urn,
-        attrs: &[String],
+        id: &Uri,
+        attrs: &[AttributeName],
         sys_attrs: SysAttrsInclusion,
-        dataset_ids: &[String],
+        dataset_ids: &[DatasetSelector],
         context: &ContextSpec,
     ) -> Result<Entity, AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn -> Uri; the store is keyed by Uri
-        let Some(expanded_entity) = self.repo.get(&entity_uri).await? else {
-            return Err(AndromedaError::entity_not_found(entity_uri.as_str()));
+        let Some(expanded_entity) = self.repo.get(id).await? else {
+            return Err(AndromedaError::entity_not_found(id.as_str()));
         };
 
-        let mut entity = self.compact_to_entity(expanded_entity, context, Some(entity_uri.as_str())).await?;
+        let mut entity = self.compact_to_entity(expanded_entity, context, Some(id.as_str())).await?;
 
         if sys_attrs == SysAttrsInclusion::Include
-            && let Some(snapshot) = self.repo.get_sys_attrs(&entity_uri).await?
+            && let Some(snapshot) = self.repo.get_sys_attrs(id).await?
         {
             entity = entity.with_sys_attrs(&snapshot);
         }
@@ -51,12 +49,12 @@ impl EntityQueryService {
         if !attrs.is_empty() {
             let mut wanted_iris = Vec::with_capacity(attrs.len());
             for attr in attrs {
-                wanted_iris.push(self.expanded_key(attr, context).await?);
+                wanted_iris.push(self.expanded_key(attr.as_str(), context).await?);
             }
             self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
 
             if entity.attrs.is_empty() {
-                return Err(AndromedaError::entity_not_found(entity_uri.as_str()));
+                return Err(AndromedaError::entity_not_found(id.as_str()));
             }
         }
 
@@ -134,9 +132,8 @@ impl EntityQueryService {
         let mut entities = self.apply_projection(entities, &compiled, context).await?;
 
         if let Some(dataset_ids) = query.dataset_id.as_deref() {
-            let dataset_ids = dataset_ids.iter().map(ToString::to_string).collect::<Vec<_>>();
             for entity in &mut entities {
-                filter_entity_by_dataset_id(entity, &dataset_ids);
+                filter_entity_by_dataset_id(entity, dataset_ids);
             }
         }
 
@@ -145,7 +142,7 @@ impl EntityQueryService {
 
     /// Execute a compiled query returning only entity identifiers
     /// (clause 5.2.39 entity maps).
-    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<String>, AndromedaError> {
+    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<Uri>, AndromedaError> {
         refuse_unnarrowable(self.repo.profile(), &compiled.selection)?;
         let outcome = self.repo.query_ids(compiled).await?;
         self.finish_ids(outcome, compiled.pagination).await

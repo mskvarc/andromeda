@@ -2,11 +2,12 @@
 
 use crate::{
     error::AndromedaError,
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::entity::{
         side_effect::BatchSideEffectJob,
         side_effect_queue::{LeasedSideEffect, SideEffectQueue},
     },
+    worker_instance_id::WorkerInstanceId,
 };
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_postgresql_context_store::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository};
@@ -20,7 +21,7 @@ use uuid::Uuid;
 
 #[async_trait]
 impl SideEffectQueue for PendingSideEffectsRepository {
-    async fn lease_batch(&self, worker_id: &str, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, AndromedaError> {
+    async fn lease_batch(&self, worker_id: &WorkerInstanceId, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, AndromedaError> {
         let rows = sqlx::query(
             r#"
             WITH claimable AS (
@@ -41,7 +42,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
             RETURNING p.id, p.attempts, p.payload
             "#,
         )
-        .bind(worker_id)
+        .bind(worker_id.as_ref())
         .bind(batch_size)
         .bind(f64::from(lease_seconds))
         .fetch_all(self.pool())
@@ -117,8 +118,7 @@ impl SideEffectQueue for PendingSideEffectsRepository {
 }
 
 fn decode_job(payload: Value) -> Result<BatchSideEffectJob, AndromedaError> {
-    let persisted: PersistedBatchSideEffectJob =
-        serde_json::from_value(payload).map_err(|err| AndromedaError::internal(format!("invalid pending_side_effect payload: {err}")))?;
+    let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| AndromedaError::internal(error.to_string()))?;
     persisted_to_domain(persisted)
 }
 
@@ -126,53 +126,28 @@ fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> Result<BatchSi
     let temporal_entities = persisted
         .temporal_entities
         .into_iter()
-        .map(|te| (Arc::from(te.id), Arc::new(te.expanded)))
+        .map(|temporal| (Arc::new(temporal.id), Arc::new(temporal.expanded)))
         .collect();
 
     let change_events = persisted
         .change_events
         .into_iter()
         .map(|pce| {
-            let trigger_reason = pce
-                .trigger_reason
-                .parse()
-                .map_err(|e| AndromedaError::internal(format!("invalid trigger reason '{}': {e}", pce.trigger_reason)))?;
-            let entity_id = pce
-                .entity_id
-                .parse()
-                .map_err(|_| AndromedaError::internal(format!("invalid entity URI '{}'", pce.entity_id)))?;
-            let entity_types = pce
-                .entity_types
-                .iter()
-                .map(|t| t.parse())
-                .collect::<Result<_, _>>()
-                .map_err(|e| AndromedaError::internal(format!("invalid entity type: {e}")))?;
-            let changed_attributes = pce
-                .changed_attributes
-                .iter()
-                .map(|a| a.parse())
-                .collect::<Result<_, _>>()
-                .map_err(|e| AndromedaError::internal(format!("invalid attribute name: {e}")))?;
-            let origin = match pce.origin.as_str() {
-                "local" => ChangeOrigin::Local,
-                "forwarded" => ChangeOrigin::Forwarded,
-                other => return Err(AndromedaError::internal(format!("unknown change origin '{other}'"))),
-            };
             let sys_attrs_snapshot = pce.sys_attrs_snapshot.map(|s| SysAttrsSnapshot {
                 created_at: s.created_at,
                 modified_at: s.modified_at,
                 expires_at: s.expires_at,
             });
             Ok(ChangeEvent::builder()
-                .entity_id(entity_id)
-                .entity_types(entity_types)
-                .trigger_reason(trigger_reason)
-                .changed_attributes(changed_attributes)
+                .entity_id(pce.entity_id)
+                .entity_types(pce.entity_types)
+                .trigger_reason(pce.trigger_reason)
+                .changed_attributes(pce.changed_attributes)
                 .occurred_at(pce.occurred_at)
                 .entity_snapshot(pce.entity_snapshot)
                 .previous_attributes(pce.previous_attributes)
                 .sys_attrs_snapshot(sys_attrs_snapshot)
-                .origin(origin)
+                .origin(pce.origin)
                 .build())
         })
         .collect::<Result<_, AndromedaError>>()?;

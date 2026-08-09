@@ -7,10 +7,6 @@
 //! - [`MqttReceiver`] — MQTT client that captures messages published by the
 //!   broker's MQTT endpoint.
 
-mod context_source;
-mod notification_http;
-mod notification_mqtt;
-
-pub use context_source::ContextSourceMock;
-pub use notification_http::{CapturedNotification, NotificationReceiver};
-pub use notification_mqtt::{MqttMessage, MqttReceiver};
+pub mod context_source;
+pub mod notification_http;
+pub mod notification_mqtt;

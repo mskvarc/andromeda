@@ -44,7 +44,7 @@ async fn delete_invalid_uri_returns_400() {
     let c = client();
     let (status, body) = delete_registration(&c, "invalidURI").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     assert!(body["title"].is_string(), "response should contain title");
 }
 

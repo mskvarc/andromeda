@@ -15,6 +15,12 @@
 
 #[cfg(test)]
 mod boundary {
+    use andromeda_layer_guard::{
+        architecture::assert_retired_architecture_invariants,
+        domain_string::assert_domain_string_inventory_text,
+        raw_constant::assert_no_raw_iri_or_media_constants,
+    };
+
     /// Every in-workspace crate the binary is entitled to name, in any table.
     ///
     /// The apex may name them all — this is the list of what "all" is, so a new
@@ -51,5 +57,23 @@ mod boundary {
     #[test]
     fn the_binary_names_only_the_workspace_crates_it_declares_it_may() {
         andromeda_layer_guard::manifest::assert_layer(env!("CARGO_MANIFEST_DIR"), &[], ALLOWED_IN_WORKSPACE);
+    }
+
+    /// Production declarations use canonical domain types or an exact exemption.
+    #[test]
+    fn production_domain_strings_match_the_reviewed_inventory_exactly() {
+        assert_domain_string_inventory_text(env!("CARGO_MANIFEST_DIR"), include_str!("../docs/domain-string-inventory.tsv"));
+    }
+
+    /// Production IRI and media constants are validated by their declared type.
+    #[test]
+    fn production_constants_do_not_encode_iris_or_media_types_as_strings() {
+        assert_no_raw_iri_or_media_constants(env!("CARGO_MANIFEST_DIR"));
+    }
+
+    /// Retired facades, dumping grounds, and composition names stay absent.
+    #[test]
+    fn retired_architecture_surfaces_do_not_return() {
+        assert_retired_architecture_invariants(env!("CARGO_MANIFEST_DIR"));
     }
 }

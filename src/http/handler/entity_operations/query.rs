@@ -3,7 +3,6 @@
 use crate::http::handler::entity_operations::{
     AcceptFormat,
     AndromedaError,
-    AttributeName,
     ContextUrl,
     CsrModeFilter,
     EntityQueryParameters,
@@ -59,8 +58,7 @@ pub async fn query(
     // data and skip both the live pipeline and CSR forwarding.
     if let Some(snapshot_id) = snapshot_id {
         state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
-        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
-        let entity_type = entity_type.as_deref();
+        let entity_type = params.entity_type.as_ref();
         let entity_ids = params.id.clone();
         let limit = i64::from(params.limit.unwrap_or(1000));
         let offset = i64::from(params.offset.unwrap_or(0));
@@ -95,7 +93,7 @@ pub async fn query(
     let opts = params.parse_options();
     let join_mode = params.join;
     let join_level = params.join_level.map_or(1, NonZeroU32::get);
-    let geometry_property = params.geometry_property.as_ref().map(AttributeName::as_str);
+    let geometry_property = params.geometry_property.as_ref();
 
     let is_local = params.local.unwrap_or(false);
     let (local_entities, total_count) = service.query(&params, &context).await.with_instance(&uri)?;
@@ -104,9 +102,8 @@ pub async fn query(
     let (entities, warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
-        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
-        let entity_type = entity_type.as_deref();
+        let context_url = context.link_contexts().first();
+        let entity_type = params.entity_type.as_ref();
         let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
 

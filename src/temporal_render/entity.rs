@@ -2,7 +2,7 @@
 //! entity representation from decoded history rows (NGSI-LD clause 6.3.10).
 
 use crate::temporal_render::history_row::{TimeRange, neutral_row_to_expanded_instance};
-use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_temporal_store::store::TemporalHistoryRow;
 use chrono::{DateTime, Utc};
@@ -10,7 +10,7 @@ use indexmap::IndexMap;
 use serde_json::{Value, json};
 
 type TemporalAttributeInstances = Vec<(Option<DateTime<Utc>>, Value)>;
-type TemporalAttrMap = IndexMap<String, TemporalAttributeInstances>;
+type TemporalAttrMap = IndexMap<AttributeName, TemporalAttributeInstances>;
 
 /// Output of [`TemporalEntityRenderer`]: the assembled entity JSON together
 /// with pagination metadata needed for Content-Range header construction.
@@ -33,7 +33,7 @@ pub struct TemporalEntityBuildResult {
 /// entity JSON along with truncation/pagination metadata.
 #[derive(Debug)]
 pub struct TemporalEntityRenderer<'a> {
-    entity_id: &'a str,
+    entity_id: &'a Uri,
     entity_types: &'a [EntityTypeName],
     rows: &'a [TemporalHistoryRow],
     compiled: &'a CompiledTemporalQuery,
@@ -42,7 +42,7 @@ pub struct TemporalEntityRenderer<'a> {
 impl<'a> TemporalEntityRenderer<'a> {
     /// Create a renderer for the given entity and row set.
     pub const fn new(
-        entity_id: &'a str,
+        entity_id: &'a Uri,
         entity_types: &'a [EntityTypeName],
         rows: &'a [TemporalHistoryRow],
         compiled: &'a CompiledTemporalQuery,
@@ -73,7 +73,7 @@ impl<'a> TemporalEntityRenderer<'a> {
         let mut max_partition_total: Option<i64> = None;
 
         for row in rows {
-            let attr_name = row.attribute_name.as_str().to_string();
+            let attr_name = row.attribute_name.clone(); // clone: the typed map owns names while history rows remain borrowed.
 
             if compiled.instances.last_n_origin.is_system_capped()
                 && let Some(last_n) = compiled.instances.last_n
@@ -96,7 +96,7 @@ impl<'a> TemporalEntityRenderer<'a> {
         }
 
         if truncated && attrs.len() > 1 {
-            let attr_ranges: Vec<(&String, DateTime<Utc>, DateTime<Utc>)> = attrs
+            let attr_ranges: Vec<(&AttributeName, DateTime<Utc>, DateTime<Utc>)> = attrs
                 .iter()
                 .filter_map(|(name, instances)| {
                     let times: Vec<DateTime<Utc>> = instances.iter().filter_map(|(t, _)| *t).collect();
@@ -135,7 +135,7 @@ impl<'a> TemporalEntityRenderer<'a> {
 
         for (attr_name, instances) in attrs {
             let values: Vec<Value> = instances.into_iter().map(|(_, v)| v).collect();
-            entity.insert(attr_name, Value::Array(values));
+            entity.insert(attr_name.to_string(), Value::Array(values));
         }
 
         let time_range = min_time.zip(max_time);

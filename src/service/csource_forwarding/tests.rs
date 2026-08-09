@@ -12,11 +12,15 @@ fn attribute_name(raw: &str) -> AttributeName {
     raw.parse().expect("valid attribute name")
 }
 
+fn entity_uri(raw: &str) -> Uri {
+    raw.parse().expect("valid entity URI")
+}
+
 fn entity_from_json(value: serde_json::Value) -> andromeda_ngsi_ld_model::entity::Entity {
     serde_json::from_value(value).expect("test entity fixture")
 }
 
-fn write_result(mode: ForwardingMode, exclusive_attrs: Vec<String>) -> ForwardedWriteResult {
+fn write_result(mode: ForwardingMode, exclusive_attrs: Vec<AttributeName>) -> ForwardedWriteResult {
     ForwardedWriteResult {
         mode,
         outcome: ForwardedWriteOutcome::Completed { status: 204, body: None },
@@ -300,7 +304,7 @@ fn build_temporal_retrieve_url_with_id() {
 
     let url = build_temporal_retrieve_url(
         &Url::parse("http://cs1.example.com").expect("valid url"),
-        "urn:ngsi-ld:Vehicle:1",
+        &entity_uri("urn:ngsi-ld:Vehicle:1"),
         "timerel=after&timeAt=2024-01-01T00:00:00Z",
     );
     assert!(
@@ -335,8 +339,8 @@ fn collect_forwarded_exclusive_attrs_empty_results() {
 #[test]
 fn collect_forwarded_exclusive_attrs_gathers_attrs() {
     let results = vec![
-        write_result(ForwardingMode::Exclusive, vec!["speed".to_string(), "fuel".to_string()]),
-        write_result(ForwardingMode::Inclusive, vec!["temperature".to_string()]),
+        write_result(ForwardingMode::Exclusive, vec![attribute_name("speed"), attribute_name("fuel")]),
+        write_result(ForwardingMode::Inclusive, vec![attribute_name("temperature")]),
     ];
     let attrs = collect_forwarded_exclusive_attrs(&results);
     pretty_assertions::assert_eq!(attrs.len(), 3);
@@ -387,8 +391,8 @@ fn collect_forwarded_exclusive_attrs_duplicates_not_deduped() {
     // collect_forwarded_exclusive_attrs does not deduplicate -- callers
     // use the list for removal which is idempotent on duplicates.
     let results = vec![
-        write_result(ForwardingMode::Exclusive, vec!["speed".to_string()]),
-        write_result(ForwardingMode::Exclusive, vec!["speed".to_string()]),
+        write_result(ForwardingMode::Exclusive, vec![attribute_name("speed")]),
+        write_result(ForwardingMode::Exclusive, vec![attribute_name("speed")]),
     ];
     let attrs = collect_forwarded_exclusive_attrs(&results);
     pretty_assertions::assert_eq!(attrs.len(), 2);
@@ -459,8 +463,9 @@ fn forwarding_query_string_renders_typed_ids_without_reparsing() {
         "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid URI"),
         "urn:ngsi-ld:Entity:b".parse::<Uri>().expect("valid URI"),
     ];
+    let entity_type = "Vehicle".parse().ok();
     pretty_assertions::assert_eq!(
-        build_forwarding_query_string(Some("Vehicle"), Some(&ids)),
+        build_forwarding_query_string(entity_type.as_ref(), Some(&ids)),
         "id=urn%3Angsi-ld%3AEntity%3Aa%2Curn%3Angsi-ld%3AEntity%3Ab&type=Vehicle"
     );
 }

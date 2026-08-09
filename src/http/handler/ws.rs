@@ -10,7 +10,6 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::{
         OriginalUri,
-        Path,
         ws::{Message, WebSocket},
     },
     response::Response,
@@ -23,7 +22,7 @@ use tracing::{debug, trace};
 use crate::{
     api::tenant::TenantState,
     error::{AndromedaError, ResultInstanceExt},
-    http::error::problem::NgsiLdError,
+    http::{error::problem::NgsiLdError, extractor::typed_path::TypedPath},
 };
 use andromeda_delivery::{
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
@@ -54,19 +53,15 @@ impl Drop for WsConnectionGuard {
 pub async fn stream(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
-    Path(subscription_id): Path<String>,
+    TypedPath(subscription_id): TypedPath<Uri>,
     ws: axum::extract::WebSocketUpgrade,
 ) -> Result<Response, NgsiLdError> {
-    let subscription_id: Uri = subscription_id
-        .parse()
-        .map_err(|_| AndromedaError::malformed_request(format!("Invalid subscription id: {subscription_id}")))
-        .with_instance(&uri)?;
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(subscription_id.as_str()).await.with_instance(&uri)?;
+    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
 
     // Validate subscription uses WebSocket transport via the canonical parser.
     let is_ws = parse_endpoint_transport(
-        subscription.notification.endpoint.uri.as_str(),
+        &subscription.notification.endpoint.uri,
         subscription.notification.endpoint.notifier_info.as_deref(),
     )
     .is_ok_and(|t| matches!(t, EndpointTransport::WebSocket));

@@ -67,13 +67,12 @@ impl MqttQoS {
 
 /// Parse an endpoint URI, with the subscription's `notifierInfo`, into the
 /// transport it names.
-pub fn parse_endpoint_transport(uri: &str, notifier_info: Option<&[KeyValuePair]>) -> Result<EndpointTransport, EndpointParseError> {
-    let parsed = Url::parse(uri)?;
-    match parsed.scheme() {
+pub fn parse_endpoint_transport(uri: &Url, notifier_info: Option<&[KeyValuePair]>) -> Result<EndpointTransport, EndpointParseError> {
+    match uri.scheme() {
         "http" | "https" => Ok(EndpointTransport::Http),
         "sse" => Ok(EndpointTransport::Sse),
         "ws" => Ok(EndpointTransport::WebSocket),
-        "mqtt" | "mqtts" => Ok(EndpointTransport::Mqtt(parse_mqtt_endpoint(&parsed, notifier_info)?)),
+        "mqtt" | "mqtts" => Ok(EndpointTransport::Mqtt(parse_mqtt_endpoint(uri, notifier_info)?)),
         other => Err(EndpointParseError::UnsupportedScheme { scheme: other.to_string() }),
     }
 }
@@ -136,10 +135,16 @@ mod tests {
     use crate::endpoint::{
         error::EndpointParseError,
         mqtt::{MqttEndpointConfig, MqttQoS, MqttVersion},
-        transport::{EndpointTransport, parse_endpoint_transport},
+        transport::{EndpointTransport, parse_endpoint_transport as parse_typed_endpoint_transport},
     };
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use secrecy::ExposeSecret;
+    use url::Url;
+
+    fn parse_endpoint_transport(uri: &str, info: Option<&[KeyValuePair]>) -> Result<EndpointTransport, EndpointParseError> {
+        let uri = Url::parse(uri)?;
+        parse_typed_endpoint_transport(&uri, info)
+    }
 
     fn notifier_info(pairs: &[(&str, &str)]) -> Vec<KeyValuePair> {
         pairs

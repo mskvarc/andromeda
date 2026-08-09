@@ -5,11 +5,11 @@
 //! delivery) and the subscription cache (outbox entry generation).
 
 use crate::{
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::{compiled_subscription::CompiledSubscription, geo_filter::matches_geo_query},
 };
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
-use andromeda_ngsi_ld_model::{expanded::entity_member::extract_scopes, subscription::SubscriptionStatus};
+use andromeda_ngsi_ld_model::{expanded::entity_member::extract_scopes, notification::ChangeOrigin, subscription::SubscriptionStatus};
 use andromeda_ngsi_ld_query::{filter::eval, scope::query::ScopeQuery};
 use chrono::Utc;
 use serde_json::Value;
@@ -99,7 +99,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
     }
 
     if let Some(ref watched) = sub.watched_attrs
-        && !event.changed_attributes.iter().any(|a| watched.contains(a.as_str()))
+        && !event.changed_attributes.iter().any(|attribute| watched.contains(attribute))
     {
         debug!(
             "Subscription {} skipped: watchedAttributes {:?} did not match event attrs {:?}",
@@ -164,7 +164,7 @@ pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::change_event::{ChangeEvent, ChangeOrigin};
+    use crate::event::change_event::ChangeEvent;
     use andromeda_delivery::endpoint::transport::EndpointTransport;
     use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;

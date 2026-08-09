@@ -10,7 +10,7 @@ use crate::service::entity::{
     entity_mutation::{EntityMutation, EntityRecord},
     history_record::HistoryRecord,
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use serde_json::Value;
 use std::sync::Arc;
@@ -21,9 +21,9 @@ use std::sync::Arc;
 /// [`commit_computed_write`](crate::service::entity::EntityService::commit_computed_write)
 /// stamps it with the `modifiedAt` of the payload the mutation was computed
 /// from, which is what stops a concurrent writer's change being overwritten.
-pub(super) fn payload_write(id: &str, merged: &Arc<Value>, history: Vec<HistoryRecord>) -> AtomicWrite {
+pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryRecord>) -> AtomicWrite {
     AtomicWrite::builder()
-        .entity_id(Arc::from(id))
+        .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
         .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(merged)))) // clone: Arc ref-count bump; the payload is also the change event's
         .history(history)
         .build()
@@ -48,7 +48,7 @@ pub(super) struct UpdatedAttrs {
     pub deleted: Vec<AttributeName>,
     /// Attribute IRIs the entity did not carry, which the handler turns into a
     /// 207 rather than a 204.
-    pub not_updated: Vec<String>,
+    pub not_updated: Vec<AttributeName>,
 }
 
 /// What one single-attribute mutation produced, beyond the write itself.

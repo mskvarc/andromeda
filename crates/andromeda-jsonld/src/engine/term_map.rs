@@ -25,7 +25,7 @@ use crate::{
     },
     loader::http::HttpContextLoader,
 };
-use iri_rs::{IriBuf, iri};
+use iri_rs::{Iri, IriBuf, iri};
 use serde_json::Value;
 use std::{borrow::Cow, collections::HashMap};
 
@@ -36,11 +36,11 @@ pub(crate) mod vocabulary;
 use crate::engine::term_map::vocabulary::CoreVocabulary;
 
 /// The XSD namespace, available as `xsd:` without any context declaring it.
-const XSD_PREFIX: &str = "http://www.w3.org/2001/XMLSchema#";
+static XSD_PREFIX: Iri<&'static str> = iri!("http://www.w3.org/2001/XMLSchema#");
 /// The NGSI-LD namespace, available as `ngsi-ld:`.
-const NGSI_LD_PREFIX: &str = "https://uri.etsi.org/ngsi-ld/";
+static NGSI_LD_PREFIX: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/");
 /// The GeoJSON vocabulary namespace, available as `geojson:`.
-const GEOJSON_PREFIX: &str = "https://purl.org/geojson/vocab#";
+static GEOJSON_PREFIX: Iri<&'static str> = iri!("https://purl.org/geojson/vocab#");
 
 /// Term resolution for one batch, covering the core context and the
 /// request's own.
@@ -141,17 +141,17 @@ impl BatchTermMap {
     }
 
     /// The core context URL this batch resolves versionless references to.
-    pub(crate) fn effective_core_url(&self) -> &str {
-        self.core_url.as_str()
+    pub(crate) fn effective_core_url(&self) -> Iri<&str> {
+        self.core_url.as_ref()
     }
 }
 
 /// The namespaces available without any context declaring them.
-fn builtin_prefix(prefix: &str) -> Option<&'static str> {
+fn builtin_prefix(prefix: &str) -> Option<&'static Iri<&'static str>> {
     match prefix {
-        "xsd" => Some(XSD_PREFIX),
-        "ngsi-ld" => Some(NGSI_LD_PREFIX),
-        "geojson" => Some(GEOJSON_PREFIX),
+        "xsd" => Some(&XSD_PREFIX),
+        "ngsi-ld" => Some(&NGSI_LD_PREFIX),
+        "geojson" => Some(&GEOJSON_PREFIX),
         _other => None,
     }
 }
@@ -214,7 +214,7 @@ pub(crate) async fn build_batch_term_map(
             eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
             continue;
         };
-        if is_ngsi_ld_core_context_url(url.as_str()) || url.as_str() == ANDROMEDA_CORE_CONTEXT_URL {
+        if is_ngsi_ld_core_context_url(url.as_ref()) || ANDROMEDA_CORE_CONTEXT_URL == url.as_str() {
             continue;
         }
         match cache.get_or_load(loader, &url).await {
@@ -233,7 +233,7 @@ pub(crate) async fn build_batch_term_map(
                         eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
                         break;
                     };
-                    if is_ngsi_ld_core_context_url(url.as_str()) || url.as_str() == ANDROMEDA_CORE_CONTEXT_URL {
+                    if is_ngsi_ld_core_context_url(url.as_ref()) || ANDROMEDA_CORE_CONTEXT_URL == url.as_str() {
                         continue;
                     }
                     match cache.get_or_load(loader, &url).await {

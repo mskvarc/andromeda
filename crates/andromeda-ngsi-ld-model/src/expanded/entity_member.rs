@@ -4,14 +4,17 @@
 //! reader shared by the write/index and read/match paths.
 
 use crate::expanded::node::expanded_object_ref;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::grammar::ScopeBuf};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 /// Extract the `@id` of an expanded entity payload.
-pub fn extract_id(expanded: &Value) -> Option<&str> {
-    expanded_object_ref(expanded).and_then(|obj| obj.get("@id")).and_then(Value::as_str)
+pub fn extract_id(expanded: &Value) -> Option<Uri> {
+    expanded_object_ref(expanded)
+        .and_then(|obj| obj.get("@id"))
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
 }
 
 /// Extract `@type` IRIs from an expanded entity payload.
@@ -62,13 +65,14 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use crate::expanded::entity_member::{extract_expires_at, extract_id, extract_scopes};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::Datelike;
     use serde_json::json;
 
     #[test]
     fn the_identifier_is_read_off_the_expanded_node() {
         let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
-        pretty_assertions::assert_eq!(extract_id(&entity), Some("urn:ngsi-ld:Building:001"));
+        pretty_assertions::assert_eq!(extract_id(&entity).as_ref().map(Uri::as_str), Some("urn:ngsi-ld:Building:001"));
     }
 
     #[test]

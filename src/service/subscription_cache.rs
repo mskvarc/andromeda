@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
@@ -48,7 +48,7 @@ use tracing::debug;
 #[derive(Debug)]
 pub struct SubscriptionCache {
     inner: DashMap<Uri, Arc<CompiledSubscription>>,
-    by_type: DashMap<String, HashSet<Uri>>,
+    by_type: DashMap<EntityTypeName, HashSet<Uri>>,
     untyped: dashmap::DashSet<Uri>,
     spatial: Arc<SpatialSubscriptionIndex>,
     tenant: TenantRef,
@@ -94,7 +94,7 @@ impl SubscriptionCache {
     pub async fn handle_change(&self, change: &SubscriptionChange, repo: &impl SubscriptionStore) {
         match change {
             SubscriptionChange::Upserted(id) => {
-                match repo.get(id.as_str()).await {
+                match repo.get(id).await {
                     Ok(Some(sub)) => {
                         if sub.lifecycle.status == SubscriptionStatus::Active {
                             if let Some(compiled) = compile_subscription(&sub) {
@@ -132,7 +132,7 @@ impl SubscriptionCache {
     pub fn find_matching(&self, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
         let mut candidate_ids: HashSet<Uri> = self.untyped.iter().map(|entry| entry.key().clone()).collect();
         for event_type in &event.entity_types {
-            if let Some(entry) = self.by_type.get(event_type.as_str()) {
+            if let Some(entry) = self.by_type.get(event_type) {
                 for id in entry.value() {
                     candidate_ids.insert(id.clone());
                 }
@@ -173,8 +173,8 @@ impl SubscriptionCache {
         let mut indexed_any = false;
         for selector in &compiled.selectors {
             match selector.type_.as_single_type() {
-                Some(type_iri) => {
-                    self.by_type.entry(type_iri.to_owned()).or_default().insert(compiled.id.clone());
+                Some(entity_type) => {
+                    self.by_type.entry(entity_type.clone()).or_default().insert(compiled.id.clone());
                 }
                 None => {
                     self.untyped.insert(compiled.id.clone());
@@ -231,7 +231,7 @@ impl SubscriptionCache {
                 needs_wildcard = true;
                 continue;
             };
-            match IriBuf::new(type_name.to_owned()) {
+            match IriBuf::new(type_name.as_str().to_owned()) {
                 Ok(type_iri) => {
                     let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
                     self.spatial.insert(key, entry.clone());
@@ -269,13 +269,9 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         .as_deref()
         .map_or_else(|| NotificationTrigger::iter().collect(), <[NotificationTrigger]>::to_vec);
 
-    let watched_attrs = sub
-        .selection
-        .watched_attributes
-        .as_ref()
-        .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
+    let watched_attrs = sub.selection.watched_attributes.as_ref().cloned().map(HashSet::from_iter);
 
-    let endpoint_transport = match parse_endpoint_transport(sub.notification.endpoint.uri.as_str(), sub.notification.endpoint.notifier_info.as_deref()) {
+    let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
         Ok(t) => t,
         Err(e) => {
             debug!("Failed to parse endpoint transport for subscription {}: {}", sub.id, e);
@@ -298,7 +294,7 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         throttling_secs: sub.delivery.throttling,
         time_interval_secs: sub.delivery.time_interval,
         notification_attributes: sub.notification.attributes.clone(),
-        notification_format: sub.notification.format.map(|f| f.to_string()),
+        notification_format: sub.notification.format,
         notification_sys_attrs: if sub.notification.sys_attrs.unwrap_or(false) {
             SysAttrsInclusion::Include
         } else {
@@ -312,8 +308,8 @@ pub fn compile_subscription(sub: &Subscription) -> Option<CompiledSubscription> 
         compiled_q: sub.filters.q.clone(),
         compiled_geo_q: sub.filters.geo_q.as_ref().and_then(|v| compile_geo_q(v, sub.id.as_ref())),
         compiled_scope_q: sub.filters.scope_q.clone(),
-        dataset_id: sub.filters.dataset_id.as_ref().map(|ids| ids.iter().map(ToString::to_string).collect()),
-        notification_join: sub.notification.join.map(|j| j.to_string()),
+        dataset_id: sub.filters.dataset_id.clone(), // clone: the compiled cache owns its dataset URI selectors.
+        notification_join: sub.notification.join,
         notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
         compiled_csf: sub.filters.csf.clone(),
         local_only: sub.delivery.local_only.unwrap_or(false),

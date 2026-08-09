@@ -131,10 +131,10 @@ impl EntityDiscoveryService {
     }
 
     /// Return detailed information for a single entity type, including attribute details and entity count.
-    pub async fn type_info(&self, type_name: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
+    pub async fn type_info(&self, type_name: &EntityTypeName, context: &ContextSpec) -> Result<Value, AndromedaError> {
         // Expand the type name first — DB stores expanded IRIs
         let prepared_context = self.engine.prepare_term_context(context);
-        let type_iri = self.engine.expand_type(type_name, &prepared_context).await?;
+        let type_iri = self.engine.expand_type(type_name.as_str(), &prepared_context).await?;
         let type_key = parse_type_name(type_iri.as_str())?;
 
         let entities = self.repo.get_entities_by_type(&type_key, None, None).await?;
@@ -329,16 +329,16 @@ impl EntityDiscoveryService {
     }
 
     /// Return detailed information for a single attribute, including its types and entity count.
-    pub async fn attribute_info(&self, attr_id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
+    pub async fn attribute_info(&self, attr_id: &AttributeName, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let prepared_context = self.engine.prepare_term_context(context);
-        let attr_iri_buf = self.engine.expand_term(attr_id, &prepared_context).await?;
+        let attr_iri_buf = self.engine.expand_term(attr_id.as_str(), &prepared_context).await?;
         let attr_iri = parse_attribute_name(attr_iri_buf.as_str())?;
 
         let row = self
             .repo
             .get_attribute_info(&attr_iri)
             .await?
-            .ok_or_else(|| AndromedaError::entity_not_found(attr_id))?;
+            .ok_or_else(|| AndromedaError::entity_not_found(attr_id.to_string()))?;
 
         // Clause 5.2.28 fixes `attributeTypes` to the attribute family names; the
         // store already mapped the payload's expanded `@type` IRIs to them.

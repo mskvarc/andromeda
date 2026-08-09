@@ -1,6 +1,7 @@
 //! Merging expanded JSON-LD fragments into a stored payload.
 
 use crate::expanded::dataset_id::get_instance_dataset_id;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::{Map, Value};
 
 /// Merge `patch` into `base` following NGSI-LD expanded form conventions.
@@ -97,7 +98,7 @@ pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patc
 /// no instances remain.
 ///
 /// Returns whether at least one instance was actually removed.
-pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, dataset_id: Option<&str>) -> bool {
+pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, key: &str, dataset_id: Option<&Uri>) -> bool {
     let Some(Value::Array(instances)) = entity_obj.get_mut(key) else {
         return false;
     };
@@ -105,7 +106,7 @@ pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, k
     let before = instances.len();
     match dataset_id {
         Some(ds_id) => {
-            instances.retain(|inst| get_instance_dataset_id(inst) != Some(ds_id));
+            instances.retain(|inst| get_instance_dataset_id(inst).as_ref() != Some(ds_id));
         }
         None => {
             // The default instance is the one carrying no datasetId at all.
@@ -124,6 +125,7 @@ pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, k
 #[cfg(test)]
 mod tests {
     use crate::expanded::merge::{deep_merge_attribute, merge_json, remove_instances_by_dataset};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::{Map, Value, json};
 
     /// One attribute instance carrying `value`, optionally tagged with a `datasetId`.
@@ -242,11 +244,8 @@ mod tests {
             instance(20, Some("urn:ngsi-ld:Dataset:B")),
             instance(30, None),
         ]);
-        assert!(remove_instances_by_dataset(
-            &mut object,
-            "https://example.com/speed",
-            Some("urn:ngsi-ld:Dataset:A")
-        ));
+        let dataset_id = "urn:ngsi-ld:Dataset:A".parse::<Uri>().ok();
+        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()));
         let instances = object["https://example.com/speed"].as_array().expect("instances");
         pretty_assertions::assert_eq!(instances.len(), 2);
         assert!(
@@ -268,22 +267,16 @@ mod tests {
     #[test]
     fn removing_an_unmatched_dataset_id_reports_that_nothing_was_removed() {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
-        assert!(!remove_instances_by_dataset(
-            &mut object,
-            "https://example.com/speed",
-            Some("urn:ngsi-ld:Dataset:Z")
-        ));
+        let dataset_id = "urn:ngsi-ld:Dataset:Z".parse::<Uri>().ok();
+        assert!(!remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()));
         pretty_assertions::assert_eq!(object["https://example.com/speed"].as_array().expect("instances").len(), 1);
     }
 
     #[test]
     fn removing_the_last_instance_drops_the_attribute_member_itself() {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
-        assert!(remove_instances_by_dataset(
-            &mut object,
-            "https://example.com/speed",
-            Some("urn:ngsi-ld:Dataset:A")
-        ));
+        let dataset_id = "urn:ngsi-ld:Dataset:A".parse::<Uri>().ok();
+        assert!(remove_instances_by_dataset(&mut object, "https://example.com/speed", dataset_id.as_ref()));
         assert!(object.get("https://example.com/speed").is_none());
     }
 

@@ -1,6 +1,7 @@
 //! Runtime configuration validation and path normalization.
 
-use crate::config::{AndromedaError, Path, PathBuf, RuntimeConfig};
+use crate::{config::runtime::RuntimeConfig, error::AndromedaError};
+use std::path::{Path, PathBuf};
 
 pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaError> {
     if config.server.port == 0 {
@@ -8,9 +9,6 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaErr
     }
     if config.http.request_timeout_secs == 0 {
         return Err(AndromedaError::internal("http.request_timeout_secs must be at least 1"));
-    }
-    if config.database.url.is_empty() {
-        return Err(AndromedaError::internal("database.url must not be empty"));
     }
     if config.database.max_connections == 0 {
         return Err(AndromedaError::internal("database.max_connections must be at least 1"));
@@ -33,9 +31,6 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaErr
     }
     if config.tenancy.janitor_interval_seconds == 0 {
         return Err(AndromedaError::internal("tenancy.janitor_interval_seconds must be at least 1"));
-    }
-    if config.info.source_identity.is_empty() {
-        return Err(AndromedaError::internal("info.source_identity must not be empty"));
     }
     if let Some(batch_concurrency) = config.performance.batch_concurrency
         && batch_concurrency == 0

@@ -13,14 +13,17 @@
 
 mod errors;
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT},
+    error,
+};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 const UNRETRIEVABLE_CONTEXT: &str = "https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-non-existing.jsonld";
-const INVALID_REQUEST_TYPE: &str = error::INVALID_REQUEST;
-const LD_CONTEXT_NOT_AVAILABLE_TYPE: &str = error::LD_CONTEXT_NOT_AVAILABLE;
+const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
+const LD_CONTEXT_NOT_AVAILABLE_TYPE: &iri_rs::Iri<&str> = error::LD_CONTEXT_NOT_AVAILABLE;
 
 fn client() -> Client {
     Client::new()
@@ -236,7 +239,7 @@ async fn invalid_parameters_post_entities_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -244,7 +247,7 @@ async fn invalid_parameters_get_entities_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/entities?type=Building&invalidParam=invalidValue", None, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -271,7 +274,7 @@ async fn invalid_parameters_post_temporal_entities_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -279,7 +282,7 @@ async fn invalid_parameters_get_temporal_entities_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/temporal/entities?type=Building&invalidParam=invalidValue", None, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -287,7 +290,7 @@ async fn invalid_parameters_get_types_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/types?invalidParam=invalidValue", None, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -295,7 +298,7 @@ async fn invalid_parameters_get_tenants_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/tenants?invalidParam=invalidValue", None, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -324,7 +327,7 @@ async fn invalid_parameters_post_subscriptions_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -332,7 +335,7 @@ async fn invalid_parameters_get_subscriptions_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/subscriptions?invalidParam=invalidValue", None, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -604,7 +607,7 @@ async fn ld_context_not_available_create_entity_returns_504() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -632,7 +635,7 @@ async fn ld_context_not_available_create_subscription_returns_504() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -665,7 +668,7 @@ async fn ld_context_not_available_create_temporal_entity_returns_504() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -707,7 +710,7 @@ async fn ld_context_not_available_create_registration_returns_504() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -881,7 +884,7 @@ async fn invalid_parameters_get_attributes_returns_400() {
     let c = client();
     let (status, _, body) = raw_request(&c, Method::GET, "/attributes?invalidParam=invalidValue", None, None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 // NGSI-LD 6.3.5: invalid params on GET /csourceRegistrations
@@ -898,7 +901,7 @@ async fn invalid_parameters_get_registrations_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 // NGSI-LD 6.3.4: Accept text/plain on entity endpoint -> 406

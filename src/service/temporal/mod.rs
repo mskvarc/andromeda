@@ -27,7 +27,13 @@ use andromeda_jsonld::{
     engine::{options::CompactOptions, processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    instance_id::InstanceId,
+    temporal_format::TemporalFormat,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
@@ -59,7 +65,10 @@ use andromeda_postgresql_temporal_store::{
 use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use serde_json::{Value, json};
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Return short IRI token from fragment or last path segment.
 fn iri_short_name(iri: &str) -> Option<String> {
@@ -142,7 +151,7 @@ pub struct TemporalService {
 #[derive(Debug)]
 pub enum CreateOrUpdateResult {
     /// A new temporal entity was created, carrying the assigned entity ID.
-    Created(String),
+    Created(Uri),
     /// Attributes were appended to an existing temporal entity.
     Updated,
 }
@@ -159,7 +168,7 @@ pub struct TemporalReadResult {
 #[derive(Debug)]
 pub struct TemporalQueryWarning {
     /// The entity that triggered the warning.
-    pub entity_id: String,
+    pub entity_id: Uri,
     /// Human-readable description of the problem.
     pub message: String,
 }

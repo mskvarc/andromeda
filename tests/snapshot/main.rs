@@ -9,7 +9,10 @@
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
+    db::TRUNCATE_ALL,
+};
 use axum::{body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};

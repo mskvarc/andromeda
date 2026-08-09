@@ -274,7 +274,7 @@ async fn list_invalid_kind_returns_400() {
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -288,7 +288,7 @@ async fn list_invalid_details_returns_400() {
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -302,7 +302,7 @@ async fn list_invalid_kind_with_details_true_returns_400() {
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -316,7 +316,7 @@ async fn list_invalid_details_with_kind_hosted_returns_400() {
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -330,7 +330,7 @@ async fn list_invalid_details_and_kind_returns_400() {
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 // ── 052_05: details=true ──────────────────────────────────────────

@@ -5,6 +5,7 @@
 //! single response, applied per entity.
 
 use crate::{error::AndromedaError, http::error::category, service::entity::batch::BatchResult};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::batch_operation::{BatchEntityError, BatchOperationResult};
 
 /// Report a broker failure against one entity of a batch.
@@ -12,7 +13,7 @@ use andromeda_ngsi_ld_problem_details::batch_operation::{BatchEntityError, Batch
 /// An internal failure is logged in full and reported as the bare phrase
 /// "Internal error", for the same reason a single-response failure is: the
 /// message may name a table, a query or a host.
-pub fn entity_error(entity_id: &str, error: &AndromedaError) -> BatchEntityError {
+pub fn entity_error(entity_id: Uri, error: &AndromedaError) -> BatchEntityError {
     let error_type = category::of(error.kind());
 
     if error.is_internal() {
@@ -30,7 +31,7 @@ pub fn entity_error(entity_id: &str, error: &AndromedaError) -> BatchEntityError
 
 /// Turn the outcome of a batch into the clause 6.17 response body.
 pub fn operation_result(result: BatchResult) -> BatchOperationResult {
-    let errors = result.errors.iter().map(|(entity_id, error)| entity_error(entity_id, error)).collect();
+    let errors = result.errors.into_iter().map(|(entity_id, error)| entity_error(entity_id, &error)).collect();
     BatchOperationResult {
         success: result.success,
         errors,
@@ -40,6 +41,7 @@ pub fn operation_result(result: BatchResult) -> BatchOperationResult {
 #[cfg(test)]
 mod tests {
     use crate::{error::AndromedaError, http::error::batch::entity_error};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType};
 
     #[test]
@@ -54,21 +56,27 @@ mod tests {
                 NgsiLdErrorType::LdContextNotAvailable,
             ),
         ] {
-            let reported = entity_error("urn:ngsi-ld:Entity:X", &error);
+            let reported = entity_error("urn:ngsi-ld:Entity:X".parse::<Uri>().expect("valid entity URI"), &error);
             pretty_assertions::assert_eq!(reported.error.error_type, BatchErrorKind::Known(expected));
-            pretty_assertions::assert_eq!(reported.entity_id, "urn:ngsi-ld:Entity:X");
+            pretty_assertions::assert_eq!(reported.entity_id.as_str(), "urn:ngsi-ld:Entity:X");
         }
     }
 
     #[test]
     fn a_failure_that_is_not_internal_keeps_its_message() {
-        let reported = entity_error("urn:ngsi-ld:Entity:5", &AndromedaError::entity_validation("missing required attribute"));
+        let reported = entity_error(
+            "urn:ngsi-ld:Entity:5".parse::<Uri>().expect("valid entity URI"),
+            &AndromedaError::entity_validation("missing required attribute"),
+        );
         pretty_assertions::assert_eq!(reported.error.detail, "missing required attribute");
     }
 
     #[test]
     fn an_internal_failure_never_reaches_the_client_in_detail() {
-        let reported = entity_error("urn:ngsi-ld:Entity:4", &AndromedaError::internal("something broke"));
+        let reported = entity_error(
+            "urn:ngsi-ld:Entity:4".parse::<Uri>().expect("valid entity URI"),
+            &AndromedaError::internal("something broke"),
+        );
         pretty_assertions::assert_eq!(reported.error.error_type, BatchErrorKind::Known(NgsiLdErrorType::InternalError));
         pretty_assertions::assert_eq!(reported.error.detail, "Internal error");
     }

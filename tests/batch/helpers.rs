@@ -1,15 +1,12 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL},
+    db::TRUNCATE_ALL,
+};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
-
-pub use andromeda_test_common::config::{BASE_URL, CORE_CONTEXT};
-/// The legacy `TEST_SUITE_CONTEXT` name in this suite actually refers to the
-/// compound variant. Re-export under the old name so per-operation files
-/// that import it keep compiling.
-pub const TEST_SUITE_CONTEXT: &str = COMPOUND_CONTEXT;
 
 pub fn client() -> Client {
     Client::new()

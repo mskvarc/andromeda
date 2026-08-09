@@ -36,10 +36,9 @@ pub fn configure_pool_options(max_connections: u32, synchronous_commit_setting: 
 pub struct DatabaseUrl(Url);
 
 impl DatabaseUrl {
-    /// Parse and validate a Postgres database URL.
-    pub fn parse(url: &str) -> Result<DatabaseUrl, ContextStoreError> {
-        let parsed = Url::parse(url).map_err(|e| ContextStoreError::Internal(format!("Invalid database URL: {e}")))?;
-        Ok(DatabaseUrl(parsed))
+    /// Wrap a validated database URL.
+    pub const fn new(url: Url) -> DatabaseUrl {
+        DatabaseUrl(url)
     }
 
     /// Return the database name from the URL path.
@@ -51,12 +50,12 @@ impl DatabaseUrl {
         Ok(TenantDatabaseName::from(path.to_string()))
     }
 
-    /// Build a full URL string with a replaced database name.
-    pub fn with_db_name(&self, db_name: &str) -> String {
+    /// Build a full URL with a replaced database name.
+    pub fn with_db_name(&self, db_name: &TenantDatabaseName) -> Url {
         // clone: `Url::set_path` mutates, and the base URL is reused per tenant
         let mut url = self.0.clone();
         url.set_path(&format!("/{db_name}"));
-        url.to_string()
+        url
     }
 }
 
@@ -94,9 +93,10 @@ pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> Tena
 
 /// Create the named database if it does not already exist.
 pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
-    let admin_url = base_url.with_db_name("postgres");
+    let admin_database = TenantDatabaseName::from("postgres".to_owned());
+    let admin_url = base_url.with_db_name(&admin_database);
     let db_name = db_name.as_str();
-    let mut conn = PgConnection::connect(&admin_url).await?;
+    let mut conn = PgConnection::connect(admin_url.as_str()).await?;
     let exists = sqlx::query("SELECT 1 FROM pg_database WHERE datname = $1")
         .bind(db_name)
         .fetch_optional(&mut conn)
@@ -132,12 +132,12 @@ pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreEr
 
 /// Connect to a single tenant database, migrate it, and close the pool.
 pub async fn migrate_single_tenant_db(
-    database_url: &str,
+    database_url: &Url,
     tenant_max_connections: u32,
     synchronous_commit_setting: &'static str,
 ) -> Result<(), ContextStoreError> {
     let pool = configure_pool_options(tenant_max_connections, synchronous_commit_setting)
-        .connect(database_url)
+        .connect(database_url.as_str())
         .await?;
     migrate_tenant_db(&pool).await?;
     pool.close().await;
@@ -147,14 +147,12 @@ pub async fn migrate_single_tenant_db(
 #[cfg(test)]
 mod tests {
     use crate::tenant_database::DatabaseUrl;
+    use andromeda_tenancy::database_name::TenantDatabaseName;
 
     #[test]
     fn database_url_newtype_roundtrip() {
         let raw = "postgres://postgres:postgres@localhost:5432/postgres";
-        let parsed = match DatabaseUrl::parse(raw) {
-            Ok(value) => value,
-            Err(err) => unreachable!("unexpected parse error: {err}"),
-        };
+        let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
 
         let db_name = match parsed.db_name() {
             Ok(value) => value,
@@ -162,17 +160,14 @@ mod tests {
         };
         pretty_assertions::assert_eq!(db_name.as_str(), "postgres");
 
-        let rebuilt = parsed.with_db_name("tenant_db");
-        assert!(rebuilt.ends_with("/tenant_db"));
+        let rebuilt = parsed.with_db_name(&TenantDatabaseName::from("tenant_db".to_owned()));
+        assert!(rebuilt.as_str().ends_with("/tenant_db"));
     }
 
     #[test]
     fn database_url_rejects_missing_db() {
         let raw = "postgres://postgres:postgres@localhost:5432";
-        let parsed = match DatabaseUrl::parse(raw) {
-            Ok(value) => value,
-            Err(err) => unreachable!("unexpected parse error: {err}"),
-        };
+        let parsed = DatabaseUrl::new(raw.parse().expect("database URL"));
         assert!(parsed.db_name().is_err());
     }
 }

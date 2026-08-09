@@ -33,7 +33,7 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
     let value_key = row.attribute_type.value_key_str();
 
     if matches!(row.value, TemporalValue::Tombstone) {
-        if row.attribute_name == expanded_properties::SCOPE.as_str() {
+        if row.attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
             instance.insert(value_key.to_string(), json!([]));
         } else if row.attribute_type == AttributeType::Relationship {
             instance.insert(value_key.to_string(), json!([{"@id": expanded_properties::NULL_URI.as_str()}]));
@@ -49,7 +49,7 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
             expanded_properties::DELETED_AT.as_str().to_string(),
             json!([{"@value": whole_seconds(row.time), "@type": expanded_classes::DATE_TIME.as_str()}]),
         );
-        if row.attribute_name != expanded_properties::SCOPE.as_str() {
+        if row.attribute_name.as_str() != expanded_properties::SCOPE.as_str() {
             instance.insert(expanded_properties::INSTANCE_ID.as_str().to_string(), json!([{"@id": &row.instance_id}]));
         }
         if let Some(ds_id) = &row.dataset_id {

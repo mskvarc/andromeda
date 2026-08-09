@@ -12,7 +12,6 @@ use crate::http::handler::temporal::{
     NgsiLdProtocolHeaders,
     NgsiLdResponse,
     OriginalUri,
-    Path,
     PreferHeader,
     Response,
     ResponsePayload,
@@ -22,12 +21,12 @@ use crate::http::handler::temporal::{
     TemporalSimplifyPayload,
     TemporalSimplifyRenderer,
     TenantState,
+    TypedPath,
     Uri,
     ValidatedQuery,
     Value,
     collect_temporal_warnings,
     merge_temporal_retrieve_results,
-    parse_entity_id,
     start_rendering,
 };
 
@@ -37,11 +36,10 @@ pub async fn get(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
-    Path(id): Path<String>,
+    TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.temporal;
-    let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
     protocol
         .extensions()
@@ -56,10 +54,9 @@ pub async fn get(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn -> Uri; the snapshot store is keyed by Uri
         let entity_data = state
             .snapshots
-            .get_snapshot_temporal_entity(&snapshot_id, &entity_uri)
+            .get_snapshot_temporal_entity(&snapshot_id, &id)
             .await
             .with_instance(&uri)?
             .ok_or_else(|| NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)))?;
@@ -89,18 +86,18 @@ pub async fn get(
 
     let is_local = params.is_local();
 
-    let local_result = service.get(id.as_ref(), &params, &context).await;
+    let local_result = service.get(&id, &params, &context).await;
 
     let (entity_value, content_range, warnings) = if is_local {
         let result = local_result.with_instance(&uri)?;
         (result.value, result.content_range, Vec::new())
     } else {
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
             .forwarding
             .forward_temporal_retrieve(
-                id.as_ref(),
+                &id,
                 query_string,
                 context_url,
                 ForwardingOperation::RetrieveTemporalEntity,

@@ -8,7 +8,7 @@
 //! Leasing rather than reading is what makes the drain at-least-once: a lease
 //! that expires unacknowledged becomes claimable again.
 
-use crate::{error::AndromedaError, service::entity::BatchSideEffectJob};
+use crate::{error::AndromedaError, service::entity::BatchSideEffectJob, worker_instance_id::WorkerInstanceId};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use uuid::Uuid;
@@ -33,7 +33,7 @@ pub trait SideEffectQueue: Send + Sync + 'static {
     /// stall the queue behind it.
     fn lease_batch<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        worker_id: &'life1 str,
+        worker_id: &'life1 WorkerInstanceId,
         batch_size: i32,
         lease_seconds: i32,
     ) -> BoxFuture<'async_trait, Result<Vec<LeasedSideEffect>, AndromedaError>>

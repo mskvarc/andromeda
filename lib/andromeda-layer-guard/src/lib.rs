@@ -18,5 +18,9 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod architecture;
 pub mod dialect;
+pub mod domain_string;
 pub mod manifest;
+pub mod raw_constant;
+mod source_scan;

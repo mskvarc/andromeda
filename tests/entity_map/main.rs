@@ -8,7 +8,11 @@
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, TEST_SUITE_CONTEXT},
+    db::TRUNCATE_ALL,
+    error,
+};
 use chrono::{Duration, Utc};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
@@ -17,8 +21,9 @@ use sqlx::PgPool;
 use urlencoding::encode;
 use uuid::Uuid;
 
-const BAD_REQUEST_DATA_TYPE: &str = error::BAD_REQUEST_DATA;
-const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
+const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
+const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
+const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
 
 fn client() -> Client {
     Client::new()
@@ -253,7 +258,7 @@ async fn entity_map_retrieve_nonexistent_map_returns_404() {
 
     let (status, _, body) = get_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -264,7 +269,7 @@ async fn entity_map_retrieve_invalid_map_id_returns_400() {
 
     let (status, _, body) = get_entity_map(&c, "not-a-valid-uri", "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -324,7 +329,7 @@ async fn entity_map_update_nonexistent_map_returns_404() {
     let patch = json!({ "expiresAt": (Utc::now() + Duration::hours(1)).to_rfc3339() });
     let (status, body) = update_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -342,7 +347,7 @@ async fn entity_map_update_invalid_expires_at_returns_400() {
     let patch = json!({ "expiresAt": "not-a-date" });
     let (status, body) = update_entity_map(&c, &map_id, &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
@@ -363,7 +368,7 @@ async fn entity_map_update_past_expires_at_returns_400() {
     let patch = json!({ "expiresAt": (Utc::now() - Duration::minutes(1)).to_rfc3339() });
     let (status, body) = update_entity_map(&c, &map_id, &patch).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 
     cleanup_entity_map(&c, &map_id).await;
     delete_entity(&c, &id).await;
@@ -386,7 +391,7 @@ async fn entity_map_delete_existing_map_then_retrieve_returns_404() {
 
     let (status, _, body) = get_entity_map(&c, &map_id, "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 
     delete_entity(&c, &id).await;
 }
@@ -495,7 +500,7 @@ async fn entity_map_create_from_get_without_filters_returns_400() {
 
     let (status, _, body) = create_entity_map_from_get(&c, "local=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -508,7 +513,7 @@ async fn entity_map_create_from_get_with_invalid_lifetime_returns_400() {
 
     let (status, _, body) = create_entity_map_from_get(&c, "type=Vehicle&entityMapLifetime=NOT_A_DURATION").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 
     delete_entity(&c, &id).await;
 }
@@ -544,7 +549,7 @@ async fn entity_map_create_from_post_without_filters_returns_400() {
     let body = json!({ "type": "Query" });
     let (status, _, body) = create_entity_map_from_post(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[tokio::test]
@@ -889,7 +894,7 @@ async fn entity_map_api_rejects_unknown_query_parameter_with_400() {
 
     pretty_assertions::assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: Value = resp.json().await.unwrap_or_default();
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 #[tokio::test]

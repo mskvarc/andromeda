@@ -169,11 +169,11 @@ impl EntityQueryService {
         let mut compiled = Vec::new();
         let order_terms = &params.ordering.order_by;
         for term in order_terms {
-            let target = match RawOrderTarget::classify(term.attr.as_str()) {
+            let target = match RawOrderTarget::classify(&term.attr) {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,
                 RawOrderTarget::Scope => OrderTarget::Scope,
-                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.engine().expand_term(name, context).await?),
+                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.engine().expand_term(name.as_str(), context).await?),
             };
             compiled.push(CompiledOrderTerm {
                 target,

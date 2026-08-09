@@ -269,6 +269,7 @@ impl From<ContextStoreError> for AndromedaError {
             ContextStoreError::Encoding(e) => AndromedaError::internal(format!("EWKB codec: {e}")),
             ContextStoreError::Render(e) => AndromedaError::internal(format!("statement render: {e}")),
             ContextStoreError::AttributeLookup(e) => AndromedaError::internal(format!("attribute name lookup: {e}")),
+            ContextStoreError::ContextMapper(e) => AndromedaError::internal(format!("JSON-LD context row: {e}")),
             ContextStoreError::Migration(e) => ErrorKind::Migration(e).into(),
             ContextStoreError::Internal(msg) => AndromedaError::internal(msg),
         }

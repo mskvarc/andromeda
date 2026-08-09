@@ -1,24 +1,40 @@
 //! Extraction and validation of context-source registration payload fields.
 
-use crate::service::csource_registration::{
-    AndromedaError,
-    CreateCsrParams,
-    CsrUpdateFragment,
-    DateTime,
-    ForwardingMode,
-    Iso8601Duration,
-    TenantName,
-    Utc,
-    Value,
-    unwrap_geo_property_to_geometry,
+use crate::{
+    error::AndromedaError,
+    service::{
+        csource_extract::unwrap_geo_property_to_geometry,
+        csource_registration::store::{CreateCsrParams, CsrUpdateFragment},
+    },
 };
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
+use andromeda_ngsi_ld_model::registration::{CsrOperation, ForwardingMode, RegistrationInfo};
+use chrono::{DateTime, Utc};
+use iso8601_duration::Duration as Iso8601Duration;
+use mediatype::MediaTypeBuf;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use url::Url;
+
+fn deserialize_member<T>(payload: &Value, key: &str) -> Result<Option<T>, AndromedaError>
+where
+    T: DeserializeOwned,
+{
+    payload
+        .get(key)
+        .map(|value| {
+            serde_json::from_value(value.clone()) // clone: serde owns the selected member while the payload remains borrowed.
+                .map_err(|error| AndromedaError::csr_validation(format!("Invalid '{key}' value: {error}")))
+        })
+        .transpose()
+}
 
 pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'_>, AndromedaError> {
     Ok(CreateCsrParams {
         registration_name: payload.get("registrationName").and_then(|v| v.as_str()),
         description: payload.get("description").and_then(|v| v.as_str()),
-        information: payload.get("information"),
-        tenant: payload.get("tenant").and_then(|v| v.as_str()),
+        information: deserialize_member::<Vec<RegistrationInfo>>(payload, "information")?,
+        tenant: deserialize_member::<TenantName>(payload, "tenant")?,
         observation_interval: payload.get("observationInterval"),
         management_interval: payload.get("managementInterval"),
         location: payload
@@ -42,8 +58,8 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'
                     .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'expiresAt' value '{}': {}", s, e)))
             })
             .transpose()?,
-        endpoint: payload.get("endpoint").and_then(|v| v.as_str()),
-        accept: payload.get("accept").and_then(|v| v.as_str()),
+        endpoint: deserialize_member::<Url>(payload, "endpoint")?,
+        accept: deserialize_member::<MediaTypeBuf>(payload, "accept")?,
         mode: payload
             .get("mode")
             .and_then(|v| v.as_str())
@@ -51,19 +67,16 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'
             .transpose()
             .map_err(|e| AndromedaError::csr_validation(format!("Invalid 'mode' value: {}", e)))?
             .unwrap_or_default(),
-        operations: payload
-            .get("operations")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'operations' value: {}", e)))) // clone: serde_json::from_value consumes the Value
-            .transpose()?,
-        scope: payload
-            .get("scope")
-            .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::csr_validation(format!("Invalid 'scope' value: {}", e)))) // clone: serde_json::from_value consumes the Value
-            .transpose()?,
+        // Clause 4.20 defines federationOps as the effective set when the
+        // registration omits an explicit subset. Persisting that effective
+        // value keeps retrieval and routing semantics identical.
+        operations: Some(deserialize_member::<Vec<CsrOperation>>(payload, "operations")?.unwrap_or_else(|| vec![CsrOperation::FederationOps])),
+        scope: deserialize_member(payload, "scope")?,
         refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
         management: payload.get("management"),
         context_source_info: payload.get("contextSourceInfo"),
-        jsonld_context: payload.get("jsonldContext").and_then(|v| v.as_str()),
-        context_source_alias: payload.get("contextSourceAlias").and_then(|v| v.as_str()),
+        jsonld_context: deserialize_member::<Url>(payload, "jsonldContext")?,
+        context_source_alias: deserialize_member::<ContextSourcePseudonym>(payload, "contextSourceAlias")?,
         additional_properties: extract_additional_properties(payload),
     })
 }
@@ -72,7 +85,7 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
     Ok(CsrUpdateFragment {
         registration_name: extract_optional_string(fragment, "registrationName"),
         description: extract_optional_string(fragment, "description"),
-        information: fragment.get("information").cloned(), // clone: need owned Value for update fragment struct
+        information: deserialize_member::<Vec<RegistrationInfo>>(fragment, "information")?,
         tenant: extract_optional_tenant_name(fragment, "tenant")?,
         observation_interval: extract_optional_value(fragment, "observationInterval"),
         management_interval: extract_optional_value(fragment, "managementInterval"),
@@ -122,8 +135,8 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
                 }
             })
             .transpose()?,
-        endpoint: fragment.get("endpoint").and_then(|v| v.as_str()).map(|s| s.to_string()),
-        accept: extract_optional_string(fragment, "accept"),
+        endpoint: deserialize_member::<Url>(fragment, "endpoint")?,
+        accept: extract_optional_typed::<MediaTypeBuf>(fragment, "accept")?,
         mode: fragment
             .get("mode")
             .and_then(|v| v.as_str())
@@ -157,8 +170,8 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
         refresh_rate: extract_optional_duration(fragment, "refreshRate")?,
         management: extract_optional_value(fragment, "management"),
         context_source_info: extract_optional_value(fragment, "contextSourceInfo"),
-        jsonld_context: extract_optional_string(fragment, "jsonldContext"),
-        context_source_alias: extract_optional_string(fragment, "contextSourceAlias"),
+        jsonld_context: extract_optional_typed::<Url>(fragment, "jsonldContext")?,
+        context_source_alias: extract_optional_typed::<ContextSourcePseudonym>(fragment, "contextSourceAlias")?,
         additional_properties: extract_additional_properties(fragment),
     })
 }
@@ -166,6 +179,19 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
 /// For nullable string fields: absent -> None, null -> Some(None), value -> Some(Some(s))
 pub(super) fn extract_optional_string(payload: &Value, key: &str) -> Option<Option<String>> {
     payload.get(key).map(|v| if v.is_null() { None } else { v.as_str().map(|s| s.to_string()) })
+}
+
+fn extract_optional_typed<T>(payload: &Value, key: &str) -> Result<Option<Option<T>>, AndromedaError>
+where
+    T: DeserializeOwned,
+{
+    match payload.get(key) {
+        None => Ok(None),
+        Some(value) if value.is_null() => Ok(Some(None)),
+        Some(value) => serde_json::from_value(value.clone()) // clone: serde owns the selected member while the update payload remains borrowed.
+            .map(|parsed| Some(Some(parsed)))
+            .map_err(|error| AndromedaError::csr_validation(format!("Invalid '{key}' value: {error}"))),
+    }
 }
 
 pub(super) fn parse_duration_value(value: &Value, key: &str) -> Result<Iso8601Duration, AndromedaError> {
@@ -215,4 +241,27 @@ pub(super) fn extract_additional_properties(payload: &Value) -> Option<Value> {
         }
     }
     if additional.is_empty() { None } else { Some(Value::Object(additional)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::service::csource_registration::payload::extract_create_params;
+    use andromeda_ngsi_ld_model::registration::CsrOperation;
+    use serde_json::json;
+
+    #[test]
+    fn create_materialises_the_clause_4_20_default_operation_group() {
+        let payload = json!({"endpoint": "https://source.example.org"});
+        let params = extract_create_params(&payload).expect("valid registration");
+
+        pretty_assertions::assert_eq!(params.operations, Some(vec![CsrOperation::FederationOps]));
+    }
+
+    #[test]
+    fn create_preserves_an_explicit_operation_subset() {
+        let payload = json!({"endpoint": "https://source.example.org", "operations": ["retrieveEntity", "queryEntity"]});
+        let params = extract_create_params(&payload).expect("valid registration");
+
+        pretty_assertions::assert_eq!(params.operations, Some(vec![CsrOperation::RetrieveEntity, CsrOperation::QueryEntity]));
+    }
 }

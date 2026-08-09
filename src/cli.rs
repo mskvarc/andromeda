@@ -1,4 +1,4 @@
-use crate::config::DEFAULT_CONFIG_PATH;
+use crate::config::runtime::DEFAULT_CONFIG_PATH;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use shadow_rs::shadow;
 use std::{net::IpAddr, path::PathBuf};

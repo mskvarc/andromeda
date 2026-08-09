@@ -10,10 +10,11 @@ use crate::{
         request::{ForwardBatchProvisionRequest, ForwardProvisionRequest},
     },
 };
-use andromeda_ngsi_ld_http_headers::via::Via;
+use andromeda_ngsi_ld_http_headers::{media_type::APPLICATION_LD_JSON, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use futures::{StreamExt, stream};
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 use tracing::{debug, warn};
 use url::Url;
@@ -28,12 +29,12 @@ impl CsourceForwardingService {
 
         let prepared_context = self.engine.prepare_term_context(request.context);
         let expanded_type = if let Some(t) = request.entity_type_compact {
-            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
+            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
         } else {
             None
         };
 
-        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), request.entity_id).await?;
+        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), Some(request.entity_id)).await?;
 
         // Separate CSRs into those that match the operation and exclusive ones that don't.
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
@@ -51,7 +52,7 @@ impl CsourceForwardingService {
             if filtered {
                 continue;
             }
-            if !csr_has_matching_information(&csr, expanded_type.as_deref(), request.entity_id, request.attribute_name) {
+            if !csr_has_matching_information(&csr, expanded_type.as_ref(), Some(request.entity_id), request.attribute_name) {
                 continue;
             }
             if request.operation.matches(&csr) {
@@ -73,14 +74,13 @@ impl CsourceForwardingService {
         }
 
         let request_ref = &request;
-        let expanded_type_ref = expanded_type.as_deref();
+        let expanded_type_ref = expanded_type.as_ref();
         let results: Vec<ForwardedWriteResult> = stream::iter(matching_csrs)
             .map(|csr| async move {
                 let url = if request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none() {
                     build_create_url(&csr.access.endpoint)
                 } else {
-                    let id = request_ref.entity_id.unwrap_or("");
-                    let mut path = vec!["ngsi-ld", "v1", "entities", id];
+                    let mut path = vec!["ngsi-ld", "v1", "entities", request_ref.entity_id.as_str()];
                     path.extend(
                         request_ref
                             .path_suffix
@@ -92,13 +92,19 @@ impl CsourceForwardingService {
                 };
 
                 let exclusive_attrs = if csr.access.mode == Some(ForwardingMode::Exclusive) {
-                    collect_matching_attrs(&csr, expanded_type_ref, request_ref.entity_id, request_ref.attribute_name, request_ref.body)
+                    collect_matching_attrs(
+                        &csr,
+                        expanded_type_ref,
+                        Some(request_ref.entity_id),
+                        request_ref.attribute_name,
+                        request_ref.body,
+                    )
                 } else {
                     Vec::new()
                 };
 
                 let filtered_body = if request_ref.attribute_name.is_none() {
-                    filter_fragment_for_registration(request_ref.body, &csr, expanded_type_ref, request_ref.entity_id)
+                    filter_fragment_for_registration(request_ref.body, &csr, expanded_type_ref, Some(request_ref.entity_id))
                 } else {
                     request_ref.body.map(<[u8]>::to_vec)
                 };
@@ -170,12 +176,12 @@ impl CsourceForwardingService {
 
         let prepared_context = self.engine.prepare_term_context(request.context);
         let expanded_type = if let Some(t) = request.entity_type_compact {
-            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
+            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
         } else {
             None
         };
 
-        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), None).await?;
+        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), None).await?;
         // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
         let matching_csrs: Vec<_> = csrs
             .into_iter()
@@ -260,17 +266,17 @@ impl CsourceForwardingService {
         url: Result<Url, AndromedaError>,
         method: reqwest::Method,
         body: Option<&[u8]>,
-        context_url: Option<&str>,
+        context_url: Option<&IriRefBuf>,
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> Result<(u16, Option<Value>), AndromedaError> {
         let url = url?;
         debug!("CS forwarding {} {}", method, url);
 
-        let mut request = self.build_request(method, url.as_str(), context_url, tenant, incoming_via);
+        let mut request = self.build_request(method, &url, context_url, tenant, incoming_via);
 
         if let Some(body_bytes) = body {
-            request = request.header("Content-Type", "application/ld+json").body(body_bytes.to_vec());
+            request = request.header("Content-Type", APPLICATION_LD_JSON.to_string()).body(body_bytes.to_vec());
         }
 
         let (status, _warning, bytes) = self.send_request(request).await?;

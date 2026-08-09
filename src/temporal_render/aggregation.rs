@@ -3,7 +3,7 @@
 //! aggregation method values (NGSI-LD aggregation methods: avg, min, max,
 //! sum, sumsq, stddev, totalCount, distinctCount).
 
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, rfc3339::whole_seconds};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, rfc3339::whole_seconds, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_temporal_store::store::{AggregationMinMax, TemporalAggregationRow};
 use indexmap::IndexMap;
@@ -39,17 +39,17 @@ fn aggregation_min_max_to_json(value: &Option<AggregationMinMax>) -> Value {
 
 impl<'a> TemporalAggregationRenderer<'a> {
     /// Group the rows and extract each requested aggregation method.
-    pub fn render(self) -> IndexMap<String, Value> {
+    pub fn render(self) -> IndexMap<AttributeName, Value> {
         let TemporalAggregationRenderer { rows, compiled } = self;
 
-        type GroupKey = (String, Option<String>);
+        type GroupKey = (AttributeName, Option<Uri>);
         let mut groups: IndexMap<GroupKey, Vec<&TemporalAggregationRow>> = IndexMap::with_capacity(rows.len().min(64));
 
         for row in rows {
             groups.entry((row.attribute_name.clone(), row.dataset_id.clone())).or_default().push(row);
         }
 
-        let mut attrs: IndexMap<String, Vec<Value>> = IndexMap::with_capacity(groups.len());
+        let mut attrs: IndexMap<AttributeName, Vec<Value>> = IndexMap::with_capacity(groups.len());
 
         for ((attr_name, dataset_id), bucket_rows) in &groups {
             let first_row = match bucket_rows.first() {
@@ -101,7 +101,7 @@ impl<'a> TemporalAggregationRenderer<'a> {
             attrs.entry(attr_name.clone()).or_default().push(Value::Object(instance));
         }
 
-        let mut result: IndexMap<String, Value> = IndexMap::with_capacity(attrs.len());
+        let mut result: IndexMap<AttributeName, Value> = IndexMap::with_capacity(attrs.len());
         for (attr_name, instances) in attrs {
             if instances.len() == 1 {
                 if let Some(single) = instances.into_iter().next() {

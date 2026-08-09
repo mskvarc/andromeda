@@ -83,7 +83,7 @@ pub(crate) fn canonical_context_urls(urls: &[IriBuf]) -> Vec<IriBuf> {
     let mut seen = HashSet::new();
     let mut canonical = Vec::with_capacity(urls.len());
     for url in urls {
-        let candidate = if is_ngsi_ld_core_context_url(url.as_str()) {
+        let candidate = if is_ngsi_ld_core_context_url(url.as_ref()) {
             IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context.jsonld"))
         } else {
             url.clone() // clone: the slice is borrowed and stays valid

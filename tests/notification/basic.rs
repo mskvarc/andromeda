@@ -1,11 +1,10 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
-use andromeda_test_common::config::callback_url;
+use andromeda_test_common::config::{CORE_CONTEXT, callback_url};
 use reqwest::StatusCode;
 
 use crate::helpers::{
-    CORE_CONTEXT,
     NotificationReceiver,
     append_entity_attrs,
     building_minimal_entity,

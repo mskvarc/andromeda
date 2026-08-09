@@ -24,7 +24,7 @@ use crate::{
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
 use jsonld_syntax::Parse;
-use mediatype::MediaTypeBuf;
+use mediatype::{MediaType, MediaTypeBuf, Name, names};
 use moka::future::Cache;
 use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
 use serde_json::Value;
@@ -38,7 +38,9 @@ use std::{
 use tracing::{trace, warn};
 
 /// What a context fetch asks the server for.
-const ACCEPT_HEADER: &str = "application/ld+json, application/json";
+const APPLICATION_LD_JSON: MediaType<'static> = MediaType::from_parts(names::APPLICATION, Name::new_unchecked("ld"), Some(names::JSON), &[]);
+/// JSON media type accepted as the non-linked-data fallback representation.
+const APPLICATION_JSON: MediaType<'static> = MediaType::new(names::APPLICATION, names::JSON);
 
 /// A loaded context together with the backing-store ownership of its hit count.
 ///
@@ -214,7 +216,7 @@ impl HttpContextLoader {
                             trace!("L2 cache hit for context: {}", url_iri);
                             let parsed = jsonld_syntax::Value::from_serde_json(payload);
                             return Ok(LoadedContext {
-                                value: Arc::new(without_embedded_core_context(url_iri.as_str(), parsed)),
+                                value: Arc::new(without_embedded_core_context(&url_iri, parsed)),
                                 durability: ContextDurability::Durable,
                             });
                         }
@@ -237,7 +239,7 @@ impl HttpContextLoader {
 
                 match fetch_and_parse(&client, &url_iri, max_bytes).await {
                     Ok(value) => {
-                        let normalized = without_embedded_core_context(url_iri.as_str(), value);
+                        let normalized = without_embedded_core_context(&url_iri, value);
                         // Written to L2 only here, on the first remote-fetch
                         // success: the row carries no counter, because hit
                         // accounting is the HitCounter's job.
@@ -345,7 +347,7 @@ impl HttpContextLoader {
             return Err(LoaderError::fetch_disabled(url.clone()));
         }
         let value = fetch_and_parse(&self.client, url, self.max_context_bytes).await?;
-        Ok(Arc::new(without_embedded_core_context(url.as_str(), value)))
+        Ok(Arc::new(without_embedded_core_context(url, value)))
     }
 }
 
@@ -371,7 +373,7 @@ fn ld_json_media_type() -> MediaTypeBuf {
 async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<jsonld_syntax::Value, LoaderError> {
     let response = client
         .get(url.as_str())
-        .header("Accept", ACCEPT_HEADER)
+        .header("Accept", format!("{APPLICATION_LD_JSON}, {APPLICATION_JSON}"))
         .send()
         .await
         .map_err(|error| LoaderError {

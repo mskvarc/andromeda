@@ -2,7 +2,7 @@
 pub mod store;
 
 use crate::{error::AndromedaError, service::entity_map::store::EntityMapStore};
-use andromeda_ngsi_ld_lexicon::{ngsi_ld_urn::EntityMapId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
@@ -29,12 +29,12 @@ impl EntityMapService {
     }
 
     /// Retrieve an entity map by its identifier.
-    pub async fn retrieve(&self, id: &EntityMapId) -> Result<EntityMap, AndromedaError> {
+    pub async fn retrieve(&self, id: &Uri) -> Result<EntityMap, AndromedaError> {
         self.store.get(id).await.ok_or_else(|| AndromedaError::entity_map_not_found(id.to_string()))
     }
 
     /// Update the expiration time of an existing entity map.
-    pub async fn update(&self, id: &EntityMapId, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
+    pub async fn update(&self, id: &Uri, expires_at: DateTime<Utc>) -> Result<(), AndromedaError> {
         if self.store.update(id, expires_at).await {
             Ok(())
         } else {
@@ -43,7 +43,7 @@ impl EntityMapService {
     }
 
     /// Scope query IDs by intersecting with an EntityMap's entity set.
-    pub async fn scope_query_ids(&self, map_id: &EntityMapId, existing_ids: Option<&[Uri]>) -> Result<Vec<Uri>, AndromedaError> {
+    pub async fn scope_query_ids(&self, map_id: &Uri, existing_ids: Option<&[Uri]>) -> Result<Vec<Uri>, AndromedaError> {
         let map = self.retrieve(map_id).await?;
         if let Some(existing) = existing_ids {
             let query_ids: HashSet<Uri> = existing.iter().cloned().collect(); // clone: owned set elements for intersection
@@ -56,9 +56,9 @@ impl EntityMapService {
     }
 
     /// Validate that a specific entity ID exists in the given EntityMap.
-    pub async fn validate_entity_in_map(&self, map_id: &EntityMapId, entity_id: &urn_rs::Urn) -> Result<(), AndromedaError> {
+    pub async fn validate_entity_in_map(&self, map_id: &Uri, entity_id: &Uri) -> Result<(), AndromedaError> {
         let map = self.retrieve(map_id).await?;
-        if map.entity_ids.iter().any(|id| matches!(id, Uri::Urn(candidate) if candidate == entity_id)) {
+        if map.entity_ids.iter().any(|id| id == entity_id) {
             Ok(())
         } else {
             Err(AndromedaError::entity_map_not_found(entity_id.to_string()))
@@ -66,7 +66,7 @@ impl EntityMapService {
     }
 
     /// Delete an entity map by its identifier.
-    pub async fn delete(&self, id: &EntityMapId) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, id: &Uri) -> Result<(), AndromedaError> {
         if self.store.delete(id).await {
             Ok(())
         } else {
@@ -90,15 +90,11 @@ pub fn parse_iso8601_duration(input: Option<&str>) -> Result<Iso8601Duration, An
     }
 }
 
-fn build_entity_map_id() -> Result<EntityMapId, AndromedaError> {
+fn build_entity_map_id() -> Result<Uri, AndromedaError> {
     let value = format!("urn:ngsi-ld:EntityMap:{}", uuid::Uuid::new_v4());
-    let id = value.parse::<EntityMapId>()?;
-    Ok(id)
-}
-
-pub fn parse_entity_map_urn(raw: &str) -> Result<EntityMapId, AndromedaError> {
-    let id = raw.parse::<EntityMapId>()?;
-    Ok(id)
+    value
+        .parse()
+        .map_err(|error| AndromedaError::internal(format!("Generated entity-map id is not a valid URI: {error}")))
 }
 
 fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<DateTime<Utc>, AndromedaError> {
@@ -111,7 +107,7 @@ fn compute_entity_map_expires_at(created_at: DateTime<Utc>, lifetime: Option<&Is
 
 #[cfg(test)]
 mod tests {
-    use crate::service::entity_map::{parse_entity_map_urn, parse_iso8601_duration};
+    use crate::service::entity_map::parse_iso8601_duration;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_postgresql_context_store::entity_map::InMemoryEntityMapStore;
     use std::{str::FromStr, sync::Arc};
@@ -168,18 +164,5 @@ mod tests {
     #[test]
     fn parse_invalid() {
         assert!(parse_iso8601_duration(Some("invalid")).is_err());
-    }
-
-    #[test]
-    fn parse_entity_map_urn_enforces_prefix() {
-        let ok = parse_entity_map_urn("urn:ngsi-ld:EntityMap:1").expect("urn");
-        pretty_assertions::assert_eq!(ok.as_str(), "urn:ngsi-ld:EntityMap:1");
-        assert!(parse_entity_map_urn("urn:ngsi-ld:Snapshot:1").is_err());
-    }
-
-    #[test]
-    fn parse_entity_map_urn_accepts_valid_urn() {
-        let parsed = super::parse_entity_map_urn("urn:ngsi-ld:EntityMap:abc");
-        assert!(parsed.is_ok());
     }
 }

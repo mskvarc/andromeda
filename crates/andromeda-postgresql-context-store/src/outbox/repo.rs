@@ -5,7 +5,13 @@
 //! defined in the binary's service layer. This module provides the struct
 //! and the inherent methods that the binary's trait impl delegates to.
 
-use crate::error::ContextStoreError;
+use crate::{
+    error::ContextStoreError,
+    outbox::rows::{OutboxRecord, OutboxRowError, RawOutboxRow},
+};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use serde_json::Value;
 use sqlx::{QueryBuilder, postgres::PgPool};
 
 /// Repository for notification outbox persistence operations.
@@ -31,9 +37,7 @@ impl OutboxRepository {
     /// Builds a single multi-row `INSERT ... VALUES (...), (...), ...` via
     /// [`sqlx::QueryBuilder::push_values`], collapsing N round-trips into one.
     ///
-    /// Each entry is described by its pre-rendered column values so the
-    /// domain types stay in the binary's service layer.
-    pub async fn insert_batch_raw_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, entries: &[OutboxInsertRow<'_>]) -> Result<(), ContextStoreError> {
+    pub async fn insert_batch_in_tx(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, entries: &[OutboxInsertRecord<'_>]) -> Result<(), ContextStoreError> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -43,36 +47,69 @@ impl OutboxRepository {
              (subscription_id, entity_id, trigger, entity_snapshot, previous_snapshot, changed_attrs) ",
         );
         builder.push_values(entries, |mut b, entry| {
-            b.push_bind(entry.subscription_id)
-                .push_bind(entry.entity_id)
-                .push_bind(entry.trigger)
+            let changed_attrs = entry.changed_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>();
+            b.push_bind(entry.subscription_id.as_str())
+                .push_bind(entry.entity_id.as_str())
+                .push_bind(entry.trigger.to_string())
                 .push_bind(entry.entity_snapshot)
                 .push_bind(entry.previous_snapshot)
-                .push_bind(entry.changed_attrs);
+                .push_bind(changed_attrs);
         });
         builder.build().execute(&mut **tx).await?;
 
         Ok(())
     }
+
+    /// Claim due rows and validate every domain-valued column.
+    pub async fn claim_pending(
+        &self,
+        worker_id: &str,
+        batch_size: i32,
+        max_attempts: i32,
+    ) -> Result<Vec<Result<OutboxRecord, OutboxRowError>>, ContextStoreError> {
+        let rows = sqlx::query_as::<_, RawOutboxRow>(
+            r#"
+            WITH claimable AS (
+                SELECT id
+                FROM notification_outbox
+                WHERE delivered_at IS NULL
+                  AND attempt_count < $3
+                  AND next_attempt_at <= NOW()
+                ORDER BY next_attempt_at
+                FOR UPDATE SKIP LOCKED
+                LIMIT $2
+            )
+            UPDATE notification_outbox o
+            SET claimed_at = NOW(), claimed_by = $1
+            FROM claimable c
+            WHERE o.id = c.id
+            RETURNING o.id, o.subscription_id, o.entity_id, o.trigger,
+                      o.entity_snapshot, o.previous_snapshot, o.changed_attrs,
+                      o.created_at, o.attempt_count, o.next_attempt_at
+            "#,
+        )
+        .bind(worker_id)
+        .bind(batch_size)
+        .bind(max_attempts)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(OutboxRecord::try_from).collect())
+    }
 }
 
-/// Pre-rendered column values for one outbox insert row.
-///
-/// The domain → string conversion happens in the binary's service layer;
-/// this struct carries the already-rendered values so the context-store
-/// does not need the domain types.
+/// Typed values for one outbox insert row.
 #[derive(Debug)]
-pub struct OutboxInsertRow<'a> {
-    /// Subscription identifier as a string.
-    pub subscription_id: &'a str,
-    /// Entity identifier as a string.
-    pub entity_id: &'a str,
-    /// Trigger reason as a string.
-    pub trigger: &'a str,
+pub struct OutboxInsertRecord<'a> {
+    /// Subscription identifier.
+    pub subscription_id: &'a Uri,
+    /// Entity identifier.
+    pub entity_id: &'a Uri,
+    /// Trigger reason.
+    pub trigger: NotificationTrigger,
     /// Entity snapshot JSON.
-    pub entity_snapshot: &'a serde_json::Value,
+    pub entity_snapshot: &'a Value,
     /// Previous entity snapshot JSON, if any.
-    pub previous_snapshot: &'a Option<serde_json::Value>,
-    /// Changed attribute names as strings.
-    pub changed_attrs: &'a [String],
+    pub previous_snapshot: &'a Option<Value>,
+    /// Changed attribute names.
+    pub changed_attrs: &'a [AttributeName],
 }

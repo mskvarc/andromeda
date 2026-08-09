@@ -53,7 +53,7 @@ pub mod write_outcome;
 
 use crate::{
     batch_activity::BatchActivityTracker,
-    event::change_event::{ChangeEvent, ChangeOrigin},
+    event::change_event::ChangeEvent,
     service::{
         entity::{
             batch::execution::BatchExecutionConfig,
@@ -67,7 +67,7 @@ use crate::{
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
 use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -150,7 +150,7 @@ impl EntityService {
     /// Callers must invoke this *before* asking the coordinator to commit: the
     /// goal is to serialise overlapping batches on broker-side mutexes so the
     /// second caller never holds a pool slot while it waits.
-    pub(crate) async fn acquire_id_locks(&self, ids: &[String]) -> Vec<OwnedMutexGuard<()>> {
+    pub(crate) async fn acquire_id_locks(&self, ids: &[Uri]) -> Vec<OwnedMutexGuard<()>> {
         acquire_id_locks_in(&self.id_locks, ids).await
     }
 

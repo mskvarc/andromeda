@@ -1,8 +1,8 @@
 //! Identity of a single attribute instance inside an expanded entity payload.
 
 use crate::expanded::{dataset_id::get_instance_dataset_id, node::expanded_object_ref};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use iri_rs::IriBuf;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -11,14 +11,14 @@ use std::collections::HashSet;
 /// System attributes are broker-managed metadata (`createdAt`, `observedAt`,
 /// …) rather than user attributes, so they never take part in the temporal
 /// catalogue or in attribute-level diffing.
-pub fn is_system_attribute(attr_name: &str) -> bool {
-    attr_name == properties::CREATED_AT.as_str()
-        || attr_name == properties::DATASET_ID.as_str()
-        || attr_name == properties::DELETED_AT.as_str()
-        || attr_name == properties::INSTANCE_ID.as_str()
-        || attr_name == properties::MODIFIED_AT.as_str()
-        || attr_name == properties::OBSERVED_AT.as_str()
-        || attr_name == properties::UNIT_CODE.as_str()
+pub fn is_system_attribute(attr_name: &AttributeName) -> bool {
+    attr_name.as_str() == properties::CREATED_AT.as_str()
+        || attr_name.as_str() == properties::DATASET_ID.as_str()
+        || attr_name.as_str() == properties::DELETED_AT.as_str()
+        || attr_name.as_str() == properties::INSTANCE_ID.as_str()
+        || attr_name.as_str() == properties::MODIFIED_AT.as_str()
+        || attr_name.as_str() == properties::OBSERVED_AT.as_str()
+        || attr_name.as_str() == properties::UNIT_CODE.as_str()
 }
 
 /// Identity of one attribute instance inside an entity payload: the expanded
@@ -33,9 +33,9 @@ pub fn is_system_attribute(attr_name: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AttributeInstanceKey {
     /// Expanded attribute IRI.
-    pub attr: IriBuf,
+    pub attr: AttributeName,
     /// `datasetId`, or `None` for the default instance.
-    pub dataset_id: Option<IriBuf>,
+    pub dataset_id: Option<Uri>,
 }
 
 /// Collect every attribute instance key present in an expanded entity payload.
@@ -51,19 +51,20 @@ pub fn attribute_instance_keys(expanded: &Value) -> HashSet<AttributeInstanceKey
     };
 
     for (attr_name, attr_value) in obj {
-        if attr_name.starts_with('@') || is_system_attribute(attr_name) || attr_name == properties::SCOPE.as_str() {
+        if attr_name.starts_with('@') {
             continue;
         }
         let Some(instances) = attr_value.as_array() else {
             continue;
         };
-        // clone: `IriBuf::new` takes ownership of the buffer it validates, and the
-        // map key behind `attr_name` is borrowed from the caller's payload.
-        let Ok(attr) = IriBuf::new(attr_name.clone()) else {
+        let Ok(attr) = attr_name.parse::<AttributeName>() else {
             continue;
         };
+        if is_system_attribute(&attr) || attr.as_str() == properties::SCOPE.as_str() {
+            continue;
+        }
         for instance in instances {
-            let dataset_id = get_instance_dataset_id(instance).and_then(|raw| IriBuf::new(raw).ok());
+            let dataset_id = get_instance_dataset_id(instance);
             keys.insert(AttributeInstanceKey {
                 attr: attr.clone(), // clone: one key per instance, each owning its IRI
                 dataset_id,
@@ -88,7 +89,7 @@ pub fn removed_attribute_instances(previous: &Value, replacement: &Value) -> Vec
 #[cfg(test)]
 mod tests {
     use crate::expanded::instance_key::{attribute_instance_keys, removed_attribute_instances};
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::{Value, json};
 
     fn property(value: i64) -> Value {
@@ -149,7 +150,7 @@ mod tests {
         }]);
         let removed = removed_attribute_instances(&previous, &replacement);
         pretty_assertions::assert_eq!(removed.len(), 1);
-        pretty_assertions::assert_eq!(removed[0].dataset_id.as_ref().map(IriBuf::as_str), Some("urn:ngsi-ld:Dataset:b"));
+        pretty_assertions::assert_eq!(removed[0].dataset_id.as_ref().map(Uri::as_str), Some("urn:ngsi-ld:Dataset:b"));
     }
 
     #[test]
@@ -162,7 +163,7 @@ mod tests {
         let replacement = json!([{"@id": "urn:ngsi-ld:Vehicle:1"}]);
         let removed = removed_attribute_instances(&previous, &replacement);
         pretty_assertions::assert_eq!(removed.len(), 1);
-        pretty_assertions::assert_eq!(removed[0].dataset_id.as_ref().map(IriBuf::as_str), Some("http://example.org/d1"));
+        pretty_assertions::assert_eq!(removed[0].dataset_id.as_ref().map(Uri::as_str), Some("http://example.org/d1"));
     }
 
     #[test]

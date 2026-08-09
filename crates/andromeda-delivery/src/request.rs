@@ -56,7 +56,7 @@ impl DeliveryRequest {
         // string; a subscription that named no context falls back to the core
         // context. A URL and the core-context constant are both valid IRI
         // references, so the construction does not fail in practice.
-        let context = self.context_url.as_ref().map_or(NGSI_LD_CORE_CONTEXT_URL, Url::as_str);
+        let context = self.context_url.as_ref().map_or(NGSI_LD_CORE_CONTEXT_URL.as_str(), Url::as_str);
         IriRefBuf::new(context).ok().map(Link::jsonld_context)
     }
 }
@@ -197,14 +197,14 @@ mod tests {
     fn a_json_notification_carries_the_core_context_link_when_the_subscription_named_none() {
         let link = assemble(Some(&media("application/json")), None).context_link().expect("a Link");
         let rendered = link.to_header_string().expect("the Link encodes");
-        assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL), "{rendered}");
+        assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
     }
 
     #[test]
     fn a_geo_json_notification_carries_a_context_link_too_because_clause_5_5_7_makes_no_exception() {
         let link = assemble(Some(&media("application/geo+json")), None).context_link().expect("a Link");
         let rendered = link.to_header_string().expect("the Link encodes");
-        assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL), "{rendered}");
+        assert!(rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
             .expect("a Link");
         let rendered = link.to_header_string().expect("the Link encodes");
         assert!(rendered.contains("https://example.com/ctx.jsonld"), "{rendered}");
-        assert!(!rendered.contains(NGSI_LD_CORE_CONTEXT_URL), "{rendered}");
+        assert!(!rendered.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{rendered}");
     }
 
     #[test]

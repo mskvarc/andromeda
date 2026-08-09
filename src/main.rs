@@ -23,10 +23,11 @@ mod store_bridge;
 mod temporal_render;
 mod version;
 mod worker;
+mod worker_instance_id;
 
 use crate::{
     cli::{Cli, Command, ConfigCommand, OutputFormat},
-    config::{RuntimeConfig, ServerOverrides},
+    config::{runtime::RuntimeConfig, server::ServerOverrides},
     error::AndromedaError,
 };
 use clap::Parser;

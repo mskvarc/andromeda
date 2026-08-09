@@ -39,11 +39,11 @@ impl EntityQueryService {
         sys_attrs: SysAttrsInclusion,
         context: &ContextSpec,
         contained_by: &HashSet<Uri>,
-    ) -> Result<HashMap<String, Entity>, AndromedaError> {
+    ) -> Result<HashMap<Uri, Entity>, AndromedaError> {
         let join_level = join_level.min(MAX_JOIN_LEVEL);
         let refs: Vec<&Entity> = entities.iter().collect();
         let resolved = self.resolve_linked_inner(refs, join_level, sys_attrs, context, contained_by.clone()).await?;
-        Ok(resolved.into_iter().map(|(id, entity)| (id.to_string(), entity)).collect())
+        Ok(resolved)
     }
 
     fn resolve_linked_inner<'a>(

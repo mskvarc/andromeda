@@ -1,7 +1,6 @@
 //! HTTP handling for the delete attribute entity operation.
 
 use crate::http::handler::entity::{
-    AndromedaError,
     AttributeName,
     ContextSpec,
     ContextUrl,
@@ -11,38 +10,32 @@ use crate::http::handler::entity::{
     ForwardProvisionRequest,
     ForwardingModes,
     ForwardingOperation,
-    FromStr,
     IncomingVia,
     IntoResponse,
     Json,
     NgsiLdError,
     OriginalUri,
-    Path,
     Response,
     ResultInstanceExt,
     StatusCode,
     TenantState,
+    TypedPath,
+    Uri,
     ValidatedQuery,
     build_multi_status_body,
     first_forwarded_status,
     has_remote_errors,
-    parse_entity_id,
-    validate_attr_name,
 };
 
 pub async fn delete_attr(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path((id, attr_id)): Path<(String, String)>,
+    TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
     IncomingVia(incoming_via): IncomingVia,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
-    let id = parse_entity_id(&id, &uri)?;
-    validate_attr_name(&attr_id, &uri)?;
-    let attr_name = AttributeName::from_str(&attr_id)
-        .map_err(|error| AndromedaError::entity_validation(format!("Invalid attribute name '{attr_id}': {error}")).with_instance(&uri))?;
     let context: ContextSpec = context.into_inner();
     let delete_all = params.delete_all.unwrap_or(false);
     let dataset_id = params.dataset_id.as_ref();
@@ -58,8 +51,7 @@ pub async fn delete_attr(
     };
 
     // Forward to matching context sources
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let entity_id = id.to_string();
+    let context_url = context.link_contexts().first();
     let path_suffix = format!("/attrs/{attr_id}");
 
     // Build query string for forwarding
@@ -75,9 +67,9 @@ pub async fn delete_attr(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
-            entity_id: Some(&entity_id),
+            entity_id: &id,
             entity_type_compact: None,
-            attribute_name: Some(&attr_name),
+            attribute_name: Some(&attr_id),
             method: reqwest::Method::DELETE,
             body: None,
             context_url,
@@ -108,6 +100,6 @@ pub async fn delete_attr(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let body = build_multi_status_body(&entity_id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
+    let body = build_multi_status_body(&id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
     Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
 }

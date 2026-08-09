@@ -5,7 +5,7 @@
 
 use crate::http::extractor::error::ExtractorRejection;
 use andromeda_ngsi_ld_http_headers::ngsild_snapshot::NgsiLdSnapshot;
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 
@@ -14,11 +14,11 @@ use headers::HeaderMapExt;
 /// When present, the request is scoped to the frozen data of the specified
 /// snapshot. The value must be a valid URN.
 #[derive(Clone, Debug, Default)]
-pub struct SnapshotHeader(pub Option<SnapshotId>);
+pub struct SnapshotHeader(pub Option<Uri>);
 
 impl SnapshotHeader {
     /// Consume the extractor and return the optional snapshot URN.
-    pub fn into_inner(self) -> Option<SnapshotId> {
+    pub fn into_inner(self) -> Option<Uri> {
         self.0
     }
 }

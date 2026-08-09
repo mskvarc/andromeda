@@ -12,17 +12,17 @@ use crate::http::handler::entity::{
     JsonLd,
     NgsiLdError,
     OriginalUri,
-    Path,
     Response,
     ResultInstanceExt,
     StatusCode,
     TenantState,
+    TypedPath,
+    Uri,
     Value,
     build_multi_status_body,
     collect_forwarded_exclusive_attrs,
     first_forwarded_status,
     has_remote_errors,
-    parse_entity_id,
     strip_exclusive_attrs_from_value,
 };
 
@@ -30,7 +30,7 @@ pub async fn update_attrs(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path(id): Path<String>,
+    TypedPath(id): TypedPath<Uri>,
     IncomingVia(incoming_via): IncomingVia,
     JsonLd {
         value: fragment,
@@ -38,19 +38,17 @@ pub async fn update_attrs(
     }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
-    let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
 
     // Forward to matching context sources
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
+    let context_url = context.link_contexts().first();
     let fragment_body =
         serde_json::to_vec(&fragment).map_err(|e| AndromedaError::internal(format!("Failed to serialize fragment: {}", e)).with_instance(&uri))?;
-    let entity_id = id.to_string();
 
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
-            entity_id: Some(&entity_id),
+            entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
             method: reqwest::Method::PATCH,
@@ -98,7 +96,7 @@ pub async fn update_attrs(
         if !has_remote_errors(&forwarded) {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
-        let body = build_multi_status_body(&entity_id, true, None, &forwarded);
+        let body = build_multi_status_body(&id, true, None, &forwarded);
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
@@ -108,6 +106,6 @@ pub async fn update_attrs(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let body = build_multi_status_body(&entity_id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
+    let body = build_multi_status_body(&id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
     Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
 }

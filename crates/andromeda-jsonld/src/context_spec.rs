@@ -8,10 +8,10 @@
 //! [`crate::document_context`].
 
 use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT_IRI, ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     document_context::resolve_context_value,
 };
-use andromeda_ngsi_ld_vocabulary::{NGSI_LD_CORE_CONTEXT_IRI, NGSI_LD_CORE_CONTEXT_URL};
+use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf, IriRefBuf};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -110,7 +110,7 @@ impl ContextSpec {
     /// reference expands against is a separate, engine-internal decision (the
     /// fastpath term table, [`crate::engine::JsonLdEngine::default_core_url`]),
     /// and it is not leaked here.
-    pub const fn effective_core_url(&self) -> &str {
+    pub const fn effective_core_url(&self) -> Iri<&'static str> {
         NGSI_LD_CORE_CONTEXT_URL
     }
 
@@ -139,7 +139,7 @@ impl ContextSpec {
     /// versionless receive the same header.
     pub fn to_link_headers(&self) -> Vec<IriRefBuf> {
         match self.core_policy {
-            CoreContextPolicy::Only => return vec![core_context_iri_ref(NGSI_LD_CORE_CONTEXT_IRI)],
+            CoreContextPolicy::Only => return vec![core_context_iri_ref(NGSI_LD_CORE_CONTEXT_URL)],
             CoreContextPolicy::Omit | CoreContextPolicy::Append | CoreContextPolicy::AppendIfNoExplicit => {}
         }
 
@@ -148,7 +148,7 @@ impl ContextSpec {
         let mut seen = HashSet::new();
 
         for url in &self.link_contexts {
-            if should_strip_core && (is_ngsi_ld_core_context_url(url.as_str()) || url.as_str() == ANDROMEDA_CORE_CONTEXT_URL) {
+            if should_strip_core && (url.as_iri().is_some_and(is_ngsi_ld_core_context_url) || ANDROMEDA_CORE_CONTEXT_URL == url.as_str()) {
                 continue;
             }
             if seen.insert(url.clone()) {
@@ -165,12 +165,12 @@ impl ContextSpec {
         };
 
         if should_append_core {
-            let andromeda_url = core_context_iri_ref(ANDROMEDA_CORE_CONTEXT_IRI);
+            let andromeda_url = core_context_iri_ref(ANDROMEDA_CORE_CONTEXT_URL);
             if seen.insert(andromeda_url.clone()) {
                 // clone: the set keeps a copy, the list keeps a copy
                 urls.push(andromeda_url);
             }
-            let core_url = core_context_iri_ref(NGSI_LD_CORE_CONTEXT_IRI);
+            let core_url = core_context_iri_ref(NGSI_LD_CORE_CONTEXT_URL);
             if seen.insert(core_url.clone()) {
                 // clone: the set keeps a copy, the list keeps a copy
                 urls.push(core_url);
@@ -224,8 +224,8 @@ mod tests {
             links,
             vec![
                 iri_ref("https://example.com/context.jsonld"),
-                iri_ref(ANDROMEDA_CORE_CONTEXT_URL),
-                iri_ref(NGSI_LD_CORE_CONTEXT_URL),
+                iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str()),
+                iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str()),
             ]
         );
     }
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn the_only_policy_discards_every_context_the_request_supplied() {
         let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).with_core_policy(CoreContextPolicy::Only);
-        pretty_assertions::assert_eq!(spec.to_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL)]);
+        pretty_assertions::assert_eq!(spec.to_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]);
     }
 
     #[test]
@@ -245,14 +245,18 @@ mod tests {
 
     #[test]
     fn a_core_context_alias_the_request_supplied_comes_back_canonical() {
-        let links = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld"), iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL)]).to_link_headers();
+        let links = ContextSpec::from_links(vec![
+            iri_ref("https://example.com/context.jsonld"),
+            iri_ref(NGSI_LD_CORE_CONTEXT_V16_URL.as_str()),
+        ])
+        .to_link_headers();
 
         pretty_assertions::assert_eq!(
             links,
             vec![
                 iri_ref("https://example.com/context.jsonld"),
-                iri_ref(ANDROMEDA_CORE_CONTEXT_URL),
-                iri_ref(NGSI_LD_CORE_CONTEXT_URL),
+                iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str()),
+                iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str()),
             ]
         );
     }
@@ -262,7 +266,7 @@ mod tests {
         let bare = ContextSpec::none().for_presentation();
         pretty_assertions::assert_eq!(
             bare.to_link_headers(),
-            vec![iri_ref(ANDROMEDA_CORE_CONTEXT_URL), iri_ref(NGSI_LD_CORE_CONTEXT_URL)]
+            vec![iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str()), iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]
         );
 
         let explicit = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).for_presentation();

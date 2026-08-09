@@ -12,9 +12,9 @@ use crate::{
             prefer::PreferHeader,
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
+            typed_path::TypedPath,
         },
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
-        validation::{parse_entity_id, validate_attr_name, validate_instance_id},
     },
     service::{
         csource_forwarding::{
@@ -30,7 +30,7 @@ use crate::{
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{time_rel::TimeRel, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, time_rel::TimeRel, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expr},
@@ -45,12 +45,11 @@ use andromeda_ngsi_ld_request::{
 };
 use andromeda_postgresql_temporal_store::params::DeleteScope;
 use axum::{
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use std::str::FromStr;
 
 /// Temporal add attributes handling.
 pub mod add_attributes;

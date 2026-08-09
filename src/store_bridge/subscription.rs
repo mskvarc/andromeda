@@ -10,25 +10,27 @@ use crate::{
     error::AndromedaError,
     service::subscription::store::{SubscriptionFields, SubscriptionStore},
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     subscription::repo::SubscriptionRepository,
     subscription_store::{
-        mapper::{row_from_pg, row_to_subscription, rows_to_subscriptions},
+        mapper::{row_from_pg, row_to_subscription, rows_to_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
     },
 };
-use sqlx::{Row, postgres::PgArguments, query::Query};
+use sqlx::{Row, postgres::PgArguments, query::Query, types::Json};
+use url::Url;
 
 /// Generates a `SubscriptionStore` implementation backed by the `subscriptions` table.
 macro_rules! impl_subscription_store {
     ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr, create_sql: $create:expr, update_sql: $update:expr, create_binds: $create_fn:expr, update_binds: $update_fn:expr) => {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
-            async fn get(&self, id: &str) -> Result<Option<Subscription>, AndromedaError> {
+            async fn get(&self, id: &Uri) -> Result<Option<Subscription>, AndromedaError> {
                 let pg_row = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id)
+                    .bind(id.as_str())
                     .fetch_optional(&self.pool)
                     .await?;
                 match pg_row {
@@ -51,15 +53,15 @@ macro_rules! impl_subscription_store {
                 Ok((subscriptions, count_row.0))
             }
 
-            async fn delete(&self, id: &str) -> Result<u64, AndromedaError> {
+            async fn delete(&self, id: &Uri) -> Result<u64, AndromedaError> {
                 let result = sqlx::query(concat!("DELETE FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id).execute(&self.pool).await?;
+                    .bind(id.as_str()).execute(&self.pool).await?;
                 Ok(result.rows_affected())
             }
 
-            async fn exists(&self, id: &str) -> Result<bool, AndromedaError> {
+            async fn exists(&self, id: &Uri) -> Result<bool, AndromedaError> {
                 let row: (bool,) = sqlx::query_as(concat!("SELECT EXISTS(SELECT 1 FROM subscriptions WHERE id = $1 AND kind = '", $kind, "')"))
-                    .bind(id).fetch_one(&self.pool).await?;
+                    .bind(id.as_str()).fetch_one(&self.pool).await?;
                 Ok(row.0)
             }
 
@@ -69,36 +71,38 @@ macro_rules! impl_subscription_store {
                 Ok(rows_to_subscriptions(&pg_rows, $hdi)?)
             }
 
-            async fn claim_notification_slot(&self, id: &str, earliest_allowed_last_notification: Option<chrono::DateTime<chrono::Utc>>) -> Result<bool, AndromedaError> {
+            async fn claim_notification_slot(&self, id: &Uri, earliest_allowed_last_notification: Option<chrono::DateTime<chrono::Utc>>) -> Result<bool, AndromedaError> {
                 let result = if let Some(ceiling) = earliest_allowed_last_notification {
                     sqlx::query(concat!("UPDATE subscriptions SET times_sent = times_sent + 1, last_notification = NOW(), modified_at = NOW() WHERE id = $1 AND status = 'active' AND kind = '", $kind, "' AND (last_notification IS NULL OR last_notification <= $2)"))
-                        .bind(id).bind(ceiling).execute(&self.pool).await?
+                        .bind(id.as_str()).bind(ceiling).execute(&self.pool).await?
                 } else {
                     sqlx::query(concat!("UPDATE subscriptions SET times_sent = times_sent + 1, last_notification = NOW(), modified_at = NOW() WHERE id = $1 AND status = 'active' AND kind = '", $kind, "'"))
-                        .bind(id).execute(&self.pool).await?
+                        .bind(id.as_str()).execute(&self.pool).await?
                 };
                 Ok(result.rows_affected() > 0)
             }
 
-            async fn mark_success(&self, id: &str) -> Result<(), AndromedaError> {
+            async fn mark_success(&self, id: &Uri) -> Result<(), AndromedaError> {
                 sqlx::query(concat!("UPDATE subscriptions SET last_success = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id).execute(&self.pool).await?;
+                    .bind(id.as_str()).execute(&self.pool).await?;
                 Ok(())
             }
 
-            async fn mark_failure(&self, id: &str) -> Result<(), AndromedaError> {
+            async fn mark_failure(&self, id: &Uri) -> Result<(), AndromedaError> {
                 sqlx::query(concat!("UPDATE subscriptions SET last_failure = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id).execute(&self.pool).await?;
+                    .bind(id.as_str()).execute(&self.pool).await?;
                 Ok(())
             }
 
-            async fn expire_due(&self) -> Result<Vec<String>, AndromedaError> {
+            async fn expire_due(&self) -> Result<Vec<Uri>, AndromedaError> {
                 let rows = sqlx::query(concat!("UPDATE subscriptions SET status = 'expired', is_active = false, modified_at = NOW() WHERE status != 'expired' AND expires_at IS NOT NULL AND expires_at <= NOW() AND kind = '", $kind, "' RETURNING id"))
                     .fetch_all(&self.pool).await?;
-                Ok(rows.iter().map(|r| Row::get::<String, _>(r, "id")).collect())
+                rows.iter()
+                    .map(|row| row.try_get::<String, _>("id").map_err(AndromedaError::from).and_then(|raw| stored_subscription_uri(raw).map_err(AndromedaError::from)))
+                    .collect()
             }
 
-            async fn create_subscription(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), AndromedaError> {
+            async fn create_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), AndromedaError> {
                 let query = sqlx::query($create);
                 let query = ($create_fn)(query, id, fields, status);
                 query.execute(&self.pool).await?;
@@ -106,7 +110,7 @@ macro_rules! impl_subscription_store {
                 Ok(())
             }
 
-            async fn update_subscription(&self, id: &str, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<u64, AndromedaError> {
+            async fn update_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<u64, AndromedaError> {
                 let query = sqlx::query($update);
                 let query = ($update_fn)(query, id, fields, status);
                 let result = query.execute(&self.pool).await?;
@@ -124,116 +128,148 @@ macro_rules! impl_subscription_store {
 
 fn bind_entity_create<'q>(
     query: Query<'q, sqlx::Postgres, PgArguments>,
-    id: &'q str,
+    id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
 ) -> Query<'q, sqlx::Postgres, PgArguments> {
     query
-        .bind(id)
+        .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.cloned())
-        .bind(fields.watched_attributes)
-        .bind(fields.notification_trigger)
+        .bind(fields.entities.map(Json))
+        .bind(
+            fields
+                .watched_attributes
+                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+        )
+        .bind(
+            fields
+                .notification_trigger
+                .map(|triggers| triggers.iter().map(ToString::to_string).collect::<Vec<_>>()),
+        )
         .bind(fields.time_interval)
-        .bind(fields.q)
-        .bind(fields.geo_q.cloned())
-        .bind(fields.scope_q)
-        .bind(fields.csf)
-        .bind(fields.dataset_id)
+        .bind(fields.q.map(ToString::to_string))
+        .bind(fields.geo_q.map(Json))
+        .bind(fields.scope_q.map(ToString::to_string))
+        .bind(fields.csf.map(ToString::to_string))
+        .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
         .bind(fields.is_active)
-        .bind(fields.notification.cloned())
+        .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(<&str>::from(status))
-        .bind(fields.temporal_q.cloned())
-        .bind(fields.lang)
-        .bind(fields.jsonld_context)
+        .bind(fields.temporal_q.map(Json))
+        .bind(fields.lang.map(ToString::to_string))
+        .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
 }
 
 fn bind_entity_update<'q>(
     query: Query<'q, sqlx::Postgres, PgArguments>,
-    id: &'q str,
+    id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
 ) -> Query<'q, sqlx::Postgres, PgArguments> {
     query
-        .bind(id)
+        .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.cloned())
-        .bind(fields.watched_attributes)
-        .bind(fields.notification_trigger)
+        .bind(fields.entities.map(Json))
+        .bind(
+            fields
+                .watched_attributes
+                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+        )
+        .bind(
+            fields
+                .notification_trigger
+                .map(|triggers| triggers.iter().map(ToString::to_string).collect::<Vec<_>>()),
+        )
         .bind(fields.time_interval)
-        .bind(fields.q)
-        .bind(fields.geo_q.cloned())
-        .bind(fields.scope_q)
-        .bind(fields.csf)
-        .bind(fields.dataset_id)
+        .bind(fields.q.map(ToString::to_string))
+        .bind(fields.geo_q.map(Json))
+        .bind(fields.scope_q.map(ToString::to_string))
+        .bind(fields.csf.map(ToString::to_string))
+        .bind(fields.dataset_id.map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()))
         .bind(fields.is_active)
-        .bind(fields.notification.cloned())
+        .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(<&str>::from(status))
-        .bind(fields.lang)
-        .bind(fields.jsonld_context)
+        .bind(fields.lang.map(ToString::to_string))
+        .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
 }
 
 fn bind_csource_create<'q>(
     query: Query<'q, sqlx::Postgres, PgArguments>,
-    id: &'q str,
+    id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
 ) -> Query<'q, sqlx::Postgres, PgArguments> {
     query
-        .bind(id)
+        .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.cloned())
-        .bind(fields.watched_attributes)
-        .bind(fields.notification_trigger)
+        .bind(fields.entities.map(Json))
+        .bind(
+            fields
+                .watched_attributes
+                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+        )
+        .bind(
+            fields
+                .notification_trigger
+                .map(|triggers| triggers.iter().map(ToString::to_string).collect::<Vec<_>>()),
+        )
         .bind(fields.time_interval)
-        .bind(fields.q)
-        .bind(fields.geo_q.cloned())
-        .bind(fields.scope_q)
-        .bind(fields.csf)
+        .bind(fields.q.map(ToString::to_string))
+        .bind(fields.geo_q.map(Json))
+        .bind(fields.scope_q.map(ToString::to_string))
+        .bind(fields.csf.map(ToString::to_string))
         .bind(fields.is_active)
-        .bind(fields.notification.cloned())
+        .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(<&str>::from(status))
-        .bind(fields.temporal_q.cloned())
-        .bind(fields.lang)
-        .bind(fields.jsonld_context)
+        .bind(fields.temporal_q.map(Json))
+        .bind(fields.lang.map(ToString::to_string))
+        .bind(fields.jsonld_context.map(Url::as_str))
 }
 
 fn bind_csource_update<'q>(
     query: Query<'q, sqlx::Postgres, PgArguments>,
-    id: &'q str,
+    id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
 ) -> Query<'q, sqlx::Postgres, PgArguments> {
     query
-        .bind(id)
+        .bind(id.as_str())
         .bind(fields.subscription_name)
         .bind(fields.description)
-        .bind(fields.entities.cloned())
-        .bind(fields.watched_attributes)
-        .bind(fields.notification_trigger)
+        .bind(fields.entities.map(Json))
+        .bind(
+            fields
+                .watched_attributes
+                .map(|names| names.iter().map(|name| name.as_str()).collect::<Vec<_>>()),
+        )
+        .bind(
+            fields
+                .notification_trigger
+                .map(|triggers| triggers.iter().map(ToString::to_string).collect::<Vec<_>>()),
+        )
         .bind(fields.time_interval)
-        .bind(fields.q)
-        .bind(fields.geo_q.cloned())
-        .bind(fields.scope_q)
-        .bind(fields.csf)
+        .bind(fields.q.map(ToString::to_string))
+        .bind(fields.geo_q.map(Json))
+        .bind(fields.scope_q.map(ToString::to_string))
+        .bind(fields.csf.map(ToString::to_string))
         .bind(fields.is_active)
-        .bind(fields.notification.cloned())
+        .bind(fields.notification.map(Json))
         .bind(fields.expires_at)
         .bind(fields.throttling)
         .bind(<&str>::from(status))
-        .bind(fields.lang)
-        .bind(fields.jsonld_context)
+        .bind(fields.lang.map(ToString::to_string))
+        .bind(fields.jsonld_context.map(Url::as_str))
 }
 
 const ENTITY_CREATE_SQL: &str = r#"

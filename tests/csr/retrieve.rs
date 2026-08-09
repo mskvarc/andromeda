@@ -28,7 +28,7 @@ async fn retrieve_invalid_id_returns_400() {
     let c = client();
     let (status, body) = retrieve_registration(&c, "invalidUri", None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ async fn retrieve_unknown_registration_returns_404() {
     let c = client();
     let (status, body) = retrieve_registration(&c, "urn:ngsi-ld:ContextSourceRegistration:unknownRegistration", None, None).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 // ---------------------------------------------------------------------------

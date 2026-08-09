@@ -1,6 +1,6 @@
 //! The EntityMap resource that pins a distributed query's result set (ETSI GS CIM 009 clause 5.2.39).
 
-use andromeda_ngsi_ld_lexicon::{constant_string, ngsi_ld_urn::EntityMapId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{constant_string, uri::Uri};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -14,7 +14,7 @@ constant_string!(EntityMapType, "EntityMap");
 #[serde(rename_all = "camelCase")]
 pub struct EntityMap {
     /// Generated identifier of this map.
-    pub id: EntityMapId,
+    pub id: Uri,
     /// Always `EntityMap`.
     #[serde(rename = "type")]
     #[builder(default)]
@@ -37,12 +37,12 @@ pub struct EntityMap {
     /// Keyed by the identifier of the contributing context source, as it
     /// appears in the registration that named it (clause 4.6.2).
     #[builder(default)]
-    pub linked_maps: IndexMap<Uri, EntityMapId>,
+    pub linked_maps: IndexMap<Uri, Uri>,
 }
 
 impl EntityMap {
     /// Construct a new EntityMap with default `@none` dataset mapping per entity.
-    pub fn new(id: EntityMapId, expires_at: DateTime<Utc>, entity_ids: Vec<Uri>) -> EntityMap {
+    pub fn new(id: Uri, expires_at: DateTime<Utc>, entity_ids: Vec<Uri>) -> EntityMap {
         let mut entity_map = IndexMap::new();
         for entity_id in &entity_ids {
             // clone: the map owns its keys and `entity_ids` keeps the originals
@@ -70,7 +70,7 @@ mod tests {
     fn a_new_entity_map_records_the_default_instance_of_every_entity() {
         // Clause 4.5.5: an attribute instance with no `datasetId` is the
         // default one, which the map spells `@none`.
-        let id: EntityMapId = "urn:ngsi-ld:EntityMap:1".parse().expect("valid entity map id");
+        let id: Uri = "urn:ngsi-ld:EntityMap:1".parse().expect("valid entity map id");
         let entity: Uri = "urn:ngsi-ld:Vehicle:1".parse().expect("valid entity id");
         let map = EntityMap::new(id, Utc::now(), vec![entity.clone()]);
         pretty_assertions::assert_eq!(map.entity_map.get(&entity), Some(&vec![DatasetSelector::Default]));

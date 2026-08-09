@@ -3,7 +3,6 @@
 use crate::http::handler::entity::{
     AcceptFormat,
     AndromedaError,
-    AttributeName,
     ContextSpec,
     ContextUrl,
     CsrModeFilter,
@@ -19,17 +18,16 @@ use crate::http::handler::entity::{
     NgsiLdResponse,
     NonZeroU32,
     OriginalUri,
-    Path,
     Response,
     ResponsePayload,
     ResultInstanceExt,
     SnapshotRenderer,
     TenantState,
+    TypedPath,
     Uri,
     ValidatedQuery,
     collect_warnings,
     merge_retrieve_results,
-    parse_entity_id,
     render_flat_join,
     start_rendering,
 };
@@ -39,12 +37,11 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    Path(id): Path<String>,
+    TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_query;
-    let id = parse_entity_id(&id, &uri)?;
     let context: ContextSpec = context.into_inner();
     protocol
         .extensions()
@@ -64,41 +61,31 @@ pub async fn get(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn -> Uri; the snapshot store is keyed by Uri
         let entity_data = state
             .snapshots
-            .get_snapshot_entity(&snapshot_id, &entity_uri)
+            .get_snapshot_entity(&snapshot_id, &id)
             .await
             .with_instance(&uri)?
             .ok_or_else(|| NgsiLdError::from(AndromedaError::entity_not_found(id.to_string()).with_instance(&uri)))?;
 
         let mode = params.resolve_render_mode();
-        let attrs: Option<Vec<&str>> = params.attrs.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect());
         let result = SnapshotRenderer::new(entity_data)
-            .with_attrs_filter(attrs.as_deref())
+            .with_attrs_filter(params.attrs.as_deref())
             .with_mode(mode)
             .render()?;
 
         let rendered = start_rendering(accept.media_type(), &context, prefer)
-            .with_geometry_property(params.geometry_property.as_ref().map(AttributeName::as_str))
+            .with_geometry_property(params.geometry_property.as_ref())
             .with_payload(ResponsePayload::Single(result))
             .render()?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
-    let attrs: Vec<String> = params
-        .attrs
-        .as_deref()
-        .map(|names| names.iter().map(ToString::to_string).collect())
-        .unwrap_or_default();
+    let attrs = params.attrs.as_deref().unwrap_or_default();
 
     let sys_attrs = params.options.unwrap_or_default().sys_attrs;
-    let dataset_ids: Vec<String> = params
-        .dataset_id
-        .as_deref()
-        .map(|ids| ids.iter().map(ToString::to_string).collect())
-        .unwrap_or_default();
-    let local_result = service.get_inner(&id, &attrs, sys_attrs, &dataset_ids, &context).await;
+    let dataset_ids = params.dataset_id.as_deref().unwrap_or_default();
+    let local_result = service.get_inner(&id, attrs, sys_attrs, dataset_ids, &context).await;
 
     let is_local = params.local.unwrap_or(false);
 
@@ -108,13 +95,13 @@ pub async fn get(
         (entity, Vec::new())
     } else {
         // Forward to context sources
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         // Phase 1: forward to primary (non-auxiliary) CSRs
         let forwarded = state
             .forwarding
             .forward_retrieve(
-                id.as_ref(),
+                &id,
                 query_string,
                 context_url,
                 ForwardingOperation::RetrieveEntity,
@@ -135,7 +122,7 @@ pub async fn get(
             let aux_forwarded = state
                 .forwarding
                 .forward_retrieve(
-                    id.as_ref(),
+                    &id,
                     query_string,
                     context_url,
                     ForwardingOperation::RetrieveEntity,
@@ -194,7 +181,7 @@ pub async fn get(
                     .render()
                     .with_instance(&uri)?;
                 let rendered = start_rendering(accept.media_type(), &context, prefer)
-                    .with_geometry_property(params.geometry_property.as_ref().map(AttributeName::as_str))
+                    .with_geometry_property(params.geometry_property.as_ref())
                     .with_payload(ResponsePayload::Single(entity_value))
                     .render()?;
                 return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
@@ -209,7 +196,7 @@ pub async fn get(
         .render()
         .with_instance(&uri)?;
     let rendered = start_rendering(accept.media_type(), &context, prefer)
-        .with_geometry_property(params.geometry_property.as_ref().map(AttributeName::as_str))
+        .with_geometry_property(params.geometry_property.as_ref())
         .with_payload(ResponsePayload::Single(entity_value))
         .render()?;
     Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())

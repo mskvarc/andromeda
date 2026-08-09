@@ -8,7 +8,7 @@
 
 use crate::{entity::EntityRenderer, error::RenderError};
 use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use serde_json::{Map, Value};
 use std::{
@@ -28,7 +28,7 @@ use std::{
 /// path: a linked entity that references itself, or forms a cycle with another,
 /// is rendered once and not descended into again. Without that guard a cyclic
 /// linked entity recurses without end and overflows the stack from a request.
-pub(crate) fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Entity>, language_filter: Option<&LanguageFilter>) -> Result<(), RenderError> {
+pub(crate) fn apply_inline_join(entity: &mut Value, linked: &HashMap<Uri, Entity>, language_filter: Option<&LanguageFilter>) -> Result<(), RenderError> {
     let mut ancestors = HashSet::new();
     apply_inline_join_guarded(entity, linked, language_filter, &mut ancestors)
 }
@@ -37,11 +37,11 @@ pub(crate) fn apply_inline_join(entity: &mut Value, linked: &HashMap<String, Ent
 /// reference cycle terminates.
 fn apply_inline_join_guarded(
     entity: &mut Value,
-    linked: &HashMap<String, Entity>,
+    linked: &HashMap<Uri, Entity>,
     language_filter: Option<&LanguageFilter>,
-    ancestors: &mut HashSet<String>,
+    ancestors: &mut HashSet<Uri>,
 ) -> Result<(), RenderError> {
-    let self_id = entity.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    let self_id = entity.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<Uri>().ok());
     // Track this entity's id on the current path so a self-reference is caught.
     let seeded = self_id.as_ref().is_some_and(|id| ancestors.insert(id.clone()));
 
@@ -56,9 +56,9 @@ fn apply_inline_join_guarded(
 /// Walk every attribute instance of one rendered entity object.
 fn inline_join_object(
     entity: &mut Value,
-    linked: &HashMap<String, Entity>,
+    linked: &HashMap<Uri, Entity>,
     language_filter: Option<&LanguageFilter>,
-    ancestors: &mut HashSet<String>,
+    ancestors: &mut HashSet<Uri>,
 ) -> Result<(), RenderError> {
     let Some(obj) = entity.as_object_mut() else { return Ok(()) };
     for attr_val in obj.values_mut() {
@@ -87,14 +87,14 @@ fn inline_join_object(
 /// inserts the rendered entities under the `"entityList"` key.
 fn inline_join_attribute_instance(
     attr_obj: &mut Map<String, Value>,
-    linked: &HashMap<String, Entity>,
+    linked: &HashMap<Uri, Entity>,
     language_filter: Option<&LanguageFilter>,
-    ancestors: &mut HashSet<String>,
+    ancestors: &mut HashSet<Uri>,
 ) -> Result<(), RenderError> {
     let attr_type = attr_obj.get("type").and_then(Value::as_str).and_then(|raw| AttributeType::from_str(raw).ok());
     match attr_type {
         Some(AttributeType::Relationship) => {
-            if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).map(ToOwned::to_owned)
+            if let Some(object_uri) = attr_obj.get("object").and_then(Value::as_str).and_then(|raw| raw.parse::<Uri>().ok())
                 && let Some(linked_entity) = linked.get(&object_uri)
             {
                 let linked_val = render_linked(linked_entity, &object_uri, linked, language_filter, ancestors)?;
@@ -106,7 +106,7 @@ fn inline_join_attribute_instance(
                 // Collect the URIs first so the borrow of `attr_obj` is released
                 // before the recursive expansion, which needs the mutable
                 // ancestor set.
-                let uris: Vec<String> = object_list.iter().filter_map(Value::as_str).map(ToOwned::to_owned).collect();
+                let uris: Vec<Uri> = object_list.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse::<Uri>().ok()).collect();
                 let mut entity_list = Vec::new();
                 for uri in &uris {
                     if let Some(linked_entity) = linked.get(uri) {
@@ -138,10 +138,10 @@ fn inline_join_attribute_instance(
 /// the cycle terminates.
 fn render_linked(
     linked_entity: &Entity,
-    object_uri: &str,
-    linked: &HashMap<String, Entity>,
+    object_uri: &Uri,
+    linked: &HashMap<Uri, Entity>,
     language_filter: Option<&LanguageFilter>,
-    ancestors: &mut HashSet<String>,
+    ancestors: &mut HashSet<Uri>,
 ) -> Result<Value, RenderError> {
     let mut linked_val = EntityRenderer::new(linked_entity).with_optional_language_filter(language_filter).render()?;
     if !ancestors.contains(object_uri) {
@@ -153,6 +153,7 @@ fn render_linked(
 #[cfg(test)]
 mod tests {
     use crate::inline_join::apply_inline_join;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::entity::Entity;
     use serde_json::{Value, json};
     use std::collections::HashMap;
@@ -169,7 +170,7 @@ mod tests {
             "name": {"type": "Property", "value": "Conference Room"}
         }));
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:ngsi-ld:Room:1".to_string(), linked_entity);
+        linked_map.insert("urn:ngsi-ld:Room:1".parse().expect("valid URI"), linked_entity);
 
         let mut entity = json!({
             "id": "urn:ngsi-ld:Building:1",
@@ -188,8 +189,8 @@ mod tests {
         let room_a = parse_entity(json!({"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}));
         let room_b = parse_entity(json!({"id": "urn:b", "type": "Room", "name": {"type": "Property", "value": "B"}}));
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:a".to_string(), room_a);
-        linked_map.insert("urn:b".to_string(), room_b);
+        linked_map.insert("urn:a".parse().expect("valid URI"), room_a);
+        linked_map.insert("urn:b".parse().expect("valid URI"), room_b);
 
         let mut entity = json!({
             "id": "urn:building", "type": "Building",
@@ -203,7 +204,7 @@ mod tests {
 
     #[test]
     fn inline_join_skips_unresolved() {
-        let linked_map: HashMap<String, Entity> = HashMap::new();
+        let linked_map: HashMap<Uri, Entity> = HashMap::new();
         let mut entity = json!({
             "id": "urn:building", "type": "Building",
             "hasRoom": {"type": "Relationship", "object": "urn:ngsi-ld:Missing:1"}
@@ -217,7 +218,7 @@ mod tests {
     fn inline_join_handles_multi_attribute_array() {
         let room = parse_entity(json!({"id": "urn:a", "type": "Room", "name": {"type": "Property", "value": "A"}}));
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:a".to_string(), room);
+        linked_map.insert("urn:a".parse().expect("valid URI"), room);
 
         let mut entity = json!({
             "id": "urn:building", "type": "Building",
@@ -243,8 +244,8 @@ mod tests {
             "ref": {"type": "Relationship", "object": "urn:c"}
         }));
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:b".to_string(), entity_b);
-        linked_map.insert("urn:c".to_string(), entity_c);
+        linked_map.insert("urn:b".parse().expect("valid URI"), entity_b);
+        linked_map.insert("urn:c".parse().expect("valid URI"), entity_c);
 
         let mut entity = json!({
             "id": "urn:a", "type": "T",
@@ -265,7 +266,7 @@ mod tests {
             "ref": {"type": "Relationship", "object": "urn:a"}
         }));
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:a".to_string(), self_ref);
+        linked_map.insert("urn:a".parse().expect("valid URI"), self_ref);
 
         let mut entity = json!({
             "id": "urn:a", "type": "T",
@@ -291,8 +292,8 @@ mod tests {
             "ref": {"type": "Relationship", "object": "urn:a"}
         }));
         let mut linked_map = HashMap::new();
-        linked_map.insert("urn:a".to_string(), entity_a);
-        linked_map.insert("urn:b".to_string(), entity_b);
+        linked_map.insert("urn:a".parse().expect("valid URI"), entity_a);
+        linked_map.insert("urn:b".parse().expect("valid URI"), entity_b);
 
         let mut entity = json!({
             "id": "urn:a", "type": "T",

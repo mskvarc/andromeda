@@ -7,7 +7,7 @@
 
 use crate::{error::TemporalStoreError, value_type::ValueType};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::geo_property::expanded_geo_node_to_geometry;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
@@ -30,7 +30,7 @@ pub struct HistoryValueColumns {
     /// Datetime value for datetime-typed properties.
     pub value_datetime: Option<DateTime<Utc>>,
     /// URI string for relationship objects.
-    pub value_uri: Option<String>,
+    pub value_uri: Option<Uri>,
 }
 
 /// The value of one attribute instance, resolved to the column it belongs in.
@@ -49,7 +49,7 @@ pub enum AttributeValue {
     /// An RFC 3339 timestamp, still in its lexical form.
     DateTime(String),
     /// A Relationship object IRI.
-    Uri(String),
+    Uri(Uri),
 }
 
 impl AttributeValue {
@@ -103,7 +103,10 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
                 .and_then(|obj| obj.get("@id"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| TemporalStoreError::Validation("Relationship missing object".to_string()))?;
-            Ok(AttributeValue::Uri(uri.to_string()))
+            let uri = uri
+                .parse::<Uri>()
+                .map_err(|error| TemporalStoreError::Validation(format!("Relationship object is not a valid URI: {error}")))?;
+            Ok(AttributeValue::Uri(uri))
         }
         AttributeType::GeoProperty => {
             let geo_node = instance
@@ -250,7 +253,7 @@ mod tests {
         let columns = extract_attribute_value(&instance, AttributeType::Relationship)
             .expect("relationship")
             .into_columns();
-        pretty_assertions::assert_eq!(columns.value_uri.as_deref(), Some("urn:ngsi-ld:Entity:target"));
+        pretty_assertions::assert_eq!(columns.value_uri.as_ref().map(Uri::as_str), Some("urn:ngsi-ld:Entity:target"));
     }
 
     #[test]

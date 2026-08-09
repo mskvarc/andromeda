@@ -112,7 +112,7 @@ pub mod tests {
             value_object: None,
             value_datetime: None,
             value_uri: None,
-            instance_id: format!("urn:ngsi-ld:attribute:instance:{tea_id}"),
+            instance_id: format!("urn:ngsi-ld:attribute:instance:{tea_id}").parse().expect("valid test instance ID"),
             observed_at: None,
             metadata: None,
             recorded_at: stamp,

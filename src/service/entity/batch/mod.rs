@@ -28,6 +28,7 @@ use crate::{
     service::entity::{EntityService, batch::delete::DeleteChunkOutcome, side_effect::BatchSideEffectMode},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::selection::OverwritePolicy};
 use futures::{StreamExt, stream};
 use std::collections::HashSet;
@@ -40,9 +41,9 @@ use std::collections::HashSet;
 /// at the handler boundary.
 pub struct BatchResult {
     /// Entity IDs that were successfully processed.
-    pub success: Vec<String>,
+    pub success: Vec<Uri>,
     /// Per-entity errors: `(entity_id, domain_error)` pairs.
-    pub errors: Vec<(String, AndromedaError)>,
+    pub errors: Vec<(Uri, AndromedaError)>,
 }
 
 impl EntityService {
@@ -84,16 +85,16 @@ impl EntityService {
     }
 
     /// Delete multiple entities by ID in a single batch operation (NGSI-LD 5.6.10).
-    pub async fn batch_delete(&self, entity_ids: &[String], mode: BatchSideEffectMode) -> Result<BatchResult, AndromedaError> {
+    pub async fn batch_delete(&self, entity_ids: &[Uri], mode: BatchSideEffectMode) -> Result<BatchResult, AndromedaError> {
         self.batch_activity.record_activity();
         let mut seen = HashSet::new();
         let mut unique_ids = Vec::new();
         let mut errors = Vec::new();
         for id in entity_ids {
             if seen.insert(id.as_str()) {
-                unique_ids.push(id.clone()); // clone: the chunk owns its identifiers
+                unique_ids.push(id.clone()); // clone: the unique batch owns its identifiers
             } else {
-                errors.push((id.clone(), AndromedaError::entity_not_found(id))); // clone: reported alongside the error
+                errors.push((id.clone(), AndromedaError::entity_not_found(id.as_str()))); // clone: reported alongside the error
             }
         }
 
@@ -153,12 +154,12 @@ impl EntityService {
         context: &ContextSpec,
         update_mode: bool,
         mode: BatchSideEffectMode,
-    ) -> Result<(BatchResult, Vec<String>), AndromedaError> {
+    ) -> Result<(BatchResult, Vec<Uri>), AndromedaError> {
         self.batch_activity.record_activity();
         let deduped = Self::dedupe_upsert_entities(entities);
         let chunk_len = self.batch_chunk_len(deduped.len());
 
-        type ChunkOutcome = (BatchResult, Vec<(String, AndromedaError)>, Vec<String>);
+        type ChunkOutcome = (BatchResult, Vec<(Uri, AndromedaError)>, Vec<Uri>);
         let chunk_results: Vec<Result<ChunkOutcome, AndromedaError>> = stream::iter(deduped.chunks(chunk_len))
             .map(|chunk| async move {
                 let mut chunk_errors = Vec::new();

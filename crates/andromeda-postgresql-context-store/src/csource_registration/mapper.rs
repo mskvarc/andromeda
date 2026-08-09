@@ -1,7 +1,7 @@
 //! Row-to-domain mapping for context source registrations.
 
 use crate::error::ContextStoreError;
-use andromeda_ngsi_ld_lexicon::{scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{
     ContextSourceAccess,
     ContextSourceRegistration,
@@ -56,7 +56,6 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR mode '{mode_label}': {e}")))?;
     let operations: Option<Vec<CsrOperation>> = row
         .get::<Option<Vec<String>>, _>("operations")
-        .or_else(|| Some(vec!["federationOps".to_string()]))
         .map(|v| {
             v.into_iter()
                 .map(|s| {
@@ -87,8 +86,11 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
         .map(Url::parse)
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR jsonldContext: {e}")))?;
-    let context_source_alias: Option<String> = match row.try_get("context_source_alias") {
-        Ok(v) => v,
+    let context_source_alias = match row.try_get::<Option<String>, _>("context_source_alias") {
+        Ok(value) => value
+            .map(ContextSourcePseudonym::try_from)
+            .transpose()
+            .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceAlias: {error}")))?,
         Err(sqlx::Error::ColumnNotFound(_)) | Err(sqlx::Error::ColumnDecode { .. }) => None,
         Err(e) => return Err(ContextStoreError::Internal(format!("Failed to read context_source_alias column: {e}"))),
     };

@@ -13,7 +13,11 @@ use crate::{
     },
 };
 use andromeda_delivery::endpoint::transport::parse_endpoint_transport;
-use andromeda_jsonld::{context_spec::ContextSpec, context_validation::validate_jsonld_context_value, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    context_validation::{validate_context_spec, validate_jsonld_context_value},
+    engine::processor::JsonLdEngine,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
@@ -23,6 +27,7 @@ use andromeda_postgresql_context_store::subscription::repo::SubscriptionReposito
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde_json::Value;
+use url::Url;
 
 /// Reject a subscription whose endpoint names a transport this broker cannot
 /// deliver over, or a `notifierInfo` it cannot read.
@@ -37,6 +42,7 @@ fn validate_endpoint(payload: &Value) -> Result<(), AndromedaError> {
     let Some(endpoint_uri) = endpoint.get("uri").and_then(Value::as_str) else {
         return Ok(());
     };
+    let endpoint_uri = Url::parse(endpoint_uri).map_err(|error| AndromedaError::subscription_validation(error.to_string()))?;
 
     let notifier_info = match endpoint.get("notifierInfo") {
         Some(value) => Some(
@@ -46,7 +52,7 @@ fn validate_endpoint(payload: &Value) -> Result<(), AndromedaError> {
         None => None,
     };
 
-    parse_endpoint_transport(endpoint_uri, notifier_info.as_deref())
+    parse_endpoint_transport(&endpoint_uri, notifier_info.as_deref())
         .map(|_transport| ())
         .map_err(|error| AndromedaError::subscription_validation(error.to_string()))
 }
@@ -65,7 +71,7 @@ pub trait SubscriptionVariant: Send + Sync {
         &'life0 self,
         payload: &'life1 mut Value,
         context: &'life2 ContextSpec,
-        base_url: Option<&'life3 str>,
+        base_url: Option<&'life3 Url>,
     ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
     where
         'life0: 'async_trait,
@@ -130,20 +136,20 @@ where
     }
 
     /// Create a new subscription from the given JSON payload.
-    pub async fn create(&self, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<String, AndromedaError> {
+    pub async fn create(&self, mut payload: Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<Uri, AndromedaError> {
         subscription_core::validation::validate_create_payload(&payload)?;
 
         validate_endpoint(&payload)?;
 
         let id = match payload.get("id").and_then(|v| v.as_str()) {
             Some(provided_id) => {
-                if provided_id.trim().is_empty() || provided_id.parse::<Uri>().is_err() {
-                    return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
+                let provided_id = provided_id
+                    .parse::<Uri>()
+                    .map_err(|error| AndromedaError::subscription_validation(format!("Subscription id must be a valid URI: {error}")))?;
+                if self.repo.exists(&provided_id).await? {
+                    return Err(AndromedaError::subscription_already_exists(provided_id.as_str()));
                 }
-                if self.repo.exists(provided_id).await? {
-                    return Err(AndromedaError::subscription_already_exists(provided_id));
-                }
-                provided_id.to_string()
+                provided_id
             }
             None => SubscriptionRepository::generate_id()?,
         };
@@ -151,32 +157,12 @@ where
         if let Some(ctx_value) = payload.get("jsonldContext") {
             validate_jsonld_context_value(&self.engine, ctx_value).await?;
         }
+        validate_context_spec(&self.engine, context).await?;
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
 
-        let watched_attributes_vec: Option<Vec<String>> = payload
-            .get("watchedAttributes")
-            .map(|v| {
-                serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'watchedAttributes' value: {}", e)))
-            }) // clone: serde_json::from_value consumes the Value
-            .transpose()?;
-        let notification_trigger_vec: Option<Vec<String>> = payload
-            .get("notificationTrigger")
-            .map(|v| {
-                serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'notificationTrigger' value: {}", e)))
-            }) // clone: serde_json::from_value consumes the Value
-            .transpose()?;
-        let dataset_id_vec: Option<Vec<String>> = if self.variant.use_dataset_id() {
-            payload
-                .get("datasetId")
-                .map(|v| serde_json::from_value(v.clone()).map_err(|e| AndromedaError::subscription_validation(format!("Invalid 'datasetId' value: {}", e)))) // clone: serde_json::from_value consumes the Value
-                .transpose()?
-        } else {
-            None
-        };
-
-        let fields = subscription_core::fields::extract_create_fields(&payload, &watched_attributes_vec, &notification_trigger_vec, &dataset_id_vec);
-        subscription_core::fields::validate_persisted_shape(&fields)?;
+        let values = subscription_core::fields::extract_create_fields(&payload, self.variant.use_dataset_id())?;
+        let fields = values.to_fields();
 
         let status = compute_updated_status(
             SubscriptionStatus::Active,
@@ -187,25 +173,17 @@ where
         );
 
         self.repo.create_subscription(&id, &fields, status).await?;
-        match id.parse::<Uri>() {
-            Ok(id_uri) => self.emit_change(self.variant.make_upserted(id_uri)),
-            Err(_) => {
-                tracing::error!(subscription_id = %id, event = "subscription_uri_parse_failed");
-            }
-        }
+        self.emit_change(self.variant.make_upserted(id.clone())); // clone: the caller and change event each own the identifier.
         Ok(id)
     }
 
     /// Retrieve a subscription by its identifier.
-    pub async fn get(&self, id: &str) -> Result<Subscription, AndromedaError> {
-        if id.is_empty() || id.parse::<Uri>().is_err() {
-            return Err(AndromedaError::subscription_validation("Subscription id must be a valid URI"));
-        }
-        self.repo.get(id).await?.ok_or_else(|| AndromedaError::subscription_not_found(id))
+    pub async fn get(&self, id: &Uri) -> Result<Subscription, AndromedaError> {
+        self.repo.get(id).await?.ok_or_else(|| AndromedaError::subscription_not_found(id.as_str()))
     }
 
     /// Retrieve a subscription and serialize it for an HTTP response.
-    pub async fn get_for_response(&self, id: &str, context: &ContextSpec) -> Result<Value, AndromedaError> {
+    pub async fn get_for_response(&self, id: &Uri, context: &ContextSpec) -> Result<Value, AndromedaError> {
         let subscription = self.get(id).await?;
         self.variant.serialize_for_response(&subscription, context).await
     }
@@ -221,11 +199,7 @@ where
     }
 
     /// Update an existing subscription with the given fragment payload.
-    pub async fn update(&self, id: &str, mut payload: Value, context: &ContextSpec, base_url: Option<&str>) -> Result<(), AndromedaError> {
-        if id.is_empty() || id.parse::<Uri>().is_err() {
-            return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
-        }
-
+    pub async fn update(&self, id: &Uri, mut payload: Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<(), AndromedaError> {
         validate_endpoint(&payload)?;
 
         subscription_core::validation::validate_common_fields(&payload)?;
@@ -235,19 +209,17 @@ where
         if let Some(ctx_value) = payload.get("jsonldContext") {
             validate_jsonld_context_value(&self.engine, ctx_value).await?;
         }
+        validate_context_spec(&self.engine, context).await?;
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
 
-        let existing = self.repo.get(id).await?.ok_or_else(|| AndromedaError::subscription_not_found(id))?;
-        let existing_value =
-            serde_json::to_value(&existing).map_err(|e| AndromedaError::internal(format!("Failed to serialize existing subscription: {}", e)))?;
-
-        let merged = subscription_core::fields::merge_update_fields(&payload, &existing, &existing_value, self.variant.use_entity_sub_merge_mode())?;
+        let existing = self.repo.get(id).await?.ok_or_else(|| AndromedaError::subscription_not_found(id.as_str()))?;
+        let existing_status = existing.lifecycle.status;
+        let merged = subscription_core::fields::merge_update_fields(&payload, existing, self.variant.use_entity_sub_merge_mode())?;
         let fields = merged.to_fields();
-        subscription_core::fields::validate_persisted_shape(&fields)?;
 
         let status = compute_updated_status(
-            existing.lifecycle.status,
+            existing_status,
             &StatusUpdateFields {
                 is_active: if payload.get("isActive").is_some() { Some(fields.is_active) } else { None },
                 expires_at: if payload.get("expiresAt").is_some() { Some(fields.expires_at) } else { None },
@@ -256,35 +228,21 @@ where
 
         let updated = self.repo.update_subscription(id, &fields, status).await?;
         if updated == 0 {
-            return Err(AndromedaError::subscription_not_found(id));
+            return Err(AndromedaError::subscription_not_found(id.as_str()));
         }
 
-        match id.parse::<Uri>() {
-            Ok(id_uri) => self.emit_change(self.variant.make_upserted(id_uri)),
-            Err(_) => {
-                tracing::error!(subscription_id = %id, event = "subscription_uri_parse_failed");
-            }
-        }
+        self.emit_change(self.variant.make_upserted(id.clone())); // clone: the change event owns the identifier.
         Ok(())
     }
 
     /// Delete a subscription by its identifier.
-    pub async fn delete(&self, id: &str) -> Result<(), AndromedaError> {
-        if id.is_empty() || id.parse::<Uri>().is_err() {
-            return Err(AndromedaError::subscription_validation("Subscription id must be present and a valid URI"));
-        }
-
+    pub async fn delete(&self, id: &Uri) -> Result<(), AndromedaError> {
         let deleted = self.repo.delete(id).await?;
         if deleted == 0 {
-            return Err(AndromedaError::subscription_not_found(id));
+            return Err(AndromedaError::subscription_not_found(id.as_str()));
         }
 
-        match id.parse::<Uri>() {
-            Ok(id_uri) => self.emit_change(self.variant.make_deleted(id_uri)),
-            Err(_) => {
-                tracing::error!(subscription_id = %id, event = "subscription_uri_parse_failed");
-            }
-        }
+        self.emit_change(self.variant.make_deleted(id.clone())); // clone: the change event owns the identifier.
         Ok(())
     }
 }

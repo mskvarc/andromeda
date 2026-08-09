@@ -1,6 +1,7 @@
 //! Typed results of context-source forwarding attempts.
 
 use andromeda_ngsi_ld_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
 use serde_json::Value;
 
@@ -45,7 +46,7 @@ pub struct ForwardedWriteResult {
     /// Typed outbound result.
     pub outcome: ForwardedWriteOutcome,
     /// Attributes covered by an exclusive registration.
-    pub exclusive_attrs: Vec<String>,
+    pub exclusive_attrs: Vec<AttributeName>,
 }
 
 /// Result classification for one forwarded write.

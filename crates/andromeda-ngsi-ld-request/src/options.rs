@@ -33,6 +33,13 @@ pub struct ListOptions {
     pub sys_attrs: SysAttrsInclusion,
 }
 
+/// System-attribute selection for endpoints whose only `options` token is `sysAttrs`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SysAttrsOptions {
+    /// Whether system-generated temporal attributes are included.
+    pub sys_attrs: SysAttrsInclusion,
+}
+
 /// Whether an append/update operation may overwrite existing attributes.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Display, EnumString)]
 pub enum OverwritePolicy {
@@ -87,6 +94,21 @@ where
 {
     Option::<String>::deserialize(deserializer)?
         .map(|raw| parse_list_options(&raw).map_err(Error::custom))
+        .transpose()
+}
+
+/// Deserialize the singleton `sysAttrs` option, rejecting every other token.
+pub fn deserialize_sys_attrs_options<'de, D>(deserializer: D) -> Result<Option<SysAttrsOptions>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)?
+        .map(|raw| match raw.as_str() {
+            "sysAttrs" => Ok(SysAttrsOptions {
+                sys_attrs: SysAttrsInclusion::Include,
+            }),
+            other => Err(Error::custom(format!("unsupported options value '{other}'"))),
+        })
         .transpose()
 }
 

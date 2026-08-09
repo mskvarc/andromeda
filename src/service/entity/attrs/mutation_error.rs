@@ -19,6 +19,8 @@ impl From<ExpandedEntityError> for AndromedaError {
             ExpandedEntityError::EntityNotExpanded
             | ExpandedEntityError::PatchNotExpanded
             | ExpandedEntityError::AttributesNotObject
+            | ExpandedEntityError::InvalidAttributeName
+            | ExpandedEntityError::InvalidAttributeType
             | ExpandedEntityError::AttributeTypeMismatch { .. } => AndromedaError::entity_validation(error.to_string()),
             ExpandedEntityError::AttributeNotFound { .. }
             | ExpandedEntityError::AttributeHasNoInstances { .. }

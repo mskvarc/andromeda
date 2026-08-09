@@ -109,7 +109,7 @@ async fn query_without_type_or_attrs_returns_400() {
     let c = client();
     let (status, body) = query_with_context(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +124,7 @@ async fn query_invalid_id_returns_400() {
     let c = client();
     let (status, body) = query_with_context(&c, "id=invalidUri").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 /// Query with invalid q expression -- 400 (5.10.2).
@@ -135,7 +135,7 @@ async fn query_invalid_q_returns_400() {
     let c = client();
     let (status, body) = query_with_context(&c, "q=(invalidQuery").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 /// Query with invalid georel (missing geometry/coordinates) -- 400 (5.10.2).
@@ -146,7 +146,7 @@ async fn query_invalid_geoquery_returns_400() {
     let c = client();
     let (status, body) = query_with_context(&c, "georel=within").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 /// Query with invalid timerel (missing timeAt) -- 400 (5.10.2).
@@ -157,7 +157,7 @@ async fn query_invalid_temporal_query_returns_400() {
     let c = client();
     let (status, body) = query_with_context(&c, "timerel=before").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 // ---------------------------------------------------------------------------

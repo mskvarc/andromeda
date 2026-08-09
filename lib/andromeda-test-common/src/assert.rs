@@ -1,6 +1,6 @@
 //! Shared assertion helpers.
 //!
-//! Test files import these via the crate prelude so per-suite assertion
+//! Test files import these from this defining module so per-suite assertion
 //! logic stays uniform — a single `assert_problem_details` handles both the
 //! RFC 7807 envelope shape and the NGSI-LD `type` URI.
 

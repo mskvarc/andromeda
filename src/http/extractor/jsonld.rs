@@ -16,6 +16,7 @@ use axum::{
         header::{CONTENT_TYPE, LINK},
     },
 };
+use iri_rs::{Iri, iri};
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use std::{collections::HashSet, str::FromStr};
@@ -137,14 +138,16 @@ fn strip_context_from_value(value: &mut serde_json::Value) {
 }
 
 /// NGSI-LD version profile URI (clause 6.3.21, RFC 6906).
-const NGSI_LD_VERSION_PROFILE: &str = "https://uri.etsi.org/ngsi-ld/profile/version";
+const NGSI_LD_VERSION_PROFILE: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/profile/version");
 
 /// Check whether any Link header carries the NGSI-LD version profile (clause 6.3.21).
 fn has_version_profile(link_headers: &[String]) -> bool {
     link_headers.iter().any(|raw| {
-        Link::from_str(raw)
-            .ok()
-            .is_some_and(|link| link.values().iter().any(|lv| lv.profile().is_some_and(|p| p == NGSI_LD_VERSION_PROFILE)))
+        Link::from_str(raw).ok().is_some_and(|link| {
+            link.values()
+                .iter()
+                .any(|value| value.profile().is_some_and(|profile| NGSI_LD_VERSION_PROFILE.as_str() == profile.as_str()))
+        })
     })
 }
 

@@ -149,15 +149,11 @@ fn quoted_value(raw: Option<&str>) -> Result<&str, LinkParseError> {
 /// Parse the space-separated relation types of a `rel` parameter.
 fn parse_relation_types(raw: Option<&str>) -> Result<Vec<RelationType>, LinkParseError> {
     let raw = raw.filter(|value| !value.is_empty()).ok_or(LinkParseError)?;
-    Ok(raw
-        .trim_matches(|character: char| character == '"' || character.is_whitespace())
+    raw.trim_matches(|character: char| character == '"' || character.is_whitespace())
         .split(' ')
         .filter(|token| !token.is_empty())
-        .map(|token| match token.trim().parse::<RelationType>() {
-            Ok(rel) => rel,
-            Err(infallible) => match infallible {},
-        })
-        .collect())
+        .map(|token| token.trim().parse::<RelationType>().map_err(|_| LinkParseError))
+        .collect::<Result<Vec<_>, _>>()
 }
 
 impl fmt::Display for LinkValue {

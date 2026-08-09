@@ -18,4 +18,5 @@ pub mod query;
 pub mod snapshot;
 pub mod snapshot_purge_q;
 pub mod tenant;
+pub mod typed_path;
 pub mod via;

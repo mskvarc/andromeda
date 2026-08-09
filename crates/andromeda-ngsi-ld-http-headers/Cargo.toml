@@ -11,6 +11,7 @@ workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 derive_more = { version = "2.1.1", features = ["display"] }
 headers = "0.4.1"
 http = "1.4.0"

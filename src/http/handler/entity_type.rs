@@ -5,18 +5,26 @@ use crate::{
     error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader, query::ValidatedQuery, snapshot::SnapshotHeader, via::IncomingVia},
+        extractor::{
+            accept::AcceptFormat,
+            context::ContextUrl,
+            prefer::PreferHeader,
+            query::ValidatedQuery,
+            snapshot::SnapshotHeader,
+            typed_path::TypedPath,
+            via::IncomingVia,
+        },
         response::{render::start_rendering, single::NgsiLdResponse},
-        validation::validate_name_or_iri,
     },
     service::csource_forwarding::discovery_result::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
 use axum::{
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -57,7 +65,7 @@ pub async fn query(
         let (result, warnings) = if is_local {
             (local_result, Vec::new())
         } else {
-            let context_url = context.link_contexts().first().map(|s| s.as_str());
+            let context_url = context.link_contexts().first();
             let query_string = uri.query().unwrap_or("");
             let forwarded = state
                 .forwarding
@@ -80,7 +88,7 @@ pub async fn query(
         let (result, warnings) = if is_local {
             (local_result, Vec::new())
         } else {
-            let context_url = context.link_contexts().first().map(|s| s.as_str());
+            let context_url = context.link_contexts().first();
             let query_string = uri.query().unwrap_or("");
             let forwarded = state
                 .forwarding
@@ -106,11 +114,10 @@ pub async fn get(
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     SnapshotHeader(snapshot_id): SnapshotHeader,
-    Path(type_): Path<String>,
+    TypedPath(type_): TypedPath<EntityTypeName>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entity_discovery;
-    validate_name_or_iri(&type_, &uri)?;
     let context: ContextSpec = context.into_inner();
 
     if let Some(snapshot_id) = snapshot_id {
@@ -143,7 +150,7 @@ pub async fn get(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
+        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         let path = format!("/types/{}", type_);
         let forwarded = state

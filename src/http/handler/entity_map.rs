@@ -5,9 +5,15 @@ use crate::{
     error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormat, context::ContextUrl, entity_query::EntityQuery, json_body::invalid_json_body, prefer::PreferHeader},
+        extractor::{
+            accept::AcceptFormat,
+            context::ContextUrl,
+            entity_query::EntityQuery,
+            json_body::invalid_json_body,
+            prefer::PreferHeader,
+            typed_path::TypedPath,
+        },
         response::{render::start_rendering, single::NgsiLdResponse},
-        validation::parse_entity_map_id,
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -17,11 +23,10 @@ use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{body::entity_map::UpdateEntityMapBody, query::entity::parameters::EntityQueryParameters};
 use axum::{
     Json,
-    extract::{OriginalUri, Path, rejection::JsonRejection},
+    extract::{OriginalUri, rejection::JsonRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use std::str::FromStr;
 
 /// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve an entity map (section 5.14.1).
 pub async fn get(
@@ -29,9 +34,8 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
-    Path(entity_map_id): Path<String>,
+    TypedPath(entity_map_id): TypedPath<Uri>,
 ) -> Result<Response, NgsiLdError> {
-    let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
     let context: ContextSpec = context.into_inner();
 
     let map = state.entity_maps.retrieve(&entity_map_id).await.with_instance(&uri)?;
@@ -47,12 +51,10 @@ pub async fn get(
 pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
-    Path(entity_map_id): Path<String>,
+    TypedPath(entity_map_id): TypedPath<Uri>,
     body: Result<Json<UpdateEntityMapBody>, JsonRejection>,
 ) -> Result<Response, NgsiLdError> {
     let Json(body) = body.map_err(|rejection| invalid_json_body(rejection, &uri, AndromedaError::entity_map_validation))?;
-    let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
-
     let expires_at = body
         .expires_at
         .ok_or_else(|| AndromedaError::entity_map_validation("expiresAt is required").with_instance(&uri))?;
@@ -69,8 +71,7 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} -- Delete an entity map (section 5.14.3).
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(entity_map_id): Path<String>) -> Result<Response, NgsiLdError> {
-    let entity_map_id = parse_entity_map_id(&entity_map_id, &uri)?;
+pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, TypedPath(entity_map_id): TypedPath<Uri>) -> Result<Response, NgsiLdError> {
     state.entity_maps.delete(&entity_map_id).await.with_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
@@ -93,13 +94,7 @@ pub async fn create_from_query(
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
     let lifetime = query.entity_map_lifetime.as_ref();
-    let typed_ids: Vec<Uri> = ids
-        .iter()
-        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
-        .collect::<Result<Vec<_>, _>>()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(ids, lifetime).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
     // Clone id before converting map to Value
@@ -135,13 +130,7 @@ pub async fn create_from_query_post(
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let typed_ids: Vec<Uri> = ids
-        .iter()
-        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
-        .collect::<Result<Vec<_>, _>>()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(ids, lifetime.as_ref()).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/entityMaps/{}", map.id);
     let map_uri = map.id.clone();
@@ -173,13 +162,7 @@ pub async fn create_temporal_from_query(
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
     let lifetime = query.entity_map_lifetime.as_ref();
-    let typed_ids: Vec<Uri> = ids
-        .iter()
-        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
-        .collect::<Result<Vec<_>, _>>()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(ids, lifetime).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
     let map_uri = map.id.clone();
@@ -214,13 +197,7 @@ pub async fn create_temporal_from_query_post(
     let compiled = state.entity_query.compile_query_uncapped(&query, &context_spec).await.with_instance(&uri)?;
     let ids = state.entity_query.query_ids(&compiled).await.with_instance(&uri)?;
 
-    let typed_ids: Vec<Uri> = ids
-        .iter()
-        .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::entity_map_validation(format!("Invalid entity id URI '{}'", id))))
-        .collect::<Result<Vec<_>, _>>()
-        .with_instance(&uri)
-        .map_err(NgsiLdError::from)?;
-    let map = state.entity_maps.create(typed_ids, lifetime.as_ref()).await.with_instance(&uri)?;
+    let map = state.entity_maps.create(ids, lifetime.as_ref()).await.with_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/temporal/entityMaps/{}", map.id);
     let map_uri = map.id.clone();

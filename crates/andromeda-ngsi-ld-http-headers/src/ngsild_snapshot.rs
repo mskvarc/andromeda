@@ -1,9 +1,9 @@
 //! Typed `NGSILD-Snapshot` request/response header (ETSI GS CIM 009 clause 6.3.22).
 //!
 //! Carries the snapshot identifier for snapshot-scoped requests and responses.
-//! The value must be a valid snapshot URN (`urn:ngsi-ld:Snapshot:<id>`).
+//! The value must be a valid URI.
 
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use http::{HeaderName, HeaderValue};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
@@ -11,19 +11,19 @@ static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
 
 /// Typed `NGSILD-Snapshot` header (clause 6.3.22).
 ///
-/// Carries the snapshot identifier URN that scopes a request to a frozen
+/// Carries the snapshot identifier URI that scopes a request to a frozen
 /// data snapshot, or indicates that a response is from a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NgsiLdSnapshot(SnapshotId);
+pub struct NgsiLdSnapshot(Uri);
 
 impl NgsiLdSnapshot {
-    /// Create a new `NGSILD-Snapshot` header from a validated URN.
-    pub const fn new(value: SnapshotId) -> NgsiLdSnapshot {
+    /// Create a new `NGSILD-Snapshot` header from a validated URI.
+    pub const fn new(value: Uri) -> NgsiLdSnapshot {
         NgsiLdSnapshot(value)
     }
 
-    /// Consume the header and return the inner URN.
-    pub fn into_inner(self) -> SnapshotId {
+    /// Consume the header and return the inner URI.
+    pub fn into_inner(self) -> Uri {
         self.0
     }
 }
@@ -46,7 +46,7 @@ impl headers::Header for NgsiLdSnapshot {
         if trimmed.is_empty() {
             return Err(headers::Error::invalid());
         }
-        let snapshot_id = match trimmed.parse::<SnapshotId>() {
+        let snapshot_id = match trimmed.parse::<Uri>() {
             Ok(value) => value,
             Err(_) => return Err(headers::Error::invalid()),
         };
@@ -64,7 +64,6 @@ impl headers::Header for NgsiLdSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
     use headers::Header;
 
     fn decode_from(raw: &str) -> Result<NgsiLdSnapshot, headers::Error> {
@@ -101,13 +100,14 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_plain_url() {
-        assert!(decode_from("https://example.com/snapshot").is_err());
+    fn decode_accepts_https_snapshot_uri() {
+        let header = decode_from("https://example.com/snapshot").expect("valid snapshot URI");
+        pretty_assertions::assert_eq!(header.into_inner().as_str(), "https://example.com/snapshot");
     }
 
     #[test]
     fn encode_roundtrip() {
-        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<SnapshotId>().expect("valid snapshot id");
+        let snapshot_id = "urn:ngsi-ld:Snapshot:x".parse::<Uri>().expect("valid snapshot id");
         let header = NgsiLdSnapshot::new(snapshot_id);
         let mut encoded = Vec::new();
         header.encode(&mut encoded);

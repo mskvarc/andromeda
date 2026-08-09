@@ -1,4 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
+use andromeda_test_common::config::COMPOUND_CONTEXT;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -328,7 +329,7 @@ async fn batch_upsert_with_invalid_entity_returns_207() {
     let entities = json!([
         e1,
         e2,
-        { "id": &id3, "@context": TEST_SUITE_CONTEXT }
+        { "id": &id3, "@context": COMPOUND_CONTEXT }
     ]);
 
     let (status, body) = batch_upsert(&c, &entities, false).await;

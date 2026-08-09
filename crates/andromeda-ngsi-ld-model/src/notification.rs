@@ -11,6 +11,17 @@ use typed_builder::TypedBuilder;
 constant_string!(NotificationType, "Notification");
 constant_string!(CsourceNotificationType, "CsourceNotification");
 
+/// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
+#[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
+pub enum ChangeOrigin {
+    /// The entity is stored and managed by this broker instance.
+    Local,
+    /// The entity was forwarded from a registered context source.
+    Forwarded,
+}
+
 /// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
 ///
 /// One vocabulary serves both sides of clause 5.3.3: a subscription lists the

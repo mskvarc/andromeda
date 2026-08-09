@@ -50,10 +50,10 @@ pub async fn batch_create(
 
     // Distributed forwarding: forward to matching context sources
     // Per spec 5.6.7: iterate CSRs, forward matching entities
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
-    let entity_type = entities.first().map(|e| match &e.type_ {
-        EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map_or("", |s| s.as_str()),
+    let context_url = context.link_contexts().first();
+    let entity_type = entities.first().and_then(|entity| match &entity.type_ {
+        EntityTypeValue::Single(name) => Some(name),
+        EntityTypeValue::Multiple(names) => names.first(),
     });
     let forwarded = state
         .forwarding

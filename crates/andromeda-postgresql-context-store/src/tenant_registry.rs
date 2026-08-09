@@ -158,7 +158,7 @@ impl PostgresTenantRegistry {
         .await?;
         tx.commit().await?;
 
-        let tenant_url = self.database_url.with_db_name(db_name.as_str());
+        let tenant_url = self.database_url.with_db_name(&db_name);
         migrate_single_tenant_db(&tenant_url, self.tenancy.tenant_max_connections, self.synchronous_commit_setting).await?;
 
         Ok(db_name)

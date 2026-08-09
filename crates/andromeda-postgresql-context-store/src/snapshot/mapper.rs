@@ -1,7 +1,7 @@
 //! Row-to-domain conversions for snapshot records.
 
 use crate::error::ContextStoreError;
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::SnapshotId;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     query::body::Query,
@@ -23,7 +23,7 @@ pub fn deserialize_json_column<T: serde::de::DeserializeOwned>(row: &sqlx::postg
 pub fn row_to_snapshot(row: &sqlx::postgres::PgRow) -> Result<Snapshot, ContextStoreError> {
     let id_str: String = row.try_get("id")?;
     let id = id_str
-        .parse::<SnapshotId>()
+        .parse::<Uri>()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid snapshot id '{id_str}': {e}")))?;
 
     // `status` is projected as `status::text`; the label mapping lives in the

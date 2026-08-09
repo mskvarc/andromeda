@@ -25,7 +25,6 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod accept;
-pub mod context_source_pseudonym;
 pub mod geo_json_body;
 pub mod language;
 pub mod link;
@@ -58,9 +57,10 @@ mod boundary {
     /// be forgotten by a table it was never added to. The rule itself is read
     /// once, in `andromeda-layer-guard`, which every crate carries as a
     /// dev-dependency and which declares nothing of its own.
-    /// A header is expressible in terms of the lexical, query and
+    /// A header is expressible in terms of the lexical, vocabulary, query and
     /// representation layers alone. `NGSILD-Scope` deliberately carries the
-    /// query crate's single authoritative scope grammar.
+    /// query crate's single authoritative scope grammar, while registered link
+    /// relations use the vocabulary crate's canonical IRI constants.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
         /// In-workspace crates this one may name, in any dependency table.
@@ -70,6 +70,7 @@ mod boundary {
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-query",
             "andromeda-ngsi-ld-representation",
+            "andromeda-ngsi-ld-vocabulary",
         ];
 
         andromeda_layer_guard::manifest::assert_layer(

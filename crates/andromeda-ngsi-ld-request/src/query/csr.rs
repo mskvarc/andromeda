@@ -3,6 +3,7 @@
 use crate::{
     error::ParameterError,
     impl_shared_query_params,
+    options::{SysAttrsOptions, deserialize_sys_attrs_options},
     query::{
         SharedQueryParams,
         deserialization::{
@@ -22,7 +23,6 @@ use andromeda_ngsi_ld_query::{
     temporal::window::TimeInterval,
     type_selection::grammar::TypeExprRaw,
 };
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -69,7 +69,8 @@ pub struct CsrQueryParameters {
     /// How many results to skip before the page (`offset`).
     pub offset: Option<u32>,
     /// The legacy representation selector, comma-separated (`options`).
-    pub options: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_sys_attrs_options")]
+    pub options: Option<SysAttrsOptions>,
 }
 
 impl_shared_query_params!(CsrQueryParameters {
@@ -80,15 +81,8 @@ impl_shared_query_params!(CsrQueryParameters {
 
 impl CsrQueryParameters {
     /// Parses the `options` parameter into structured flags.
-    pub fn parse_options(&self) -> CsrQueryParametersOptions {
-        let opts = self.options.as_deref().unwrap_or("");
-        CsrQueryParametersOptions {
-            sys_attrs: if opts.contains("sysAttrs") {
-                SysAttrsInclusion::Include
-            } else {
-                SysAttrsInclusion::Strip
-            },
-        }
+    pub fn parse_options(&self) -> SysAttrsOptions {
+        self.options.unwrap_or_default()
     }
 
     /// Validates the CSR query parameters for completeness and correctness.
@@ -122,18 +116,12 @@ impl CsrQueryParameters {
     }
 }
 
-/// Parsed response shaping options from the CSR `options` parameter.
-#[derive(Debug, Default)]
-pub struct CsrQueryParametersOptions {
-    /// Whether to include system-generated attributes (`createdAt`, `modifiedAt`).
-    pub sys_attrs: SysAttrsInclusion,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{params_from_query, query::SharedQueryParams};
     use andromeda_ngsi_ld_query::error::QueryError;
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 
     fn params_from_query(query: &str) -> CsrQueryParameters {
         params_from_query!(query, CsrQueryParameters)

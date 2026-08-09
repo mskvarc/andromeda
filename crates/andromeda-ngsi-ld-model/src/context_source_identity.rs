@@ -1,22 +1,24 @@
 //! The identity a Context Source answers `/info` with (clause 6.36.3.1).
 
-use andromeda_ngsi_ld_lexicon::{constant_string, ngsi_ld_urn::ContextSourceId};
+use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use serde::Serialize;
 
 constant_string!(ContextSourceIdentityType, "ContextSourceIdentity");
 
 /// The response body of the Context Source identity endpoint.
 ///
-/// Clause 6.36.3.1 fixes both members: the identifier this source is known by
-/// when it appears in a `Via` header or a registration, and a `type` that is
-/// always `"ContextSourceIdentity"`.
+/// Table 5.2.40-1 separates the source's URI identifier from the pseudonym it
+/// places in `Via` headers for loop detection.
 #[derive(Debug, Serialize)]
 pub struct ContextSourceIdentity {
     /// The identifier of this context source.
-    pub id: ContextSourceId,
+    pub id: Uri,
     /// Always `"ContextSourceIdentity"`.
     #[serde(rename = "type")]
     pub type_: ContextSourceIdentityType,
+    /// The pseudonym used to identify this source in a `Via` chain.
+    #[serde(rename = "contextSourceAlias")]
+    pub context_source_alias: ContextSourcePseudonym,
 }
 
 #[cfg(test)]
@@ -28,10 +30,12 @@ mod tests {
         let rendered = serde_json::to_value(ContextSourceIdentity {
             id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse().expect("valid context source id"),
             type_: ContextSourceIdentityType,
+            context_source_alias: "andromeda".parse().expect("valid context source alias"),
         })
         .expect("serialises");
         pretty_assertions::assert_eq!(rendered["id"], "urn:ngsi-ld:ContextSourceIdentity:andromeda");
         pretty_assertions::assert_eq!(rendered["type"], "ContextSourceIdentity");
+        pretty_assertions::assert_eq!(rendered["contextSourceAlias"], "andromeda");
         assert!(rendered.get("type_").is_none());
     }
 }

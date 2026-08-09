@@ -5,21 +5,21 @@ use crate::{
     error::ResultInstanceExt,
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery, typed_path::TypedPath},
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
             render::start_rendering,
             single::NgsiLdResponse,
         },
-        validation::parse_csr_id,
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{registration::RegistrationRenderer, response::ResponsePayload};
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
 use axum::{
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -49,11 +49,9 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    Path(registration_id): Path<String>,
+    TypedPath(registration_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, NgsiLdError> {
-    parse_csr_id(&registration_id, &uri)?;
-
     let service = &state.csr;
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
@@ -113,14 +111,12 @@ pub async fn update(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path(registration_id): Path<String>,
+    TypedPath(registration_id): TypedPath<Uri>,
     JsonLd {
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
-    parse_csr_id(&registration_id, &uri)?;
-
     let service = &state.csr;
     let context = context.merge(body_context);
     service.update(&registration_id, payload, &context).await.with_instance(&uri)?;
@@ -129,9 +125,11 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Delete a context source registration.
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(registration_id): Path<String>) -> Result<Response, NgsiLdError> {
-    parse_csr_id(&registration_id, &uri)?;
-
+pub async fn delete(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    TypedPath(registration_id): TypedPath<Uri>,
+) -> Result<Response, NgsiLdError> {
     let service = &state.csr;
     service.delete(&registration_id).await.with_instance(&uri)?;
 

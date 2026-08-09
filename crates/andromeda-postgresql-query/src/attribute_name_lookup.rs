@@ -41,5 +41,5 @@ pub trait AttributeNameLookup: Send + Sync + Debug {
 
     /// Resolve every name, creating dictionary entries for those that are new.
     #[must_use = "attribute-name resolution must be awaited"]
-    async fn resolve_or_create(&self, names: &[&str]) -> Result<HashMap<String, AttributeNameId>, AttributeNameLookupError>;
+    async fn resolve_or_create(&self, names: &[AttributeName]) -> Result<HashMap<AttributeName, AttributeNameId>, AttributeNameLookupError>;
 }

@@ -6,6 +6,7 @@
 //! on a row lock holds a connection for the whole wait, and a burst of
 //! overlapping batches would exhaust the pool waiting for itself.
 
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use dashmap::DashMap;
 use std::{
     sync::{Arc, Weak},
@@ -14,7 +15,7 @@ use std::{
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 /// Map used to coordinate writes by entity id.
-pub(crate) type IdLockMap = DashMap<String, Arc<Mutex<()>>>;
+pub(crate) type IdLockMap = DashMap<Uri, Arc<Mutex<()>>>;
 
 /// Interval between sweeps of the lock-coalescing map.
 ///
@@ -28,14 +29,15 @@ const ID_LOCK_GC_INTERVAL_SECS: u64 = 60;
 ///
 /// Callers receive owned guards so the locks remain held for the lifetime
 /// of the returned `Vec`. Drop the vec to release every lock at once.
-pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, ids: &[String]) -> Vec<OwnedMutexGuard<()>> {
-    let mut sorted: Vec<String> = ids.to_vec();
-    sorted.sort_unstable();
-    sorted.dedup();
+pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, ids: &[Uri]) -> Vec<OwnedMutexGuard<()>> {
+    let mut sorted: Vec<&Uri> = ids.iter().collect();
+    sorted.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+    sorted.dedup_by(|left, right| left.as_str() == right.as_str());
 
     let mut guards = Vec::with_capacity(sorted.len());
     for id in sorted {
-        let lock = map.entry(id).or_insert_with(|| Arc::new(Mutex::new(()))).value().clone();
+        // The map owns its key independently of the caller's input slice.
+        let lock = map.entry(id.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value().clone();
         guards.push(lock.lock_owned().await);
     }
     guards
@@ -75,12 +77,17 @@ pub(crate) fn spawn_id_lock_gc(weak: Weak<IdLockMap>) {
 #[cfg(test)]
 mod tests {
     use super::{IdLockMap, acquire_id_locks_in, gc_id_locks};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use std::sync::Arc;
 
     #[tokio::test]
     async fn id_lock_gc_reclaims_unused_entries_after_guards_drop() {
         let map: Arc<IdLockMap> = Arc::new(IdLockMap::new());
-        let ids = vec!["urn:ngsi-ld:A".to_string(), "urn:ngsi-ld:B".to_string(), "urn:ngsi-ld:C".to_string()];
+        let ids = [
+            "urn:ngsi-ld:Entity:A".parse::<Uri>().expect("valid test URI"),
+            "https://example.com/entities/B".parse::<Uri>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:C".parse::<Uri>().expect("valid test URI"),
+        ];
 
         let guards = acquire_id_locks_in(&map, &ids).await;
         pretty_assertions::assert_eq!(map.len(), 3);
@@ -100,7 +107,13 @@ mod tests {
         let map: Arc<IdLockMap> = Arc::new(IdLockMap::new());
         // Duplicates must collapse to a single entry; sorted ordering eliminates
         // deadlocks between concurrent callers with overlapping id sets.
-        let ids = vec!["b".to_string(), "a".to_string(), "b".to_string(), "c".to_string(), "a".to_string()];
+        let ids = [
+            "https://example.com/entities/b".parse::<Uri>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid test URI"),
+            "https://example.com/entities/b".parse::<Uri>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:c".parse::<Uri>().expect("valid test URI"),
+            "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid test URI"),
+        ];
         let guards = acquire_id_locks_in(&map, &ids).await;
         pretty_assertions::assert_eq!(guards.len(), 3);
         pretty_assertions::assert_eq!(map.len(), 3);

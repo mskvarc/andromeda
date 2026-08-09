@@ -39,7 +39,7 @@ async fn delete_unknown_context_returns_404() {
     let c = client();
     let (status, body) = delete_context(&c, "urn:ngsi-ld:unknown:context:12345", "").await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 /// 051_04_01: Delete wrong ID + reload=true -> 400.
@@ -121,7 +121,7 @@ async fn delete_core_context_no_reload_returns_400() {
     let c = client();
     let (status, body) = delete_context(&c, CORE_CONTEXT, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 /// 051_08_02: Delete core context with reload=false -> 400.
@@ -182,5 +182,5 @@ async fn delete_cached_reload_server_unavailable_returns_504() {
     // Attempt delete with reload -- should fail since server is down
     let (status, body) = delete_context(&c, &cached_id, "reload=true").await;
     pretty_assertions::assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE);
+    pretty_assertions::assert_eq!(body["type"], LD_CONTEXT_NOT_AVAILABLE_TYPE.as_str());
 }

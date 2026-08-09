@@ -52,7 +52,7 @@ pub enum RawOrderTarget<'a> {
     /// The `scope` keyword.
     Scope,
     /// An attribute name, still compact.
-    Attribute(&'a str),
+    Attribute(&'a NgsiLdReference),
 }
 
 impl<'a> RawOrderTarget<'a> {
@@ -64,15 +64,15 @@ impl<'a> RawOrderTarget<'a> {
     pub const SCOPE_KEYWORD: &'static str = "scope";
 
     /// Classify a raw `orderBy` name.
-    pub fn classify(raw: &'a str) -> RawOrderTarget<'a> {
-        match raw {
+    pub fn classify(raw: &'a NgsiLdReference) -> RawOrderTarget<'a> {
+        match raw.as_str() {
             RawOrderTarget::ID_KEYWORD => RawOrderTarget::Id,
             RawOrderTarget::TYPE_KEYWORD => RawOrderTarget::Type,
             RawOrderTarget::SCOPE_KEYWORD => RawOrderTarget::Scope,
             // `&str` is unbounded, so a catch-all is the only way to close this
             // match; anything that is not one of the two keywords is an
             // attribute name.
-            other => RawOrderTarget::Attribute(other),
+            _other => RawOrderTarget::Attribute(raw),
         }
     }
 }
@@ -179,13 +179,17 @@ mod tests {
         // Clause 4.23: `id` and `type` name members of the representation, not
         // attributes, so no context lookup applies to them and neither reaches
         // the attribute arm that performs one.
-        assert_eq!(RawOrderTarget::classify("id"), RawOrderTarget::Id);
-        assert_eq!(RawOrderTarget::classify("type"), RawOrderTarget::Type);
-        assert_eq!(RawOrderTarget::classify("scope"), RawOrderTarget::Scope);
+        let id = "id".parse().expect("reference");
+        let type_ = "type".parse().expect("reference");
+        let scope = "scope".parse().expect("reference");
+        assert_eq!(RawOrderTarget::classify(&id), RawOrderTarget::Id);
+        assert_eq!(RawOrderTarget::classify(&type_), RawOrderTarget::Type);
+        assert_eq!(RawOrderTarget::classify(&scope), RawOrderTarget::Scope);
     }
 
     #[test]
     fn any_other_order_by_term_is_classified_as_an_attribute() {
-        assert_eq!(RawOrderTarget::classify("speed"), RawOrderTarget::Attribute("speed"));
+        let speed = "speed".parse().expect("reference");
+        assert_eq!(RawOrderTarget::classify(&speed), RawOrderTarget::Attribute(&speed));
     }
 }

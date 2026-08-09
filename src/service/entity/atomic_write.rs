@@ -11,6 +11,7 @@ use crate::service::{
     entity::{entity_mutation::EntityMutation, history_record::HistoryRecord, precondition::Precondition, side_effect::BatchSideEffectJob},
     outbox::entry::NewOutboxEntry,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
@@ -41,9 +42,9 @@ pub struct AtomicWrite {
     /// The entity this write is about.
     ///
     /// Shared rather than owned because the batch side-effect path already
-    /// carries identifiers as `Arc<str>`, and because the identifier outlives
+    /// carries identifiers as `Arc<Uri>`, and because the identifier outlives
     /// the write in the change events it raises.
-    pub entity_id: Arc<str>,
+    pub entity_id: Arc<Uri>,
     /// What happens to the `entities` row.
     pub entity: EntityMutation,
     /// What the write appends to the entity's Temporal Evolution.

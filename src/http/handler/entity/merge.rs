@@ -13,22 +13,22 @@ use crate::http::handler::entity::{
     LocalOnlyParams,
     NgsiLdError,
     OriginalUri,
-    Path,
     Response,
     ResultInstanceExt,
     StatusCode,
     TenantState,
+    TypedPath,
+    Uri,
     ValidatedQuery,
     collect_forwarded_exclusive_attrs,
     first_forwarded_status,
-    parse_entity_id,
 };
 
 pub async fn merge(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    Path(id): Path<String>,
+    TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
     JsonLd {
@@ -37,7 +37,6 @@ pub async fn merge(
     }: JsonLd<EntityPatch>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.entities;
-    let id = parse_entity_id(&id, &uri)?;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
 
@@ -46,14 +45,13 @@ pub async fn merge(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
+    let context_url = context.link_contexts().first();
     let patch_body = serde_json::to_vec(&patch).map_err(|e| AndromedaError::internal(format!("Failed to serialize patch: {e}")).with_instance(&uri))?;
-    let entity_id = id.to_string();
 
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
-            entity_id: Some(&entity_id),
+            entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
             method: reqwest::Method::PATCH,

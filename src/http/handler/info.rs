@@ -19,8 +19,9 @@ use axum::{
 /// GET /ngsi-ld/v1/info/sourceIdentity -- Retrieve context source identity.
 pub async fn get(State(state): State<BrokerState>, OriginalUri(uri): OriginalUri, accept: AcceptFormat, context: ContextUrl) -> Result<Response, NgsiLdError> {
     let identity = ContextSourceIdentity {
-        id: state.source_identity,
+        id: state.source_id,
         type_: ContextSourceIdentityType,
+        context_source_alias: state.source_alias,
     };
     let context = context.into_inner();
     let value = serde_json::to_value(&identity)

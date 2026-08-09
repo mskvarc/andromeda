@@ -26,7 +26,6 @@ use crate::{
     },
 };
 use andromeda_ngsi_ld_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy, query::body::Query};
 use andromeda_ngsi_ld_problem_details::batch_operation::BatchOperationResult;
 use andromeda_ngsi_ld_render::{entity::EntityRenderer, response::ResponsePayload};

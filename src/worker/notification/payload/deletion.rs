@@ -1,6 +1,10 @@
 //! Deleted attribute and instance materialization.
 
-use crate::worker::notification::payload::{AttributeName, DateTime, HashSet, Utc, Value, expanded_classes, expanded_properties, whole_seconds};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::whole_seconds, uri::Uri};
+use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use std::collections::HashSet;
 
 pub(super) fn nullify_entity_attributes(entity: &mut Value) {
     let Some(obj) = entity.as_object_mut() else { return };
@@ -118,7 +122,7 @@ pub(super) fn inject_deleted_instances(
         return;
     };
 
-    let current_dataset_ids: HashSet<Option<String>> = cur_arr
+    let current_dataset_ids: HashSet<Option<Uri>> = cur_arr
         .iter()
         .map(|inst| {
             inst.as_object()
@@ -128,7 +132,7 @@ pub(super) fn inject_deleted_instances(
                 .and_then(|v| v.as_object())
                 .and_then(|o| o.get("@id"))
                 .and_then(|v| v.as_str())
-                .map(String::from)
+                .and_then(|raw| raw.parse::<Uri>().ok())
         })
         .collect();
 
@@ -142,7 +146,7 @@ pub(super) fn inject_deleted_instances(
             .and_then(|v| v.as_object())
             .and_then(|o| o.get("@id"))
             .and_then(|v| v.as_str())
-            .map(String::from);
+            .and_then(|raw| raw.parse::<Uri>().ok());
 
         if !current_dataset_ids.contains(&prev_ds_id) {
             let mut nullified = prev_inst.clone();

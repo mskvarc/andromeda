@@ -45,7 +45,7 @@ where
 /// Serde's "unknown field" message is stable across versions, making this heuristic
 /// reliable for distinguishing unsupported parameters (`InvalidRequest`) from
 /// invalid parameter values (`BadRequestData`).
-fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::http::Uri) -> ExtractorRejection {
+pub(crate) fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::http::Uri) -> ExtractorRejection {
     if error_str.contains("unknown field") {
         ExtractorRejection::invalid_request(error_msg, uri)
     } else {

@@ -14,7 +14,7 @@ use std::{
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     response::{
         IntoResponse,
         Response,
@@ -28,7 +28,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     api::tenant::TenantState,
     error::{AndromedaError, ResultInstanceExt},
-    http::error::problem::NgsiLdError,
+    http::{error::problem::NgsiLdError, extractor::typed_path::TypedPath},
 };
 use andromeda_delivery::{
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
@@ -87,18 +87,18 @@ impl Stream for SseEventStream {
 /// Validates that the subscription exists and uses SSE transport, then opens a
 /// persistent connection that streams notification events as they are dispatched
 /// by the notification worker.
-pub async fn stream(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
-    let subscription_id: Uri = subscription_id
-        .parse()
-        .map_err(|_| AndromedaError::malformed_request(format!("Invalid subscription id: {subscription_id}")))
-        .with_instance(&uri)?;
+pub async fn stream(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    TypedPath(subscription_id): TypedPath<Uri>,
+) -> Result<Response, NgsiLdError> {
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(subscription_id.as_str()).await.with_instance(&uri)?;
+    let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
 
     // Validate subscription uses SSE transport via the canonical parser
     // (handles case-insensitive URI schemes like SSE://).
     let is_sse = parse_endpoint_transport(
-        subscription.notification.endpoint.uri.as_str(),
+        &subscription.notification.endpoint.uri,
         subscription.notification.endpoint.notifier_info.as_deref(),
     )
     .is_ok_and(|t| matches!(t, EndpointTransport::Sse));

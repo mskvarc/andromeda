@@ -20,7 +20,7 @@ async fn subscription_retrieve_invalid_id_returns_bad_request_data() {
     let (status, body) = retrieve_subscription(&http_client, "InvalidUri", false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -32,7 +32,7 @@ async fn subscription_retrieve_unknown_id_returns_resource_not_found() {
     let (status, body) = retrieve_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 #[serial_test::serial]

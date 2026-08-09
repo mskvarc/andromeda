@@ -15,7 +15,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{EntitySelector, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
-use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
 use std::collections::HashSet;
@@ -31,7 +31,7 @@ pub struct CompiledCsrSubscription {
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
     pub selectors: Vec<EntitySelector>,
-    pub watched_attrs: Option<HashSet<String>>,
+    pub watched_attrs: Option<HashSet<AttributeName>>,
     pub throttling_secs: Option<f64>,
     pub time_interval_secs: Option<f64>,
     pub jsonld_context: Option<Url>,
@@ -49,12 +49,12 @@ pub struct CompiledSubscription {
     pub endpoint_receiver_info: Option<Vec<KeyValuePair>>,
     pub endpoint_transport: EndpointTransport,
     pub triggers: Vec<NotificationTrigger>,
-    pub watched_attrs: Option<HashSet<String>>, // expanded IRIs; None = all
+    pub watched_attrs: Option<HashSet<AttributeName>>, // expanded IRIs; None = all
     pub selectors: Vec<EntitySelector>,
     pub throttling_secs: Option<f64>,
     pub time_interval_secs: Option<f64>,
     pub notification_attributes: Option<Vec<AttributeName>>,
-    pub notification_format: Option<String>,
+    pub notification_format: Option<ResponseFormat>,
     pub notification_sys_attrs: SysAttrsInclusion,
     pub notification_show_changes: bool,
     pub jsonld_context: Option<Url>,
@@ -69,8 +69,8 @@ pub struct CompiledSubscription {
     pub compiled_geo_q: Option<GeoQuery>,
     /// The subscription's parsed `scopeQ`, if set.
     pub compiled_scope_q: Option<ScopeQuery>,
-    pub dataset_id: Option<Vec<String>>,
-    pub notification_join: Option<String>,
+    pub dataset_id: Option<Vec<Uri>>,
+    pub notification_join: Option<JoinMode>,
     pub notification_join_level: u32,
     pub compiled_csf: Option<Expr>,
     /// When true, this subscription only matches locally-stored entities (clause 5.5.13).

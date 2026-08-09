@@ -2,7 +2,7 @@
 
 use crate::{
     api::{state::BrokerState, tenant_factory::BrokerTenantFactory},
-    config::RuntimeConfig,
+    config::runtime::RuntimeConfig,
     error::AndromedaError,
     http::handler::{
         attribute,
@@ -57,9 +57,9 @@ pub struct BrokerHttp {
 pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, AndromedaError> {
     info!("Constructing router!");
 
-    let database_url = DatabaseUrl::parse(&config.database.url)?;
+    let database_url = DatabaseUrl::new(config.database.url.clone()); // clone: the factory owns the validated URL beyond this borrow
     let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit.as_postgres_setting())
-        .connect(&config.database.url)
+        .connect(config.database.url.as_str())
         .await?;
     let registry = Arc::new(
         PostgresTenantRegistry::connect(
@@ -97,12 +97,9 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
     let version_router: Router<BrokerState> = Router::new().route("/version", get(version::check)).layer(version_service);
 
     let broker_state = BrokerState {
-        tenants: Arc::clone(&tenants), // clone: the router and shutdown coordinator share the manager
-        source_identity: config
-            .info
-            .source_identity
-            .parse()
-            .map_err(|e| AndromedaError::internal(format!("info.source_identity is not a valid context source id: {e}")))?,
+        tenants: Arc::clone(&tenants),                  // clone: the router and shutdown coordinator share the manager
+        source_id: config.info.source_id.clone(),       // clone: configuration and router state own the validated identifier
+        source_alias: config.info.source_alias.clone(), // clone: configuration and router state own the validated alias
     };
     let max_body = config.performance.max_request_body_bytes;
     let router = Router::new()

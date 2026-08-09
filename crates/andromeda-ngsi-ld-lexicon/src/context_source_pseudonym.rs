@@ -1,6 +1,7 @@
 //! The pseudonym naming one intermediary in a `Via` chain (RFC 9110 clause 7.6.3).
 
-use derive_more::Display;
+use derive_more::{Display, Into};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -17,8 +18,10 @@ use thiserror::Error;
 /// `received-by` a single whitespace-delimited token, so the value must be
 /// non-empty and free of whitespace and control characters; being URI-shaped is
 /// allowed but never required.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Display, Into, Serialize, Deserialize)]
 #[display("{_0}")]
+#[into(String)]
+#[serde(try_from = "String", into = "String")]
 pub struct ContextSourcePseudonym(String);
 
 /// Why a string cannot be a [`ContextSourcePseudonym`].

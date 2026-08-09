@@ -1,20 +1,21 @@
 //! Registration-information matching and forwarded-fragment partitioning.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, RegistrationInfo};
+use iri_rs::IriBuf;
 use serde_json::Value;
 
 /// Build a minimal forwarding query string with only type and id params.
-pub(crate) fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<String> {
+pub(crate) fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<AttributeName> {
     let mut attrs = Vec::new();
     for info in &csr.coverage.information {
         for name in info.property_names.iter().chain(info.relationship_names.iter()).flatten() {
-            attrs.push(name.to_string());
+            attrs.push(name.clone()); // clone: the result owns names borrowed from the registration.
             // Also add the compacted form (last path/fragment segment) for
             // matching against deserialized EntityPatch attr keys, which are
             // compacted.
-            if let Some(short) = compact_iri(name.as_str())
-                && short != name.as_str()
+            if let Some(short) = compact_attribute_name(name)
+                && short != *name
             {
                 attrs.push(short);
             }
@@ -26,13 +27,13 @@ pub(crate) fn collect_exclusive_attrs(csr: &ContextSourceRegistration) -> Vec<St
 /// Attribute names from matching information entries that this request covers.
 pub(crate) fn collect_matching_attrs(
     csr: &ContextSourceRegistration,
-    entity_type: Option<&str>,
-    entity_id: Option<&str>,
+    entity_type: Option<&IriBuf>,
+    entity_id: Option<&Uri>,
     explicit_attribute: Option<&AttributeName>,
     body: Option<&[u8]>,
-) -> Vec<String> {
+) -> Vec<AttributeName> {
     if let Some(attribute) = explicit_attribute {
-        return vec![attribute.to_string()];
+        return vec![attribute.clone()]; // clone: the result outlives the borrowed request.
     }
     let requested = body.and_then(fragment_attribute_names).unwrap_or_default();
     let mut covered = Vec::new();
@@ -45,9 +46,9 @@ pub(crate) fn collect_matching_attrs(
         let declared = information.property_names.iter().chain(&information.relationship_names).flatten();
         let declared = declared.collect::<Vec<_>>();
         if declared.is_empty() {
-            covered.extend(requested.iter().map(AttributeName::to_string));
+            covered.extend(requested.iter().cloned());
         } else if requested.is_empty() {
-            covered.extend(declared.iter().map(ToString::to_string));
+            covered.extend(declared.iter().map(|name| (*name).clone()));
         } else {
             covered.extend(
                 requested
@@ -55,9 +56,9 @@ pub(crate) fn collect_matching_attrs(
                     .filter(|attribute| {
                         declared
                             .iter()
-                            .any(|name| *name == *attribute || compact_iri(name.as_str()).as_deref() == Some(attribute.as_str()))
+                            .any(|name| *name == *attribute || compact_attribute_name(name).as_ref() == Some(attribute))
                     })
-                    .map(AttributeName::to_string),
+                    .cloned(),
             );
         }
     }
@@ -70,8 +71,8 @@ pub(crate) fn collect_matching_attrs(
 pub(crate) fn filter_fragment_for_registration(
     body: Option<&[u8]>,
     csr: &ContextSourceRegistration,
-    entity_type: Option<&str>,
-    entity_id: Option<&str>,
+    entity_type: Option<&IriBuf>,
+    entity_id: Option<&Uri>,
 ) -> Option<Vec<u8>> {
     let body = body?;
     let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
@@ -95,10 +96,10 @@ pub(crate) fn filter_fragment_for_registration(
     let covered = information
         .iter()
         .flat_map(|entry| entry.property_names.iter().chain(&entry.relationship_names).flatten())
-        .flat_map(|name| [Some(name.to_string()), compact_iri(name.as_str())])
+        .flat_map(|name| [Some(name.clone()), compact_attribute_name(name)])
         .flatten()
         .collect::<Vec<_>>();
-    object.retain(|name, _value| is_entity_control_member(name) || covered.iter().any(|covered_name| covered_name == name));
+    object.retain(|name, _value| is_entity_control_member(name) || covered.iter().any(|covered_name| covered_name.as_str() == name));
     if object.keys().all(|name| is_entity_control_member(name)) {
         return None;
     }
@@ -126,8 +127,8 @@ pub(crate) fn is_entity_control_member(name: &str) -> bool {
 /// Whether one information entry covers the entity and requested attribute.
 pub(crate) fn csr_has_matching_information(
     csr: &ContextSourceRegistration,
-    entity_type: Option<&str>,
-    entity_id: Option<&str>,
+    entity_type: Option<&IriBuf>,
+    entity_id: Option<&Uri>,
     attribute: Option<&AttributeName>,
 ) -> bool {
     csr.coverage
@@ -137,17 +138,17 @@ pub(crate) fn csr_has_matching_information(
 }
 
 /// Whether the entity selector axis of one information entry matches.
-pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_type: Option<&str>, entity_id: Option<&str>) -> bool {
+pub(crate) fn information_matches_entity(information: &RegistrationInfo, entity_type: Option<&IriBuf>, entity_id: Option<&Uri>) -> bool {
     let Some(selectors) = information.entities.as_deref().filter(|selectors| !selectors.is_empty()) else {
         return true;
     };
     selectors.iter().any(|selector| {
-        let type_matches = entity_type.is_none_or(|requested| selector.type_.matches(&[requested]));
+        let type_matches = entity_type.is_none_or(|requested| selector.type_.matches(&[requested.as_str()]));
         let id_matches = entity_id.is_none_or(|requested| match (&selector.id, &selector.id_pattern) {
             (None, None) => true,
-            (Some(id), None) => id.as_str() == requested,
-            (None, Some(pattern)) => pattern.is_match(requested),
-            (Some(id), Some(pattern)) => id.as_str() == requested || pattern.is_match(requested),
+            (Some(id), None) => id.as_str() == requested.as_str(),
+            (None, Some(pattern)) => pattern.is_match(requested.as_str()),
+            (Some(id), Some(pattern)) => id.as_str() == requested.as_str() || pattern.is_match(requested.as_str()),
         });
         type_matches && id_matches
     })
@@ -162,7 +163,7 @@ pub(crate) fn information_covers_attribute(information: &RegistrationInfo, attri
     let mut saw_name = false;
     for name in names {
         saw_name = true;
-        if name == attribute || compact_iri(name.as_str()).as_deref() == Some(attribute.as_str()) {
+        if name == attribute || compact_attribute_name(name).as_ref() == Some(attribute) {
             return true;
         }
     }
@@ -170,10 +171,12 @@ pub(crate) fn information_covers_attribute(information: &RegistrationInfo, attri
 }
 
 /// Extract the short name from an expanded IRI by taking the fragment or last path segment.
-pub(crate) fn compact_iri(iri: &str) -> Option<String> {
-    if let Some(pos) = iri.rfind('#') {
-        Some(iri[pos + 1..].to_string())
+pub(crate) fn compact_attribute_name(attribute: &AttributeName) -> Option<AttributeName> {
+    let iri = attribute.as_str();
+    let compact = if let Some(pos) = iri.rfind('#') {
+        &iri[pos + 1..]
     } else {
-        iri.rfind('/').map(|pos| iri[pos + 1..].to_string())
-    }
+        iri.rfind('/').map(|pos| &iri[pos + 1..])?
+    };
+    compact.parse().ok()
 }

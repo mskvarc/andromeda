@@ -4,7 +4,8 @@
 //! and recipients between the user agent and the server. Used for loop
 //! detection in distributed NGSI-LD forwarding.
 
-use crate::{context_source_pseudonym::ContextSourcePseudonym, received_protocol::ReceivedProtocol};
+use crate::received_protocol::ReceivedProtocol;
+use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use http::{HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -76,8 +77,8 @@ impl Via {
     ///
     /// Used for loop detection per clause 6.3.18: compares against each
     /// discrete pseudonym, not substring match.
-    pub fn contains_pseudonym(&self, identity: &str) -> bool {
-        self.0.iter().any(|entry| entry.pseudonym.as_str() == identity)
+    pub fn contains_pseudonym(&self, identity: &ContextSourcePseudonym) -> bool {
+        self.0.iter().any(|entry| &entry.pseudonym == identity)
     }
 }
 
@@ -178,7 +179,8 @@ impl headers::Header for Via {
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_source_pseudonym::ContextSourcePseudonym, received_protocol::ReceivedProtocol, via::Via};
+    use crate::{received_protocol::ReceivedProtocol, via::Via};
+    use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use headers::Header;
     use http::HeaderValue;
 
@@ -248,8 +250,11 @@ mod tests {
         // contribute its pseudonym, or a cycle back through this broker could
         // slip past `contains_pseudonym`.
         let via = decode_from("1.1 broker-a, 1.1 broker-b (unterminated").expect("should decode");
-        assert!(via.contains_pseudonym("broker-a"));
-        assert!(via.contains_pseudonym("broker-b"), "a hop with a malformed comment must not be lost");
+        assert!(via.contains_pseudonym(&pseudonym("broker-a")));
+        assert!(
+            via.contains_pseudonym(&pseudonym("broker-b")),
+            "a hop with a malformed comment must not be lost"
+        );
     }
 
     #[test]
@@ -259,14 +264,14 @@ mod tests {
         // loop detection can still match it.
         let via = decode_from("brokerX").expect("should decode");
         pretty_assertions::assert_eq!(via.0[0].protocol, None);
-        assert!(via.contains_pseudonym("brokerX"));
+        assert!(via.contains_pseudonym(&pseudonym("brokerX")));
     }
 
     #[test]
     fn an_empty_element_between_commas_is_skipped_but_the_rest_survive() {
         let via = decode_from("1.1 broker-a, , 1.1 broker-b").expect("should decode");
-        assert!(via.contains_pseudonym("broker-a"));
-        assert!(via.contains_pseudonym("broker-b"));
+        assert!(via.contains_pseudonym(&pseudonym("broker-a")));
+        assert!(via.contains_pseudonym(&pseudonym("broker-b")));
     }
 
     #[test]
@@ -279,25 +284,25 @@ mod tests {
     #[test]
     fn contains_pseudonym_positive() {
         let via = decode_from("1.1 broker-a, 1.1 broker-b").expect("should decode");
-        assert!(via.contains_pseudonym("broker-a"));
+        assert!(via.contains_pseudonym(&pseudonym("broker-a")));
     }
 
     #[test]
     fn contains_pseudonym_negative() {
         let via = decode_from("1.1 broker-a, 1.1 broker-b").expect("should decode");
-        assert!(!via.contains_pseudonym("broker-c"));
+        assert!(!via.contains_pseudonym(&pseudonym("broker-c")));
     }
 
     #[test]
     fn contains_pseudonym_no_prefix_match() {
         let via = decode_from("1.1 broker10").expect("should decode");
-        assert!(!via.contains_pseudonym("broker1"));
+        assert!(!via.contains_pseudonym(&pseudonym("broker1")));
     }
 
     #[test]
     fn contains_pseudonym_no_suffix_match() {
         let via = decode_from("1.1 my-broker1").expect("should decode");
-        assert!(!via.contains_pseudonym("broker1"));
+        assert!(!via.contains_pseudonym(&pseudonym("broker1")));
     }
 
     #[test]
@@ -324,18 +329,18 @@ mod tests {
     fn via_loop_no_header_means_no_loop() {
         // No Via header -> no loop (handled by Option<Via> being None at call site)
         let via = Via::with_entry(protocol("1.1"), pseudonym("broker-a"));
-        assert!(!via.contains_pseudonym("broker-b"));
+        assert!(!via.contains_pseudonym(&pseudonym("broker-b")));
     }
 
     #[test]
     fn via_loop_detected_single() {
         let via = decode_from("1.1 urn:ngsi-ld:ContextSourceIdentity:broker1").expect("should decode");
-        assert!(via.contains_pseudonym("urn:ngsi-ld:ContextSourceIdentity:broker1"));
+        assert!(via.contains_pseudonym(&pseudonym("urn:ngsi-ld:ContextSourceIdentity:broker1")));
     }
 
     #[test]
     fn via_loop_detected_multi_hop() {
         let via = decode_from("1.1 urn:ngsi-ld:ContextSourceIdentity:broker2, 1.1 urn:ngsi-ld:ContextSourceIdentity:broker1").expect("should decode");
-        assert!(via.contains_pseudonym("urn:ngsi-ld:ContextSourceIdentity:broker1"));
+        assert!(via.contains_pseudonym(&pseudonym("urn:ngsi-ld:ContextSourceIdentity:broker1")));
     }
 }

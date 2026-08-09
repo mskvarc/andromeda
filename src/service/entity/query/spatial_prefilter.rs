@@ -82,8 +82,8 @@ impl EntityQueryService {
         let final_ids: Vec<Uri> = if selector.ids.is_empty() {
             candidate_ids
         } else {
-            let requested: HashSet<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
-            candidate_ids.into_iter().filter(|id| requested.contains(AsRef::<str>::as_ref(id))).collect()
+            let requested: HashSet<&Uri> = selector.ids.iter().collect();
+            candidate_ids.into_iter().filter(|id| requested.contains(id)).collect()
         };
 
         // A warm index that narrowed to no candidates is an authoritative empty

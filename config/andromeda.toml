@@ -34,7 +34,8 @@ runtime_max_cached = 64
 janitor_interval_seconds = 30
 
 [info]
-source_identity = "urn:ngsi-ld:ContextSourceIdentity:andromeda"
+source_id = "urn:ngsi-ld:ContextSourceIdentity:andromeda"
+source_alias = "andromeda"
 
 [performance]
 # If omitted, defaults to min(database.max_connections, 25)

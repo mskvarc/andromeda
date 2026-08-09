@@ -9,6 +9,7 @@ use crate::{
     http::{error::problem::NgsiLdError, extractor::context::ContextUrl},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri as EntityId;
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
@@ -186,15 +187,16 @@ pub fn parse_batch_entities(
             .as_object()
             .and_then(|o| o.get("id"))
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
+            .ok_or_else(|| AndromedaError::malformed_request("Every batch entity must contain a valid URI id").with_instance(uri))?
+            .parse::<EntityId>()
+            .map_err(|_| AndromedaError::malformed_request("Every batch entity must contain a valid URI id").with_instance(uri))?;
 
         // Per-entity @context validation
         let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
 
         if is_plain_json && has_context {
             parse_errors.push(BatchEntityError::new(
-                &entity_id,
+                entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/json body must not contain @context",
             ));
@@ -203,7 +205,7 @@ pub fn parse_batch_entities(
 
         if is_ld_json && !has_context {
             parse_errors.push(BatchEntityError::new(
-                &entity_id,
+                entity_id,
                 NgsiLdErrorType::BadRequestData,
                 "application/ld+json body must contain @context",
             ));
@@ -219,7 +221,7 @@ pub fn parse_batch_entities(
             Ok(entity) => entities.push(entity),
             Err(e) => {
                 parse_errors.push(BatchEntityError::new(
-                    &entity_id,
+                    entity_id,
                     NgsiLdErrorType::BadRequestData,
                     &format!("Invalid entity: {}", e),
                 ));
@@ -267,6 +269,6 @@ mod tests {
             vec!["urn:ngsi-ld:Vehicle:1".to_string(), "urn:ngsi-ld:Vehicle:3".to_string()]
         );
         pretty_assertions::assert_eq!(errors.len(), 1);
-        pretty_assertions::assert_eq!(errors[0].entity_id, "urn:ngsi-ld:Vehicle:2");
+        pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
     }
 }

@@ -151,7 +151,7 @@ async fn create_with_invalid_content_returns_400() {
 
     let (status, _, body) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -176,7 +176,7 @@ async fn create_with_unknown_operation_returns_400() {
 
     let (status, _, body) = create_registration(&c, &reg).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 /// Create CSR with expiration date in the past -- 400 (5.9.2).
@@ -351,7 +351,7 @@ async fn create_json_content_type_with_context_in_body_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -416,7 +416,7 @@ async fn create_jsonld_content_type_without_context_in_body_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     assert!(body["title"].is_string(), "response should contain title");
 }
 
@@ -442,6 +442,6 @@ async fn create_jsonld_content_type_with_link_header_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     assert!(body["title"].is_string(), "response should contain title");
 }

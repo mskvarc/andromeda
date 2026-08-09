@@ -25,17 +25,6 @@ impl OutboxEntryId {
     }
 }
 
-/// Identifies a worker instance that has claimed outbox entries for delivery.
-#[derive(Debug, Clone, PartialEq, Eq, From, Display)]
-pub struct WorkerInstanceId(String);
-
-impl WorkerInstanceId {
-    /// Returns the inner string slice.
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
 /// A persisted notification outbox row, representing a pending or completed
 /// notification delivery attempt.
 #[derive(Debug, Clone, TypedBuilder)]
@@ -59,18 +48,6 @@ pub struct OutboxEntry {
     pub changed_attrs: Vec<AttributeName>,
     /// Timestamp when the outbox entry was created.
     pub created_at: DateTime<Utc>,
-    /// Timestamp when a worker claimed this entry for delivery.
-    #[builder(default)]
-    pub claimed_at: Option<DateTime<Utc>>,
-    /// Identifier of the worker that claimed this entry.
-    #[builder(default)]
-    pub claimed_by: Option<WorkerInstanceId>,
-    /// Timestamp when the notification was successfully delivered.
-    #[builder(default)]
-    pub delivered_at: Option<DateTime<Utc>>,
-    /// Error message from the most recent failed delivery attempt.
-    #[builder(default)]
-    pub delivery_error: Option<String>,
     /// Number of delivery attempts made so far.
     pub attempt_count: i32,
     /// Earliest time at which the next delivery attempt may be made.
@@ -104,6 +81,7 @@ pub struct NewOutboxEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker_instance_id::WorkerInstanceId;
 
     #[test]
     fn outbox_entry_id_into_inner_returns_raw_value() {
@@ -119,13 +97,13 @@ mod tests {
 
     #[test]
     fn worker_instance_id_as_str_returns_inner_string() {
-        let worker_id = WorkerInstanceId::from("worker-001".to_string());
-        assert_eq!(worker_id.as_str(), "worker-001");
+        let worker_id = WorkerInstanceId::outbox(uuid::Uuid::nil());
+        assert_eq!(AsRef::<str>::as_ref(&worker_id), "outbox-worker-00000000-0000-0000-0000-000000000000");
     }
 
     #[test]
     fn worker_instance_id_display_formats_correctly() {
-        let worker_id = WorkerInstanceId::from("test-worker".to_string());
-        assert_eq!(format!("{}", worker_id), "test-worker");
+        let worker_id = WorkerInstanceId::outbox(uuid::Uuid::nil());
+        assert_eq!(format!("{}", worker_id), "outbox-worker-00000000-0000-0000-0000-000000000000");
     }
 }

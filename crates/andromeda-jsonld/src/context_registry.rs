@@ -31,7 +31,7 @@ impl ContextRegistry {
     /// registered user context that redefines a core term resolves to the Core's
     /// definition rather than failing.
     pub fn register(&self, url: IriBuf, value: jsonld_syntax::Value) {
-        let normalized = without_embedded_core_context(url.as_str(), value);
+        let normalized = without_embedded_core_context(&url, value);
         self.contexts.insert(url, Arc::new(normalized));
     }
 

@@ -10,6 +10,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
 use std::collections::HashSet;
 
@@ -19,17 +20,17 @@ impl EntityService {
     /// A batch that names one entity twice is asking to create it twice, and
     /// the second is a conflict exactly as it would be in a separate request
     /// (NGSI-LD 6.4.3.1).
-    pub(super) fn dedupe_create_entities(entities: &[Entity]) -> (Vec<&Entity>, Vec<(String, AndromedaError)>) {
+    pub(super) fn dedupe_create_entities(entities: &[Entity]) -> (Vec<&Entity>, Vec<(Uri, AndromedaError)>) {
         let mut deduped = Vec::with_capacity(entities.len());
         let mut errors = Vec::new();
         let mut seen = HashSet::with_capacity(entities.len());
 
         for entity in entities {
-            let id = entity.id.to_string();
-            if seen.insert(id.clone()) {
+            let id = &entity.id;
+            if seen.insert(id) {
                 deduped.push(entity);
             } else {
-                errors.push((id.clone(), AndromedaError::entity_already_exists(&id)));
+                errors.push(((*id).clone(), AndromedaError::entity_already_exists(id.as_str()))); // clone: error result owns the entity ID
             }
         }
 
@@ -48,16 +49,16 @@ impl EntityService {
             return Ok(BatchResult { success: Vec::new(), errors });
         }
 
-        let lock_ids: Vec<String> = prepared.iter().map(|entity| entity.id.to_string()).collect(); // the id-lock registry is keyed by text
+        let lock_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
         let _id_guards = self.acquire_id_locks(&lock_ids).await;
 
-        let mut seen: HashSet<String> = HashSet::with_capacity(prepared.len());
+        let mut seen: HashSet<Uri> = HashSet::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
-            if seen.insert(entity.id.to_string()) {
+            if seen.insert(entity.id.clone()) {
                 writes.push(ChunkWrite::insert(entity, Precondition::MustNotExist));
             } else {
-                errors.push((entity.id.to_string(), AndromedaError::entity_already_exists(entity.id.as_str()))); // reported and formatted as text
+                errors.push((entity.id.clone(), AndromedaError::entity_already_exists(entity.id.as_str()))); // clone: error result owns the entity ID
             }
         }
 

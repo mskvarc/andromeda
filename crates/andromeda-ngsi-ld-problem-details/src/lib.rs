@@ -28,13 +28,13 @@ mod boundary {
     /// be forgotten by a table it was never added to. The rule itself is read
     /// once, in `andromeda-layer-guard`, which every crate carries as a
     /// dev-dependency and which declares nothing of its own.
-    /// An error category is expressible in terms of the specification alone, so
-    /// this crate names no other crate in the workspace at all.
+    /// Batch problem details carry the validated URI types defined by the
+    /// lexical layer, but name no resource model or higher-level policy crate.
     #[test]
     fn this_crate_declares_only_what_its_layer_permits() {
         /// In-workspace crates this one may name, in any dependency table.
         /// Anything else is an upward or sideways edge.
-        const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard"];
+        const ALLOWED_IN_WORKSPACE: &[&str] = &["andromeda-layer-guard", "andromeda-ngsi-ld-lexicon"];
 
         andromeda_layer_guard::manifest::assert_layer(
             env!("CARGO_MANIFEST_DIR"),

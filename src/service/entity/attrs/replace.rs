@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, mutation::attribute::replace_attr},
     notification::NotificationTrigger,
@@ -19,7 +19,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::sync::Arc;
-use urn_rs::Urn;
 
 impl EntityService {
     /// Replace one attribute of an entity wholesale (clause 5.6.19).
@@ -29,21 +28,20 @@ impl EntityService {
     /// recomputed against a fresh read if a concurrent writer got in first.
     pub async fn replace_attr(
         &self,
-        id: &Urn,
-        attr_name: &str,
+        id: &Uri,
+        attr_name: &AttributeName,
         dataset_id: Option<&Uri>,
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
-        if attr_name.starts_with('@') {
+        if attr_name.as_str().starts_with('@') {
             return Err(AndromedaError::entity_validation("Invalid attribute name"));
         }
 
         let prepared_context = self.engine.prepare_term_context(context);
-        let attr_iri = self.engine.expand_term(attr_name, &prepared_context).await?;
+        let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
 
         if attr_iri.as_str() == expanded_properties::SCOPE.as_str() {
             return Err(AndromedaError::entity_validation("Scope is not a replaceable attribute"));
@@ -64,7 +62,7 @@ impl EntityService {
                 replace_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
                 let merged = Arc::new(existing);
-                let write = payload_write(&id, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))]); // clone: Arc ref-count bump
+                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))]); // clone: Arc ref-count bump
                 Ok((
                     write,
                     MutatedEntity {

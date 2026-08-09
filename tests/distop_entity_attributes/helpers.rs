@@ -9,7 +9,10 @@ use std::{
     },
 };
 
-use andromeda_test_common::config::callback_url;
+use andromeda_test_common::{
+    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL, callback_url},
+    db::TRUNCATE_ALL,
+};
 use axum::{extract::Request, response::IntoResponse};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
@@ -17,11 +20,6 @@ use sqlx::PgPool;
 use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
-
-pub use andromeda_test_common::{
-    config::{BASE_URL, COMPOUND_CONTEXT as TEST_SUITE_CONTEXT, DATABASE_URL},
-    db::TRUNCATE_ALL,
-};
 
 // ---------------------------------------------------------------------------
 // Mock context source server
@@ -143,7 +141,7 @@ pub fn unique_id(prefix: &str) -> String {
 }
 
 pub fn jsonld_link_value() -> String {
-    format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
+    format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
 pub async fn clean_database() {
@@ -170,7 +168,7 @@ pub fn vehicle_entity(id: &str) -> Value {
             "object": "urn:ngsi-ld:OffStreetParking:Downtown1",
             "observedAt": "2017-07-29T12:00:04Z"
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -188,7 +186,7 @@ pub fn vehicle_entity_different(id: &str) -> Value {
             "object": "urn:ngsi-ld:OffStreetParking:Downtown2",
             "observedAt": "2017-07-29T12:00:04Z"
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -212,7 +210,7 @@ pub fn vehicle_entity_two_speed_datasets(id: &str) -> Value {
                 "value": 60
             }
         ],
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -295,7 +293,7 @@ pub fn vehicle_registration_redirection_ops(reg_id: &str, entity_id: Option<&str
         ],
         "endpoint": endpoint,
         "operations": ops,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(eid) = entity_id {
@@ -338,7 +336,7 @@ pub fn vehicle_registration_speed_redirection_ops(reg_id: &str, entity_id: &str,
         ],
         "endpoint": endpoint,
         "operations": ops,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(m) = mode {

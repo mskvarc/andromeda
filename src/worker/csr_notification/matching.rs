@@ -2,6 +2,7 @@
 
 use crate::worker::csr_notification::{
     Arc,
+    AttributeName,
     CompiledCsrSubscription,
     DashMap,
     EntitySelector,
@@ -21,13 +22,9 @@ pub(super) fn compile_csr_subscription(sub: &Subscription) -> Option<CompiledCsr
     // selector member is already parsed
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
 
-    let watched_attrs = sub
-        .selection
-        .watched_attributes
-        .as_ref()
-        .map(|attrs| attrs.iter().map(ToString::to_string).collect::<HashSet<String>>());
+    let watched_attrs = sub.selection.watched_attributes.as_ref().cloned().map(HashSet::from_iter);
 
-    let endpoint_transport = match parse_endpoint_transport(sub.notification.endpoint.uri.as_str(), sub.notification.endpoint.notifier_info.as_deref()) {
+    let endpoint_transport = match parse_endpoint_transport(&sub.notification.endpoint.uri, sub.notification.endpoint.notifier_info.as_deref()) {
         Ok(t) => t,
         Err(e) => {
             debug!("Failed to parse endpoint transport for CSR subscription {}: {}", sub.id, e);
@@ -132,18 +129,18 @@ pub(super) fn matches_csr_subscription(sub: &CompiledCsrSubscription, csr_data: 
         let information = csr_data.get("information").and_then(|v| v.as_array());
         let any_attr_matches = match information {
             Some(info_arr) => info_arr.iter().any(|info| {
-                let prop_names: Vec<&str> = info
+                let prop_names: Vec<AttributeName> = info
                     .get("propertyNames")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
                     .unwrap_or_default();
-                let rel_names: Vec<&str> = info
+                let rel_names: Vec<AttributeName> = info
                     .get("relationshipNames")
                     .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
                     .unwrap_or_default();
 
-                prop_names.iter().any(|n| watched.contains(*n)) || rel_names.iter().any(|n| watched.contains(*n))
+                prop_names.iter().any(|name| watched.contains(name)) || rel_names.iter().any(|name| watched.contains(name))
             }),
             None => false,
         };
@@ -197,18 +194,18 @@ pub(super) fn filter_csr_for_subscription(csr_data: &Value, sub: &CompiledCsrSub
 
                 // Check watched attributes match
                 if let Some(ref watched) = sub.watched_attrs {
-                    let prop_names: Vec<&str> = info
+                    let prop_names: Vec<AttributeName> = info
                         .get("propertyNames")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
                         .unwrap_or_default();
-                    let rel_names: Vec<&str> = info
+                    let rel_names: Vec<AttributeName> = info
                         .get("relationshipNames")
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                        .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
                         .unwrap_or_default();
 
-                    if !prop_names.iter().any(|n| watched.contains(*n)) && !rel_names.iter().any(|n| watched.contains(*n)) {
+                    if !prop_names.iter().any(|name| watched.contains(name)) && !rel_names.iter().any(|name| watched.contains(name)) {
                         return false;
                     }
                 }

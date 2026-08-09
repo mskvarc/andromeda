@@ -13,7 +13,9 @@ use crate::{
 use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use futures::{StreamExt, stream};
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 use tracing::{debug, warn};
 
@@ -37,14 +39,14 @@ impl CsourceForwardingService {
         }
 
         let prepared_context = self.engine.prepare_term_context(context);
-        let expanded_type = if let Some(t) = entity_type_compact {
-            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
+        let expanded_type = if let Some(t) = entity_type_compact.and_then(TypeExprRaw::as_single_type) {
+            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
         } else {
             None
         };
 
-        let first_id = entity_ids.and_then(|ids| ids.first().map(Uri::as_str));
-        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
+        let first_id = entity_ids.and_then(|ids| ids.first());
+        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?;
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
@@ -140,9 +142,9 @@ impl CsourceForwardingService {
     /// Same pattern as `forward_retrieve()` but targets `/ngsi-ld/v1/temporal/entities/{id}`.
     pub async fn forward_temporal_retrieve(
         &self,
-        entity_id: &str,
+        entity_id: &Uri,
         query_string: &str,
-        context_url: Option<&str>,
+        context_url: Option<&IriRefBuf>,
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
         mode_filter: CsrModeFilter,

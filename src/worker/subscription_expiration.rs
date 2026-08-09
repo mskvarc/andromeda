@@ -2,7 +2,6 @@ use crate::{
     event::subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
     service::subscription::store::SubscriptionStore,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_context_store::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -46,14 +45,7 @@ impl SubscriptionExpirationWorker {
                     if !expired_ids.is_empty() {
                         info!("Expired {} subscription(s)", expired_ids.len());
                         for id in expired_ids {
-                            match id.parse::<Uri>() {
-                                Ok(uri) => {
-                                    let _ = self.subscription_change_tx.send(SubscriptionChange::Deleted(uri));
-                                }
-                                Err(_) => {
-                                    error!("Failed to parse expired subscription ID as URI: {}", id);
-                                }
-                            }
+                            let _ = self.subscription_change_tx.send(SubscriptionChange::Deleted(id));
                         }
                     }
                 }
@@ -67,14 +59,7 @@ impl SubscriptionExpirationWorker {
                     if !expired_ids.is_empty() {
                         info!("Expired {} CSR subscription(s)", expired_ids.len());
                         for id in expired_ids {
-                            match id.parse::<Uri>() {
-                                Ok(uri) => {
-                                    let _ = self.csource_subscription_change_tx.send(CsourceSubscriptionChange::Deleted(uri));
-                                }
-                                Err(_) => {
-                                    error!("Failed to parse expired CSR subscription ID as URI: {}", id);
-                                }
-                            }
+                            let _ = self.csource_subscription_change_tx.send(CsourceSubscriptionChange::Deleted(id));
                         }
                     }
                 }

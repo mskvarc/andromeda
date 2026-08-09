@@ -5,7 +5,8 @@ use crate::{
     error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery},
+        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery, typed_path::TypedPath},
+        origin::request_origin,
         response::{
             collection::NgsiLdCollectionResponse,
             pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
@@ -15,6 +16,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
@@ -22,7 +24,7 @@ use andromeda_ngsi_ld_render::{
 };
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
 use axum::{
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -42,10 +44,10 @@ pub async fn create(
     }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
-    let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
+    let base_url = request_origin(&headers).map_err(|error| error.with_instance(&uri))?;
     let context = context.merge(body_context);
 
-    let id = service.create(payload, &context, base_url.as_deref()).await.with_instance(&uri)?;
+    let id = service.create(payload, &context, base_url.as_ref()).await.with_instance(&uri)?;
 
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/subscriptions/{}", id))]).into_response())
 }
@@ -56,7 +58,7 @@ pub async fn get(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
-    Path(subscription_id): Path<String>,
+    TypedPath(subscription_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
@@ -156,18 +158,18 @@ pub async fn update(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
-    Path(subscription_id): Path<String>,
+    TypedPath(subscription_id): TypedPath<Uri>,
     JsonLd {
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
-    let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
+    let base_url = request_origin(&headers).map_err(|error| error.with_instance(&uri))?;
     let context = context.merge(body_context);
 
     service
-        .update(&subscription_id, payload, &context, base_url.as_deref())
+        .update(&subscription_id, payload, &context, base_url.as_ref())
         .await
         .with_instance(&uri)?;
 
@@ -175,7 +177,11 @@ pub async fn update(
 }
 
 /// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
-pub async fn delete(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, Path(subscription_id): Path<String>) -> Result<Response, NgsiLdError> {
+pub async fn delete(
+    TenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    TypedPath(subscription_id): TypedPath<Uri>,
+) -> Result<Response, NgsiLdError> {
     let service = &state.subscriptions;
     service.delete(&subscription_id).await.with_instance(&uri)?;
 

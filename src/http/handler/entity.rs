@@ -13,10 +13,10 @@ use crate::{
             jsonld::JsonLd,
             protocol::NgsiLdProtocolHeaders,
             query::ValidatedQuery,
+            typed_path::TypedPath,
             via::IncomingVia,
         },
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
-        validation::{parse_entity_id, validate_attr_name},
     },
     service::{
         csource_forwarding::{
@@ -33,7 +33,7 @@ use crate::{
     },
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     entity_type::EntityTypeValue,
@@ -61,12 +61,12 @@ use andromeda_ngsi_ld_request::{
 };
 use axum::{
     Json,
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use std::{collections::HashSet, num::NonZeroU32, str::FromStr};
+use std::{collections::HashSet, num::NonZeroU32};
 
 const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Uri> {
     match selector {

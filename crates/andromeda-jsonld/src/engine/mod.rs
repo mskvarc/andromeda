@@ -17,7 +17,6 @@ pub mod batch_context;
 pub mod builder;
 pub mod context_url;
 pub mod core_term_semantics;
-pub mod expanded_key;
 pub mod fast_attribute;
 pub mod fast_entity;
 pub mod options;

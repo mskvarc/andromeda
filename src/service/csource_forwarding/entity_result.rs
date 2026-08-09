@@ -2,12 +2,13 @@
 
 use crate::service::csource_forwarding::outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteResult};
 use andromeda_ngsi_ld_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
+use indexmap::IndexMap;
 use serde_json::Value;
 use tracing::warn;
 
-pub(crate) fn parse_forwarded_entities(csr_id: &str, values: Vec<Value>) -> (Vec<Entity>, Vec<NgsiLdWarning>) {
+pub(crate) fn parse_forwarded_entities(csr_id: &Uri, values: Vec<Value>) -> (Vec<Entity>, Vec<NgsiLdWarning>) {
     let mut entities = Vec::with_capacity(values.len());
     let mut warnings = Vec::new();
     for mut value in values {
@@ -40,17 +41,17 @@ pub fn merge_query_results(local_entities: Vec<Entity>, remote_results: Vec<Forw
         return local_entities;
     }
 
-    let mut entity_map: indexmap::IndexMap<String, Entity> = indexmap::IndexMap::with_capacity(local_entities.len());
+    let mut entity_map: IndexMap<Uri, Entity> = IndexMap::with_capacity(local_entities.len());
 
     for entity in local_entities {
-        entity_map.insert(entity.id.to_string(), entity);
+        entity_map.insert(entity.id.clone(), entity); // clone: the index and entity each own the identifier.
     }
 
     for forwarded in remote_results {
         match forwarded.mode {
             ForwardingMode::Auxiliary | ForwardingMode::Inclusive | ForwardingMode::Exclusive | ForwardingMode::Redirect => {
                 for remote_entity in forwarded.entities {
-                    let remote_id = remote_entity.id.to_string();
+                    let remote_id = remote_entity.id.clone(); // clone: the index key and entity each own the identifier.
                     if let Some(local_entity) = entity_map.get_mut(&remote_id) {
                         merge_entity_attributes(local_entity, remote_entity);
                     } else {
@@ -133,14 +134,11 @@ pub fn collect_temporal_warnings(results: &[ForwardedTemporalEntities]) -> Vec<N
 /// results. Used by provision handlers to strip exclusive attributes from
 /// local operations per spec 4.3.6.3.
 pub fn collect_forwarded_exclusive_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeName> {
-    // A forwarded name that is not a valid NGSI-LD attribute name cannot key a
-    // locally held attribute, so dropping it here removes nothing that a
-    // subsequent strip would have matched.
     results
         .iter()
         .filter(|result| !result.is_failure())
         .flat_map(|r| r.exclusive_attrs.iter())
-        .filter_map(|name| name.parse().ok())
+        .cloned()
         .collect()
 }
 
@@ -171,7 +169,8 @@ mod tests {
             "@context": "https://example.com/context.jsonld"
         });
 
-        let (entities, warnings) = parse_forwarded_entities("urn:ngsi-ld:Registration:1", vec![value]);
+        let registration_id = "urn:ngsi-ld:Registration:1".parse().expect("registration URI");
+        let (entities, warnings) = parse_forwarded_entities(&registration_id, vec![value]);
         pretty_assertions::assert_eq!(entities.len(), 1);
         assert!(warnings.is_empty());
     }

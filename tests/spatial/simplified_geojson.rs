@@ -6,7 +6,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::{client::NgsiLdClient, config::TEST_SUITE_CONTEXT, header::jsonld_link_header, scope::TestScope};
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};

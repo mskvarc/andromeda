@@ -14,8 +14,9 @@ use crate::{
 use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
-use andromeda_ngsi_ld_query::filter::eval::evaluate as eval_q_expr;
+use andromeda_ngsi_ld_query::{filter::eval::evaluate as eval_q_expr, type_selection::grammar::TypeExprRaw};
 use futures::{StreamExt, stream};
+use iri_rs::IriRefBuf;
 use serde_json::Value;
 use tracing::{debug, warn};
 
@@ -45,15 +46,15 @@ impl CsourceForwardingService {
 
         // Expand entity type for CSR matching (CSRs store expanded IRIs)
         let prepared_context = self.engine.prepare_term_context(context);
-        let expanded_type = if let Some(t) = entity_type_compact {
-            Some(self.engine.expand_type(t, &prepared_context).await?.to_string())
+        let expanded_type = if let Some(t) = entity_type_compact.and_then(TypeExprRaw::as_single_type) {
+            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
         } else {
             None
         };
 
         // For CSR matching, also pass entity IDs if available
-        let first_id = entity_ids.and_then(|ids| ids.first().map(Uri::as_str));
-        let csrs = self.csr_repo.find_matching(expanded_type.as_deref(), first_id).await?;
+        let first_id = entity_ids.and_then(|ids| ids.first());
+        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?;
         let matching_csrs: Vec<_> = csrs
             .into_iter()
             .filter(|csr| operation.matches(csr))
@@ -95,13 +96,13 @@ impl CsourceForwardingService {
                 let mode = csr.access.mode.unwrap_or_default();
                 match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
-                        let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), arr);
+                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, arr);
                         let mut warnings = cs_warnings;
                         warnings.extend(parse_warnings);
                         Some(ForwardedEntities { mode, entities, warnings })
                     }
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                        let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), vec![obj]);
+                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
                         let mut warnings = cs_warnings;
                         warnings.extend(parse_warnings);
                         Some(ForwardedEntities { mode, entities, warnings })
@@ -166,9 +167,9 @@ impl CsourceForwardingService {
     /// Returns entities collected from all matching context sources.
     pub async fn forward_retrieve(
         &self,
-        entity_id: &str,
+        entity_id: &Uri,
         query_string: &str,
-        context_url: Option<&str>,
+        context_url: Option<&IriRefBuf>,
         operation: ForwardingOperation,
         incoming_via: Option<&Via>,
         mode_filter: CsrModeFilter,
@@ -205,7 +206,7 @@ impl CsourceForwardingService {
                 let mode = csr.access.mode.unwrap_or_default();
                 match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
-                        let (entities, parse_warnings) = parse_forwarded_entities(csr.id.as_ref(), vec![obj]);
+                        let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
                         let mut warnings = cs_warnings;
                         warnings.extend(parse_warnings);
                         Some(ForwardedEntities { mode, entities, warnings })

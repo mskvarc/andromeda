@@ -6,6 +6,7 @@
 //! they are persisted alongside the entity write and drained by a worker.
 
 use crate::event::change_event::ChangeEvent;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct BatchSideEffectJob {
     /// Entities whose observations still have to reach the Temporal Evolution.
-    pub temporal_entities: Vec<(Arc<str>, Arc<Value>)>,
+    pub temporal_entities: Vec<(Arc<Uri>, Arc<Value>)>,
     /// Change events still to be emitted on the broadcast channel.
     pub change_events: Vec<ChangeEvent>,
 }

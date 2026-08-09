@@ -97,8 +97,8 @@ impl NgsiLdClient {
         self.tenant.as_deref()
     }
 
-    pub(crate) const fn base_url(&self) -> &'static str {
-        BASE_URL
+    pub(crate) fn base_url(&self) -> &'static str {
+        BASE_URL.as_str()
     }
 
     pub(crate) fn apply_tenant(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {

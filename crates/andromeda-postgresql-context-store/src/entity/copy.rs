@@ -12,7 +12,11 @@
 //!
 //! [`COPY`]: https://www.postgresql.org/docs/current/sql-copy.html
 
-use crate::{entity::params::PreparedEntityColumns, error::ContextStoreError};
+use crate::{
+    entity::{mapper::stored_uri, params::PreparedEntityColumns},
+    error::ContextStoreError,
+};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_encoding::copy::{write_bytea_opt, write_field_count, write_header, write_jsonb, write_text, write_timestamptz_opt, write_trailer};
 use sqlx::{Executor, Postgres, Transaction};
 
@@ -59,7 +63,7 @@ RETURNING id
 /// `entities` inside the provided transaction. Returns the list of IDs
 /// actually inserted (rows blocked by `ON CONFLICT (id) DO NOTHING` are
 /// omitted).
-pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, columns: &PreparedEntityColumns) -> Result<Vec<String>, ContextStoreError> {
+pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, columns: &PreparedEntityColumns) -> Result<Vec<Uri>, ContextStoreError> {
     if columns.ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -74,7 +78,7 @@ pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, col
     }
 
     let rows: Vec<(String,)> = sqlx::query_as(INSERT_FROM_STAGE_CREATE_SQL).fetch_all(&mut **tx).await?;
-    Ok(rows.into_iter().map(|(id,)| id).collect())
+    rows.into_iter().map(|(id,)| stored_uri(id)).collect()
 }
 
 /// Encode a set of entity columns into the Postgres binary COPY format.
@@ -83,7 +87,7 @@ fn encode_entities_copy_stream(columns: &PreparedEntityColumns) -> Vec<u8> {
     write_header(&mut buf);
     for index in 0..columns.ids.len() {
         write_field_count(&mut buf, STAGE_ENTITIES_FIELD_COUNT);
-        write_text(&mut buf, &columns.ids[index]);
+        write_text(&mut buf, columns.ids[index].as_str());
         write_jsonb(&mut buf, &columns.types_json[index]);
         write_jsonb(&mut buf, &columns.scope_paths_json[index]);
         write_jsonb(&mut buf, &columns.payloads[index]);
@@ -112,8 +116,8 @@ mod tests {
     /// Build a two-row sample for encoding tests.
     fn sample_columns() -> PreparedEntityColumns {
         let mut columns = PreparedEntityColumns::with_capacity(2);
-        columns.ids.push("urn:ngsi-ld:Building:1".to_string());
-        columns.ids.push("urn:ngsi-ld:Building:2".to_string());
+        columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
+        columns.ids.push("urn:ngsi-ld:Building:2".parse().expect("entity URI"));
         columns.types_json.push(serde_json::json!(["https://example.com/Building"]));
         columns.types_json.push(serde_json::json!(["https://example.com/Building"]));
         columns.scope_paths_json.push(serde_json::json!(["root.a"]));

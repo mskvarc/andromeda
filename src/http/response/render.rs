@@ -62,7 +62,7 @@ mod tests {
     fn a_spec_with_no_explicit_context_still_advertises_the_core_context() {
         let resolved = response_context(&ContextSpec::none());
         assert!(
-            resolved.link_urls().iter().any(|url| url.as_str() == NGSI_LD_CORE_CONTEXT_URL),
+            resolved.link_urls().iter().any(|url| NGSI_LD_CORE_CONTEXT_URL == url.as_str()),
             "the core context is missing from {:?}",
             resolved.link_urls()
         );

@@ -29,7 +29,8 @@ pub mod transport;
 
 use crate::{error::AndromedaError, service::csource_registration::store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_http_headers::via::Via;
+use andromeda_ngsi_ld_http_headers::{received_protocol::ReceivedProtocol, via::Via};
+use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use std::{sync::Arc, time::Duration};
 
 /// Service for forwarding NGSI-LD operations to registered context sources.
@@ -37,18 +38,20 @@ pub struct CsourceForwardingService {
     http_client: reqwest::Client,
     csr_repo: Arc<dyn RegistrationStore>,
     engine: JsonLdEngine,
-    /// Context Source Identity (hostAlias) for Via header (§6.3.18).
-    source_identity: String,
+    /// Context Source alias used as the `Via` pseudonym (clause 6.3.18).
+    source_alias: ContextSourcePseudonym,
+    /// Protocol token appended with the local alias to every forwarded request.
+    received_protocol: ReceivedProtocol,
     /// Maximum number of parallel CSR fan-out HTTP requests per operation.
     csr_concurrency: usize,
 }
 
 impl CsourceForwardingService {
-    /// Create a new context source forwarding service with the given source identity for Via headers.
+    /// Create a forwarding service with its validated `Via` identity.
     pub fn new(
         csr_repo: Arc<dyn RegistrationStore>,
         engine: JsonLdEngine,
-        source_identity: String,
+        source_alias: ContextSourcePseudonym,
         csr_concurrency: usize,
     ) -> Result<CsourceForwardingService, AndromedaError> {
         let http_client = reqwest::ClientBuilder::new()
@@ -61,18 +64,20 @@ impl CsourceForwardingService {
             .timeout(Duration::from_secs(5))
             .build()
             .map_err(|e| AndromedaError::internal(format!("Failed to create HTTP client for context source forwarding: {}", e)))?;
+        let received_protocol = ReceivedProtocol::try_from("1.1").map_err(|error| AndromedaError::internal(format!("invalid forwarding protocol: {error}")))?;
         Ok(CsourceForwardingService {
             http_client,
             csr_repo,
             engine,
-            source_identity,
+            source_alias,
+            received_protocol,
             csr_concurrency: csr_concurrency.max(1),
         })
     }
 
     /// Check whether forwarding would create a Via loop.
     pub fn is_loop_detected(&self, incoming_via: Option<&Via>) -> bool {
-        incoming_via.is_some_and(|v| v.contains_pseudonym(&self.source_identity))
+        incoming_via.is_some_and(|via| via.contains_pseudonym(&self.source_alias))
     }
 
     /// Send a request and return the status and raw bytes.

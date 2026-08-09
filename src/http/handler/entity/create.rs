@@ -4,7 +4,6 @@ use crate::http::handler::entity::{
     AndromedaError,
     ContextUrl,
     Entity,
-    EntityTypeName,
     EntityTypeValue,
     ForwardProvisionRequest,
     ForwardingModes,
@@ -47,19 +46,19 @@ pub async fn create(
     }
 
     // Check for matching CSRs for distributed forwarding
-    let context_url = context.link_contexts().first().map(|s| s.as_str());
+    let context_url = context.link_contexts().first();
     let entity_body = serde_json::to_vec(&entity).map_err(|e| AndromedaError::internal(format!("Failed to serialize entity: {e}")).with_instance(&uri))?;
-    let entity_id = entity.id.to_string();
-    let entity_type_str: &str = match &entity.type_ {
-        EntityTypeValue::Single(s) => s.as_str(),
-        EntityTypeValue::Multiple(v) => v.first().map_or("", EntityTypeName::as_str),
+    let entity_id = entity.id.clone(); // clone: the forwarding request and local create both need the identifier
+    let entity_type = match &entity.type_ {
+        EntityTypeValue::Single(name) => Some(name),
+        EntityTypeValue::Multiple(names) => names.first(),
     };
 
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
-            entity_id: Some(&entity_id),
-            entity_type_compact: Some(entity_type_str),
+            entity_id: &entity_id,
+            entity_type_compact: entity_type,
             attribute_name: None,
             method: reqwest::Method::POST,
             body: Some(&entity_body),

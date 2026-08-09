@@ -6,10 +6,9 @@
 //! transaction, so rows are the store's vocabulary and events are this
 //! module's.
 
-use crate::error::AndromedaError;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::instance_key::{AttributeInstanceKey, removed_attribute_instances};
 use derive_more::IsVariant;
-use iri_rs::IriBuf;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -33,21 +32,12 @@ pub enum HistoryRecord {
     Tombstone(AttributeInstanceKey),
 }
 
-/// A tombstone for one attribute instance, named by its expanded IRI.
-///
-/// # Errors
-///
-/// Returns [`AndromedaError::entity_validation`] if either identifier is not an
-/// IRI. The attribute IRI comes from an expanded payload or from JSON-LD term
-/// expansion, so a value that fails names something that cannot be an attribute
-/// at all; a `datasetId` that is not a URI is invalid under clause 5.2.5.
-pub fn tombstone(attr_iri: &str, dataset_id: Option<&str>) -> Result<HistoryRecord, AndromedaError> {
-    let attr = IriBuf::new(attr_iri.to_string()).map_err(|_error| AndromedaError::entity_validation(format!("Invalid attribute IRI '{attr_iri}'")))?;
-    let dataset_id = match dataset_id {
-        Some(raw) => Some(IriBuf::new(raw.to_string()).map_err(|_error| AndromedaError::entity_validation(format!("Invalid datasetId '{raw}'")))?),
-        None => None,
-    };
-    Ok(HistoryRecord::Tombstone(AttributeInstanceKey { attr, dataset_id }))
+/// A tombstone for one validated attribute instance identity.
+pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>) -> HistoryRecord {
+    HistoryRecord::Tombstone(AttributeInstanceKey {
+        attr: attr.clone(),              // clone: the history record owns the attribute name.
+        dataset_id: dataset_id.cloned(), // clone: the history record owns the dataset URI.
+    })
 }
 
 /// The history a full replacement records: its observations, then a tombstone

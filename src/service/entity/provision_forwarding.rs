@@ -7,6 +7,7 @@
 //! and build multi-status responses.
 
 use crate::{error::AndromedaError, http::error::batch::entity_error, service::csource_forwarding::outcome::ForwardedWriteResult};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use serde_json::Value;
 
@@ -39,7 +40,7 @@ impl ForwardingModes {
 ///
 /// Used by create, delete, append_attrs, update_attrs, and delete_attr
 /// handlers when inclusive mode produces mixed local+remote results.
-pub fn build_multi_status_body(entity_id: &str, local_ok: bool, local_error: Option<&AndromedaError>, forwarded: &[ForwardedWriteResult]) -> Value {
+pub fn build_multi_status_body(entity_id: &Uri, local_ok: bool, local_error: Option<&AndromedaError>, forwarded: &[ForwardedWriteResult]) -> Value {
     let mut success = Vec::new();
     let mut errors = Vec::new();
 
@@ -48,7 +49,7 @@ pub fn build_multi_status_body(entity_id: &str, local_ok: bool, local_error: Opt
     } else if let Some(err) = local_error {
         errors.push(serde_json::json!({
             "entityId": entity_id,
-            "error": serde_json::to_value(entity_error(entity_id, err).error).unwrap_or_default()
+            "error": serde_json::to_value(entity_error(entity_id.clone(), err).error).unwrap_or_default()
         }));
     }
 
@@ -105,6 +106,10 @@ mod tests {
             },
             exclusive_attrs: Vec::new(),
         }
+    }
+
+    fn entity_uri(raw: &str) -> Uri {
+        raw.parse().expect("valid entity URI")
     }
 
     #[test]
@@ -177,7 +182,7 @@ mod tests {
     #[test]
     fn build_multi_status_body_local_success_remote_error() {
         let remote = vec![make_result(ForwardingMode::Inclusive, 500)];
-        let body = build_multi_status_body("urn:test:1", true, None, &remote);
+        let body = build_multi_status_body(&entity_uri("urn:test:1"), true, None, &remote);
         let success = body["success"].as_array().expect("success array");
         let errors = body["errors"].as_array().expect("errors array");
         pretty_assertions::assert_eq!(success.len(), 1);
@@ -188,7 +193,7 @@ mod tests {
     fn build_multi_status_body_local_error_remote_success() {
         let err = AndromedaError::entity_not_found("urn:test:1");
         let remote = vec![make_result(ForwardingMode::Inclusive, 204)];
-        let body = build_multi_status_body("urn:test:1", false, Some(&err), &remote);
+        let body = build_multi_status_body(&entity_uri("urn:test:1"), false, Some(&err), &remote);
         let success = body["success"].as_array().expect("success array");
         let errors = body["errors"].as_array().expect("errors array");
         pretty_assertions::assert_eq!(success.len(), 1);
@@ -198,7 +203,7 @@ mod tests {
     #[test]
     fn build_multi_status_body_all_success() {
         let remote = vec![make_result(ForwardingMode::Inclusive, 204)];
-        let body = build_multi_status_body("urn:test:1", true, None, &remote);
+        let body = build_multi_status_body(&entity_uri("urn:test:1"), true, None, &remote);
         let success = body["success"].as_array().expect("success array");
         let errors = body["errors"].as_array().expect("errors array");
         pretty_assertions::assert_eq!(success.len(), 1);

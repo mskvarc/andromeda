@@ -38,7 +38,7 @@ use std::{
 };
 
 /// One chunk's per-entity upsert results.
-type UpsertOutcome = (BatchResult, Vec<String>);
+type UpsertOutcome = (BatchResult, Vec<Uri>);
 
 impl EntityService {
     /// Keep only the last appearance of each identifier, which is the one a
@@ -48,7 +48,7 @@ impl EntityService {
         entities
             .iter()
             .rev()
-            .filter(|entity| seen.insert(entity.id.to_string()))
+            .filter(|entity| seen.insert(&entity.id))
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
@@ -59,7 +59,7 @@ impl EntityService {
         &self,
         entities: &[&Entity],
         context: &ContextSpec,
-        errors: &mut Vec<(String, AndromedaError)>,
+        errors: &mut Vec<(Uri, AndromedaError)>,
         mode: BatchSideEffectMode,
     ) -> Result<UpsertOutcome, AndromedaError> {
         let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
@@ -75,8 +75,7 @@ impl EntityService {
         }
 
         let chunk_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        let lock_ids: Vec<String> = chunk_ids.iter().map(Uri::to_string).collect(); // the id-lock registry is keyed by text
-        let _id_guards = self.acquire_id_locks(&lock_ids).await;
+        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
 
         let snapshots = self.repo.get_snapshot_batch(&chunk_ids).await?;
         let mut payloads: HashMap<Uri, Arc<Value>> = HashMap::with_capacity(prepared.len());
@@ -109,7 +108,7 @@ impl EntityService {
                 break;
             }
             if attempt == WRITE_ATTEMPTS {
-                errors.extend(retry.into_iter().map(|(id, error)| (id.to_string(), error)));
+                errors.extend(retry);
                 break;
             }
 
@@ -139,7 +138,7 @@ impl EntityService {
         &self,
         entities: &[&Entity],
         context: &ContextSpec,
-        errors: &mut Vec<(String, AndromedaError)>,
+        errors: &mut Vec<(Uri, AndromedaError)>,
         mode: BatchSideEffectMode,
     ) -> Result<UpsertOutcome, AndromedaError> {
         let (prepared, mut chunk_errors) = self.prepare_entity_refs(entities, context).await;
@@ -155,11 +154,10 @@ impl EntityService {
         }
 
         let prepared_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        let lock_ids: Vec<String> = prepared_ids.iter().map(Uri::to_string).collect(); // the id-lock registry is keyed by text
         // Hold the per-id locks across the read-modify-write window: concurrent
         // upsert-update calls for the same id must not race the snapshot read,
         // the merge, and the write.
-        let _id_guards = self.acquire_id_locks(&lock_ids).await;
+        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut writes = Vec::with_capacity(prepared.len());
@@ -176,7 +174,7 @@ impl EntityService {
             let mut merged = existing.clone(); // clone: the merge mutates its own copy of the stored payload
             let id = entity.id;
             if let Err(error) = merge_entity(&mut merged, &entity.expanded) {
-                errors.push((id.to_string(), error.into()));
+                errors.push((id, error.into()));
                 continue;
             }
 

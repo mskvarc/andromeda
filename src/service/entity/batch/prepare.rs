@@ -32,8 +32,11 @@ use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, stream};
 use serde_json::Value;
-use std::sync::Arc;
-use tokio::{sync::Semaphore, task::JoinSet};
+use std::{collections::HashMap, sync::Arc};
+use tokio::{
+    sync::Semaphore,
+    task::{Id, JoinSet},
+};
 
 /// Pre-processed entity data ready for the write path.
 ///
@@ -78,7 +81,10 @@ pub(super) struct ClassifiedBatch {
 }
 
 /// `(input_index, prepared_entity_or_error)` tuple emitted by either pool.
-pub(super) type PreparedSlot = Result<PreparedEntity, (String, AndromedaError)>;
+///
+/// The error pair is boxed so a successful slot is not sized for the much
+/// larger broker error variant.
+pub(super) type PreparedSlot = Result<PreparedEntity, Box<(Uri, AndromedaError)>>;
 type IndexedPrepared = (usize, PreparedSlot);
 
 /// Output of one entry processed by the fastpath chunk worker.
@@ -119,6 +125,15 @@ fn process_fast_entry(entry: ClassifiedEntry, engine: &JsonLdEngine, handle: &Ba
     }
 }
 
+/// Attribute one chunk-level preparation failure to every entity the chunk
+/// owned. Clause 5.2.17 requires a real entity URI for each batch error.
+fn append_preparation_failures(outputs: &mut Vec<FastPoolOutput>, metadata: Vec<(usize, Uri)>, detail: &str) {
+    outputs.extend(metadata.into_iter().map(|(idx, id)| FastPoolOutput::Done {
+        idx,
+        result: Box::new(Err(Box::new((id, AndromedaError::internal(detail))))),
+    }));
+}
+
 impl EntityService {
     pub(super) fn batch_execution(&self, len: usize, fast_count: usize, slow_count: usize) -> BatchExecution {
         decide_batch_execution(
@@ -132,7 +147,7 @@ impl EntityService {
     }
 
     fn build_prepared_entity(id: Uri, expanded: Value) -> PreparedSlot {
-        validate_attribute_envelopes(&expanded).map_err(|err| (id.to_string(), err))?;
+        validate_attribute_envelopes(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
         let changed_attributes = extract_attribute_keys(&expanded);
         let types = extract_types(&expanded);
         let scopes = extract_scopes(&expanded);
@@ -168,58 +183,60 @@ impl EntityService {
                 let chunk_size = self.batch_chunk_size.max(1);
                 let semaphore = Arc::new(Semaphore::new(fast_chunks.get()));
                 let mut joinset: JoinSet<Vec<FastPoolOutput>> = JoinSet::new();
+                let mut task_inputs: HashMap<Id, Vec<(usize, Uri)>> = HashMap::new();
+                let mut outputs: Vec<FastPoolOutput> = Vec::new();
                 let mut chunk: Vec<ClassifiedEntry> = Vec::with_capacity(chunk_size);
-                let spawn_chunk = async |owned: Vec<ClassifiedEntry>, joinset: &mut JoinSet<Vec<FastPoolOutput>>| -> Result<(), AndromedaError> {
+                let spawn_chunk = async |owned: Vec<ClassifiedEntry>, joinset: &mut JoinSet<Vec<FastPoolOutput>>| {
+                    // The blocking task owns the entries; a second typed ID list
+                    // is retained solely so a failed task can report every
+                    // affected entity rather than inventing a sentinel.
+                    let metadata: Vec<(usize, Uri)> = owned.iter().map(|entry| (entry.idx, entry.id.clone())).collect();
                     // Semaphore is closed only when the Arc is dropped; the
                     // owning Arc is held by `semaphore` and the inner closure,
                     // so a closed error here is unreachable. Treat it as an
                     // internal error to keep the function panic-free.
-                    let permit = Arc::clone(&semaphore)
-                        .acquire_owned()
-                        .await
-                        .map_err(|err| AndromedaError::internal(format!("fastpath semaphore closed: {err}")))?;
+                    let permit = match Arc::clone(&semaphore).acquire_owned().await {
+                        Ok(permit) => permit,
+                        Err(error) => return Err((metadata, format!("fastpath semaphore closed: {error}"))),
+                    };
                     let engine = self.engine.clone(); // clone: Arc-shared engine internals
                     let handle_local = handle.clone(); // clone: Arc-shared resolved context
-                    joinset.spawn_blocking(move || {
+                    let abort_handle = joinset.spawn_blocking(move || {
                         let _permit = permit;
                         owned.into_iter().map(|entry| process_fast_entry(entry, &engine, &handle_local)).collect()
                     });
-                    Ok(())
+                    Ok((abort_handle.id(), metadata))
                 };
-                let mut spawn_errors: Vec<(String, AndromedaError)> = Vec::new();
                 for entry in fast {
                     chunk.push(entry);
                     if chunk.len() == chunk_size {
                         let owned = std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
-                        if let Err(err) = spawn_chunk(owned, &mut joinset).await {
-                            spawn_errors.push(("unknown".to_string(), err));
+                        match spawn_chunk(owned, &mut joinset).await {
+                            Ok((task_id, metadata)) => {
+                                task_inputs.insert(task_id, metadata);
+                            }
+                            Err((metadata, detail)) => append_preparation_failures(&mut outputs, metadata, &detail),
                         }
                     }
                 }
-                if !chunk.is_empty()
-                    && let Err(err) = spawn_chunk(chunk, &mut joinset).await
-                {
-                    spawn_errors.push(("unknown".to_string(), err));
+                if !chunk.is_empty() {
+                    match spawn_chunk(chunk, &mut joinset).await {
+                        Ok((task_id, metadata)) => {
+                            task_inputs.insert(task_id, metadata);
+                        }
+                        Err((metadata, detail)) => append_preparation_failures(&mut outputs, metadata, &detail),
+                    }
                 }
-
-                let mut outputs: Vec<FastPoolOutput> = Vec::new();
-                for (id, error) in spawn_errors {
-                    outputs.push(FastPoolOutput::Done {
-                        idx: usize::MAX,
-                        result: Box::new(Err((id, error))),
-                    });
-                }
-                while let Some(result) = joinset.join_next().await {
+                while let Some(result) = joinset.join_next_with_id().await {
                     match result {
-                        Ok(chunk_outputs) => outputs.extend(chunk_outputs),
+                        Ok((task_id, chunk_outputs)) => {
+                            task_inputs.remove(&task_id);
+                            outputs.extend(chunk_outputs);
+                        }
                         Err(error) => {
-                            outputs.push(FastPoolOutput::Done {
-                                idx: usize::MAX,
-                                result: Box::new(Err((
-                                    "unknown".to_string(),
-                                    AndromedaError::internal(format!("Batch preparation task failed: {error}")),
-                                ))),
-                            });
+                            if let Some(metadata) = task_inputs.remove(&error.id()) {
+                                append_preparation_failures(&mut outputs, metadata, &format!("Batch preparation task failed: {error}"));
+                            }
                         }
                     }
                 }
@@ -263,7 +280,7 @@ impl EntityService {
             for ((idx, id, _), expanded) in hit_pending.into_iter().zip(bulk) {
                 let result = match expanded {
                     Ok(v) => Self::build_prepared_entity(id, v),
-                    Err(err) => Err((id.to_string(), err.into())),
+                    Err(error) => Err(Box::new((id, error.into()))),
                 };
                 results.push((idx, result));
             }
@@ -279,7 +296,7 @@ impl EntityService {
                 .map(|(idx, id, value)| async move {
                     let expanded = match self.engine.expand(value, handle.spec()).await {
                         Ok(v) => v,
-                        Err(err) => return (idx, Err((id.to_string(), err.into()))),
+                        Err(error) => return (idx, Err(Box::new((id, error.into())))),
                     };
                     (idx, Self::build_prepared_entity(id, expanded))
                 })
@@ -292,19 +309,19 @@ impl EntityService {
         results
     }
 
-    pub(super) async fn prepare_entity_refs(&self, entities: &[&Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(String, AndromedaError)>) {
+    pub(super) async fn prepare_entity_refs(&self, entities: &[&Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(Uri, AndromedaError)>) {
         let len = entities.len();
         let handle = self.engine.batch_context_handle(context).await;
 
         // Serialize all entities to JSON upfront so per-entity serialization
         // failures are reported and the rest of the batch can proceed.
         let mut entries: Vec<ClassifiedEntry> = Vec::with_capacity(len);
-        let mut errors: Vec<(String, AndromedaError)> = Vec::new();
+        let mut errors: Vec<(Uri, AndromedaError)> = Vec::new();
         for (idx, entity) in entities.iter().enumerate() {
             let id = entity.id.clone(); // clone: owned identifier for the classified entry
             match serde_json::to_value(*entity) {
                 Ok(value) => entries.push(ClassifiedEntry { idx, id, value }),
-                Err(err) => errors.push((id.to_string(), AndromedaError::entity_validation(format!("Invalid entity payload: {}", err)))),
+                Err(error) => errors.push((id, AndromedaError::entity_validation(format!("Invalid entity payload: {error}")))),
             }
         }
 
@@ -324,7 +341,7 @@ impl EntityService {
                         // Pool-level error (e.g. JoinError) — record it
                         // without an index slot.
                         if let Err(err) = *result {
-                            errors.push(err);
+                            errors.push(*err);
                         }
                     }
                 }
@@ -342,14 +359,14 @@ impl EntityService {
         for slot in indexed_results {
             match slot {
                 Some(Ok(entity)) => prepared.push(entity),
-                Some(Err(error)) => errors.push(error),
+                Some(Err(error)) => errors.push(*error),
                 None => {}
             }
         }
         (prepared, errors)
     }
 
-    pub(super) async fn prepare_entities(&self, entities: &[Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(String, AndromedaError)>) {
+    pub(super) async fn prepare_entities(&self, entities: &[Entity], context: &ContextSpec) -> (Vec<PreparedEntity>, Vec<(Uri, AndromedaError)>) {
         let refs: Vec<&Entity> = entities.iter().collect();
         self.prepare_entity_refs(&refs, context).await
     }

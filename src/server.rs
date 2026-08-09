@@ -3,7 +3,10 @@ use crate::{
         router::{BrokerHttp, create_router},
         tenant::echo_tenant_header_middleware,
     },
-    config::{CorsMode, HttpFeatureMode, RuntimeConfig},
+    config::{
+        http::{CorsMode, HttpFeatureMode},
+        runtime::RuntimeConfig,
+    },
     error::AndromedaError,
 };
 use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
@@ -121,7 +124,12 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
     axum::serve(listener, ServiceExt::<axum::extract::Request>::into_make_service(app))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    info!(event = "http_traffic_drained", "HTTP listener stopped after draining accepted requests");
     tenants.shutdown_all().await;
+    info!(
+        event = "broker_resources_closed",
+        "Tenant workers, transports, context flushers, and pools are closed"
+    );
 
     Ok(())
 }
@@ -139,11 +147,15 @@ async fn shutdown_signal() {
                     result = tokio::signal::ctrl_c() => {
                         if let Err(error) = result {
                             tracing::error!(error = %error, "Ctrl-C signal listener failed");
+                        } else {
+                            tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received");
                         }
                     }
                     received = terminate.recv() => {
                         if received.is_none() {
                             tracing::error!("SIGTERM signal stream ended before receiving a signal");
+                        } else {
+                            tracing::info!(signal = "sigterm", event = "shutdown_signal_received");
                         }
                     }
                 }
@@ -152,6 +164,8 @@ async fn shutdown_signal() {
                 tracing::error!(error = %error, "SIGTERM signal listener failed; waiting for Ctrl-C");
                 if let Err(error) = tokio::signal::ctrl_c().await {
                     tracing::error!(error = %error, "Ctrl-C signal listener failed");
+                } else {
+                    tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received");
                 }
             }
         }
@@ -160,5 +174,7 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     if let Err(error) = tokio::signal::ctrl_c().await {
         tracing::error!(error = %error, "Ctrl-C signal listener failed");
+    } else {
+        tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received");
     }
 }

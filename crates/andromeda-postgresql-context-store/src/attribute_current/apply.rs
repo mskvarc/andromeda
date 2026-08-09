@@ -1,6 +1,7 @@
 //! Applying a drained batch, isolating the rows that cannot be applied.
 
 use crate::{error::ContextStoreError, repair_attribute_current::repair_attribute_current};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
 use chrono::{DateTime, Utc};
@@ -105,7 +106,7 @@ pub async fn apply_attribute_current_batch(conn: &mut PgConnection, entries: &[H
         value_geos.push(geometry_bytes(entry.value_geo.as_ref())?);
         value_objects.push(entry.value_object.as_ref());
         value_datetimes.push(entry.value_datetime);
-        value_uris.push(entry.value_uri.as_deref());
+        value_uris.push(entry.value_uri.as_ref().map(Uri::as_str));
         recorded_ats.push(entry.recorded_at);
     }
 

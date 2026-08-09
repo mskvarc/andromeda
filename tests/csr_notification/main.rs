@@ -1,5 +1,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::{db::TRUNCATE_ALL, prelude::*};
+use andromeda_test_common::{
+    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
+    db::TRUNCATE_ALL,
+};
 use axum::{Router, body::Bytes, http::StatusCode as AxumStatusCode, routing::post};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, SecondsFormat, Utc};
 use reqwest::{Client, StatusCode};

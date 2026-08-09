@@ -7,6 +7,7 @@
 //! store may depend on the other, so the struct lives below both.
 
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{instance_id::InstanceId, uri::Uri};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -30,9 +31,9 @@ pub struct HistoryBatchEntry {
     /// DateTime value column.
     pub value_datetime: Option<DateTime<Utc>>,
     /// URI value column (for Relationships).
-    pub value_uri: Option<String>,
+    pub value_uri: Option<Uri>,
     /// Unique instance identifier.
-    pub instance_id: String,
+    pub instance_id: InstanceId,
     /// Application-level observation timestamp.
     pub observed_at: Option<DateTime<Utc>>,
     /// Additional metadata (sub-attributes, unitCode, etc.).

@@ -34,6 +34,25 @@ pub async fn validate_jsonld_context_value(engine: &JsonLdEngine, value: &Value)
     Ok(())
 }
 
+/// Check that every context selected for one request is valid and reachable.
+///
+/// This validates body and `Link` contexts together with the configured core
+/// context policy, preserving context-loading failures as [`JsonLdError`]
+/// values before a downstream term-language adapter can erase their kind.
+///
+/// # Errors
+///
+/// Returns the typed JSON-LD processing or context-loading failure produced
+/// while resolving the effective request context.
+pub async fn validate_context_spec(engine: &JsonLdEngine, context: &ContextSpec) -> Result<(), JsonLdError> {
+    let probe = json!({
+        "id": "urn:ngsi-ld:_:context-validate",
+        "type": "Subscription"
+    });
+    engine.expand(probe, context).await?;
+    Ok(())
+}
+
 /// Read a `jsonldContext` member as the context value it names.
 fn as_context_value(value: &Value) -> Result<Value, JsonLdError> {
     match value {
@@ -59,7 +78,13 @@ fn not_a_context() -> JsonLdError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_validation::validate_jsonld_context_value, engine::processor::JsonLdEngine, error::JsonLdError};
+    use crate::{
+        context_spec::ContextSpec,
+        context_validation::{validate_context_spec, validate_jsonld_context_value},
+        engine::processor::JsonLdEngine,
+        error::JsonLdError,
+    };
+    use iri_rs::IriRefBuf;
     use serde_json::json;
 
     /// An engine that resolves only what is embedded, never the network.
@@ -107,5 +132,23 @@ mod tests {
             .expect_err("not parseable");
 
         assert!(matches!(error, JsonLdError::InvalidDocument(_)), "got {error}");
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_link_context_remains_a_typed_loading_failure() {
+        let context = ContextSpec::from_links(vec![
+            IriRefBuf::new("https://example.com/absent.jsonld".to_string()).expect("a valid IRI reference"),
+        ]);
+        let error = validate_context_spec(&offline_engine(), &context).await.expect_err("nothing resolves offline");
+
+        assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_body_context_remains_a_typed_loading_failure() {
+        let context = ContextSpec::none().with_body_context(Some(json!("https://example.com/absent.jsonld")));
+        let error = validate_context_spec(&offline_engine(), &context).await.expect_err("nothing resolves offline");
+
+        assert!(error.is_context_not_available(), "expected a loading failure, got {error}");
     }
 }

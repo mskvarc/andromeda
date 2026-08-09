@@ -4,13 +4,13 @@
 //! Uses the standard Rust test harness with `#[tokio::test]` and raw `reqwest`.
 //! Requires a running Andromeda instance on `127.0.0.1:1056` with a clean database.
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::config::{BASE_URL, CORE_CONTEXT};
 use reqwest::Client;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const BASE: &str = BASE_URL;
-const CTX: &str = CORE_CONTEXT;
+const BASE: &iri_rs::Iri<&str> = BASE_URL;
+const CTX: &iri_rs::Iri<&str> = CORE_CONTEXT;
 
 fn uid(prefix: &str) -> String {
     format!("urn:ngsi-ld:AggTest:{}:{}", prefix, Uuid::new_v4())

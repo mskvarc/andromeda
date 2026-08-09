@@ -1,7 +1,7 @@
 //! Shared infrastructure for Andromeda integration tests.
 //!
-//! Every `tests/<suite>/` binary depends on this crate and imports the
-//! full kit via `use andromeda_test_common::prelude::*;`.
+//! Every `tests/<suite>/` binary depends on this crate and imports each test
+//! capability from the module that defines it.
 //!
 //! Goals:
 //! - single source of truth for `BASE_URL`, `DATABASE_URL`, canonical contexts,
@@ -25,7 +25,6 @@ pub mod fixture;
 pub mod header;
 pub mod ids;
 pub mod mock;
-pub mod prelude;
 pub mod scope;
 
 #[cfg(test)]

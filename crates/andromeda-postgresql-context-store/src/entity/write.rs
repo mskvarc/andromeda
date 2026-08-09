@@ -13,6 +13,7 @@ use crate::{
     entity::{deleted::DeletedEntity, mapper::stored_uri, params::PreparedEntityColumns, repo::EntityRepository},
     error::ContextStoreError,
 };
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use sqlx::{Postgres, Row, Transaction};
 
@@ -87,13 +88,14 @@ RETURNING entities.id, entities.payload, entities.created_at, entities.modified_
 impl EntityRepository {
     /// Insert every entity in `entities` that does not already exist, returning
     /// the identifiers actually inserted.
-    pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<String>, ContextStoreError> {
+    pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<Uri>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
 
+        let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
         let rows: Vec<(String,)> = sqlx::query_as(ENTITY_INSERT_SQL)
-            .bind(&entities.ids)
+            .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
             .bind(&entities.payload_json)
@@ -104,7 +106,7 @@ impl EntityRepository {
             .fetch_all(&mut **tx)
             .await?;
 
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        rows.into_iter().map(|(id,)| stored_uri(id)).collect()
     }
 
     /// Overwrite every entity in `entities` whose expectation still holds,
@@ -116,7 +118,7 @@ impl EntityRepository {
         tx: &mut Transaction<'_, Postgres>,
         entities: &PreparedEntityColumns,
         expected_modified_at: &[Option<DateTime<Utc>>],
-    ) -> Result<Vec<String>, ContextStoreError> {
+    ) -> Result<Vec<Uri>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -128,8 +130,9 @@ impl EntityRepository {
             )));
         }
 
+        let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
         let rows: Vec<(String,)> = sqlx::query_as(ENTITY_UPDATE_SQL)
-            .bind(&entities.ids)
+            .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
             .bind(&entities.payload_json)
@@ -141,7 +144,7 @@ impl EntityRepository {
             .fetch_all(&mut **tx)
             .await?;
 
-        Ok(rows.into_iter().map(|(id,)| id).collect())
+        rows.into_iter().map(|(id,)| stored_uri(id)).collect()
     }
 
     /// Delete every entity in `ids` whose expectation still holds, returning
@@ -154,7 +157,7 @@ impl EntityRepository {
     /// deletes unconditionally.
     pub async fn delete_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
-        ids: &[String],
+        ids: &[Uri],
         expected_modified_at: &[Option<DateTime<Utc>>],
     ) -> Result<Vec<DeletedEntity>, ContextStoreError> {
         if ids.is_empty() {
@@ -168,6 +171,7 @@ impl EntityRepository {
             )));
         }
 
+        let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>();
         let rows = sqlx::query(ENTITY_DELETE_SQL).bind(ids).bind(expected_modified_at).fetch_all(&mut **tx).await?;
 
         rows.into_iter()

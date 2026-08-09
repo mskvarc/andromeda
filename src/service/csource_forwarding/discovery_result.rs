@@ -2,7 +2,10 @@
 
 use crate::service::csource_forwarding::outcome::ForwardedDiscoveryResult;
 use andromeda_ngsi_ld_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use indexmap::IndexMap;
 use serde_json::Value;
+use std::collections::HashSet;
 
 pub fn collect_discovery_warnings(results: &[ForwardedDiscoveryResult]) -> Vec<NgsiLdWarning> {
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
@@ -33,13 +36,13 @@ fn merge_simple_types(mut local: Value, remote_bodies: &[&Value]) -> Value {
         return local;
     };
 
-    let mut seen: std::collections::HashSet<String> = local_list.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+    let mut seen: HashSet<EntityTypeName> = local_list.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect();
 
     for body in remote_bodies {
         if let Some(arr) = body.get("typeList").and_then(|v| v.as_array()) {
             for item in arr {
-                if let Some(s) = item.as_str()
-                    && seen.insert(s.to_string())
+                if let Some(entity_type) = item.as_str().and_then(|raw| raw.parse().ok())
+                    && seen.insert(entity_type)
                 {
                     local_list.push(item.clone()); // clone: adding remote type IRI to merged list
                 }
@@ -48,8 +51,8 @@ fn merge_simple_types(mut local: Value, remote_bodies: &[&Value]) -> Value {
         // Also handle bare arrays (some brokers may return array directly)
         if let Some(arr) = body.as_array() {
             for item in arr {
-                if let Some(s) = item.as_str()
-                    && seen.insert(s.to_string())
+                if let Some(entity_type) = item.as_str().and_then(|raw| raw.parse().ok())
+                    && seen.insert(entity_type)
                 {
                     local_list.push(item.clone()); // clone: adding remote type IRI from bare array
                 }
@@ -62,13 +65,13 @@ fn merge_simple_types(mut local: Value, remote_bodies: &[&Value]) -> Value {
 
 /// Merge detailed type lists by type name, unioning attribute names per type.
 fn merge_detailed_types(local: Value, remote_bodies: &[&Value]) -> Value {
-    let mut type_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+    let mut type_map: IndexMap<EntityTypeName, Value> = IndexMap::new();
 
     // Collect local types
     if let Some(arr) = local.as_array() {
         for entry in arr {
-            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
-                type_map.insert(id.to_string(), entry.clone()); // clone: local type entry for merge map
+            if let Some(id) = entry.get("id").and_then(Value::as_str).and_then(|raw| raw.parse().ok()) {
+                type_map.insert(id, entry.clone()); // clone: local type entry for merge map
             }
         }
     }
@@ -81,13 +84,13 @@ fn merge_detailed_types(local: Value, remote_bodies: &[&Value]) -> Value {
             continue;
         };
         for entry in entries {
-            let Some(id) = entry.get("id").and_then(|v| v.as_str()) else {
+            let Some(id) = entry.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<EntityTypeName>().ok()) else {
                 continue;
             };
-            if let Some(existing) = type_map.get_mut(id) {
+            if let Some(existing) = type_map.get_mut(&id) {
                 merge_type_attribute_names(existing, entry);
             } else {
-                type_map.insert(id.to_string(), entry.clone()); // clone: remote type entry not present locally
+                type_map.insert(id, entry.clone()); // clone: remote type entry not present locally
             }
         }
     }
@@ -100,10 +103,10 @@ fn merge_type_attribute_names(local: &mut Value, remote: &Value) {
     if let Some(local_attrs) = local.get_mut("attributeNames").and_then(|v| v.as_array_mut())
         && let Some(remote_attrs) = remote.get("attributeNames").and_then(|v| v.as_array())
     {
-        let existing: std::collections::HashSet<String> = local_attrs.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let mut existing: HashSet<AttributeName> = local_attrs.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect();
         for attr in remote_attrs {
-            if let Some(s) = attr.as_str()
-                && !existing.contains(s)
+            if let Some(name) = attr.as_str().and_then(|raw| raw.parse().ok())
+                && existing.insert(name)
             {
                 local_attrs.push(attr.clone()); // clone: adding remote attribute name to merged set
             }
@@ -151,13 +154,13 @@ fn merge_simple_attributes(mut local: Value, remote_bodies: &[&Value]) -> Value 
         return local;
     };
 
-    let mut seen: std::collections::HashSet<String> = local_list.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+    let mut seen: HashSet<AttributeName> = local_list.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect();
 
     for body in remote_bodies {
         if let Some(arr) = body.get("attributeList").and_then(|v| v.as_array()) {
             for item in arr {
-                if let Some(s) = item.as_str()
-                    && seen.insert(s.to_string())
+                if let Some(name) = item.as_str().and_then(|raw| raw.parse().ok())
+                    && seen.insert(name)
                 {
                     local_list.push(item.clone()); // clone: adding remote attribute IRI to merged list
                 }
@@ -165,8 +168,8 @@ fn merge_simple_attributes(mut local: Value, remote_bodies: &[&Value]) -> Value 
         }
         if let Some(arr) = body.as_array() {
             for item in arr {
-                if let Some(s) = item.as_str()
-                    && seen.insert(s.to_string())
+                if let Some(name) = item.as_str().and_then(|raw| raw.parse().ok())
+                    && seen.insert(name)
                 {
                     local_list.push(item.clone()); // clone: adding remote attribute IRI from bare array
                 }
@@ -179,12 +182,12 @@ fn merge_simple_attributes(mut local: Value, remote_bodies: &[&Value]) -> Value 
 
 /// Merge detailed attribute lists by attribute name, unioning type names per attribute.
 fn merge_detailed_attributes(local: Value, remote_bodies: &[&Value]) -> Value {
-    let mut attr_map: indexmap::IndexMap<String, Value> = indexmap::IndexMap::new();
+    let mut attr_map: IndexMap<AttributeName, Value> = IndexMap::new();
 
     if let Some(arr) = local.as_array() {
         for entry in arr {
-            if let Some(id) = entry.get("id").and_then(|v| v.as_str()) {
-                attr_map.insert(id.to_string(), entry.clone()); // clone: local attribute entry for merge map
+            if let Some(id) = entry.get("id").and_then(Value::as_str).and_then(|raw| raw.parse().ok()) {
+                attr_map.insert(id, entry.clone()); // clone: local attribute entry for merge map
             }
         }
     }
@@ -196,13 +199,13 @@ fn merge_detailed_attributes(local: Value, remote_bodies: &[&Value]) -> Value {
             continue;
         };
         for entry in entries {
-            let Some(id) = entry.get("id").and_then(|v| v.as_str()) else {
+            let Some(id) = entry.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<AttributeName>().ok()) else {
                 continue;
             };
-            if let Some(existing) = attr_map.get_mut(id) {
+            if let Some(existing) = attr_map.get_mut(&id) {
                 merge_attribute_type_names(existing, entry);
             } else {
-                attr_map.insert(id.to_string(), entry.clone()); // clone: remote attribute entry not present locally
+                attr_map.insert(id, entry.clone()); // clone: remote attribute entry not present locally
             }
         }
     }
@@ -215,10 +218,10 @@ fn merge_attribute_type_names(local: &mut Value, remote: &Value) {
     if let Some(local_types) = local.get_mut("typeNames").and_then(|v| v.as_array_mut())
         && let Some(remote_types) = remote.get("typeNames").and_then(|v| v.as_array())
     {
-        let existing: std::collections::HashSet<String> = local_types.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let mut existing: HashSet<EntityTypeName> = local_types.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect();
         for t in remote_types {
-            if let Some(s) = t.as_str()
-                && !existing.contains(s)
+            if let Some(entity_type) = t.as_str().and_then(|raw| raw.parse().ok())
+                && existing.insert(entity_type)
             {
                 local_types.push(t.clone()); // clone: adding remote type name to merged set
             }

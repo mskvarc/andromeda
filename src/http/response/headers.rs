@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_http_headers::{
     ngsild_snapshot::NgsiLdSnapshot,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::{EntityMapId, SnapshotId};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::context::ContextLocation;
 use axum::http::{HeaderMap, HeaderValue};
 use headers::HeaderMapExt;
@@ -17,9 +17,9 @@ pub struct CommonHeadersOptions<'a> {
     /// `Location` header value for created resources.
     pub location: Option<&'a str>,
     /// NGSILD-EntityMap header URI for entity map scoping (clause 5.7.3.4).
-    pub entity_map_uri: Option<&'a EntityMapId>,
+    pub entity_map_uri: Option<&'a Uri>,
     /// NGSILD-Snapshot header URN for snapshot-scoped responses (clause 6.3.22).
-    pub snapshot_uri: Option<&'a SnapshotId>,
+    pub snapshot_uri: Option<&'a Uri>,
     /// NGSILD-Warning header values from distributed forwarding (clause 6.3.17).
     pub warnings: &'a [NgsiLdWarning],
     /// Where the JSON-LD `@context` should appear: in the `Link` header or in the body.

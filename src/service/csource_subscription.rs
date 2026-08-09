@@ -15,6 +15,7 @@ use serde_json::Value;
 use sqlx::postgres::PgPool;
 use tokio::sync::broadcast;
 use tracing::debug;
+use url::Url;
 
 /// CSR-subscription-specific behaviour.
 pub struct CsrSubscriptionVariant {
@@ -25,7 +26,7 @@ pub struct CsrSubscriptionVariant {
 impl SubscriptionVariant for CsrSubscriptionVariant {
     type Change = CsourceSubscriptionChange;
 
-    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, _base_url: Option<&str>) -> Result<(), AndromedaError> {
+    async fn expand_terms(&self, payload: &mut Value, context: &ContextSpec, _base_url: Option<&Url>) -> Result<(), AndromedaError> {
         // Store body @context as jsonldContext (simplified -- no context hosting).
         // The body context comes from ContextSpec (set by the JsonLd extractor), not
         // from the payload directly, since the extractor strips @context before

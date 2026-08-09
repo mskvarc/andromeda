@@ -28,7 +28,7 @@ pub(super) fn columns_for(writes: &[IndexedWrite<'_>]) -> Result<PreparedEntityC
             .record()
             .ok_or_else(|| AndromedaError::internal(format!("atomic write for {} carries no entity record", write.entity_id)))?;
 
-        columns.ids.push(write.entity_id.to_string());
+        columns.ids.push(write.entity_id.as_ref().clone()); // clone: the SQL column set owns identifiers borrowed from the writes.
         columns.types_json.push(Value::Array(
             record.types.iter().map(|entity_type| Value::String(entity_type.to_string())).collect(),
         ));
@@ -59,14 +59,14 @@ mod tests {
         precondition::Precondition,
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
-    use andromeda_ngsi_ld_lexicon::scope::grammar::ScopeBuf;
+    use andromeda_ngsi_ld_lexicon::{scope::grammar::ScopeBuf, uri::Uri};
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;
 
     fn scoped_write(id: &str, scopes: Vec<&str>, location: Option<Geometry>) -> AtomicWrite {
         AtomicWrite::builder()
-            .entity_id(Arc::from(id))
+            .entity_id(Arc::new(id.parse::<Uri>().expect("valid entity URI")))
             .entity(EntityMutation::Update(EntityRecord {
                 payload: Arc::new(json!([{"@id": id, "https://example.org/speed": [{"@value": 1}]}])),
                 types: Vec::new(),
@@ -151,12 +151,12 @@ mod tests {
         let now = Utc::now();
         let writes = [
             AtomicWrite::builder()
-                .entity_id(Arc::from("urn:ngsi-ld:A"))
+                .entity_id(Arc::new("urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI")))
                 .entity(EntityMutation::Delete)
                 .precondition(Precondition::UnchangedSince(now))
                 .build(),
             AtomicWrite::builder()
-                .entity_id(Arc::from("urn:ngsi-ld:B"))
+                .entity_id(Arc::new("urn:ngsi-ld:B".parse::<Uri>().expect("valid entity URI")))
                 .entity(EntityMutation::Delete)
                 .precondition(Precondition::MustExist)
                 .build(),

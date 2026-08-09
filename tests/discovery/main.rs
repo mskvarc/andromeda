@@ -18,14 +18,17 @@ mod entity_type_details;
 mod entity_type_info;
 mod entity_types;
 
-use andromeda_test_common::prelude::*;
+use andromeda_test_common::{
+    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL},
+    error,
+};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-const COMPOUND_CONTEXT_URL: &str = COMPOUND_CONTEXT;
-const RESOURCE_NOT_FOUND_TYPE: &str = error::RESOURCE_NOT_FOUND;
+const COMPOUND_CONTEXT_URL: &iri_rs::Iri<&str> = COMPOUND_CONTEXT;
+const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
 
 fn client() -> Client {
     Client::new()
@@ -180,7 +183,7 @@ fn expected_entity_type_details_expanded() -> Value {
             "typeName": "https://ngsi-ld-test-suite/context#Vehicle",
             "attributeNames": [
                 "https://ngsi-ld-test-suite/context#brandName",
-                "isParked"
+                "https://ngsi-ld-test-suite/context#isParked"
             ]
         }
     ])

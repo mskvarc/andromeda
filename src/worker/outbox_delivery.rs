@@ -4,10 +4,7 @@
 //! notifications via the transport layer, and marks entries as delivered
 //! or failed. Periodically cleans up old delivered entries.
 
-use crate::{
-    config::OutboxConfig,
-    service::outbox::{entry::WorkerInstanceId, store::OutboxStore},
-};
+use crate::{config::outbox::OutboxConfig, service::outbox::store::OutboxStore, worker_instance_id::WorkerInstanceId};
 use chrono::{Duration, Utc};
 use std::{sync::Arc, time::Duration as StdDuration};
 use tracing::{debug, error, info};
@@ -35,7 +32,7 @@ pub struct OutboxDeliveryWorker {
 impl OutboxDeliveryWorker {
     /// Create a new outbox delivery worker from the given configuration.
     pub fn new(repo: Arc<dyn OutboxStore>, config: &OutboxConfig) -> OutboxDeliveryWorker {
-        let worker_id = WorkerInstanceId::from(format!("outbox-worker-{}", uuid::Uuid::new_v4()));
+        let worker_id = WorkerInstanceId::outbox(uuid::Uuid::new_v4());
         let cleanup_secs = i64::try_from(config.cleanup_after_secs).unwrap_or(i64::MAX);
         let base_backoff = i64::try_from(config.base_backoff_secs).unwrap_or(5);
         OutboxDeliveryWorker {
@@ -99,10 +96,6 @@ impl OutboxDeliveryWorker {
                 has_previous = entry.previous_snapshot.is_some(),
                 changed_attrs = ?entry.changed_attrs,
                 created_at = %entry.created_at,
-                claimed_at = ?entry.claimed_at,
-                claimed_by = ?entry.claimed_by,
-                delivered_at = ?entry.delivered_at,
-                delivery_error = ?entry.delivery_error,
                 next_attempt_at = %entry.next_attempt_at,
                 "Processing outbox entry"
             );

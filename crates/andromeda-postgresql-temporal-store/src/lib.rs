@@ -14,20 +14,24 @@
 
 #![deny(missing_docs)]
 
+mod attribute_history;
 /// Reading the parts of one expanded NGSI-LD attribute instance.
 pub mod attribute_instance;
 /// The value an attribute instance carries, and the column it lands in.
 pub mod attribute_value;
+mod batch_write;
 /// Dispatch mode for bulk history writes.
 pub mod bulk_write_mode;
 /// Binary COPY path for bulk attribute-history inserts.
 pub(crate) mod copy;
+mod entity_history;
 /// One row of the temporal attribute catalogue.
 pub mod entry;
 /// Error types for the temporal store crate.
 pub mod error;
 /// Decoding `PgRow` into the backend-neutral temporal row types.
 pub(crate) mod history_row_decode;
+mod instance_mutation;
 /// Row-to-domain conversions for temporal data.
 pub mod mapper;
 /// [`TemporalMutator`](store::TemporalMutator) implementation on [`TemporalRepository`](repo::TemporalRepository).
@@ -36,6 +40,8 @@ pub mod mutator;
 pub mod observation;
 /// Repository input parameter types for temporal data.
 pub mod params;
+/// Projection repair used by the asynchronous materializer and instance mutations.
+pub mod projection_repair;
 /// [`TemporalHistoryReader`](store::TemporalHistoryReader) implementation on [`TemporalRepository`](repo::TemporalRepository).
 pub mod reader;
 /// Writing attribute history whenever entities are created or modified.

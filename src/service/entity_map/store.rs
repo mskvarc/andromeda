@@ -4,7 +4,7 @@
 //! nothing in the contract commits an implementation to durability -- an
 //! in-process map and a shared cache both satisfy it.
 
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::EntityMapId;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -18,21 +18,21 @@ pub trait EntityMapStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Retrieve an entity map, treating an expired one as absent.
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 EntityMapId) -> BoxFuture<'async_trait, Option<EntityMap>>
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Option<EntityMap>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Move an entity map's expiry. Returns `false` if it is absent or already expired.
-    fn update<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 EntityMapId, expires_at: DateTime<Utc>) -> BoxFuture<'async_trait, bool>
+    fn update<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri, expires_at: DateTime<Utc>) -> BoxFuture<'async_trait, bool>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Remove an entity map. Returns whether it existed.
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 EntityMapId) -> BoxFuture<'async_trait, bool>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, bool>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

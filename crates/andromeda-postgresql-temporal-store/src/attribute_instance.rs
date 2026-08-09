@@ -4,9 +4,10 @@
 //! `instanceId` in dedicated columns and everything else verbatim as metadata.
 //! This module owns which key is which.
 
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use crate::error::TemporalStoreError;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use iri_rs::IriBuf;
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -38,15 +39,21 @@ pub fn detect_attribute_type(instance: &Value) -> AttributeType {
     AttributeType::Property
 }
 
-/// The instance's `observedAt` in its lexical RFC 3339 form, if it declares one.
-pub fn extract_observed_at(instance: &Value) -> Option<String> {
-    instance
+/// The instance's validated `observedAt`, if it declares one.
+pub fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, TemporalStoreError> {
+    let raw = instance
         .get(expanded_properties::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
         .and_then(|v| v.as_str())
-        .map(String::from)
+        .map(str::to_owned);
+    raw.map(|value| {
+        DateTime::parse_from_rfc3339(&value)
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+            .map_err(|error| TemporalStoreError::Validation(format!("Invalid observedAt '{value}': {error}")))
+    })
+    .transpose()
 }
 
 /// Extract an attribute instance's `datasetId` (NGSI-LD 5.2.5).
@@ -55,14 +62,19 @@ pub fn extract_observed_at(instance: &Value) -> Option<String> {
 /// URI. Parsing it as a URN discarded every plain-URI dataset identifier,
 /// which silently merged distinct instances onto the default one and produced
 /// a wrong `attribute_current` grain.
-pub fn extract_dataset_id(instance: &Value) -> Option<IriBuf> {
-    instance
+pub fn extract_dataset_id(instance: &Value) -> Result<Option<Uri>, TemporalStoreError> {
+    let raw = instance
         .get(expanded_properties::DATASET_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
-        .and_then(|v| v.as_str())
-        .and_then(|value| IriBuf::new(value.to_owned()).ok())
+        .and_then(|v| v.as_str());
+    raw.map(|value| {
+        value
+            .parse::<Uri>()
+            .map_err(|error| TemporalStoreError::Validation(format!("Invalid datasetId '{value}': {error}")))
+    })
+    .transpose()
 }
 
 /// The instance's `instanceId`, and whether the client supplied it.
@@ -70,24 +82,34 @@ pub fn extract_dataset_id(instance: &Value) -> Option<IriBuf> {
 /// Clause 4.5.7 makes `instanceId` the identity of a temporal instance, so a
 /// client-supplied one must survive; a generated one is the broker's own and
 /// may be replaced on a rewrite.
-pub fn extract_or_generate_instance_id(instance: &Value) -> (String, bool) {
-    instance
+pub fn extract_or_generate_instance_id(instance: &Value) -> Result<(InstanceId, bool), TemporalStoreError> {
+    let supplied = instance
         .get(expanded_properties::INSTANCE_ID.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@id"))
-        .and_then(|v| v.as_str())
-        .map_or_else(|| (generated_instance_id(), false), |s| (s.to_owned(), true))
+        .and_then(|v| v.as_str());
+    match supplied {
+        Some(raw) => raw
+            .parse::<InstanceId>()
+            .map(|id| (id, true))
+            .map_err(|error| TemporalStoreError::Validation(format!("Invalid instanceId '{raw}': {error}"))),
+        None => generated_instance_id().map(|id| (id, false)),
+    }
 }
 
 /// Mint an `instanceId` for an instance that arrived without one.
-pub fn generated_instance_id() -> String {
-    format!("urn:ngsi-ld:attribute:instance:{}", Uuid::new_v4())
+pub fn generated_instance_id() -> Result<InstanceId, TemporalStoreError> {
+    let raw = format!("urn:ngsi-ld:attribute:instance:{}", Uuid::new_v4());
+    raw.parse::<InstanceId>()
+        .map_err(|error| TemporalStoreError::Validation(format!("Generated invalid instanceId '{raw}': {error}")))
 }
 
 /// Mint an `instanceId` for a recorded scope observation.
-pub fn generated_scope_instance_id() -> String {
-    format!("urn:ngsi-ld:scope:instance:{}", Uuid::new_v4())
+pub fn generated_scope_instance_id() -> Result<InstanceId, TemporalStoreError> {
+    let raw = format!("urn:ngsi-ld:scope:instance:{}", Uuid::new_v4());
+    raw.parse::<InstanceId>()
+        .map_err(|error| TemporalStoreError::Validation(format!("Generated invalid scope instanceId '{raw}': {error}")))
 }
 
 /// Whether the key is stored in a dedicated column instead of the metadata blob.
@@ -120,7 +142,12 @@ pub fn collect_metadata(instance: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_model::expanded::instance_key::is_system_attribute;
+
+    fn attribute_name(value: &str) -> AttributeName {
+        value.parse().expect("attribute name")
+    }
 
     #[test]
     fn metadata_skip_key_matches_known_values() {
@@ -132,9 +159,9 @@ mod tests {
 
     #[test]
     fn system_attribute_matches_known_values() {
-        assert!(is_system_attribute(expanded_properties::CREATED_AT.as_str()));
-        assert!(is_system_attribute(expanded_properties::UNIT_CODE.as_str()));
-        assert!(!is_system_attribute("https://example.com/custom"));
+        assert!(is_system_attribute(&attribute_name(expanded_properties::CREATED_AT.as_str())));
+        assert!(is_system_attribute(&attribute_name(expanded_properties::UNIT_CODE.as_str())));
+        assert!(!is_system_attribute(&attribute_name("https://example.com/custom")));
     }
 
     #[test]
@@ -144,16 +171,16 @@ mod tests {
                 {"@id": "urn:ngsi-ld:attribute:instance:provided"}
             ]
         });
-        let (id, supplied) = extract_or_generate_instance_id(&instance);
-        pretty_assertions::assert_eq!(id, "urn:ngsi-ld:attribute:instance:provided");
+        let (id, supplied) = extract_or_generate_instance_id(&instance).expect("valid instance ID");
+        pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:attribute:instance:provided");
         assert!(supplied);
     }
 
     #[test]
     fn extract_instance_id_flags_generated_when_absent() {
         let instance = serde_json::json!({});
-        let (id, supplied) = extract_or_generate_instance_id(&instance);
-        assert!(id.starts_with("urn:ngsi-ld:attribute:instance:"));
+        let (id, supplied) = extract_or_generate_instance_id(&instance).expect("generated instance ID");
+        assert!(id.as_str().starts_with("urn:ngsi-ld:attribute:instance:"));
         assert!(!supplied);
     }
 
@@ -165,7 +192,10 @@ mod tests {
         let instance = serde_json::json!({
             expanded_properties::DATASET_ID.as_str(): [{"@id": "http://example.org/d1"}]
         });
-        pretty_assertions::assert_eq!(extract_dataset_id(&instance).as_ref().map(IriBuf::as_str), Some("http://example.org/d1"));
+        pretty_assertions::assert_eq!(
+            extract_dataset_id(&instance).expect("valid dataset").as_ref().map(Uri::as_str),
+            Some("http://example.org/d1")
+        );
     }
 
     #[test]
@@ -173,12 +203,31 @@ mod tests {
         let instance = serde_json::json!({
             expanded_properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:d1"}]
         });
-        pretty_assertions::assert_eq!(extract_dataset_id(&instance).as_ref().map(IriBuf::as_str), Some("urn:ngsi-ld:Dataset:d1"));
+        pretty_assertions::assert_eq!(
+            extract_dataset_id(&instance).expect("valid dataset").as_ref().map(Uri::as_str),
+            Some("urn:ngsi-ld:Dataset:d1")
+        );
     }
 
     #[test]
     fn dataset_id_is_absent_when_the_instance_has_none() {
-        assert!(extract_dataset_id(&serde_json::json!({})).is_none());
+        assert!(extract_dataset_id(&serde_json::json!({})).expect("absent dataset").is_none());
+    }
+
+    #[test]
+    fn malformed_dataset_id_is_rejected() {
+        let instance = serde_json::json!({
+            expanded_properties::DATASET_ID.as_str(): [{"@id": "not-a-uri"}]
+        });
+        assert!(extract_dataset_id(&instance).is_err());
+    }
+
+    #[test]
+    fn malformed_observed_at_is_rejected() {
+        let instance = serde_json::json!({
+            expanded_properties::OBSERVED_AT.as_str(): [{"@value": "not-a-timestamp"}]
+        });
+        assert!(extract_observed_at(&instance).is_err());
     }
 
     #[test]

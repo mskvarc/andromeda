@@ -6,7 +6,8 @@
 //! than something the store discovers later.
 
 use crate::error::AndromedaError;
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 
 /// Reject an expanded entity carrying an attribute instance with no value.
@@ -24,14 +25,17 @@ pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), Andro
             if key.starts_with('@') {
                 continue;
             }
-            validate_attr_instances(key, value)?;
+            let attribute_name = key
+                .parse::<AttributeName>()
+                .map_err(|error| AndromedaError::entity_validation(format!("invalid expanded attribute name '{key}': {error}")))?;
+            validate_attr_instances(&attribute_name, value)?;
         }
     }
     Ok(())
 }
 
 /// Reject any instance of one attribute that omits the member its type needs.
-fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), AndromedaError> {
+fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(), AndromedaError> {
     let instances = match value {
         Value::Array(arr) => arr.as_slice(),
         _other => return Ok(()),
@@ -42,15 +46,22 @@ fn validate_attr_instances(attr_name: &str, value: &Value) -> Result<(), Androme
             continue;
         };
 
-        let types: Vec<&str> = obj
+        let types: Vec<AttributeType> = obj
             .get("@type")
             .and_then(|t| t.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-            .unwrap_or_default();
+            .into_iter()
+            .flatten()
+            .map(|value| {
+                value
+                    .as_str()
+                    .and_then(AttributeType::from_expanded_iri)
+                    .ok_or_else(|| AndromedaError::entity_validation("attribute type is not a supported NGSI-LD attribute type"))
+            })
+            .collect::<Result<_, _>>()?;
 
-        let is_property = types.iter().any(|t| *t == expanded_classes::PROPERTY.as_str());
-        let is_geo_property = types.iter().any(|t| *t == expanded_classes::GEO_PROPERTY.as_str());
-        let is_relationship = types.iter().any(|t| *t == expanded_classes::RELATIONSHIP.as_str());
+        let is_property = types.contains(&AttributeType::Property);
+        let is_geo_property = types.contains(&AttributeType::GeoProperty);
+        let is_relationship = types.contains(&AttributeType::Relationship);
 
         if (is_property || is_geo_property) && !obj.contains_key(expanded_properties::VALUE.as_str()) {
             let short_type = if is_geo_property { "GeoProperty" } else { "Property" };

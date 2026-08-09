@@ -57,10 +57,9 @@ impl EntityService {
         }
 
         let prepared_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        let lock_ids: Vec<String> = prepared_ids.iter().map(Uri::to_string).collect(); // the id-lock registry is keyed by text
         // Hold the per-id locks across the read-modify-write window so two
         // concurrent updates for the same id can't lose each other's writes.
-        let _id_guards = self.acquire_id_locks(&lock_ids).await;
+        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
         let existing_map = self.repo.get_batch(&prepared_ids).await?;
 
         let mut writes = Vec::with_capacity(prepared.len());
@@ -68,7 +67,8 @@ impl EntityService {
             let id = prepared_entity.id;
             let Some(mut existing) = existing_map.get(&id).cloned() else {
                 // clone: the merge mutates its own copy of the stored payload
-                errors.push((id.to_string(), AndromedaError::entity_not_found(id.as_str())));
+                let error = AndromedaError::entity_not_found(id.as_str());
+                errors.push((id, error));
                 continue;
             };
 
@@ -76,22 +76,22 @@ impl EntityService {
             if overwrite == OverwritePolicy::Preserve {
                 let skipped = has_overlapping_attrs(&existing, attrs);
                 if let Err(error) = append_entity_attrs(&mut existing, attrs, OverwritePolicy::Preserve) {
-                    errors.push((id.to_string(), error.into()));
+                    errors.push((id, error.into()));
                     continue;
                 }
                 if skipped {
                     errors.push((
-                        id.to_string(),
+                        id.clone(), // clone: the write below still owns the identifier
                         AndromedaError::entity_validation("Some attributes already exist and were not updated due to noOverwrite"),
                     ));
                 }
             } else {
                 if let Err(error) = update_entity_attrs(&mut existing, attrs) {
-                    errors.push((id.to_string(), error.into()));
+                    errors.push((id, error.into()));
                     continue;
                 }
                 if let Err(error) = append_entity_attrs(&mut existing, attrs, OverwritePolicy::Overwrite) {
-                    errors.push((id.to_string(), error.into()));
+                    errors.push((id, error.into()));
                     continue;
                 }
             }

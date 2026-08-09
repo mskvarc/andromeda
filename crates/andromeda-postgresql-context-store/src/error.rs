@@ -1,5 +1,6 @@
 //! Error types for the context store crate.
 
+use crate::jsonld_context::mapper::ContextMapperError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookupError, error::RenderError};
 
@@ -30,6 +31,9 @@ pub enum ContextStoreError {
     /// An attribute-name dictionary lookup failed.
     #[error("context store attribute lookup: {0}")]
     AttributeLookup(#[from] AttributeNameLookupError),
+    /// A JSON-LD context row contained an invalid domain value.
+    #[error("context store JSON-LD context row: {0}")]
+    ContextMapper(#[from] ContextMapperError),
     /// A database migration failed.
     #[error("context store migration: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),

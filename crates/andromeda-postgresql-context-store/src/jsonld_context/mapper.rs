@@ -1,6 +1,6 @@
 //! Row-to-domain mapping for the JSON-LD context store.
 
-use crate::jsonld_context::rows::ContextMetadataRow;
+use crate::jsonld_context::rows::{ContextMetadataRow, ContextSummaryRow};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use thiserror::Error;
@@ -37,7 +37,7 @@ pub enum ContextMapperError {
 }
 
 /// Convert a detailed-projection row into the domain [`ContextMetadata`].
-pub fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, ContextMapperError> {
+pub(crate) fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, ContextMapperError> {
     let local_id: Uri = row.local_id.parse().map_err(|_| ContextMapperError::LocalId { value: row.local_id.clone() })?;
 
     let url = row
@@ -61,4 +61,12 @@ pub fn row_to_metadata(row: ContextMetadataRow) -> Result<ContextMetadata, Conte
         .number_of_hits(number_of_hits)
         .extra_info(row.extra_info)
         .build())
+}
+
+/// Convert a summary projection into the public URL when present, otherwise its local identifier.
+pub(crate) fn row_to_identifier(row: ContextSummaryRow) -> Result<Uri, ContextMapperError> {
+    match row.url {
+        Some(raw) => Url::parse(&raw).map(Uri::Url).map_err(|source| ContextMapperError::Url { source }),
+        None => row.id.parse().map_err(|_| ContextMapperError::LocalId { value: row.id }),
+    }
 }

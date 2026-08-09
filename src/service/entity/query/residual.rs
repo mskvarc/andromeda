@@ -84,7 +84,7 @@ impl EntityQueryService {
     /// one costs a payload read for every identifier the store returned. That is
     /// the honest price of an entity-map query against a store that could not
     /// push the predicate down.
-    pub(super) async fn finish_ids(&self, outcome: QueryOutcome<Uri>, pagination: Pagination) -> Result<Vec<String>, AndromedaError> {
+    pub(super) async fn finish_ids(&self, outcome: QueryOutcome<Uri>, pagination: Pagination) -> Result<Vec<Uri>, AndromedaError> {
         let QueryOutcome {
             rows,
             unapplied,
@@ -94,27 +94,21 @@ impl EntityQueryService {
         match applied {
             PaginationOutcome::Applied { total: _ } => {
                 if unapplied.is_empty() {
-                    Ok(rows.iter().map(Uri::to_string).collect())
+                    Ok(rows)
                 } else {
                     Err(incoherent(&unapplied))
                 }
             }
             PaginationOutcome::Deferred => {
                 if unapplied.is_empty() {
-                    return Ok(rows
-                        .iter()
-                        .skip(pagination.offset as usize)
-                        .take(pagination.limit as usize)
-                        .map(Uri::to_string)
-                        .collect());
+                    return Ok(rows.into_iter().skip(pagination.offset as usize).take(pagination.limit as usize).collect());
                 }
                 let payloads = self.repo.get_batch(&rows).await?;
                 Ok(rows
-                    .iter()
-                    .filter(|id| payloads.get(*id).is_some_and(|payload| residual_filter::matches(&unapplied, payload)))
+                    .into_iter()
+                    .filter(|id| payloads.get(id).is_some_and(|payload| residual_filter::matches(&unapplied, payload)))
                     .skip(pagination.offset as usize)
                     .take(pagination.limit as usize)
-                    .map(Uri::to_string)
                     .collect())
             }
         }

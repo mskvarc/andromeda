@@ -95,7 +95,7 @@ mod tests {
     fn a_json_notification_carries_the_context_link_in_its_metadata() {
         let rendered = envelope(&request("application/json", None, None));
         let link = rendered["metadata"]["Link"].as_str().expect("a Link member");
-        assert!(link.contains(NGSI_LD_CORE_CONTEXT_URL), "{link}");
+        assert!(link.contains(NGSI_LD_CORE_CONTEXT_URL.as_str()), "{link}");
     }
 
     #[test]

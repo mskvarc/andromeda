@@ -51,7 +51,7 @@ async fn subscription_update_invalid_id_returns_bad_request_data() {
     let (status, body) = update_subscription(&http_client, "InvalidUri", &update_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -63,7 +63,7 @@ async fn subscription_update_unknown_id_returns_resource_not_found() {
     let (status, body) = update_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", &update_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
-    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE);
+    pretty_assertions::assert_eq!(body["type"], RESOURCE_NOT_FOUND_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -80,7 +80,7 @@ async fn subscription_update_invalid_fragment_returns_bad_request_data() {
     let (status, body) = update_subscription(&http_client, &subscription_id, &invalid_update_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -97,7 +97,7 @@ async fn subscription_update_null_mandatory_properties_returns_bad_request_data(
     let (status, body) = update_subscription(&http_client, &subscription_id, &null_properties_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]
@@ -265,5 +265,5 @@ async fn subscription_update_with_past_expires_at_returns_bad_request_data() {
     let (status, body) = update_subscription(&http_client, &subscription_id, &past_expires_fragment(), false).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE);
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }

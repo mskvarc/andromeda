@@ -13,6 +13,7 @@ use crate::{
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
     error::JsonLdError,
 };
+use iri_rs::Iri;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 
@@ -96,7 +97,7 @@ fn retain_non_core(contexts: &mut Vec<Value>) {
     contexts.retain(|value| {
         !value
             .as_str()
-            .is_some_and(|url| is_ngsi_ld_core_context_url(url) || url == ANDROMEDA_CORE_CONTEXT_URL)
+            .is_some_and(|url| Iri::parse(url).is_ok_and(is_ngsi_ld_core_context_url) || ANDROMEDA_CORE_CONTEXT_URL == url)
     });
 }
 

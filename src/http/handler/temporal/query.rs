@@ -11,7 +11,6 @@ use crate::http::handler::temporal::{
     ForwardTemporalQueryRequest,
     ForwardingMode,
     ForwardingOperation,
-    FromStr,
     IntoResponse,
     NgsiLdCollectionResponse,
     NgsiLdError,
@@ -65,8 +64,7 @@ pub async fn query(
     if let Some(snapshot_id) = snapshot.into_inner() {
         let _snap = state.snapshots.validate_for_scoping(&snapshot_id).await.with_instance(&uri)?;
 
-        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
-        let entity_type = entity_type.as_deref();
+        let entity_type = params.entity_type.as_ref();
         let entity_ids = params.id.clone();
         let limit = params.limit.unwrap_or(100) as i64;
         let offset = params.offset.unwrap_or(0) as i64;
@@ -146,13 +144,12 @@ pub async fn query(
     } = result;
 
     // Distributed forwarding: query matching context sources unless local=true
-    let mut remote_ids: Vec<String> = Vec::new();
+    let mut remote_ids: Vec<Uri> = Vec::new();
     let (mut entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let context_url = context.link_contexts().first().map(|s| s.as_str());
-        let entity_type = params.entity_type.as_ref().map(ToString::to_string);
-        let entity_type = entity_type.as_deref();
+        let context_url = context.link_contexts().first();
+        let entity_type = params.entity_type.as_ref();
         let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
         let query_string = uri.query().unwrap_or("");
@@ -179,7 +176,7 @@ pub async fn query(
         remote_ids = forwarded
             .iter()
             .flat_map(|f| f.entities.iter())
-            .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+            .filter_map(|value| value.get("id").and_then(Value::as_str).and_then(|raw| raw.parse::<Uri>().ok()))
             .collect();
 
         let forwarded = if split_entities {
@@ -238,15 +235,10 @@ pub async fn query(
         let mut all_ids = service.query_ids(&params, &context).await.with_instance(&uri)?;
         // Include forwarded entity IDs in the map (spec 5.7.4.4, 5.5.14)
         all_ids.extend(remote_ids);
-        all_ids.sort_unstable();
+        all_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
         all_ids.dedup();
-        let typed_ids: Vec<Uri> = all_ids
-            .iter()
-            .map(|id| Uri::from_str(id).map_err(|_| AndromedaError::temporal_validation(format!("Invalid entity id URI '{}'", id))))
-            .collect::<Result<Vec<_>, _>>()
-            .with_instance(&uri)?;
         let lifetime = params.entity_map_lifetime.as_ref();
-        let map = state.entity_maps.create(typed_ids, lifetime).await.with_instance(&uri)?;
+        let map = state.entity_maps.create(all_ids, lifetime).await.with_instance(&uri)?;
         Some(map.id)
     } else if entity_map_header.is_some() {
         entity_map_header.map(|h| h.into_inner())

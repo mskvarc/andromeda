@@ -4,6 +4,7 @@ use crate::service::temporal::{
     AndromedaError,
     Arc,
     AtomicWrite,
+    AttributeName,
     ContextSpec,
     CreateOrUpdateResult,
     DatasetSelector,
@@ -11,6 +12,7 @@ use crate::service::temporal::{
     EntityMutation,
     EntityRecord,
     HistoryRecord,
+    InstanceId,
     TemporalService,
     Uri,
     Value,
@@ -34,13 +36,13 @@ impl TemporalService {
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AndromedaError::temporal_validation("Entity missing @id"))?;
 
-            if entity_id.parse::<Uri>().is_err() {
-                return Err(AndromedaError::temporal_validation("Invalid entity id"));
-            }
+            let entity_id = entity_id
+                .parse::<Uri>()
+                .map_err(|error| AndromedaError::temporal_validation(format!("Invalid entity id: {error}")))?;
             if entity_obj.get("@type").and_then(|v| v.as_array()).is_none_or(|types| types.is_empty()) {
                 return Err(AndromedaError::temporal_validation("Entity missing @type"));
             }
-            entity_id.to_string()
+            entity_id
         };
 
         // Per the specification, temporal entities can be created independently
@@ -59,7 +61,7 @@ impl TemporalService {
             // clause is the check, and it does not lose a race to a concurrent
             // temporal write for the same new identifier.
             let write = AtomicWrite::builder()
-                .entity_id(Arc::from(entity_id.as_str()))
+                .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
                 // Unconditional: two concurrent temporal writes for one new
                 // identifier are both legitimate, and neither should fail
                 // because the other materialised the row first.
@@ -73,7 +75,7 @@ impl TemporalService {
     }
 
     /// Add temporal attributes to an existing temporal entity.
-    pub async fn add_attrs(&self, entity_id: &str, mut payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
+    pub async fn add_attrs(&self, entity_id: &Uri, mut payload: Value, context: &ContextSpec) -> Result<(), AndromedaError> {
         if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
@@ -96,9 +98,9 @@ impl TemporalService {
     /// 204/400/404 for `POST /temporal/entities/{id}/attrs`, and 204 means "all
     /// the Attributes were added successfully" -- there is no response code that
     /// can report a subset having been stored.
-    async fn add_attrs_internal(&self, entity_id: &str, expanded: Arc<Value>) -> Result<(), AndromedaError> {
+    async fn add_attrs_internal(&self, entity_id: &Uri, expanded: Arc<Value>) -> Result<(), AndromedaError> {
         let write = AtomicWrite::builder()
-            .entity_id(Arc::from(entity_id))
+            .entity_id(Arc::new(entity_id.clone())) // clone: the write owns a shared validated identifier.
             .entity(EntityMutation::None)
             .history(vec![HistoryRecord::Observations(expanded)])
             .build();
@@ -106,22 +108,28 @@ impl TemporalService {
         Ok(())
     }
 
-    async fn resolve_attr_iri_for_entity(&self, entity_id: &str, attr_id: &str, context: &ContextSpec) -> Result<String, AndromedaError> {
+    async fn resolve_attr_iri_for_entity(&self, entity_id: &Uri, attr_id: &AttributeName, context: &ContextSpec) -> Result<AttributeName, AndromedaError> {
         let prepared_context = self.engine.prepare_term_context(context);
-        let expanded_attr = self.engine.expand_term(attr_id, &prepared_context).await?.to_string();
+        let expanded_attr = self
+            .engine
+            .expand_term(attr_id.as_str(), &prepared_context)
+            .await?
+            .to_string()
+            .parse::<AttributeName>()
+            .map_err(|error| AndromedaError::temporal_validation(format!("Expanded attribute name is invalid: {error}")))?;
 
         if !self.mutator.attribute_entries(entity_id, &expanded_attr).await?.is_empty() {
             return Ok(expanded_attr);
         }
 
-        if expanded_attr != attr_id && !self.mutator.attribute_entries(entity_id, attr_id).await?.is_empty() {
-            return Ok(attr_id.to_string());
+        if expanded_attr != *attr_id && !self.mutator.attribute_entries(entity_id, attr_id).await?.is_empty() {
+            return Ok(attr_id.clone()); // clone: the resolved name is returned after borrowing the request value.
         }
 
         let attr_names = self.mutator.attribute_names_for_entity(entity_id).await?;
         let mut matches = attr_names
             .into_iter()
-            .filter(|name| iri_short_name(name).is_some_and(|short| short == attr_id))
+            .filter(|name| iri_short_name(name.as_str()).is_some_and(|short| short == attr_id.as_str()))
             .collect::<Vec<_>>();
 
         if matches.len() == 1
@@ -134,7 +142,7 @@ impl TemporalService {
     }
 
     /// Delete all temporal data for an entity.
-    pub async fn delete(&self, entity_id: &str) -> Result<(), AndromedaError> {
+    pub async fn delete(&self, entity_id: &Uri) -> Result<(), AndromedaError> {
         if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
@@ -145,8 +153,8 @@ impl TemporalService {
     /// Delete a specific temporal attribute (optionally filtered by dataset ID).
     pub async fn delete_attr(
         &self,
-        entity_id: &str,
-        attr_id: &str,
+        entity_id: &Uri,
+        attr_id: &AttributeName,
         dataset_id: Option<&DatasetSelector>,
         scope: DeleteScope,
         context: &ContextSpec,
@@ -183,9 +191,9 @@ impl TemporalService {
     /// Replace an existing attribute instance with new data.
     pub async fn modify_attr_instance(
         &self,
-        entity_id: &str,
-        attr_id: &str,
-        instance_id: &str,
+        entity_id: &Uri,
+        attr_id: &AttributeName,
+        instance_id: &InstanceId,
         payload: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
@@ -217,7 +225,13 @@ impl TemporalService {
     }
 
     /// Delete a specific attribute instance by its instance ID.
-    pub async fn delete_attr_instance(&self, entity_id: &str, attr_id: &str, instance_id: &str, context: &ContextSpec) -> Result<(), AndromedaError> {
+    pub async fn delete_attr_instance(
+        &self,
+        entity_id: &Uri,
+        attr_id: &AttributeName,
+        instance_id: &InstanceId,
+        context: &ContextSpec,
+    ) -> Result<(), AndromedaError> {
         let attr_iri = self.resolve_attr_iri_for_entity(entity_id, attr_id, context).await?;
 
         if !self.mutator.entity_exists(entity_id).await? {

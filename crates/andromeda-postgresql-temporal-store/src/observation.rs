@@ -18,10 +18,10 @@ use crate::{
     params::{ScopeHistoryEntry, TeaBatchEntry},
     rows::TeaBatchResultRow,
 };
-use andromeda_ngsi_ld_lexicon::scope::grammar::Scope;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::instance_key::is_system_attribute;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_postgresql_query::{history_batch_entry::HistoryBatchEntry, ltree::scope_to_ltree};
+use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -50,7 +50,7 @@ pub struct PendingHistory {
     /// The typed value columns this observation writes.
     pub columns: HistoryValueColumns,
     /// The instance identifier (clause 4.5.7).
-    pub instance_id: String,
+    pub instance_id: InstanceId,
     /// Whether the client supplied `instance_id` rather than the broker minting it.
     pub instance_id_client_supplied: bool,
     /// The declared `observedAt`, absent when the instance declared none.
@@ -60,8 +60,8 @@ pub struct PendingHistory {
 }
 
 /// Prepare observations from entity payloads held behind `Arc`s.
-pub fn prepare_from_shared(entities: &[(Arc<str>, Arc<Value>)]) -> PreparedObservations {
-    let refs: Vec<(&str, &Value)> = entities.iter().map(|(id, v)| (id.as_ref(), v.as_ref())).collect();
+pub fn prepare_from_shared(entities: &[(Arc<Uri>, Arc<Value>)]) -> Result<PreparedObservations, crate::error::TemporalStoreError> {
+    let refs: Vec<(&Uri, &Value)> = entities.iter().map(|(id, value)| (id.as_ref(), value.as_ref())).collect();
     prepare(&refs)
 }
 
@@ -70,14 +70,13 @@ pub fn prepare_from_shared(entities: &[(Arc<str>, Arc<Value>)]) -> PreparedObser
 /// An attribute the broker cannot read is skipped with a warning rather than
 /// failing the whole write: clause 5.6.7 lets a batch partially succeed, and a
 /// single unreadable attribute is not grounds to reject an entity outright.
-pub fn prepare(entities: &[(&str, &Value)]) -> PreparedObservations {
+pub fn prepare(entities: &[(&Uri, &Value)]) -> Result<PreparedObservations, crate::error::TemporalStoreError> {
     let mut tea_entries = Vec::new();
     let mut pending_histories: Vec<PendingHistory> = Vec::new();
     let mut tea_index: Vec<usize> = Vec::new();
     let mut scope_entries: Vec<ScopeHistoryEntry> = Vec::new();
 
     for (entity_id, expanded) in entities {
-        let entity_id_str: &str = entity_id;
         let obj = match *expanded {
             Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
             Value::Object(obj) => Some(obj),
@@ -88,12 +87,18 @@ pub fn prepare(entities: &[(&str, &Value)]) -> PreparedObservations {
         };
 
         for (attr_name, attr_value) in obj {
-            if attr_name.starts_with('@') || is_system_attribute(attr_name) {
+            if attr_name.starts_with('@') {
+                continue;
+            }
+            let attr_name = attr_name
+                .parse::<AttributeName>()
+                .map_err(|error| crate::error::TemporalStoreError::Decode(format!("invalid expanded attribute name '{attr_name}': {error}")))?;
+            if is_system_attribute(&attr_name) {
                 continue;
             }
 
-            if attr_name == expanded_properties::SCOPE.as_str() {
-                collect_scope_entries(entity_id_str, attr_value, &mut scope_entries);
+            if attr_name.as_str() == expanded_properties::SCOPE.as_str() {
+                collect_scope_entries(entity_id, attr_value, &mut scope_entries)?;
                 continue;
             }
 
@@ -113,27 +118,24 @@ pub fn prepare(entities: &[(&str, &Value)]) -> PreparedObservations {
                 let attribute_value = match extract_attribute_value(instance, attribute_type) {
                     Ok(value) => value,
                     Err(error) => {
-                        tracing::warn!(error = %error, entity_id = %entity_id_str, attr = %attr_name, event = "temporal_batch_extract_failed");
+                        tracing::warn!(error = %error, entity_id = %entity_id, attr = %attr_name, event = "temporal_batch_extract_failed");
                         continue;
                     }
                 };
                 let value_type = attribute_value.value_type();
-                let dataset_id = extract_dataset_id(instance);
-                let observed_at_str = extract_observed_at(instance);
-                let (instance_id, instance_id_client_supplied) = extract_or_generate_instance_id(instance);
+                let dataset_id = extract_dataset_id(instance)?;
+                let observed_at = extract_observed_at(instance)?;
+                let (instance_id, instance_id_client_supplied) = extract_or_generate_instance_id(instance)?;
                 let metadata = collect_metadata(instance);
 
-                let observed_at = observed_at_str
-                    .as_deref()
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).map(|dt| dt.with_timezone(&Utc)).ok());
                 let time = observed_at.unwrap_or_else(Utc::now);
 
                 let tea_idx = tea_entries.len();
                 tea_entries.push(TeaBatchEntry {
-                    entity_id: entity_id_str.to_owned(),
-                    attribute_name: attr_name.clone(), // clone: the catalogue row owns its attribute IRI
+                    entity_id: (*entity_id).clone(),   // clone: the catalogue row owns the entity URI.
+                    attribute_name: attr_name.clone(), // clone: one catalogue row owns each instance's attribute name.
                     attribute_type,
-                    dataset_id: dataset_id.map(|id| id.as_str().to_owned()),
+                    dataset_id,
                     value_type,
                 });
                 pending_histories.push(PendingHistory {
@@ -149,37 +151,38 @@ pub fn prepare(entities: &[(&str, &Value)]) -> PreparedObservations {
         }
     }
 
-    PreparedObservations {
+    Ok(PreparedObservations {
         tea_entries,
         pending_histories,
         tea_index,
         scope_entries,
-    }
+    })
 }
 
 /// Record one history row per scope the entity declares.
 ///
 /// A value outside the clause 4.18 grammar cannot name a scope, so no history
 /// row is recorded for it.
-fn collect_scope_entries(entity_id: &str, attr_value: &Value, scope_entries: &mut Vec<ScopeHistoryEntry>) {
+fn collect_scope_entries(entity_id: &Uri, attr_value: &Value, scope_entries: &mut Vec<ScopeHistoryEntry>) -> Result<(), crate::error::TemporalStoreError> {
     let Some(scope_arr) = attr_value.as_array() else {
-        return;
+        return Ok(());
     };
     for scope_entry in scope_arr {
         if let Some(scope) = scope_entry
             .as_object()
             .and_then(|o| o.get("@value"))
             .and_then(|v| v.as_str())
-            .and_then(|raw| Scope::new(raw).ok())
+            .and_then(|raw| ScopeBuf::new(raw.to_owned()).ok())
         {
             scope_entries.push(ScopeHistoryEntry {
                 time: Utc::now(),
-                entity_id: entity_id.to_owned(),
-                scope_path: scope_to_ltree(scope),
-                instance_id: generated_scope_instance_id(),
+                entity_id: entity_id.clone(), // clone: each persisted scope row owns its entity URI.
+                scope_path: scope,
+                instance_id: generated_scope_instance_id()?,
             });
         }
     }
+    Ok(())
 }
 
 /// Pair prepared observations with the TEA UUIDs the catalogue upsert assigned.
@@ -190,15 +193,15 @@ fn collect_scope_entries(entity_id: &str, attr_value: &Value, scope_entries: &mu
 /// intra-batch ordering on rows that are in fact simultaneous.
 pub fn build_history_entries(prepared: &PreparedObservations, tea_results: &[TeaBatchResultRow]) -> Vec<HistoryBatchEntry> {
     let recorded_at = Utc::now();
-    let mut tea_id_map: HashMap<(&str, &str, Option<&str>), Uuid> = HashMap::with_capacity(tea_results.len());
+    let mut tea_id_map: HashMap<(&Uri, &AttributeName, Option<&Uri>), Uuid> = HashMap::with_capacity(tea_results.len());
     for row in tea_results {
-        tea_id_map.insert((row.entity_id.as_str(), row.attribute_name.as_str(), row.dataset_id.as_deref()), row.id);
+        tea_id_map.insert((&row.entity_id, &row.attribute_name, row.dataset_id.as_ref()), row.id);
     }
 
     let mut history_entries = Vec::with_capacity(prepared.pending_histories.len());
     for (i, pending) in prepared.pending_histories.iter().enumerate() {
         let tea_entry = &prepared.tea_entries[prepared.tea_index[i]];
-        let key = (tea_entry.entity_id.as_str(), tea_entry.attribute_name.as_str(), tea_entry.dataset_id.as_deref());
+        let key = (&tea_entry.entity_id, &tea_entry.attribute_name, tea_entry.dataset_id.as_ref());
         let Some(&tea_id) = tea_id_map.get(&key) else {
             tracing::warn!(
                 entity_id = %tea_entry.entity_id,
@@ -232,6 +235,11 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 
+    fn prepare_entity(entity: &Value) -> PreparedObservations {
+        let entity_id = "urn:ngsi-ld:Entity:e1".parse::<Uri>().expect("valid entity URI");
+        prepare(&[(&entity_id, entity)]).expect("valid observation fixture")
+    }
+
     fn tea_results_for(prepared: &PreparedObservations) -> Vec<TeaBatchResultRow> {
         prepared
             .tea_entries
@@ -264,18 +272,17 @@ mod tests {
                 attr: [{"@value": 2}]
             }],
         });
-        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
-        let prepared = prepare(&entities);
+        let prepared = prepare_entity(&entity);
         pretty_assertions::assert_eq!(prepared.pending_histories.len(), 2);
         let with_id = prepared
             .pending_histories
             .iter()
-            .find(|p| p.instance_id == "urn:ngsi-ld:attribute:instance:client")
+            .find(|pending| pending.instance_id.as_str() == "urn:ngsi-ld:attribute:instance:client")
             .expect("client-supplied entry");
         let without_id = prepared
             .pending_histories
             .iter()
-            .find(|p| p.instance_id != "urn:ngsi-ld:attribute:instance:client")
+            .find(|pending| pending.instance_id.as_str() != "urn:ngsi-ld:attribute:instance:client")
             .expect("generated entry");
         assert!(with_id.instance_id_client_supplied);
         assert!(!without_id.instance_id_client_supplied);
@@ -296,11 +303,10 @@ mod tests {
                 ]
             }],
         });
-        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
-        let prepared = prepare(&entities);
+        let prepared = prepare_entity(&entity);
         let history = build_history_entries(&prepared, &tea_results_for(&prepared));
         pretty_assertions::assert_eq!(history.len(), 1);
-        pretty_assertions::assert_eq!(history[0].instance_id, "urn:ngsi-ld:attribute:instance:client");
+        pretty_assertions::assert_eq!(history[0].instance_id.as_str(), "urn:ngsi-ld:attribute:instance:client");
         assert!(history[0].instance_id_client_supplied);
     }
 
@@ -332,8 +338,7 @@ mod tests {
                 },
             ],
         });
-        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
-        let prepared = prepare(&entities);
+        let prepared = prepare_entity(&entity);
         pretty_assertions::assert_eq!(prepared.pending_histories.len(), 2);
         let ids: Vec<&str> = prepared.pending_histories.iter().map(|p| p.instance_id.as_str()).collect();
         pretty_assertions::assert_eq!(ids, vec!["urn:ngsi-ld:attribute:instance:first", "urn:ngsi-ld:attribute:instance:second"]);
@@ -356,8 +361,7 @@ mod tests {
             "https://example.com/a": [{"@type": [property_type], attr: [{"@value": 1}]}],
             "https://example.com/b": [{"@type": [property_type], attr: [{"@value": 2}]}],
         });
-        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
-        let prepared = prepare(&entities);
+        let prepared = prepare_entity(&entity);
         let history = build_history_entries(&prepared, &tea_results_for(&prepared));
         pretty_assertions::assert_eq!(history.len(), 2);
         pretty_assertions::assert_eq!(history[0].recorded_at, history[1].recorded_at);
@@ -372,10 +376,9 @@ mod tests {
                 {"@value": "not a scope at all"},
             ],
         });
-        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
-        let prepared = prepare(&entities);
+        let prepared = prepare_entity(&entity);
         pretty_assertions::assert_eq!(prepared.scope_entries.len(), 1);
-        pretty_assertions::assert_eq!(prepared.scope_entries[0].entity_id, "urn:ngsi-ld:Entity:e1");
+        pretty_assertions::assert_eq!(prepared.scope_entries[0].entity_id.as_str(), "urn:ngsi-ld:Entity:e1");
     }
 
     #[test]
@@ -386,9 +389,8 @@ mod tests {
             expanded_properties::CREATED_AT.as_str(): [{"@value": "2026-07-25T10:00:00Z"}],
             "https://example.com/a": [{"@type": [property_type], expanded_properties::VALUE.as_str(): [{"@value": 1}]}],
         });
-        let entities = [("urn:ngsi-ld:Entity:e1", &entity)];
-        let prepared = prepare(&entities);
+        let prepared = prepare_entity(&entity);
         pretty_assertions::assert_eq!(prepared.tea_entries.len(), 1);
-        pretty_assertions::assert_eq!(prepared.tea_entries[0].attribute_name, "https://example.com/a");
+        pretty_assertions::assert_eq!(prepared.tea_entries[0].attribute_name.as_str(), "https://example.com/a");
     }
 }

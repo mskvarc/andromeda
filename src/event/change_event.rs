@@ -2,23 +2,11 @@
 //! outbox and index consumers read (ETSI GS CIM 009 clause 5.3).
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{NotificationTrigger, SysAttrsSnapshot};
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
-
-/// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
-///
-/// Distinguishes whether an entity mutation originated from the local broker
-/// or was forwarded from a registered context source.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ChangeOrigin {
-    /// The entity is stored and managed by this broker instance.
-    Local,
-    /// The entity was forwarded from a registered context source.
-    Forwarded,
-}
 
 /// An entity mutation that may trigger notifications (ETSI GS CIM 009 clause 5.3.3).
 ///
@@ -77,9 +65,9 @@ impl ChangeEvent {
 
 #[cfg(test)]
 mod tests {
-    use crate::event::change_event::{ChangeEvent, ChangeOrigin};
+    use crate::event::change_event::ChangeEvent;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::notification::{NotificationTrigger, SysAttrsSnapshot};
+    use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot};
     use chrono::{DateTime, TimeZone, Utc};
     use serde_json::json;
     use std::sync::Arc;

@@ -2,12 +2,14 @@
 
 use crate::service::temporal::{
     AndromedaError,
+    AttributeName,
     CompactOptions,
     CompiledTemporalQuery,
     ContextSpec,
     DateTime,
     EntityTypeName,
     ForwardedTemporalEntities,
+    HashMap,
     TemporalAggregationRenderer,
     TemporalAggregationRow,
     TemporalArrayNormalizer,
@@ -34,17 +36,14 @@ use crate::service::temporal::{
 };
 
 impl TemporalService {
-    pub async fn get(&self, entity_id: &str, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalReadResult, AndromedaError> {
+    pub async fn get(&self, entity_id: &Uri, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalReadResult, AndromedaError> {
         params.validate(false)?;
 
         if !self.mutator.entity_exists(entity_id).await? {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
-        let entity_types = match entity_id.parse::<Uri>() {
-            Ok(entity_uri) => self.entity_repo.get(&entity_uri).await?.as_ref().map(extract_types).unwrap_or_default(),
-            Err(_) => Vec::new(),
-        };
+        let entity_types = self.entity_repo.get(entity_id).await?.as_ref().map(extract_types).unwrap_or_default();
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
@@ -77,7 +76,9 @@ impl TemporalService {
         }
 
         let value = if format == TemporalFormat::TemporalValues {
-            TemporalValuesRenderer::new(compacted).render()
+            TemporalValuesRenderer::new(compacted)
+                .render()
+                .map_err(|error| AndromedaError::internal(error.to_string()))?
         } else {
             compacted
         };
@@ -102,13 +103,10 @@ impl TemporalService {
         let total_count = id_outcome.total_count;
 
         // Batch-fetch entity payloads to extract types (avoids N+1 queries).
-        // Stage 1 read these ids out of `entities.id`, so any that fails to parse
-        // is a corrupt row and is simply absent from the type map below.
-        let entity_uris: Vec<Uri> = entity_ids.iter().filter_map(|id| id.parse::<Uri>().ok()).collect();
-        let entity_payloads = self.entity_repo.get_batch(&entity_uris).await?;
-        let entity_types_map: std::collections::HashMap<String, Vec<EntityTypeName>> = entity_payloads
+        let entity_payloads = self.entity_repo.get_batch(&entity_ids).await?;
+        let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = entity_payloads
             .iter()
-            .map(|(id, payload)| (id.to_string(), extract_types(payload))) // key by text: the loop below carries String ids from stage 1
+            .map(|(id, payload)| (id.clone(), extract_types(payload))) // clone: the type index owns its validated entity URI.
             .collect();
 
         let mut entities = Vec::new();
@@ -165,12 +163,20 @@ impl TemporalService {
                                     if !has_explicit_context(context) {
                                         normalize_temporal_payload_without_context(&mut compacted);
                                     }
-                                    let result = if compiled.representation.format == TemporalFormat::TemporalValues {
-                                        TemporalValuesRenderer::new(compacted).render()
+                                    if compiled.representation.format == TemporalFormat::TemporalValues {
+                                        match TemporalValuesRenderer::new(compacted).render() {
+                                            Ok(result) => entities.push(result),
+                                            Err(error) => {
+                                                tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render temporal values");
+                                                warnings.push(TemporalQueryWarning {
+                                                    entity_id: entity_id.clone(), // clone: the warning owns the identifier while the loop continues.
+                                                    message: error.to_string(),
+                                                });
+                                            }
+                                        }
                                     } else {
-                                        compacted
-                                    };
-                                    entities.push(result);
+                                        entities.push(compacted);
+                                    }
                                 }
                                 Err(e) => {
                                     tracing::warn!(error = %e, entity_id = %entity_id, "Failed to compact temporal entity");
@@ -217,7 +223,7 @@ impl TemporalService {
     /// Aggregation keys (avg, min, etc.) aren't valid JSON-LD IRIs and would be dropped by compact().
     async fn build_aggregated_compacted(
         &self,
-        entity_id: &str,
+        entity_id: &Uri,
         entity_types: &[EntityTypeName],
         rows: &[TemporalAggregationRow],
         compiled: &CompiledTemporalQuery,
@@ -227,30 +233,35 @@ impl TemporalService {
         let aggr_data = TemporalAggregationRenderer::new(rows, compiled).render();
 
         // Compact each attribute IRI individually by building a 1-key skeleton and compacting it
-        let mut iri_to_short: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        let mut iri_to_short: HashMap<AttributeName, AttributeName> = HashMap::new();
         for attr_iri in aggr_data.keys() {
             let mut skeleton = serde_json::Map::new();
             skeleton.insert("@id".to_string(), json!(entity_id));
-            skeleton.insert(attr_iri.clone(), json!([{"@type": [expanded_classes::PROPERTY]}])); // clone: owned key for JSON map insertion
+            skeleton.insert(attr_iri.to_string(), json!([{"@type": [expanded_classes::PROPERTY]}]));
             if let Ok(compacted) = self.engine.compact(Value::Object(skeleton), context, CompactOptions::default()).await
                 && let Some(obj) = compacted.as_object()
             {
                 for key in obj.keys() {
                     if !["id", "type", "@context"].contains(&key.as_str()) {
-                        iri_to_short.insert(attr_iri.clone(), key.clone()); // clone: owned keys for HashMap entry; originals are borrowed
+                        if let Ok(short) = key.parse() {
+                            iri_to_short.insert(attr_iri.clone(), short); // clone: the index owns its attribute key.
+                        }
                         break;
                     }
                 }
             }
             if !iri_to_short.contains_key(attr_iri) {
-                let short = compact_attr_iri(&self.engine, attr_iri, context).await;
-                if short != *attr_iri {
-                    iri_to_short.insert(attr_iri.clone(), short);
-                } else if !has_explicit_context(context)
-                    && let Some(short_name) = iri_short_name(attr_iri)
-                    && short_name != *attr_iri
+                let short = compact_attr_iri(&self.engine, attr_iri.as_str(), context).await;
+                if short != attr_iri.as_str()
+                    && let Ok(short) = short.parse()
                 {
-                    iri_to_short.insert(attr_iri.clone(), short_name);
+                    iri_to_short.insert(attr_iri.clone(), short); // clone: the index owns its attribute key.
+                } else if !has_explicit_context(context)
+                    && let Some(short_name) = iri_short_name(attr_iri.as_str())
+                    && short_name != attr_iri.as_str()
+                    && let Ok(short_name) = short_name.parse()
+                {
+                    iri_to_short.insert(attr_iri.clone(), short_name); // clone: the index owns its attribute key.
                 }
             }
         }
@@ -300,8 +311,8 @@ impl TemporalService {
         result.insert("type".to_string(), compacted_type);
 
         for (attr_iri, attr_obj) in aggr_data {
-            let short_name = iri_to_short.get(&attr_iri).cloned().unwrap_or(attr_iri); // clone: need owned String for map insertion; attr_iri consumed by unwrap_or
-            result.insert(short_name, attr_obj);
+            let short_name = iri_to_short.get(&attr_iri).unwrap_or(&attr_iri);
+            result.insert(short_name.to_string(), attr_obj);
         }
 
         Ok(Value::Object(result))
@@ -313,7 +324,7 @@ impl TemporalService {
     /// Runs only the lightweight stage 1 SQL (entity ID resolution) without fetching
     /// temporal history, ensuring the EntityMap captures ALL matching IDs, not just the
     /// current page.
-    pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<String>, AndromedaError> {
+    pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<Uri>, AndromedaError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;
         let outcome = self.reader.query_entity_ids(&compiled).await?;

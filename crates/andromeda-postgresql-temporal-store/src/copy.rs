@@ -7,6 +7,7 @@
 //! per-row payload parsing of the prior `UNNEST(..)` path is gone.
 
 use crate::error::TemporalStoreError;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_encoding::{
     copy::{
         write_bool_opt,
@@ -104,7 +105,7 @@ pub(crate) fn encode_history_copy_stream(entries: &[HistoryBatchEntry]) -> Resul
         write_bytea_opt(&mut buf, geometry_bytes(entry.value_geo.as_ref())?.as_deref());
         write_jsonb_opt(&mut buf, entry.value_object.as_ref());
         write_timestamptz_opt(&mut buf, entry.value_datetime);
-        write_text_opt(&mut buf, entry.value_uri.as_deref());
+        write_text_opt(&mut buf, entry.value_uri.as_ref().map(Uri::as_str));
         write_text(&mut buf, entry.instance_id.as_str());
         write_timestamptz_opt(&mut buf, entry.observed_at);
         write_jsonb_opt(&mut buf, entry.metadata.as_ref());
@@ -137,7 +138,7 @@ mod tests {
             value_object: None,
             value_datetime: None,
             value_uri: None,
-            instance_id: instance_id.to_string(),
+            instance_id: format!("urn:ngsi-ld:attribute:instance:{instance_id}").parse().expect("valid test instance ID"),
             observed_at: None,
             metadata: None,
             recorded_at: Utc.timestamp_opt(1_700_000_000, 0).unwrap(),
@@ -268,8 +269,8 @@ mod tests {
 
     #[test]
     fn binary_copy_text_field_encodes_utf8_with_length_prefix() {
-        let id = "urn:ngsi-ld:attribute:instance:client";
-        let entries = [make_entry(uuid::Uuid::nil(), id)];
+        let entries = [make_entry(uuid::Uuid::nil(), "client")];
+        let expected_id = "urn:ngsi-ld:attribute:instance:client";
         let buf = encode_history_copy_stream(&entries).expect("copy stream encodes");
         // Locate instance_id. Layout up to instance_id length prefix:
         // header(19) + field_count(2) + time(4+8) + tea_id(4+16)
@@ -277,7 +278,7 @@ mod tests {
         //     value_geo, value_object, value_datetime, value_uri) of 4 B each.
         let offset = 19 + 2 + 12 + 20 + 4 * 7;
         let len = i32::from_be_bytes([buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3]]);
-        assert_eq!(len as usize, id.len());
-        assert_eq!(&buf[offset + 4..offset + 4 + id.len()], id.as_bytes());
+        assert_eq!(len as usize, expected_id.len());
+        assert_eq!(&buf[offset + 4..offset + 4 + expected_id.len()], expected_id.as_bytes());
     }
 }

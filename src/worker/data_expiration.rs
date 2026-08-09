@@ -111,7 +111,7 @@ impl DataExpirationWorker {
         let mut writes = Vec::with_capacity(candidates.len());
         let mut purged_ids = Vec::with_capacity(candidates.len());
         for (id, snapshot) in candidates {
-            let Some(write) = purge_write(id.as_str(), snapshot, cutoff) else {
+            let Some(write) = purge_write(&id, snapshot, cutoff) else {
                 continue;
             };
             writes.push(write);
@@ -156,7 +156,7 @@ fn landed_ids(purged_ids: Vec<Uri>, outcomes: &[WriteOutcome]) -> Vec<Uri> {
 
 /// The write that removes `snapshot`'s past-due instances, or `None` when the
 /// candidate turns out to hold none by the time it is read.
-fn purge_write(id: &str, snapshot: EntitySnapshot, cutoff: chrono::DateTime<Utc>) -> Option<AtomicWrite> {
+fn purge_write(id: &Uri, snapshot: EntitySnapshot, cutoff: chrono::DateTime<Utc>) -> Option<AtomicWrite> {
     let EntitySnapshot {
         payload: previous,
         modified_at,
@@ -173,7 +173,7 @@ fn purge_write(id: &str, snapshot: EntitySnapshot, cutoff: chrono::DateTime<Utc>
 
     Some(
         AtomicWrite::builder()
-            .entity_id(Arc::from(id))
+            .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
             .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::new(purged))))
             .history(history)
             .precondition(Precondition::UnchangedSince(modified_at))
@@ -240,7 +240,8 @@ mod tests {
     #[test]
     fn a_past_due_instance_is_written_back_with_a_tombstone() {
         let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("2025-01-01T00:00:00Z")]}]);
-        let write = purge_write("urn:ngsi-ld:A", snapshot(payload), cutoff()).expect("a purge write");
+        let id = "urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI");
+        let write = purge_write(&id, snapshot(payload), cutoff()).expect("a purge write");
 
         pretty_assertions::assert_eq!(write.history.len(), 1);
         assert!(matches!(write.history[0], HistoryRecord::Tombstone(_)));
@@ -250,6 +251,7 @@ mod tests {
     #[test]
     fn an_entity_with_nothing_past_due_produces_no_write() {
         let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("2027-01-01T00:00:00Z")]}]);
-        assert!(purge_write("urn:ngsi-ld:A", snapshot(payload), cutoff()).is_none());
+        let id = "urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI");
+        assert!(purge_write(&id, snapshot(payload), cutoff()).is_none());
     }
 }

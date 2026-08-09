@@ -9,7 +9,10 @@ use std::{
     },
 };
 
-use andromeda_test_common::config::callback_url;
+use andromeda_test_common::{
+    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL, callback_url},
+    db::TRUNCATE_ALL,
+};
 use axum::{extract::Request, response::IntoResponse};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
@@ -17,11 +20,6 @@ use sqlx::PgPool;
 use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
-
-pub use andromeda_test_common::{
-    config::{BASE_URL, COMPOUND_CONTEXT as TEST_SUITE_CONTEXT, DATABASE_URL},
-    db::TRUNCATE_ALL,
-};
 
 // ---------------------------------------------------------------------------
 // Mock context source server
@@ -174,7 +172,7 @@ pub fn unique_id(prefix: &str) -> String {
 }
 
 pub fn jsonld_link_value() -> String {
-    format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
+    format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
 pub async fn clean_database() {
@@ -200,7 +198,7 @@ pub fn vehicle_entity(id: &str) -> Value {
             "object": "urn:ngsi-ld:OffStreetParking:Downtown1",
             "observedAt": "2017-07-29T12:00:04Z"
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -212,7 +210,7 @@ pub fn vehicle_entity_with_speed(id: &str, speed: i64) -> Value {
             "type": "Property",
             "value": speed
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -224,7 +222,7 @@ pub fn vehicle_entity_speed_only(id: &str) -> Value {
             "type": "Property",
             "value": 56
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -257,7 +255,7 @@ pub fn vehicle_entity_second_ld(id: &str) -> Value {
             "object": "urn:ngsi-ld:OffStreetParking:Downtown2",
             "observedAt": "2017-07-29T12:00:04Z"
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -274,7 +272,7 @@ pub fn vehicle_entity_different_ld(id: &str) -> Value {
             "object": "urn:ngsi-ld:OffStreetParking:Downtown3",
             "observedAt": "2018-07-29T12:00:04Z"
         },
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -287,7 +285,7 @@ pub fn vehicle_entity_with_scope(id: &str, scope: &str) -> Value {
             "value": 50
         },
         "scope": scope,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     })
 }
 
@@ -340,7 +338,7 @@ pub fn vehicle_registration(reg_id: &str, entity_id: Option<&str>, endpoint: &st
             }
         ],
         "endpoint": endpoint,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(eid) = entity_id {
@@ -381,7 +379,7 @@ pub fn vehicle_registration_speed_property(reg_id: &str, entity_id: &str, endpoi
             }
         ],
         "endpoint": endpoint,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(m) = mode {
@@ -409,7 +407,7 @@ pub fn vehicle_registration_redirection_ops(reg_id: &str, entity_id: Option<&str
         ],
         "endpoint": endpoint,
         "operations": ops,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(eid) = entity_id {
@@ -441,7 +439,7 @@ pub fn vehicle_registration_speed_redirection_ops(reg_id: &str, entity_id: &str,
         ],
         "endpoint": endpoint,
         "operations": ops,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(m) = mode {
@@ -468,7 +466,7 @@ pub fn vehicle_registration_speed_default_ops(reg_id: &str, entity_id: &str, end
             }
         ],
         "endpoint": endpoint,
-        "@context": TEST_SUITE_CONTEXT
+        "@context": COMPOUND_CONTEXT
     });
 
     if let Some(m) = mode {

@@ -6,7 +6,7 @@
 
 use crate::{
     error::{AndromedaError, ErrorKind},
-    http::extractor::error::ExtractorRejection,
+    http::extractor::{error::ExtractorRejection, query::classify_query_parse_error},
 };
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::{extract::FromRequestParts, http::request::Parts};
@@ -30,8 +30,11 @@ where
         let uri = parts.uri.clone();
         // Parse query string manually
         let query_str = parts.uri.query().unwrap_or("");
-        let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str)
-            .map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid query parameters: {}", error), uri.clone()))?;
+        let params = serde_urlencoded::from_str::<EntityQueryParameters>(query_str).map_err(|error| {
+            let error_text = error.to_string();
+            let message = format!("Invalid query parameters: {error_text}");
+            classify_query_parse_error(&error_text, message, uri.clone())
+        })?;
 
         // Validate options and other parameter values. QueryError classifies
         // each variant as either MalformedRequest or QueryValidation when
@@ -81,5 +84,29 @@ mod tests {
 
         let result = EntityQuery::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok(), "expected Ok when local=true, even without filters");
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_parameters_as_invalid_request() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities?type=Building&invalidParam=invalidValue")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let result = EntityQuery::from_request_parts(&mut parts, &()).await;
+        assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_parameter_values_as_bad_request_data() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities?type=Building&limit=invalid")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let (mut parts, _) = req.into_parts();
+
+        let result = EntityQuery::from_request_parts(&mut parts, &()).await;
+        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
 }

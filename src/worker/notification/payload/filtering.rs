@@ -1,7 +1,10 @@
 //! Notification attribute, dataset, and previous-value filtering.
 
-use crate::worker::notification::payload::{AttributeName, ContextSpec, HashSet, JsonLdEngine, Value, expanded_entity_object_mut, expanded_properties, prefix};
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use crate::service::entity::sys_attrs::expanded_entity_object_mut;
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_vocabulary::{expanded::properties as expanded_properties, prefix};
+use serde_json::Value;
 
 pub fn filter_entity_attributes(entity: &Value, attrs: &[AttributeName]) -> Value {
     let Some(obj) = entity.as_object() else { return entity.clone() };
@@ -15,7 +18,7 @@ pub fn filter_entity_attributes(entity: &Value, attrs: &[AttributeName]) -> Valu
     Value::Object(filtered)
 }
 
-pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[String]) {
+pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Uri]) {
     let Some(obj) = expanded_entity_object_mut(entity) else { return };
     let default_context_prefix = format!("{}default-context/", prefix::NGSI_LD.as_str());
 
@@ -43,7 +46,7 @@ pub(super) fn filter_entity_by_dataset_id(entity: &mut Value, dataset_ids: &[Str
                     .and_then(|v| v.as_str());
 
                 match instance_dataset_id {
-                    Some(id) => dataset_ids.iter().any(|d| d == id),
+                    Some(id) => dataset_ids.iter().any(|dataset_id| dataset_id.as_str() == id),
                     None => dataset_ids.is_empty(),
                 }
             })
@@ -68,17 +71,19 @@ pub(super) async fn inject_previous_values(
         return;
     };
 
-    let changed_set: HashSet<&str> = changed_attributes.iter().map(AttributeName::as_str).collect();
     let keys: Vec<String> = curr_obj.keys().filter(|k| !k.starts_with('@') && *k != "id" && *k != "type").cloned().collect();
 
     let prepared_context = engine.prepare_term_context(context);
     for key in keys {
         if !changed_attributes.is_empty() {
-            let expanded_key = engine
+            let expanded_matches = engine
                 .expand_term(&key, &prepared_context)
                 .await
-                .map_or_else(|_| key.clone(), |iri| iri.to_string());
-            if !changed_set.contains(expanded_key.as_str()) && !changed_set.contains(key.as_str()) {
+                .ok()
+                .and_then(|iri| iri.as_str().parse::<AttributeName>().ok())
+                .is_some_and(|name| changed_attributes.contains(&name));
+            let compact_matches = key.parse::<AttributeName>().ok().is_some_and(|name| changed_attributes.contains(&name));
+            if !expanded_matches && !compact_matches {
                 continue;
             }
         }

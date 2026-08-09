@@ -238,14 +238,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             // live runtime the moment the store hiccuped.
             return 0;
         };
-        let registered: HashSet<&str> = registered.iter().map(TenantName::as_str).collect();
+        let registered: HashSet<&TenantName> = registered.iter().collect();
 
         let orphans: Vec<(TenantRef, Instant)> = self
             .runtimes
             .iter()
             .filter_map(|entry| match entry.key() {
                 TenantRef::UnnamedDefault => None,
-                TenantRef::Named(name) if registered.contains(name.as_str()) => None,
+                TenantRef::Named(name) if registered.contains(name) => None,
                 // clone: the eviction list outlives the iteration. The last-used
                 // stamp is captured so a request that touches this runtime after
                 // it is judged an orphan spares it from removal.

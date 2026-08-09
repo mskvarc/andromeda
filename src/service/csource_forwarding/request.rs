@@ -3,15 +3,16 @@
 use crate::service::csource_forwarding::operation::ForwardingOperation;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_http_headers::via::Via;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_query::filter::expression::Expr;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_query::{filter::expression::Expr, type_selection::grammar::TypeExprRaw};
+use iri_rs::IriRefBuf;
 
 /// Parameters for forwarding a single-entity provision operation.
 pub struct ForwardProvisionRequest<'a> {
     /// Entity ID to target, if applicable.
-    pub entity_id: Option<&'a str>,
+    pub entity_id: &'a Uri,
     /// Compact entity type for CSR matching.
-    pub entity_type_compact: Option<&'a str>,
+    pub entity_type_compact: Option<&'a EntityTypeName>,
     /// Attribute name used to filter registration information entries.
     pub attribute_name: Option<&'a AttributeName>,
     /// HTTP method for the forwarded request.
@@ -19,7 +20,7 @@ pub struct ForwardProvisionRequest<'a> {
     /// Optional request body bytes.
     pub body: Option<&'a [u8]>,
     /// JSON-LD context URL for the Link header.
-    pub context_url: Option<&'a str>,
+    pub context_url: Option<&'a IriRefBuf>,
     /// JSON-LD context used to expand matching terms.
     pub context: &'a ContextSpec,
     /// NGSI-LD operation being forwarded.
@@ -35,11 +36,11 @@ pub struct ForwardProvisionRequest<'a> {
 /// Parameters for forwarding a batch provision operation.
 pub struct ForwardBatchProvisionRequest<'a> {
     /// Compact entity type for CSR matching.
-    pub entity_type_compact: Option<&'a str>,
+    pub entity_type_compact: Option<&'a EntityTypeName>,
     /// Batch request body.
     pub body: &'a [u8],
     /// JSON-LD context URL for the Link header.
-    pub context_url: Option<&'a str>,
+    pub context_url: Option<&'a IriRefBuf>,
     /// JSON-LD context used to expand matching terms.
     pub context: &'a ContextSpec,
     /// NGSI-LD batch operation being forwarded.
@@ -55,13 +56,13 @@ pub struct ForwardBatchProvisionRequest<'a> {
 /// Parameters for forwarding a temporal entity query.
 pub struct ForwardTemporalQueryRequest<'a> {
     /// Compact entity type for CSR matching.
-    pub entity_type_compact: Option<&'a str>,
+    pub entity_type_compact: Option<&'a TypeExprRaw>,
     /// Optional entity identifiers.
     pub entity_ids: Option<&'a [Uri]>,
     /// Complete temporal query string.
     pub query_string: &'a str,
     /// JSON-LD context URL for the Link header.
-    pub context_url: Option<&'a str>,
+    pub context_url: Option<&'a IriRefBuf>,
     /// JSON-LD context used to expand matching terms.
     pub context: &'a ContextSpec,
     /// NGSI-LD operation being forwarded.
@@ -73,11 +74,11 @@ pub struct ForwardTemporalQueryRequest<'a> {
 /// Parameters for forwarding an entity query.
 pub struct ForwardQueryRequest<'a> {
     /// Compact entity type for CSR matching.
-    pub entity_type_compact: Option<&'a str>,
+    pub entity_type_compact: Option<&'a TypeExprRaw>,
     /// Optional entity identifiers.
     pub entity_ids: Option<&'a [Uri]>,
     /// JSON-LD context URL for the Link header.
-    pub context_url: Option<&'a str>,
+    pub context_url: Option<&'a IriRefBuf>,
     /// JSON-LD context used to expand matching terms.
     pub context: &'a ContextSpec,
     /// NGSI-LD operation being forwarded.

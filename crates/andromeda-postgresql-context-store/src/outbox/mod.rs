@@ -1,8 +1,9 @@
 //! Persistence layer for the notification outbox.
 //!
-//! - [`rows`] — `sqlx::FromRow` structs (crate-visible).
+//! The SQL decode shape remains private; [`rows`] exposes only records whose
+//! domain-valued columns have passed validation.
 
 /// The outbox repository struct and inherent insert method.
 pub mod repo;
-/// Row structures for notification outbox entries.
+/// Validated notification outbox records and their mapper errors.
 pub mod rows;

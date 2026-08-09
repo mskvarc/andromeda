@@ -3,18 +3,24 @@
 use crate::{
     api::tenant::TenantState,
     error::{AndromedaError, ResultInstanceExt},
-    http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery},
+    http::{
+        error::problem::NgsiLdError,
+        extractor::{query::ValidatedQuery, typed_path::TypedPath},
+        origin::request_origin,
+    },
 };
 use andromeda_jsonld::core_context::is_ngsi_ld_core_context_url;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
 use andromeda_postgresql_context_store::jsonld_context::params::DetailLevel;
 use axum::{
     Json,
     body::Bytes,
-    extract::{OriginalUri, Path},
+    extract::OriginalUri,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
+use iri_rs::Iri;
 use serde_json::Value;
 
 /// POST /ngsi-ld/v1/jsonldContexts -- Create a hosted JSON-LD context.
@@ -22,9 +28,9 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
     let service = &state.contexts;
     let payload: Value = serde_json::from_slice(&body).map_err(|_| AndromedaError::malformed_request("Request body is not valid JSON").with_instance(&uri))?;
 
-    let base_url = headers.get("host").and_then(|v| v.to_str().ok()).map(|h| format!("http://{}", h));
+    let base_url = request_origin(&headers).map_err(|error| error.with_instance(&uri))?;
 
-    let id = service.create(payload, base_url.as_deref()).await.with_instance(&uri)?;
+    let id = service.create(payload, base_url.as_ref()).await.with_instance(&uri)?;
 
     Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/jsonldContexts/{}", id))]).into_response())
 }
@@ -53,7 +59,7 @@ pub async fn query(
 pub async fn get(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
-    Path(context_id): Path<String>,
+    TypedPath(context_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
@@ -72,14 +78,14 @@ pub async fn get(
 pub async fn delete(
     TenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
-    Path(context_id): Path<String>,
+    TypedPath(context_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
 ) -> Result<Response, NgsiLdError> {
     let service = &state.contexts;
     let reload = params.reload.unwrap_or(false);
 
     // Check if attempting to delete a core context
-    if is_ngsi_ld_core_context_url(&context_id) {
+    if Iri::parse(context_id.as_str()).is_ok_and(is_ngsi_ld_core_context_url) {
         if reload {
             // Core contexts are embedded; reload is a no-op success.
             return Ok(StatusCode::NO_CONTENT.into_response());

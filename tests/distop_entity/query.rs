@@ -4,12 +4,12 @@
 //! Tests querying entities across context sources with different registration modes,
 //! entityMap, and splitEntities functionality.
 
+use andromeda_test_common::config::BASE_URL;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use serial_test::serial;
 
 use crate::helpers::{
-    BASE_URL,
     MockServer,
     clean_database,
     client,

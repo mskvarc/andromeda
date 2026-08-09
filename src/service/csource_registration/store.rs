@@ -6,13 +6,16 @@
 
 use crate::{error::AndromedaError, service::csource_merge::ResolvedCsrUpdate};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo};
 use andromeda_ngsi_ld_query::csr::compiled::CompiledCsrQuery;
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
+use iri_rs::IriBuf;
 use iso8601_duration::Duration as Iso8601Duration;
+use mediatype::MediaTypeBuf;
 use serde_json::Value;
+use url::Url;
 
 /// Parameters for creating a new context source registration.
 #[derive(Debug)]
@@ -22,9 +25,9 @@ pub struct CreateCsrParams<'a> {
     /// Free-text description of the registration.
     pub description: Option<&'a str>,
     /// Registration information entries describing provided entities/attributes.
-    pub information: Option<&'a Value>,
+    pub information: Option<Vec<RegistrationInfo>>,
     /// Tenant identifier for multi-tenancy.
-    pub tenant: Option<&'a str>,
+    pub tenant: Option<TenantName>,
     /// Expected interval between observations.
     pub observation_interval: Option<&'a Value>,
     /// Expected interval between management interactions.
@@ -38,15 +41,15 @@ pub struct CreateCsrParams<'a> {
     /// Expiration timestamp for the registration.
     pub expires_at: Option<DateTime<Utc>>,
     /// Base endpoint URL of the context source.
-    pub endpoint: Option<&'a str>,
+    pub endpoint: Option<Url>,
     /// Preferred MIME type for responses from the context source.
-    pub accept: Option<&'a str>,
+    pub accept: Option<MediaTypeBuf>,
     /// Forwarding mode for distributed operations.
     pub mode: ForwardingMode,
     /// NGSI-LD operations supported by the context source.
     pub operations: Option<Vec<CsrOperation>>,
     /// Scope values for the registration.
-    pub scope: Option<Vec<String>>,
+    pub scope: Option<Vec<ScopeBuf>>,
     /// ISO 8601 duration between context source refreshes.
     pub refresh_rate: Option<Iso8601Duration>,
     /// Management information for the registration.
@@ -54,9 +57,9 @@ pub struct CreateCsrParams<'a> {
     /// Additional context source metadata entries.
     pub context_source_info: Option<&'a Value>,
     /// JSON-LD context associated with this registration.
-    pub jsonld_context: Option<&'a str>,
+    pub jsonld_context: Option<Url>,
     /// Unique pseudonym for Via-based loop detection.
-    pub context_source_alias: Option<&'a str>,
+    pub context_source_alias: Option<ContextSourcePseudonym>,
     /// Non-standard properties preserved from the original request.
     pub additional_properties: Option<Value>,
 }
@@ -106,7 +109,7 @@ pub struct CsrUpdateFragment {
     /// Updated description.
     pub description: Option<Option<String>>,
     /// Updated registration information entries.
-    pub information: Option<Value>,
+    pub information: Option<Vec<RegistrationInfo>>,
     /// Updated tenant identifier.
     pub tenant: Option<Option<TenantName>>,
     /// Updated observation interval.
@@ -122,15 +125,15 @@ pub struct CsrUpdateFragment {
     /// Updated expiration timestamp.
     pub expires_at: Option<Option<DateTime<Utc>>>,
     /// Updated endpoint URL.
-    pub endpoint: Option<String>,
+    pub endpoint: Option<Url>,
     /// Updated accepted MIME type.
-    pub accept: Option<Option<String>>,
+    pub accept: Option<Option<MediaTypeBuf>>,
     /// Updated forwarding mode.
     pub mode: Option<ForwardingMode>,
     /// Updated supported operations.
     pub operations: Option<Option<Vec<CsrOperation>>>,
     /// Updated scope values.
-    pub scope: Option<Option<Vec<String>>>,
+    pub scope: Option<Option<Vec<ScopeBuf>>>,
     /// Updated refresh rate duration.
     pub refresh_rate: Option<Option<Iso8601Duration>>,
     /// Updated management information.
@@ -138,9 +141,9 @@ pub struct CsrUpdateFragment {
     /// Updated context source metadata entries.
     pub context_source_info: Option<Option<Value>>,
     /// Updated JSON-LD context reference.
-    pub jsonld_context: Option<Option<String>>,
+    pub jsonld_context: Option<Option<Url>>,
     /// Updated context source alias pseudonym.
-    pub context_source_alias: Option<Option<String>>,
+    pub context_source_alias: Option<Option<ContextSourcePseudonym>>,
     /// Updated non-standard properties.
     pub additional_properties: Option<Value>,
 }
@@ -148,7 +151,7 @@ pub struct CsrUpdateFragment {
 /// Storing context source registrations (clause 5.10).
 pub trait RegistrationStore: Send + Sync + 'static {
     /// Whether a registration with this identifier exists.
-    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
+    fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, AndromedaError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -157,7 +160,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Persist a new registration.
     fn create<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
-        id: &'life1 str,
+        id: &'life1 Uri,
         params: &'life2 CreateCsrParams<'life3>,
     ) -> BoxFuture<'async_trait, Result<(), AndromedaError>>
     where
@@ -168,7 +171,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Retrieve a registration by identifier.
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, AndromedaError>>
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, AndromedaError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -197,7 +200,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Replace a registration with a fully resolved value set. Returns rows affected.
     fn update<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: &'life1 str,
+        id: &'life1 Uri,
         values: &'life2 ResolvedCsrUpdate,
     ) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
     where
@@ -210,8 +213,8 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// expired ones (clause 5.10.2).
     fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        entity_type: Option<&'life1 str>,
-        entity_id: Option<&'life2 str>,
+        entity_type: Option<&'life1 IriBuf>,
+        entity_id: Option<&'life2 Uri>,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, AndromedaError>>
     where
         'life0: 'async_trait,
@@ -224,7 +227,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// `after` is the last identifier of the previous page, exclusive.
     fn find_all_active<'life0, 'life1, 'async_trait>(
         &'life0 self,
-        after: Option<&'life1 str>,
+        after: Option<&'life1 Uri>,
         limit: u32,
     ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, AndromedaError>>
     where
@@ -233,7 +236,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Delete a registration by identifier. Returns rows affected.
-    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 str) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
+    fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<u64, AndromedaError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

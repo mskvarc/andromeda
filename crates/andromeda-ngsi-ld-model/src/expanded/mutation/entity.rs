@@ -8,6 +8,7 @@ use crate::expanded::{
     node::{expanded_object_mut, expanded_object_ref},
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::{Map, Value};
 use std::slice::from_ref;
@@ -79,7 +80,7 @@ fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_in
     for patch_instance in patch_instances {
         if instance_is_null_sentinel(patch_instance) {
             let dataset_id = get_instance_dataset_id(patch_instance);
-            remove_instances_by_dataset(entity_obj, key, dataset_id);
+            remove_instances_by_dataset(entity_obj, key, dataset_id.as_ref());
         } else {
             deep_merge_attribute(entity_obj, key, from_ref(patch_instance));
         }
@@ -102,7 +103,7 @@ fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_in
 /// Returns [`ExpandedEntityError::EntityNotExpanded`] if `entity` is not an
 /// expanded JSON-LD node, or [`ExpandedEntityError::AttributesNotObject`] if
 /// `attrs` is not a JSON object.
-pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: OverwritePolicy) -> Result<Vec<String>, ExpandedEntityError> {
+pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: OverwritePolicy) -> Result<Vec<AttributeName>, ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
     let attrs_obj = attrs.as_object().ok_or(ExpandedEntityError::AttributesNotObject)?;
     let no_overwrite = overwrite == OverwritePolicy::Preserve;
@@ -146,8 +147,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
             Some(arr) => arr,
             None => {
                 if no_overwrite {
-                    // clone: the reported IRI is borrowed from the fragment key.
-                    not_appended.push(key.clone());
+                    not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
                 } else {
                     // clone: both the key and the value are borrowed from the fragment and stored owned.
                     entity_obj.insert(key.clone(), value.clone());
@@ -175,8 +175,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
                 }
             }
             if any_skipped {
-                // clone: the reported IRI is borrowed from the fragment key.
-                not_appended.push(key.clone());
+                not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
             }
         } else {
             deep_merge_attribute(entity_obj, key, patch_instances);
@@ -200,7 +199,7 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
 /// Returns [`ExpandedEntityError::EntityNotExpanded`] if `entity` is not an
 /// expanded JSON-LD node, or [`ExpandedEntityError::AttributesNotObject`] if
 /// `attrs` is not a JSON object.
-pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<String>, ExpandedEntityError> {
+pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<AttributeName>, ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
     let attrs_obj = attrs.as_object().ok_or(ExpandedEntityError::AttributesNotObject)?;
 
@@ -229,8 +228,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Stri
                 // clone: both the key and the value are borrowed from the fragment and stored owned.
                 entity_obj.insert(key.clone(), value.clone());
             } else {
-                // clone: the reported IRI is borrowed from the fragment key.
-                not_updated.push(key.clone());
+                not_updated.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
             }
             continue;
         }
@@ -264,6 +262,7 @@ mod tests {
         selection::OverwritePolicy,
         speed_entity,
     };
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use serde_json::{Value, json};
 
     /// One expanded Property instance carrying `value`, optionally tagged with a
@@ -411,7 +410,10 @@ mod tests {
         let attrs = json!({"https://example.com/speed": [{"https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 20}]}]});
         let not_appended = append_entity_attrs(&mut entity, &attrs, OverwritePolicy::Preserve).expect("append succeeds");
         pretty_assertions::assert_eq!(speed_entity::values(&entity), vec![10]);
-        pretty_assertions::assert_eq!(not_appended, vec!["https://example.com/speed".to_string()]);
+        pretty_assertions::assert_eq!(
+            not_appended,
+            vec!["https://example.com/speed".parse::<AttributeName>().expect("valid attribute name")]
+        );
     }
 
     #[test]

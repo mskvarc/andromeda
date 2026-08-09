@@ -1,7 +1,7 @@
 //! The NGSI-LD error categories of clause 5.5.2.
 
 use http::StatusCode;
-use iri_rs::{Iri, iri};
+use iri_rs::{Iri, IriRefBuf, iri};
 use strum::{Display, EnumIter, IntoEnumIterator, IntoStaticStr};
 
 /// An NGSI-LD error category (ETSI GS CIM 009 v1.9.1, clause 5.5.2).
@@ -70,11 +70,6 @@ impl NgsiLdErrorType {
         }
     }
 
-    /// The canonical ETSI type IRI as a static string slice.
-    pub fn type_uri(self) -> &'static str {
-        self.type_iri().into_inner()
-    }
-
     /// The short title of this category, as the `title` member of a problem
     /// detail carries it.
     pub fn title(self) -> &'static str {
@@ -87,8 +82,8 @@ impl NgsiLdErrorType {
     /// hand-written inverse can drift from [`type_iri`](Self::type_iri), and a
     /// twelve-element scan costs nothing on a path that runs once per
     /// deserialised batch error.
-    pub fn from_type_uri(uri: &str) -> Option<NgsiLdErrorType> {
-        NgsiLdErrorType::iter().find(|category| category.type_uri() == uri)
+    pub fn from_type_iri(iri: &IriRefBuf) -> Option<NgsiLdErrorType> {
+        NgsiLdErrorType::iter().find(|category| category.type_iri().as_str() == iri.as_str())
     }
 
     /// The HTTP status code Table 6.3.2-1 assigns to this category.
@@ -116,16 +111,18 @@ impl NgsiLdErrorType {
 mod tests {
     use crate::error_type::NgsiLdErrorType;
     use http::StatusCode;
+    use iri_rs::IriRefBuf;
     use strum::IntoEnumIterator;
 
     #[test]
     fn every_category_has_an_etsi_type_iri_that_resolves_back_to_it() {
         for category in NgsiLdErrorType::iter() {
             assert!(
-                category.type_uri().starts_with("https://uri.etsi.org/ngsi-ld/errors/"),
+                category.type_iri().as_str().starts_with("https://uri.etsi.org/ngsi-ld/errors/"),
                 "{category} does not carry an ETSI type IRI"
             );
-            pretty_assertions::assert_eq!(NgsiLdErrorType::from_type_uri(category.type_uri()), Some(category));
+            let iri = IriRefBuf::new(category.type_iri().as_str().to_owned()).expect("IRI reference");
+            pretty_assertions::assert_eq!(NgsiLdErrorType::from_type_iri(&iri), Some(category));
         }
     }
 
@@ -139,8 +136,11 @@ mod tests {
 
     #[test]
     fn a_uri_no_category_claims_resolves_to_nothing() {
-        pretty_assertions::assert_eq!(NgsiLdErrorType::from_type_uri("https://uri.etsi.org/ngsi-ld/errors/Invented"), None);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::from_type_uri(""), None);
+        pretty_assertions::assert_eq!(
+            NgsiLdErrorType::from_type_iri(&"https://uri.etsi.org/ngsi-ld/errors/Invented".parse().expect("IRI reference")),
+            None
+        );
+        pretty_assertions::assert_eq!(NgsiLdErrorType::from_type_iri(&IriRefBuf::default()), None);
     }
 
     #[test]

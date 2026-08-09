@@ -1,35 +1,23 @@
 //! Notification context selection and compacted-entity normalization.
 
-use crate::worker::notification::payload::{
-    CompiledSubscription,
-    ContextSpec,
-    CoreContextPolicy,
-    IriRefBuf,
-    SysAttrsInclusion,
-    Url,
-    Value,
-    expanded_properties,
-};
+use crate::service::compiled_subscription::CompiledSubscription;
+use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
+use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use iri_rs::IriRefBuf;
+use serde_json::Value;
+use url::Url;
 
 pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {
-    context_for_subscription_raw(sub.jsonld_context.as_ref().map(Url::as_str))
+    context_from_url(sub.jsonld_context.as_ref())
 }
 
-/// Build a ContextSpec from an optional jsonldContext string.
-/// Shared by both notification_worker and interval_worker.
-pub fn context_for_subscription_raw(jsonld_context: Option<&str>) -> ContextSpec {
+/// Build a context specification from an optional `jsonldContext` URL.
+pub fn context_from_url(jsonld_context: Option<&Url>) -> ContextSpec {
     let Some(url) = jsonld_context else {
         return ContextSpec::none().with_core_policy(CoreContextPolicy::Append);
     };
-    let trimmed = url.trim();
-    if ((trimmed.starts_with('{') && trimmed.ends_with('}')) || (trimmed.starts_with('[') && trimmed.ends_with(']')))
-        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
-    {
-        return ContextSpec::none().with_body_context(Some(value)).with_core_policy(CoreContextPolicy::Append);
-    }
-    // A jsonldContext that parses as an IRI reference is a context URL; an inline
-    // object or array is a body context, handled above.
-    if let Ok(iri) = IriRefBuf::new(url.to_string()) {
+    if let Ok(iri) = IriRefBuf::new(url.as_str().to_owned()) {
         return ContextSpec::from_links(vec![iri]).with_core_policy(CoreContextPolicy::Append);
     }
     ContextSpec::none().with_core_policy(CoreContextPolicy::Append)
@@ -46,7 +34,10 @@ pub fn normalize_compacted_entity(mut entity: Value) -> Value {
             && let Some(t) = obj.remove("@type")
         {
             let normalized = match t {
-                Value::Array(arr) if arr.len() == 1 => arr.into_iter().next().unwrap_or(Value::Null),
+                Value::Array(arr) if arr.len() == 1 => match arr.into_iter().next() {
+                    Some(value) => value,
+                    None => Value::Null,
+                },
                 other => other,
             };
             obj.insert("type".to_string(), normalized);

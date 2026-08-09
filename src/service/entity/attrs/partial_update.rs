@@ -18,7 +18,6 @@ use andromeda_ngsi_ld_model::{
 };
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
-use urn_rs::Urn;
 
 impl EntityService {
     /// Apply a partial update to one attribute instance (clause 5.6.4).
@@ -28,19 +27,17 @@ impl EntityService {
     /// recomputed against a fresh read if a concurrent writer got in first.
     pub async fn partial_update_attr(
         &self,
-        id: &Urn,
-        attr_name: &str,
+        id: &Uri,
+        attr_name: &AttributeName,
         dataset_id: Option<&Uri>,
         fragment: Value,
         context: &ContextSpec,
     ) -> Result<(), AndromedaError> {
-        let entity_uri = Uri::from(id.clone()); // clone: owned Urn for Uri conversion; id is &Urn
-        let id = id.to_string();
+        let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
         let prepared_context = self.engine.prepare_term_context(context);
-        let attr_iri = self.engine.expand_term(attr_name, &prepared_context).await?;
-        // The tombstone catalogue records a datasetId as its raw string form.
-        let dataset_id_str = dataset_id.map(ToString::to_string);
+        let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
+        let expanded_attr_name = attr_name_of(attr_iri.as_str())?;
 
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
@@ -63,10 +60,7 @@ impl EntityService {
                 let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
 
                 let (history, trigger) = if was_deleted {
-                    (
-                        vec![tombstone(attr_iri.as_str(), dataset_id_str.as_deref())?],
-                        NotificationTrigger::AttributeDeleted,
-                    )
+                    (vec![tombstone(&expanded_attr_name, dataset_id)], NotificationTrigger::AttributeDeleted)
                 } else {
                     (
                         vec![HistoryRecord::Observations(Arc::clone(&expanded))], // clone: Arc ref-count bump
@@ -75,7 +69,7 @@ impl EntityService {
                 };
 
                 let merged = Arc::new(existing);
-                let write = payload_write(&id, &merged, history);
+                let write = payload_write(&entity_uri, &merged, history);
                 Ok((
                     write,
                     MutatedEntity {

@@ -9,7 +9,10 @@ use crate::{
     worker::csr_notification::matching::{compile_csr_subscription, filter_csr_for_subscription, find_matching_csr_subscriptions, matches_csr_subscription},
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    uri::{NGSI_LD_URN_NID, Uri},
+};
 use andromeda_ngsi_ld_model::{
     notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
@@ -161,8 +164,7 @@ impl CsrNotificationWorker {
     async fn handle_subscription_change(&self, change: CsourceSubscriptionChange) {
         match change {
             CsourceSubscriptionChange::Upserted(id) => {
-                let id_str = id.to_string();
-                match self.sub_repo.get(&id_str).await {
+                match self.sub_repo.get(&id).await {
                     Ok(Some(sub)) => {
                         let compiled = if sub.lifecycle.status == SubscriptionStatus::Active {
                             compile_csr_subscription(&sub).map(Arc::new)
@@ -186,7 +188,7 @@ impl CsrNotificationWorker {
                         self.cache.remove(&id);
                     }
                     Err(e) => {
-                        debug!("Failed to load CSR subscription {} for cache update: {}", id_str, e);
+                        debug!("Failed to load CSR subscription {} for cache update: {}", id, e);
                     }
                 }
             }
@@ -246,7 +248,7 @@ impl CsrNotificationWorker {
 
         match self
             .sub_repo
-            .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
             .await
         {
             Ok(true) => {}
@@ -287,11 +289,11 @@ impl CsrNotificationWorker {
         let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
         if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
+            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
                 debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
             }
         } else {
-            if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
+            if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
                 debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
             }
         }
@@ -310,7 +312,7 @@ impl CsrNotificationWorker {
         // Fetch the CSR data (use snapshot for deletes)
         let csr_data = match event.trigger_reason {
             CsrTriggerReason::NoLongerMatching => event.csr_snapshot.clone(),
-            _ => match self.csr_repo.get(event.csr_id.as_ref()).await {
+            _ => match self.csr_repo.get(&event.csr_id).await {
                 Ok(Some(csr)) => serde_json::to_value(&csr).ok(),
                 Ok(None) => {
                     debug!("CSR {} no longer exists, skipping notification", event.csr_id);
@@ -343,7 +345,7 @@ impl CsrNotificationWorker {
 
                     match self
                         .sub_repo
-                        .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
                         .await
                     {
                         Ok(true) => {}
@@ -387,10 +389,10 @@ impl CsrNotificationWorker {
                     let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
                     if success {
-                        if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
+                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
                             debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
                         }
-                    } else if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
+                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
                         debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
                     }
                 }
@@ -405,7 +407,7 @@ impl CsrNotificationWorker {
     /// to subscriptions that matched the old CSR but not the new one.
     async fn handle_csr_update_with_snapshot(&self, event: &CsrChangeEvent, pre_update: &Value) {
         // Fetch post-update CSR from DB
-        let post_update = match self.csr_repo.get(event.csr_id.as_ref()).await {
+        let post_update = match self.csr_repo.get(&event.csr_id).await {
             Ok(Some(csr)) => match serde_json::to_value(&csr) {
                 Ok(v) => v,
                 Err(_) => return,
@@ -420,11 +422,11 @@ impl CsrNotificationWorker {
         let matched_before = find_matching_csr_subscriptions(&self.cache, pre_update);
         let matched_after = find_matching_csr_subscriptions(&self.cache, &post_update);
 
-        let after_ids: HashSet<&str> = matched_after.iter().map(|s| s.id.as_str()).collect();
-        let before_ids: HashSet<&str> = matched_before.iter().map(|s| s.id.as_str()).collect();
+        let after_ids: HashSet<&Uri> = matched_after.iter().map(|subscription| &subscription.id).collect();
+        let before_ids: HashSet<&Uri> = matched_before.iter().map(|subscription| &subscription.id).collect();
 
         // Subscriptions that still match → "updated"
-        let updated_subs: Vec<Arc<CompiledCsrSubscription>> = matched_after.iter().filter(|sub| before_ids.contains(sub.id.as_str())).cloned().collect();
+        let updated_subs: Vec<Arc<CompiledCsrSubscription>> = matched_after.iter().filter(|sub| before_ids.contains(&sub.id)).cloned().collect();
         let _updated: Vec<()> = stream::iter(updated_subs)
             .map(|sub| {
                 let post_update = post_update.clone();
@@ -437,8 +439,7 @@ impl CsrNotificationWorker {
             .await;
 
         // Subscriptions that matched before but not after → "noLongerMatching"
-        let no_longer_matching_subs: Vec<Arc<CompiledCsrSubscription>> =
-            matched_before.iter().filter(|sub| !after_ids.contains(sub.id.as_str())).cloned().collect();
+        let no_longer_matching_subs: Vec<Arc<CompiledCsrSubscription>> = matched_before.iter().filter(|sub| !after_ids.contains(&sub.id)).cloned().collect();
         let _no_longer_matching: Vec<()> = stream::iter(no_longer_matching_subs)
             .map(|sub| async move {
                 self.send_csr_notification(&sub, pre_update, CsrTriggerReason::NoLongerMatching).await;
@@ -448,8 +449,7 @@ impl CsrNotificationWorker {
             .await;
 
         // Subscriptions that match after but not before → "newlyMatching" (from update)
-        let newly_matching_subs: Vec<Arc<CompiledCsrSubscription>> =
-            matched_after.iter().filter(|sub| !before_ids.contains(sub.id.as_str())).cloned().collect();
+        let newly_matching_subs: Vec<Arc<CompiledCsrSubscription>> = matched_after.iter().filter(|sub| !before_ids.contains(&sub.id)).cloned().collect();
         let _newly_matching: Vec<()> = stream::iter(newly_matching_subs)
             .map(|sub| {
                 let post_update = post_update.clone();
@@ -467,7 +467,7 @@ impl CsrNotificationWorker {
 
         match self
             .sub_repo
-            .claim_notification_slot(sub_id.as_ref(), ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
             .await
         {
             Ok(true) => {}
@@ -510,11 +510,11 @@ impl CsrNotificationWorker {
         let success = self.transport.deliver(&compiled_sub.endpoint_transport, &request).await.is_delivered();
 
         if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id.as_ref()).await {
+            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
                 debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
             }
         } else {
-            if let Err(e) = self.sub_repo.mark_failure(sub_id.as_ref()).await {
+            if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
                 debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
             }
         }

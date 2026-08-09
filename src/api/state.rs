@@ -14,7 +14,7 @@ use crate::{
     },
 };
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
-use andromeda_ngsi_ld_lexicon::ngsi_ld_urn::ContextSourceId;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     subscription::repo::SubscriptionRepository,
@@ -51,5 +51,6 @@ pub struct AndromedaState {
 #[derive(Clone)]
 pub struct BrokerState {
     pub tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
-    pub source_identity: ContextSourceId,
+    pub source_id: Uri,
+    pub source_alias: ContextSourcePseudonym,
 }

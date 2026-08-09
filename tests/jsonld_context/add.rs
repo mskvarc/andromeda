@@ -80,7 +80,7 @@ async fn add_invalid_context_missing_key_returns_400() {
     });
     let (status, _, body) = create_context(&c, &body).await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE);
+    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
 }
 
 /// 050_02_02: Add @context with malformed JSON (empty object) -> 400.
