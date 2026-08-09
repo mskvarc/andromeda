@@ -6,7 +6,6 @@
 
 use crate::{
     api::{
-        context_hit_flush::ContextHitFlushWorker,
         state::AndromedaState,
         tenant_factory::{
             runtime::BrokerTenantRuntime,
@@ -20,16 +19,15 @@ use crate::{
     error::AndromedaError,
 };
 use andromeda_context_commit::committer::ContextCommitter;
-use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
+use andromeda_delivery::mqtt::pool::MqttTransportPool;
 use andromeda_entity::batch_activity::BatchActivityTracker;
 use andromeda_postgresql_atomic_write::committer::{EntityInsertMode, PostgresAtomicCommitter};
 use andromeda_postgresql_context_store::tenant_database::DatabaseUrl;
 use andromeda_postgresql_temporal_store::recorder::TemporalRecorder;
+use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::{database_name::TenantDatabaseName, error::TenancyError, state_factory::TenantStateFactory, tenant_ref::TenantRef};
 use async_trait::async_trait;
-use sqlx::PgPool;
 use std::sync::{Arc, OnceLock};
-use tokio::task::JoinHandle;
 use tracing::debug;
 
 /// Runtime ownership and ordered shutdown.
@@ -51,15 +49,18 @@ pub struct BrokerTenantFactory {
     /// belongs to a runtime the health router has no handle on. Written once:
     /// the unnamed default is the one tenant that is never evicted.
     default_mqtt_pool: OnceLock<Arc<MqttTransportPool>>,
+    /// Process task scope from which every tenant supervisor derives cancellation.
+    process_tasks: TaskSupervisor,
 }
 
 impl BrokerTenantFactory {
     /// A factory over the broker's configuration.
-    pub const fn new(config: Arc<RuntimeConfig>, database_url: DatabaseUrl) -> BrokerTenantFactory {
+    pub const fn new(config: Arc<RuntimeConfig>, database_url: DatabaseUrl, process_tasks: TaskSupervisor) -> BrokerTenantFactory {
         BrokerTenantFactory {
             config,
             database_url,
             default_mqtt_pool: OnceLock::new(),
+            process_tasks,
         }
     }
 
@@ -76,21 +77,18 @@ impl TenantStateFactory for BrokerTenantFactory {
 
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<AndromedaState>, BrokerTenantRuntime), TenancyError> {
         let db_url = self.database_url.with_db_name(database);
-        let (state, context_hit_flush, worker_handles, transport, pool, health_shutdown) = build_tenant_state(&self.config, &db_url, tenant.clone()) // clone: the state owns its tenant
+        let (state, runtime) = build_tenant_state(&self.config, &db_url, tenant.clone(), self.process_tasks.tenant()) // clone: the state owns its tenant and the tenant task scope derives from the process scope.
             .await
             .map_err(|error| TenancyError::RuntimeUnavailable {
                 tenant: tenant.clone(), // clone: the error outlives this borrow
                 detail: error.to_string(),
             })?;
 
-        if tenant.is_unnamed_default() && self.default_mqtt_pool.set(Arc::clone(transport.mqtt_pool())).is_err() {
+        if tenant.is_unnamed_default() && self.default_mqtt_pool.set(Arc::clone(runtime.mqtt_pool())).is_err() {
             debug!("the default tenant's MQTT pool was already recorded; /health keeps reporting on the first");
         }
 
-        Ok((
-            Arc::new(state),
-            BrokerTenantRuntime::new(context_hit_flush, worker_handles, transport, pool, health_shutdown),
-        ))
+        Ok((Arc::new(state), runtime))
     }
 }
 
@@ -102,17 +100,8 @@ async fn build_tenant_state(
     config: &RuntimeConfig,
     db_url: &url::Url,
     tenant: TenantRef,
-) -> Result<
-    (
-        AndromedaState,
-        Option<ContextHitFlushWorker>,
-        Vec<JoinHandle<()>>,
-        Arc<TransportDispatcher>,
-        PgPool,
-        Option<tokio::sync::watch::Sender<bool>>,
-    ),
-    AndromedaError,
-> {
+    task_supervisor: TaskSupervisor,
+) -> Result<(AndromedaState, BrokerTenantRuntime), AndromedaError> {
     let signals = TenantSignals::new(config.spatial.change_channel_capacity);
     let storage = initialize_storage(config, db_url, &tenant).await?;
     let pool = storage.pool;
@@ -185,10 +174,20 @@ async fn build_tenant_state(
             .writes(writes)
             .engine(engine)
             .spatial_index(spatial_index)
-            .batch_activity(batch_activity)
             .transport(Arc::clone(&transport))
+            .task_supervisor(task_supervisor)
             .build(),
-    );
+    )?;
 
-    Ok((state, context_hit_flush, supervision.handles, transport, pool, supervision.health_shutdown))
+    Ok((
+        state,
+        BrokerTenantRuntime::new(
+            context_hit_flush,
+            supervision.handles,
+            transport,
+            pool,
+            supervision.health_shutdown,
+            supervision.task_supervisor,
+        ),
+    ))
 }

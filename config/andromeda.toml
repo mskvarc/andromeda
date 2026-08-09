@@ -45,6 +45,7 @@ batch_large_threshold = 512
 batch_prepare_blocking_threshold = 128
 batch_side_effect_queue_capacity = 8
 # batch_async_side_effect_threshold = 512
+entity_expiry_batch_size = 1000
 max_request_body_bytes = 67108864
 snapshot_concurrency = 4
 forward_csr_concurrency = 16

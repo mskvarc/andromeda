@@ -5,8 +5,9 @@ use crate::{
     entity::{mapper::stored_uri, repo::EntityRepository},
     error::ContextStoreError,
 };
-use andromeda_entity::entity_snapshot::EntitySnapshot;
+use andromeda_entity::{entity_snapshot::EntitySnapshot, expiry::EntityExpiryBatchSize};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use chrono::{DateTime, Utc};
 use sqlx::Row;
 
 /// Every entity carrying at least one past-due attribute instance, with the
@@ -29,24 +30,38 @@ WHERE EXISTS (
         WHERE key NOT LIKE '@%' AND jsonb_typeof(value) = 'array'
     ) AS kv(key, val),
     LATERAL jsonb_array_elements(kv.val) AS inst(elem)
-    WHERE (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= NOW()
+    WHERE (inst.elem #>>'{https://uri.etsi.org/ngsi-ld/expiresAt,0,@value}')::timestamptz <= $1
 )
+ORDER BY modified_at, id
+LIMIT $2
 "#;
 
 /// Select entity-level expiry candidates without applying policy-owned deletion.
-const ENTITIES_DUE_FOR_EXPIRY_SQL: &str = "SELECT id FROM entities WHERE expires_at IS NOT NULL AND expires_at <= NOW()";
+const ENTITIES_DUE_FOR_EXPIRY_SQL: &str = "SELECT id FROM entities WHERE expires_at IS NOT NULL AND expires_at <= $1 ORDER BY expires_at, id LIMIT $2";
 
 impl EntityRepository {
     /// Read identifiers of entities whose `expiresAt` has passed.
-    pub async fn entities_due_for_expiry(&self) -> Result<Vec<Uri>, ContextStoreError> {
-        let rows: Vec<(String,)> = sqlx::query_as(ENTITIES_DUE_FOR_EXPIRY_SQL).fetch_all(&self.pool).await?;
+    pub async fn entities_due_for_expiry(&self, cutoff: DateTime<Utc>, batch_size: EntityExpiryBatchSize) -> Result<Vec<Uri>, ContextStoreError> {
+        let rows: Vec<(String,)> = sqlx::query_as(ENTITIES_DUE_FOR_EXPIRY_SQL)
+            .bind(cutoff)
+            .bind(i64::from(batch_size.get()))
+            .fetch_all(&self.pool)
+            .await?;
 
         rows.into_iter().map(|(id,)| stored_uri(id)).collect()
     }
 
     /// Read every entity that holds a past-due attribute instance.
-    pub async fn entities_with_expired_attributes(&self) -> Result<Vec<(Uri, EntitySnapshot)>, ContextStoreError> {
-        let rows = sqlx::query(ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL).fetch_all(&self.pool).await?;
+    pub async fn entities_with_expired_attributes(
+        &self,
+        cutoff: DateTime<Utc>,
+        batch_size: EntityExpiryBatchSize,
+    ) -> Result<Vec<(Uri, EntitySnapshot)>, ContextStoreError> {
+        let rows = sqlx::query(ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL)
+            .bind(cutoff)
+            .bind(i64::from(batch_size.get()))
+            .fetch_all(&self.pool)
+            .await?;
 
         rows.into_iter()
             .map(|row| {
@@ -71,11 +86,17 @@ mod tests {
         assert!(ENTITIES_DUE_FOR_EXPIRY_SQL.starts_with("SELECT id FROM entities"));
         assert!(!ENTITIES_DUE_FOR_EXPIRY_SQL.contains("DELETE"));
         assert!(!ENTITIES_DUE_FOR_EXPIRY_SQL.contains("UPDATE"));
+        assert!(ENTITIES_DUE_FOR_EXPIRY_SQL.contains("<= $1"));
+        assert!(ENTITIES_DUE_FOR_EXPIRY_SQL.contains("LIMIT $2"));
+        assert!(!ENTITIES_DUE_FOR_EXPIRY_SQL.contains("NOW()"));
     }
 
     #[test]
     fn the_expiry_candidate_query_reads_the_version_token_with_the_payload() {
         assert!(ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL.contains("SELECT id, payload, modified_at"));
+        assert!(ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL.contains("<= $1"));
+        assert!(ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL.contains("LIMIT $2"));
+        assert!(!ENTITIES_WITH_EXPIRED_ATTRIBUTES_SQL.contains("NOW()"));
     }
 
     #[test]

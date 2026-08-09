@@ -17,7 +17,7 @@ use axum::{
     middleware,
 };
 use headers::Header;
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{
@@ -101,7 +101,11 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
             Duration::from_secs(http.request_timeout_secs),
         ));
 
-    let BrokerHttp { router, tenants } = create_router(Arc::clone(&config)).await?;
+    let BrokerHttp {
+        router,
+        tenants,
+        process_tasks,
+    } = create_router(Arc::clone(&config)).await?;
     let mut router = router.layer(middleware::from_fn(echo_tenant_header_middleware));
 
     if let HttpFeatureMode::Enabled = http.response_compression {
@@ -117,7 +121,7 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
 
     let app = NormalizePathLayer::trim_trailing_slash().layer(router);
 
-    let listener = TcpListener::bind(std::net::SocketAddr::from((config.server.host, config.server.port))).await?;
+    let listener = TcpListener::bind(SocketAddr::from((config.server.host, config.server.port))).await?;
 
     info!("Listening on {}", listener.local_addr()?);
 
@@ -125,7 +129,9 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     info!(event = "http_traffic_drained", "HTTP listener stopped after draining accepted requests");
+    process_tasks.request_cancellation();
     tenants.shutdown_all().await;
+    process_tasks.shutdown().await;
     info!(
         event = "broker_resources_closed",
         "Tenant workers, transports, context flushers, and pools are closed"
@@ -138,13 +144,16 @@ pub async fn run(config: RuntimeConfig) -> Result<(), AndromedaError> {
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
+        use tokio::signal::{
+            ctrl_c,
+            unix::{SignalKind, signal},
+        };
 
         let terminate = signal(SignalKind::terminate());
         match terminate {
             Ok(mut terminate) => {
                 tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
+                    result = ctrl_c() => {
                         if let Err(error) = result {
                             tracing::error!(error = %error, "Ctrl-C signal listener failed");
                         } else {
@@ -162,7 +171,7 @@ async fn shutdown_signal() {
             }
             Err(error) => {
                 tracing::error!(error = %error, "SIGTERM signal listener failed; waiting for Ctrl-C");
-                if let Err(error) = tokio::signal::ctrl_c().await {
+                if let Err(error) = ctrl_c().await {
                     tracing::error!(error = %error, "Ctrl-C signal listener failed");
                 } else {
                     tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received");
@@ -172,9 +181,13 @@ async fn shutdown_signal() {
     }
 
     #[cfg(not(unix))]
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::error!(error = %error, "Ctrl-C signal listener failed");
-    } else {
-        tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received");
+    {
+        use tokio::signal::ctrl_c;
+
+        if let Err(error) = ctrl_c().await {
+            tracing::error!(error = %error, "Ctrl-C signal listener failed");
+        } else {
+            tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received");
+        }
     }
 }

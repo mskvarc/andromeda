@@ -40,6 +40,7 @@ andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temp
 andromeda-registration = { path = "crates/andromeda-registration" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-subscription = { path = "crates/andromeda-subscription" }
+andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
 
@@ -100,6 +101,7 @@ andromeda-postgresql-temporal-store.workspace = true
 andromeda-registration.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
+andromeda-task-runtime.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.89"
 axum = { version = "0.8.9", features = ["ws"] }

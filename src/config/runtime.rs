@@ -172,6 +172,7 @@ mod tests {
                 batch_prepare_blocking_threshold: 128,
                 batch_side_effect_queue_capacity: 8,
                 batch_async_side_effect_threshold: None,
+                entity_expiry_batch_size: 1_000,
                 pending_side_effects_poll_secs: 1,
                 pending_side_effects_lease_secs: 30,
                 pending_side_effects_batch_size: 32,
@@ -437,6 +438,14 @@ port = 1600
     }
 
     #[test]
+    fn validate_rejects_zero_entity_expiry_batch_size() {
+        let mut config = test_runtime_config_with_preload("contexts/test.jsonld");
+        config.performance.entity_expiry_batch_size = 0;
+
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
     #[serial]
     fn env_overrides_batch_chunk_write_concurrency() {
         unsafe { std::env::set_var("ANDROMEDA_PERFORMANCE_BATCH_CHUNK_WRITE_CONCURRENCY", "9") };
@@ -487,6 +496,12 @@ port = 1600
     fn batch_chunk_size_default_is_512() {
         let config = RuntimeConfig::builder().env().load().expect("config should load");
         pretty_assertions::assert_eq!(config.performance.batch_chunk_size, 512);
+    }
+
+    #[test]
+    fn entity_expiry_batch_size_default_is_one_thousand() {
+        let config = RuntimeConfig::builder().env().load().expect("config should load");
+        pretty_assertions::assert_eq!(config.performance.entity_expiry_batch_size, 1_000);
     }
 
     #[test]

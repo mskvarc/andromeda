@@ -1,7 +1,8 @@
 //! Runtime resources owned by one tenant and their shutdown order.
 
 use crate::api::context_hit_flush::ContextHitFlushWorker;
-use andromeda_delivery::dispatch::TransportDispatcher;
+use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
+use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::state_factory::TenantRuntime;
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -16,6 +17,7 @@ pub struct BrokerTenantRuntime {
     transport: Arc<TransportDispatcher>,
     pool: PgPool,
     health_shutdown: Option<watch::Sender<bool>>,
+    task_supervisor: TaskSupervisor,
 }
 
 impl BrokerTenantRuntime {
@@ -25,6 +27,7 @@ impl BrokerTenantRuntime {
         transport: Arc<TransportDispatcher>,
         pool: PgPool,
         health_shutdown: Option<watch::Sender<bool>>,
+        task_supervisor: TaskSupervisor,
     ) -> BrokerTenantRuntime {
         BrokerTenantRuntime {
             context_hit_flush,
@@ -32,7 +35,13 @@ impl BrokerTenantRuntime {
             transport,
             pool,
             health_shutdown,
+            task_supervisor,
         }
+    }
+
+    /// Return the tenant's shared MQTT connection pool.
+    pub(super) fn mqtt_pool(&self) -> &Arc<MqttTransportPool> {
+        self.transport.mqtt_pool()
     }
 }
 
@@ -42,9 +51,10 @@ impl TenantRuntime for BrokerTenantRuntime {
         if let Some(shutdown) = self.health_shutdown {
             let _ = shutdown.send(true);
         }
-        self.transport.shutdown().await;
+        self.task_supervisor.shutdown().await;
         stop_workers(self.worker_handles).await;
         info!(event = "tenant_workers_stopped");
+        self.transport.shutdown().await;
         if let Some(worker) = self.context_hit_flush {
             worker.shutdown().await;
         }

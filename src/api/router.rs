@@ -30,6 +30,7 @@ use andromeda_postgresql_context_store::{
     tenant_database::{DatabaseUrl, configure_pool_options},
     tenant_registry::PostgresTenantRegistry,
 };
+use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
 use axum::{
     Extension,
@@ -38,6 +39,7 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
+use tokio::runtime::Handle;
 use tower_helmet::HelmetLayer;
 use tracing::info;
 
@@ -47,6 +49,8 @@ pub struct BrokerHttp {
     pub router: Router,
     /// Tenant manager to drain after the server stops accepting traffic.
     pub tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
+    /// Process task scope coordinating cancellation across tenants.
+    pub process_tasks: TaskSupervisor,
 }
 
 pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, AndromedaError> {
@@ -66,7 +70,12 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
         )
         .await?,
     );
-    let factory = Arc::new(BrokerTenantFactory::new(Arc::clone(&config), database_url));
+    let process_tasks = TaskSupervisor::process(Handle::current());
+    let factory = Arc::new(BrokerTenantFactory::new(
+        Arc::clone(&config),
+        database_url,
+        process_tasks.clone(), // clone: the factory derives tenant scopes while server shutdown retains the process scope.
+    ));
     let tenants = TenantRuntimeManager::new(config.tenancy.clone(), Arc::clone(&registry), Arc::clone(&factory)); // clone: same
 
     // The janitor runs for the process lifetime; detaching its handle is the
@@ -104,7 +113,11 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
         .layer(DefaultBodyLimit::max(max_body))
         .layer(HelmetLayer::with_defaults())
         .with_state(broker_state);
-    Ok(BrokerHttp { router, tenants })
+    Ok(BrokerHttp {
+        router,
+        tenants,
+        process_tasks,
+    })
 }
 
 fn build_v1_router(entity_routes: Router) -> Router<BrokerState> {

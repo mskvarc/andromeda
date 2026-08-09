@@ -1,0 +1,21 @@
+[package]
+name = "andromeda-task-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+compact_str = "0.9.0"
+dashmap = "6.1.0"
+derive_more = { version = "2.1.1", features = ["display"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.1", features = ["rt", "sync", "time"] }
+tokio-util = { version = "0.7.18", features = ["rt"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "test-util"] }

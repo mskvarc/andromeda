@@ -1,0 +1,126 @@
+//! Named execution and supervision for broker background tasks.
+//!
+//! This crate owns runtime mechanics only. Policy operations and concrete adapters remain independent and are adapted into these execution forms by broker composition.
+
+#![deny(missing_docs)]
+#![deny(clippy::missing_docs_in_private_items)]
+
+/// Cancellation and scheduled-task control handles.
+pub mod control;
+/// The operational effect of an exhausted task.
+pub mod criticality;
+/// Runtime-neutral task failure classification.
+pub mod failure;
+/// Observable task lifecycle events.
+pub mod lifecycle_event;
+/// Periodic scheduling policy.
+pub mod periodic_trigger;
+/// Complete metadata required before task execution.
+pub mod registration;
+mod resident_driver;
+/// Long-lived task execution.
+pub mod resident_task;
+/// Restart decisions after task failures.
+pub mod restart_policy;
+mod scheduled_driver;
+/// Periodically triggered bounded task execution.
+pub mod scheduled_task;
+/// Grace periods for cooperative task shutdown.
+pub mod shutdown_policy;
+/// One-time task execution required during construction.
+pub mod startup_task;
+/// Named task supervision on a supplied Tokio execution host.
+pub mod supervisor;
+/// Observable task health.
+pub mod task_health;
+/// Validated task identifiers.
+pub mod task_name;
+mod task_observer;
+
+#[cfg(test)]
+andromeda_architecture_checks::dependency_boundary! {
+    allow_workspace_dependencies: [
+    ],
+    allow_workspace_dev_dependencies: [
+    ],
+    allow_production_dependencies: ["tokio"],
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use std::{fs, io::Error, path::Path};
+
+    #[test]
+    fn source_names_no_policy_adapter_http_or_database_dependency() -> Result<(), Error> {
+        let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))?;
+        for forbidden in ["axum", "sqlx", "andromeda-entity", "andromeda-postgresql", "andromeda-delivery"] {
+            assert!(!manifest.contains(forbidden), "task runtime must not depend on {forbidden}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn runtime_never_constructs_an_executor() -> Result<(), Error> {
+        let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/supervisor.rs"))?;
+        assert!(!source.contains("Runtime::new"));
+        assert!(!source.contains("Builder::new_multi_thread"));
+        assert!(!source.contains("Builder::new_current_thread"));
+        Ok(())
+    }
+
+    #[test]
+    fn policy_crates_remain_independent_of_task_execution_types() -> Result<(), Error> {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for policy in [
+            "andromeda-context-registry",
+            "andromeda-entity",
+            "andromeda-entity-map",
+            "andromeda-federation",
+            "andromeda-registration",
+            "andromeda-subscription",
+        ] {
+            let root = workspace.join("crates").join(policy);
+            let manifest = fs::read_to_string(root.join("Cargo.toml"))?;
+            assert!(!manifest.contains("andromeda-task-runtime"), "{policy} must not depend on task runtime");
+            assert_policy_sources_are_runtime_neutral(&root.join("src"), policy)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn entity_expiry_has_no_legacy_binary_loop_or_runtime_dependency() -> Result<(), Error> {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        assert!(!workspace.join("src/worker/data_expiration.rs").exists());
+        let worker_modules = fs::read_to_string(workspace.join("src/worker/mod.rs"))?;
+        let composition = fs::read_to_string(workspace.join("src/api/tenant_factory/workers.rs"))?;
+        assert!(!worker_modules.contains("data_expiration"));
+        assert!(!composition.contains("DataExpirationWorker"));
+        for independent in ["andromeda-entity", "andromeda-postgresql-context-store"] {
+            let manifest = fs::read_to_string(workspace.join("crates").join(independent).join("Cargo.toml"))?;
+            assert!(!manifest.contains("andromeda-task-runtime"), "{independent} must not depend on task runtime");
+        }
+        Ok(())
+    }
+
+    fn assert_policy_sources_are_runtime_neutral(directory: &Path, policy: &str) -> Result<(), Error> {
+        for entry in fs::read_dir(directory)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                assert_policy_sources_are_runtime_neutral(&path, policy)?;
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let source = fs::read_to_string(&path)?;
+                for forbidden in ["TaskRegistration", "TaskSupervisor", "tokio::task::JoinHandle"] {
+                    assert!(
+                        !source.contains(forbidden),
+                        "{policy} policy source must not name {forbidden}: {}",
+                        path.display()
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests;

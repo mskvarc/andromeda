@@ -2,13 +2,13 @@
 
 use crate::{
     config::runtime::RuntimeConfig,
+    error::AndromedaError,
     service::snapshot::store::SnapshotStore,
     worker::{
         csr_interval::CsrIntervalWorker,
         csr_notification::CsrNotificationWorker,
-        data_expiration::DataExpirationWorker,
         interval::IntervalWorker,
-        notification::NotificationWorker,
+        notification::{NotificationWorker, NotificationWorkerDeps},
         outbox_delivery::OutboxDeliveryWorker,
         pending_side_effects::{PendingSideEffectsWorker, WorkerConfig},
         snapshot_expiration::SnapshotExpirationWorker,
@@ -21,7 +21,8 @@ use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextComm
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::{
     EntityService,
-    batch_activity::BatchActivityTracker,
+    error::EntityError,
+    expiry::{EntityExpiryBatchSize, EntityExpiryOutcome, EntityExpirySweep},
     port::{
         discovery::EntityDiscoveryStore,
         expiry::EntityExpirySource,
@@ -47,7 +48,19 @@ use andromeda_subscription::{
     cache::SubscriptionCache,
     change::{CsourceSubscriptionChange, SubscriptionChange},
 };
+use andromeda_task_runtime::{
+    criticality::TaskCriticality,
+    failure::TaskFailure,
+    periodic_trigger::{InitialExecution, MissedTickPolicy, PeriodicSchedule},
+    registration::TaskRegistration,
+    restart_policy::RestartPolicy,
+    scheduled_task::ScheduledTask,
+    shutdown_policy::ShutdownPolicy,
+    supervisor::TaskSupervisor,
+    task_name::TaskName,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
+use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -100,18 +113,19 @@ pub(super) struct WorkerSupervisionInputs<'a> {
     pub(super) writes: Arc<dyn ContextCommitter>,
     pub(super) engine: JsonLdEngine,
     pub(super) spatial_index: Arc<SpatialEntityIndex>,
-    pub(super) batch_activity: BatchActivityTracker,
     pub(super) transport: Arc<TransportDispatcher>,
+    pub(super) task_supervisor: TaskSupervisor,
 }
 
 /// Handles needed to stop the complete tenant worker set.
 pub(super) struct WorkerSupervision {
     pub(super) handles: Vec<JoinHandle<()>>,
     pub(super) health_shutdown: Option<watch::Sender<bool>>,
+    pub(super) task_supervisor: TaskSupervisor,
 }
 
 /// Spawn every background worker owned by a tenant.
-pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSupervision {
+pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> Result<WorkerSupervision, AndromedaError> {
     let WorkerSupervisionInputs {
         config,
         pool,
@@ -130,8 +144,8 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
         writes,
         engine,
         spatial_index,
-        batch_activity,
         transport,
+        task_supervisor,
     } = inputs;
     let TenantSignals {
         entity,
@@ -178,7 +192,7 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
     let notification = NotificationWorker::new(
         entity.subscribe(),
         subscription.subscribe(),
-        crate::worker::notification::NotificationWorkerDeps {
+        NotificationWorkerDeps {
             sub_repo: SubscriptionRepository::new(pool),
             entity_reader: Arc::clone(&entity_reader),
             entity_query: notification_query,
@@ -227,9 +241,13 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
         )
         .run(),
     ));
-    handles.push(tokio::spawn(
-        DataExpirationWorker::new(entity_policy, entity_expiry_source, expiration_interval, batch_activity).run(),
-    ));
+    register_entity_expiry(
+        &task_supervisor,
+        entity_policy,
+        entity_expiry_source,
+        expiration_interval,
+        config.performance.entity_expiry_batch_size,
+    )?;
     handles.push(tokio::spawn(SnapshotExpirationWorker::new(snapshot_store, expiration_interval).run()));
     handles.push(tokio::spawn(
         SpatialSyncWorker::new(
@@ -252,5 +270,72 @@ pub(super) fn supervise_workers(inputs: WorkerSupervisionInputs<'_>) -> WorkerSu
     handles.push(tokio::spawn(
         CsrIntervalWorker::new(CsourceSubscriptionRepository::new(pool), registration_store, transport, tenant).run(),
     ));
-    WorkerSupervision { handles, health_shutdown }
+    Ok(WorkerSupervision {
+        handles,
+        health_shutdown,
+        task_supervisor,
+    })
+}
+
+/// Register entity expiry as the first runtime-managed scheduled policy operation.
+fn register_entity_expiry(
+    supervisor: &TaskSupervisor,
+    entity_policy: Arc<EntityService>,
+    entity_expiry_source: Arc<dyn EntityExpirySource>,
+    expiration_interval: u64,
+    expiry_batch_size: usize,
+) -> Result<(), AndromedaError> {
+    let cadence = Duration::from_secs(expiration_interval);
+    let schedule =
+        PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip).map_err(|error| AndromedaError::internal(error.to_string()))?;
+    let name = TaskName::try_from("entity-expiry").map_err(|error| AndromedaError::internal(error.to_string()))?;
+    let registration = TaskRegistration::new(
+        name,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        ShutdownPolicy::new(cadence),
+    );
+    let expiry_batch_size = EntityExpiryBatchSize::try_from(expiry_batch_size).map_err(|error| AndromedaError::internal(error.to_string()))?;
+    let sweep = Arc::new(EntityExpirySweep::new(entity_policy, entity_expiry_source, expiry_batch_size));
+    let task = ScheduledTask::new(registration, schedule, move |execution| {
+        let sweep = Arc::clone(&sweep); // clone: each scheduled future owns the shared policy operation for its duration.
+        async move {
+            let cutoff = DateTime::<Utc>::from(execution.cutoff());
+            match sweep.execute(cutoff).await.map_err(classify_entity_expiry_failure)? {
+                EntityExpiryOutcome::DeferredForBatchActivity => tracing::debug!("entity expiry deferred during recent batch activity"),
+                EntityExpiryOutcome::Applied {
+                    expired_entities,
+                    purged_attributes,
+                } => tracing::info!(expired_entities, purged_attributes, "entity expiry sweep completed"),
+            }
+            Ok(())
+        }
+    });
+    supervisor
+        .register_scheduled(task)
+        .map(drop)
+        .map_err(|error| AndromedaError::internal(error.to_string()))
+}
+
+/// Classify exhaustive entity-policy failures at the binary composition boundary.
+fn classify_entity_expiry_failure(error: EntityError) -> TaskFailure {
+    let summary = error.to_string();
+    match error {
+        EntityError::Commit(_) | EntityError::Persistence { detail: _ } => TaskFailure::transient(summary),
+        EntityError::Internal { detail: _ } => TaskFailure::invariant_violation(summary),
+        EntityError::Validation { detail: _ }
+        | EntityError::NotFound { identifier: _ }
+        | EntityError::TypeNotFound { name: _ }
+        | EntityError::AttributeNotFound { name: _ }
+        | EntityError::MemberNotFound { detail: _ }
+        | EntityError::AlreadyExists { identifier: _ }
+        | EntityError::OperationNotSupported { detail: _ }
+        | EntityError::JsonLd(_)
+        | EntityError::Query(_)
+        | EntityError::Request(_)
+        | EntityError::Representation(_)
+        | EntityError::Identifier(_)
+        | EntityError::EntityTypeListIdentifier(_)
+        | EntityError::AttributeListIdentifier(_) => TaskFailure::permanent(summary),
+    }
 }

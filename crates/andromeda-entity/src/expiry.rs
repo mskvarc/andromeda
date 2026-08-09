@@ -15,12 +15,98 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
 };
 use chrono::{DateTime, Utc};
-use std::sync::Arc;
+use std::{num::NonZeroU32, sync::Arc};
+use thiserror::Error;
+
+/// One entity-policy-owned bounded expiry operation.
+pub struct EntityExpirySweep {
+    entity_policy: Arc<EntityService>,
+    source: Arc<dyn EntityExpirySource>,
+    batch_size: EntityExpiryBatchSize,
+}
+
+impl EntityExpirySweep {
+    /// Construct expiry policy over its semantic service and candidate source.
+    pub const fn new(entity_policy: Arc<EntityService>, source: Arc<dyn EntityExpirySource>, batch_size: EntityExpiryBatchSize) -> EntityExpirySweep {
+        EntityExpirySweep {
+            entity_policy,
+            source,
+            batch_size,
+        }
+    }
+
+    /// Reconcile entity and attribute-instance expiry at one explicit UTC cutoff.
+    pub async fn execute(&self, cutoff: DateTime<Utc>) -> Result<EntityExpiryOutcome, EntityError> {
+        if self.entity_policy.batch_activity.is_within_cooldown() {
+            return Ok(EntityExpiryOutcome::DeferredForBatchActivity);
+        }
+        let expired_entities = self.entity_policy.expire_due_entities(self.source.as_ref(), cutoff, self.batch_size).await?;
+        let purged_attributes = self
+            .entity_policy
+            .purge_expired_attributes(self.source.as_ref(), cutoff, self.batch_size)
+            .await?;
+        Ok(EntityExpiryOutcome::Applied {
+            expired_entities,
+            purged_attributes,
+        })
+    }
+}
+
+/// Non-zero maximum candidate count read by each phase of one expiry sweep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EntityExpiryBatchSize(NonZeroU32);
+
+impl EntityExpiryBatchSize {
+    /// Return the validated candidate limit.
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl TryFrom<usize> for EntityExpiryBatchSize {
+    type Error = EntityExpiryBatchSizeError;
+
+    fn try_from(value: usize) -> Result<EntityExpiryBatchSize, EntityExpiryBatchSizeError> {
+        let value = u32::try_from(value).map_err(|_| EntityExpiryBatchSizeError::TooLarge)?;
+        let value = NonZeroU32::new(value).ok_or(EntityExpiryBatchSizeError::Zero)?;
+        Ok(EntityExpiryBatchSize(value))
+    }
+}
+
+/// Invalid expiry sweep candidate limit.
+#[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
+pub enum EntityExpiryBatchSizeError {
+    /// A bounded sweep cannot have an empty limit.
+    #[error("entity expiry batch size must be at least one")]
+    Zero,
+    /// The configured limit exceeds the portable 32-bit port representation.
+    #[error("entity expiry batch size must fit in an unsigned 32-bit integer")]
+    TooLarge,
+}
+
+/// Semantic result of one bounded entity expiry reconciliation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityExpiryOutcome {
+    /// Recent batch activity deferred this level-triggered reconciliation.
+    DeferredForBatchActivity,
+    /// Expiry reconciliation completed against the supplied cutoff.
+    Applied {
+        /// Entity-level deletions that committed.
+        expired_entities: usize,
+        /// Entity payloads whose expired attribute instances were removed.
+        purged_attributes: usize,
+    },
+}
 
 impl EntityService {
     /// Delete every entity-level expiry candidate through normal entity deletion policy.
-    pub async fn expire_due_entities(&self, source: &dyn EntityExpirySource) -> Result<usize, EntityError> {
-        let candidates = source.entities_due_for_expiry().await?;
+    async fn expire_due_entities(
+        &self,
+        source: &dyn EntityExpirySource,
+        cutoff: DateTime<Utc>,
+        batch_size: EntityExpiryBatchSize,
+    ) -> Result<usize, EntityError> {
+        let candidates = source.entities_due_for_expiry(cutoff, batch_size).await?;
         let mut expired = 0usize;
         for entity_id in candidates {
             match self.delete(&entity_id).await {
@@ -33,9 +119,13 @@ impl EntityService {
     }
 
     /// Remove every past-due attribute instance and record its history tombstone atomically.
-    pub async fn purge_expired_attributes(&self, source: &dyn EntityExpirySource) -> Result<usize, EntityError> {
-        let candidates = source.entities_with_expired_attributes().await?;
-        let cutoff = Utc::now();
+    async fn purge_expired_attributes(
+        &self,
+        source: &dyn EntityExpirySource,
+        cutoff: DateTime<Utc>,
+        batch_size: EntityExpiryBatchSize,
+    ) -> Result<usize, EntityError> {
+        let candidates = source.entities_with_expired_attributes(cutoff, batch_size).await?;
         let (writes, identifiers): (Vec<_>, Vec<_>) = candidates
             .into_iter()
             .filter_map(|(identifier, snapshot)| purge_write(&identifier, snapshot, cutoff).map(|write| (write, identifier)))
@@ -93,7 +183,7 @@ fn purge_write(identifier: &Uri, snapshot: EntitySnapshot, cutoff: DateTime<Utc>
 mod tests {
     use crate::{
         entity_snapshot::EntitySnapshot,
-        expiry::{landed_ids, purge_write},
+        expiry::{EntityExpiryBatchSize, EntityExpiryBatchSizeError, landed_ids, purge_write},
     };
     use andromeda_context_commit::{history_record::HistoryRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
@@ -141,6 +231,14 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_sweeps_report_one_semantic_attribute_deletion() -> Result<(), UriParseError> {
+        let outcomes = vec![WriteOutcome::Updated, WriteOutcome::Superseded];
+        let landed = landed_ids(identifiers(&["urn:ngsi-ld:A", "urn:ngsi-ld:A"])?, &outcomes);
+        pretty_assertions::assert_eq!(landed, identifiers(&["urn:ngsi-ld:A"])?);
+        Ok(())
+    }
+
+    #[test]
     fn a_past_due_instance_produces_an_optimistic_write_and_tombstone() -> Result<(), UriParseError> {
         let payload = json!([{"@id": "urn:ngsi-ld:A", "https://example.org/speed": [expiring_instance("1969-01-01T00:00:00Z")]}]);
         let identifier = "urn:ngsi-ld:A".parse::<Uri>()?;
@@ -161,5 +259,10 @@ mod tests {
         let identifier = "urn:ngsi-ld:A".parse::<Uri>()?;
         assert!(purge_write(&identifier, snapshot(payload), cutoff()).is_none());
         Ok(())
+    }
+
+    #[test]
+    fn expiry_batch_size_rejects_zero() {
+        assert_eq!(EntityExpiryBatchSize::try_from(0), Err(EntityExpiryBatchSizeError::Zero));
     }
 }

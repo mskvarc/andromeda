@@ -64,6 +64,14 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaErr
     {
         return Err(AndromedaError::internal("performance.batch_async_side_effect_threshold must be at least 1"));
     }
+    if config.performance.entity_expiry_batch_size == 0 {
+        return Err(AndromedaError::internal("performance.entity_expiry_batch_size must be at least 1"));
+    }
+    if u32::try_from(config.performance.entity_expiry_batch_size).is_err() {
+        return Err(AndromedaError::internal(
+            "performance.entity_expiry_batch_size must fit in an unsigned 32-bit integer",
+        ));
+    }
     if config.performance.pending_side_effects_poll_secs == 0 {
         return Err(AndromedaError::internal("performance.pending_side_effects_poll_secs must be at least 1"));
     }

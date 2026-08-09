@@ -115,6 +115,7 @@ dependencies = [
  "andromeda-registration",
  "andromeda-spatial-index",
  "andromeda-subscription",
+ "andromeda-task-runtime",
  "andromeda-tenancy",
  "andromeda-test-common",
  "async-trait",
@@ -904,6 +905,20 @@ dependencies = [
  "url",
  "urn-rs",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-task-runtime"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "compact_str",
+ "dashmap",
+ "derive_more",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -5894,6 +5909,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

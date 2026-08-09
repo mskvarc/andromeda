@@ -46,6 +46,9 @@ pub struct PerformanceConfig {
     /// Minimum batch size eligible for asynchronous side effects.
     #[config(env = "ANDROMEDA_PERFORMANCE_BATCH_ASYNC_SIDE_EFFECT_THRESHOLD")]
     pub batch_async_side_effect_threshold: Option<usize>,
+    /// Maximum entity or attribute-expiry candidates read per sweep phase.
+    #[config(env = "ANDROMEDA_PERFORMANCE_ENTITY_EXPIRY_BATCH_SIZE", default = 1_000)]
+    pub entity_expiry_batch_size: usize,
     /// Poll interval for durable pending side effects.
     #[config(env = "ANDROMEDA_PERFORMANCE_PENDING_SIDE_EFFECTS_POLL_SECS", default = 1)]
     pub pending_side_effects_poll_secs: u64,

@@ -16,6 +16,7 @@
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-architecture-checks",
         "andromeda-context-commit",
         "andromeda-context-registry",
         "andromeda-delivery",
@@ -47,7 +48,9 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-registration",
         "andromeda-spatial-index",
         "andromeda-subscription",
+        "andromeda-task-runtime",
         "andromeda-tenancy",
+        "andromeda-test-common",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-test-common",
