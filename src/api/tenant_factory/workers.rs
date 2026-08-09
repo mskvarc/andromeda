@@ -3,12 +3,8 @@
 use crate::{
     batch_activity::BatchActivityTracker,
     config::runtime::RuntimeConfig,
-    event::{
-        csr_change_event::CsrChangeEvent,
-        subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
-    },
+    event::subscription_change::{CsourceSubscriptionChange, SubscriptionChange},
     service::{
-        csource_registration::store::RegistrationStore,
         entity::{query::EntityQueryService, store::EntityStore},
         snapshot::store::SnapshotStore,
         subscription_cache::SubscriptionCache,
@@ -31,6 +27,7 @@ use crate::{
 use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextCommitter};
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
+use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_postgresql_context_store::{
     attribute_current::materializer::AttributeCurrentMaterializer,
     csource_subscription::repo::CsourceSubscriptionRepository,
@@ -38,6 +35,7 @@ use andromeda_postgresql_context_store::{
     pending_side_effects::repo::PendingSideEffectsRepository,
     subscription::repo::SubscriptionRepository,
 };
+use andromeda_registration::store::RegistrationStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;

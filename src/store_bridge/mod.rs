@@ -8,7 +8,6 @@
 
 mod entity;
 mod outbox;
-mod registration;
 mod side_effects;
 mod snapshot;
 mod subscription;

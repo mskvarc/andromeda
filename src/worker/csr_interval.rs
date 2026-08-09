@@ -1,11 +1,13 @@
-use crate::service::{csource_registration::store::RegistrationStore, subscription::store::SubscriptionStore};
+use crate::service::subscription::store::SubscriptionStore;
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::Subscription};
+use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_postgresql_context_store::csource_subscription::repo::CsourceSubscriptionRepository;
+use andromeda_registration::store::RegistrationStore;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use serde_json::Value;
@@ -144,16 +146,23 @@ impl CsrIntervalWorker {
 
     async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::AndromedaError> {
         let mut matching = Vec::new();
-        let page_size: i64 = 500;
-        let mut offset: i64 = 0;
+        let page_size = 500;
+        let mut offset = 0;
 
         loop {
-            let (page, total) = self.csr_repo.list(Some(page_size), Some(offset)).await?;
-            if page.is_empty() {
+            let page = self
+                .csr_repo
+                .list(Pagination {
+                    limit: page_size,
+                    offset,
+                    count: CountPolicy::Emit,
+                })
+                .await?;
+            if page.registrations.is_empty() {
                 break;
             }
 
-            for csr in page {
+            for csr in page.registrations {
                 let csr_value = serde_json::to_value(&csr).map_err(|e| crate::error::AndromedaError::internal(format!("Failed to serialize CSR: {}", e)))?;
                 if matches_csr_for_subscription(&csr_value, sub) {
                     matching.push(csr_value);
@@ -161,7 +170,7 @@ impl CsrIntervalWorker {
             }
 
             offset += page_size;
-            if offset >= total {
+            if u64::from(offset) >= page.total {
                 break;
             }
         }

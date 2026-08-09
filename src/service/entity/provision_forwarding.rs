@@ -6,7 +6,8 @@
 //! `forward_provision`, then uses these helpers to classify the result modes
 //! and build multi-status responses.
 
-use crate::{error::AndromedaError, http::error::batch::entity_error, service::csource_forwarding::outcome::ForwardedWriteResult};
+use crate::{error::AndromedaError, http::error::batch::entity_error};
+use andromeda_federation::outcome::ForwardedWriteResult;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use serde_json::Value;
@@ -94,7 +95,7 @@ pub fn first_forwarded_status(forwarded: &[ForwardedWriteResult], fallback: u16)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::csource_forwarding::outcome::ForwardedWriteOutcome;
+    use andromeda_federation::outcome::ForwardedWriteOutcome;
 
     fn make_result(mode: ForwardingMode, status: u16) -> ForwardedWriteResult {
         ForwardedWriteResult {

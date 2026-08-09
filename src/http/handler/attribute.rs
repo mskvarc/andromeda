@@ -16,8 +16,8 @@ use crate::{
         },
         response::{render::start_rendering, single::NgsiLdResponse},
     },
-    service::csource_forwarding::discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
 };
+use andromeda_federation::discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;

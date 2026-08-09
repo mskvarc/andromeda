@@ -4,19 +4,14 @@ use crate::{
     api::context_hit_flush::ContextHitFlushWorker,
     config::{performance::BulkWriteMode, runtime::RuntimeConfig},
     error::AndromedaError,
-    service::{
-        csource_registration::store::RegistrationStore,
-        entity::store::EntityStore,
-        snapshot::store::SnapshotStore,
-        subscription_cache::SubscriptionCache,
-    },
+    service::{entity::store::EntityStore, snapshot::store::SnapshotStore, subscription_cache::SubscriptionCache},
 };
 use andromeda_context_registry::hit_store::ContextHitStore;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
     attribute_current::{materializer::AttributeCurrentMaterializer, queue::AttributeCurrentQueue},
     attribute_names::AttributeNameCache,
-    csource_registration::repo::CsourceRegistrationRepository,
+    csource_registration::registration_store::PostgresRegistrationStore,
     entity::repo::EntityRepository,
     jsonld_context::repo::JsonLdContextRepository,
     snapshot::repo::SnapshotRepository,
@@ -26,6 +21,7 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, projection_barrier::ProjectionBarrier};
 use andromeda_postgresql_temporal_store::{repo::TemporalRepository, timescale_features::TimescaleFeatures};
+use andromeda_registration::store::RegistrationStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
@@ -102,7 +98,7 @@ pub(super) async fn initialize_storage(config: &RuntimeConfig, database_url: &Ur
         Arc::clone(&attribute_names) as Arc<dyn AttributeNameLookup>,
         Arc::new(attribute_current_barrier) as Arc<dyn ProjectionBarrier>,
     )) as Arc<dyn EntityStore>;
-    let registration_store = Arc::new(CsourceRegistrationRepository::new(&pool)) as Arc<dyn RegistrationStore>;
+    let registration_store = Arc::new(PostgresRegistrationStore::new(&pool)) as Arc<dyn RegistrationStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
     if let Err(error) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {

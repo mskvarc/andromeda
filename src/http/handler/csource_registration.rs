@@ -2,7 +2,7 @@
 
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
-    error::ResultInstanceExt,
+    error::{AndromedaError, ResultInstanceExt},
     http::{
         error::problem::NgsiLdError,
         extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery, typed_path::TypedPath},
@@ -78,8 +78,8 @@ pub async fn query(
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
 
-    let limit = params.effective_limit() as i64;
-    let offset = params.effective_offset() as i64;
+    let limit = i64::from(params.effective_limit());
+    let offset = i64::from(params.effective_offset());
 
     let (csrs, total) = service.query(&params, &context).await.with_instance(&uri)?;
 
@@ -91,7 +91,13 @@ pub async fn query(
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
         .with_payload(ResponsePayload::Collection(csrs))
         .render()?;
-    let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total as usize);
+    let total_count = usize::try_from(total)
+        .map_err(|error| AndromedaError::internal(format!("registration count does not fit the response platform: {error}")))
+        .with_instance(&uri)?;
+    let pagination_total = i64::try_from(total)
+        .map_err(|error| AndromedaError::internal(format!("registration count does not fit offset pagination: {error}")))
+        .with_instance(&uri)?;
+    let response = NgsiLdCollectionResponse::ok(rendered).with_total_count(total_count);
 
     let mut response = response.into_response();
     append_pagination_links(
@@ -99,7 +105,7 @@ pub async fn query(
         &uri,
         limit,
         offset,
-        total,
+        pagination_total,
         PaginationStyle::OffsetFull,
         PaginationMediaType::None,
     );

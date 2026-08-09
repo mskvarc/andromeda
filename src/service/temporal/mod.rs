@@ -3,10 +3,7 @@
 use crate::{
     error::AndromedaError,
     http::response::content_range::build_content_range,
-    service::{
-        csource_forwarding::{outcome::ForwardedTemporalEntities, temporal_result::merge_temporal_query_results},
-        entity::{query::selector_compilation::compile_entity_selectors, store::EntityStore},
-    },
+    service::entity::{query::selector_compilation::compile_entity_selectors, store::EntityStore},
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
         array_normalizer::TemporalArrayNormalizer,
@@ -20,6 +17,7 @@ use andromeda_context_commit::{
     entity_mutation::{EntityMutation, EntityRecord},
     history_record::HistoryRecord,
 };
+use andromeda_federation::{outcome::ForwardedTemporalEntities, temporal_result::merge_temporal_query_results};
 use andromeda_jsonld::{
     compaction::compact_attr_iri,
     context_spec::ContextSpec,

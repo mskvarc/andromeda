@@ -1,8 +1,6 @@
 use crate::{
     api::tenant_factory::BrokerTenantFactory,
     service::{
-        csource_forwarding::CsourceForwardingService,
-        csource_registration::CsourceRegistrationService,
         csource_subscription::CsrSubscriptionVariant,
         entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService},
         snapshot::SnapshotService,
@@ -14,12 +12,14 @@ use crate::{
 use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_entity_map::service::EntityMapService;
+use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     subscription::repo::SubscriptionRepository,
     tenant_registry::PostgresTenantRegistry,
 };
+use andromeda_registration::RegistrationService;
 use andromeda_tenancy::runtime::TenantRuntimeManager;
 use std::sync::Arc;
 
@@ -31,9 +31,9 @@ pub struct AndromedaState {
     pub temporal: Arc<TemporalService>,
     pub subscriptions: Arc<SubscriptionServiceCore<SubscriptionRepository, EntitySubscriptionVariant>>,
     pub contexts: Arc<ContextRegistryService>,
-    pub csr: Arc<CsourceRegistrationService>,
+    pub csr: Arc<RegistrationService>,
     pub csr_subscriptions: Arc<SubscriptionServiceCore<CsourceSubscriptionRepository, CsrSubscriptionVariant>>,
-    pub forwarding: Arc<CsourceForwardingService>,
+    pub forwarding: Arc<FederationService>,
     pub entity_maps: Arc<EntityMapService>,
     pub snapshots: Arc<SnapshotService>,
     pub sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>>,

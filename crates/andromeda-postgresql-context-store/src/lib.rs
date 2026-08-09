@@ -65,6 +65,7 @@ mod boundary {
             "andromeda-postgresql-context-query",
             "andromeda-postgresql-encoding",
             "andromeda-postgresql-query",
+            "andromeda-registration",
             "andromeda-spatial-index",
             "andromeda-tenancy",
         ];

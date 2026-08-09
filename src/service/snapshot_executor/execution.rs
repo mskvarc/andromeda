@@ -1,10 +1,6 @@
 //! Execution and persistence of individual snapshot queries.
 
 use crate::service::{
-    csource_forwarding::{
-        operation::ForwardingOperation,
-        request::{CsrModeFilter, ForwardQueryRequest},
-    },
     entity::query::EntityQueryService,
     snapshot::store::SnapshotEntityInput,
     snapshot_executor::{
@@ -12,6 +8,10 @@ use crate::service::{
         status::{failure_detail, success_detail},
         translation::{entity_parameters, temporal_parameters},
     },
+};
+use andromeda_federation::{
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardQueryRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;

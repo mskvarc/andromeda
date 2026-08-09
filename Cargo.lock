@@ -87,6 +87,7 @@ dependencies = [
  "andromeda-context-registry",
  "andromeda-delivery",
  "andromeda-entity-map",
+ "andromeda-federation",
  "andromeda-health",
  "andromeda-jsonld",
  "andromeda-layer-guard",
@@ -107,6 +108,7 @@ dependencies = [
  "andromeda-postgresql-query",
  "andromeda-postgresql-temporal-query",
  "andromeda-postgresql-temporal-store",
+ "andromeda-registration",
  "andromeda-spatial-index",
  "andromeda-tenancy",
  "andromeda-test-common",
@@ -248,6 +250,29 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-federation"
+version = "0.1.0"
+dependencies = [
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-http-headers",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-registration",
+ "futures",
+ "headers",
+ "indexmap 2.14.0",
+ "iri-rs",
+ "pretty_assertions",
+ "reqwest",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -558,6 +583,7 @@ dependencies = [
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
+ "andromeda-registration",
  "andromeda-spatial-index",
  "andromeda-tenancy",
  "async-trait",
@@ -662,6 +688,32 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tracing",
+ "urn-rs",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-registration"
+version = "0.1.0"
+dependencies = [
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-request",
+ "chrono",
+ "futures",
+ "iri-rs",
+ "iso8601-duration",
+ "mediatype",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "typed-builder",
+ "url",
  "urn-rs",
  "uuid",
 ]

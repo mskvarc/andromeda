@@ -5,12 +5,12 @@ mod status;
 mod translation;
 
 use crate::service::{
-    csource_forwarding::CsourceForwardingService,
     entity::query::EntityQueryService,
     snapshot::store::SnapshotStore,
     snapshot_status::validate_preparing_transition,
     temporal::TemporalService,
 };
+use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_model::snapshot::Snapshot;
 use std::sync::Arc;
 use tracing::{debug, error, info};
@@ -20,7 +20,7 @@ pub struct SnapshotExecutor {
     snapshot_repo: Arc<dyn SnapshotStore>,
     entity_query: Arc<EntityQueryService>,
     temporal: Arc<TemporalService>,
-    forwarding: Arc<CsourceForwardingService>,
+    forwarding: Arc<FederationService>,
 }
 
 impl SnapshotExecutor {
@@ -29,7 +29,7 @@ impl SnapshotExecutor {
         snapshot_repo: Arc<dyn SnapshotStore>,
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
-        forwarding: Arc<CsourceForwardingService>,
+        forwarding: Arc<FederationService>,
     ) -> SnapshotExecutor {
         SnapshotExecutor {
             snapshot_repo,

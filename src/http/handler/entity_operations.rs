@@ -16,14 +16,12 @@ use crate::{
         },
         response::{batch::NgsiLdBatchResponse, collection::NgsiLdCollectionResponse, render::start_rendering, sonic_json::SonicJson},
     },
-    service::{
-        csource_forwarding::{
-            entity_result::collect_warnings,
-            operation::ForwardingOperation,
-            request::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest},
-        },
-        entity::{provision_forwarding::ForwardingModes, query::EntityQueryService, side_effect::BatchSideEffectMode},
-    },
+    service::entity::{provision_forwarding::ForwardingModes, query::EntityQueryService, side_effect::BatchSideEffectMode},
+};
+use andromeda_federation::{
+    entity_result::collect_warnings,
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest},
 };
 use andromeda_ngsi_ld_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
 use andromeda_ngsi_ld_model::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy, query::body::Query};

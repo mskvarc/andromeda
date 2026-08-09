@@ -1,10 +1,8 @@
 //! Merging locally held entities with those a context source returned
 //! (clause 5.7.2).
 
-use crate::service::{
-    csource_forwarding::{entity_result::merge_query_results, outcome::ForwardedEntities},
-    entity::query::EntityQueryService,
-};
+use crate::service::entity::query::EntityQueryService;
+use andromeda_federation::{entity_result::merge_query_results, outcome::ForwardedEntities};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::entity::Entity;
 

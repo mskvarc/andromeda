@@ -17,17 +17,17 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
     },
     service::{
-        csource_forwarding::{
-            entity_result::collect_temporal_warnings,
-            operation::ForwardingOperation,
-            request::{CsrModeFilter, ForwardTemporalQueryRequest},
-            temporal_result::merge_temporal_retrieve_results,
-        },
         geo_filter::matches_geo_query,
         subscription_matching::matches_scope_query,
         temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     },
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
+};
+use andromeda_federation::{
+    entity_result::collect_temporal_warnings,
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardTemporalQueryRequest},
+    temporal_result::merge_temporal_retrieve_results,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, time_rel::TimeRel, uri::Uri};

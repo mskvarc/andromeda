@@ -8,14 +8,12 @@ use crate::{
         extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
         response::{collection::NgsiLdCollectionResponse, render::start_rendering},
     },
-    service::{
-        csource_forwarding::{
-            entity_result::collect_temporal_warnings,
-            operation::ForwardingOperation,
-            request::{CsrModeFilter, ForwardTemporalQueryRequest},
-        },
-        temporal::{TemporalQueryResult, TemporalService},
-    },
+    service::temporal::{TemporalQueryResult, TemporalService},
+};
+use andromeda_federation::{
+    entity_result::collect_temporal_warnings,
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardTemporalQueryRequest},
 };
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;

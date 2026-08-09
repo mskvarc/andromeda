@@ -27,6 +27,8 @@ use crate::error::{
 use andromeda_context_commit::error::CommitError;
 use andromeda_context_registry::error::ContextRegistryError;
 use andromeda_entity_map::error::EntityMapError;
+use andromeda_federation::error::FederationError;
+use andromeda_registration::error::RegistrationError;
 
 impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
     fn from(error: andromeda_postgresql_encoding::ewkb::EwkbError) -> AndromedaError {
@@ -277,6 +279,40 @@ impl From<ContextRegistryError> for AndromedaError {
             ContextRegistryError::Persistence { detail } | ContextRegistryError::Representation { detail } | ContextRegistryError::Invariant { detail } => {
                 AndromedaError::internal(detail)
             }
+        }
+    }
+}
+
+// Manual conversion is required because the broker error preserves HTTP-facing
+// categories rather than wrapping policy errors as a single derivable variant.
+impl From<RegistrationError> for AndromedaError {
+    fn from(error: RegistrationError) -> AndromedaError {
+        match error {
+            RegistrationError::Validation { detail } => AndromedaError::csr_validation(detail),
+            RegistrationError::NotFound { identifier } => AndromedaError::csr_not_found(identifier.to_string()),
+            RegistrationError::AlreadyExists { identifier } => AndromedaError::csr_already_exists(identifier.to_string()),
+            RegistrationError::JsonLd(error) => error.into(),
+            RegistrationError::Query(error) => error.into(),
+            RegistrationError::Representation(error) => error.into(),
+            RegistrationError::Identifier(error) => error.into(),
+            RegistrationError::Persistence { detail } | RegistrationError::Internal { detail } => AndromedaError::internal(detail),
+        }
+    }
+}
+
+// Manual conversion is required because distinct federation failures map to
+// conflict, gateway, request-validation, and internal broker categories.
+impl From<FederationError> for AndromedaError {
+    fn from(error: FederationError) -> AndromedaError {
+        match error {
+            FederationError::Conflict { detail } => AndromedaError::conflict(detail),
+            FederationError::Gateway { detail } => AndromedaError::context_source_gateway(detail),
+            FederationError::Registration(error) => error.into(),
+            FederationError::JsonLd(error) => error.into(),
+            FederationError::Query(error) => error.into(),
+            FederationError::Request(error) => error.into(),
+            FederationError::Representation(error) => error.into(),
+            FederationError::Internal { detail } => AndromedaError::internal(detail),
         }
     }
 }

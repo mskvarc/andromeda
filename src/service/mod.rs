@@ -6,10 +6,6 @@
 //! source registration.
 
 pub mod compiled_subscription;
-pub mod csource_extract;
-pub mod csource_forwarding;
-pub mod csource_merge;
-pub mod csource_registration;
 pub mod csource_subscription;
 pub mod entity;
 /// Evaluating a clause 4.10 geo-query against an expanded entity payload.

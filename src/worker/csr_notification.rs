@@ -1,11 +1,6 @@
 use crate::{
-    event::{csr_change_event::CsrChangeEvent, subscription_change::CsourceSubscriptionChange},
-    service::{
-        compiled_subscription::CompiledCsrSubscription,
-        csource_registration::store::RegistrationStore,
-        subscription::store::SubscriptionStore,
-        subscription_throttle::ceiling_for_throttle,
-    },
+    event::subscription_change::CsourceSubscriptionChange,
+    service::{compiled_subscription::CompiledCsrSubscription, subscription::store::SubscriptionStore, subscription_throttle::ceiling_for_throttle},
     worker::csr_notification::matching::{compile_csr_subscription, filter_csr_for_subscription, find_matching_csr_subscriptions, matches_csr_subscription},
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
@@ -14,11 +9,15 @@ use andromeda_ngsi_ld_lexicon::{
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{
-    notification::{CsourceNotification, CsourceNotificationType, CsrTriggerReason},
+    notification::{CsourceNotification, CsourceNotificationType, CsrChangeEvent, CsrTriggerReason},
     subscription::{EntitySelector, Subscription, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::filter::eval;
+use andromeda_ngsi_ld_query::{
+    filter::eval,
+    pagination::{CountPolicy, Pagination},
+};
 use andromeda_postgresql_context_store::csource_subscription::repo::CsourceSubscriptionRepository;
+use andromeda_registration::store::RegistrationStore;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -209,23 +208,31 @@ impl CsrNotificationWorker {
 
         // Fetch all CSRs and filter matching ones
         let mut matching_csrs = Vec::new();
-        let page_size: i64 = 500;
-        let mut offset: i64 = 0;
+        let page_size = 500;
+        let mut offset = 0;
 
         loop {
-            let (page, total) = match self.csr_repo.list(Some(page_size), Some(offset)).await {
-                Ok(r) => r,
+            let page = match self
+                .csr_repo
+                .list(Pagination {
+                    limit: page_size,
+                    offset,
+                    count: CountPolicy::Emit,
+                })
+                .await
+            {
+                Ok(page) => page,
                 Err(e) => {
                     error!("Failed to fetch CSRs for subscription {} notification: {}", sub_id, e);
                     return;
                 }
             };
 
-            if page.is_empty() {
+            if page.registrations.is_empty() {
                 break;
             }
 
-            for csr in page {
+            for csr in page.registrations {
                 let csr_value = match serde_json::to_value(&csr) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -237,7 +244,7 @@ impl CsrNotificationWorker {
             }
 
             offset += page_size;
-            if offset >= total {
+            if u64::from(offset) >= page.total {
                 break;
             }
         }

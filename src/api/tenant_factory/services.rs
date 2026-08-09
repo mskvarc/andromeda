@@ -8,9 +8,8 @@ use crate::{
     batch_activity::BatchActivityTracker,
     config::runtime::RuntimeConfig,
     error::AndromedaError,
+    event::registration_change_sink::BroadcastRegistrationChangeSink,
     service::{
-        csource_forwarding::CsourceForwardingService,
-        csource_registration::{CsourceRegistrationService, store::RegistrationStore},
         csource_subscription::CsrSubscriptionVariant,
         entity::{
             EntityService,
@@ -30,6 +29,7 @@ use crate::{
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
 use andromeda_entity_map::{memory_store::InMemoryEntityMapStore, service::EntityMapService};
+use andromeda_federation::FederationService;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
@@ -41,6 +41,7 @@ use andromeda_postgresql_temporal_store::{
     repo::TemporalRepository,
     store::{TemporalHistoryReader, TemporalMutator},
 };
+use andromeda_registration::{RegistrationService, store::RegistrationStore};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use sqlx::PgPool;
@@ -125,7 +126,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         Arc::clone(spatial_index),
         tenant.clone(), // clone: the query service owns its tenant partition.
     ));
-    let forwarding = Arc::new(CsourceForwardingService::new(
+    let forwarding = Arc::new(FederationService::new(
         Arc::clone(registration_store),
         engine.clone(),
         config.info.source_alias.clone(), // clone: each forwarding service owns the validated alias.
@@ -153,10 +154,10 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
             Some(signals.subscription.clone()),
         )),
         contexts,
-        csr: Arc::new(CsourceRegistrationService::new(
+        csr: Arc::new(RegistrationService::new(
             Arc::clone(registration_store),
             engine.clone(),
-            Some(signals.registration.clone()),
+            Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
         )),
         csr_subscriptions: Arc::new(SubscriptionServiceCore::<CsourceSubscriptionRepository, CsrSubscriptionVariant>::new(
             pool,

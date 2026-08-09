@@ -12,6 +12,7 @@ andromeda-context-commit = { path = "crates/andromeda-context-commit" }
 andromeda-context-registry = { path = "crates/andromeda-context-registry" }
 andromeda-delivery = { path = "crates/andromeda-delivery" }
 andromeda-entity-map = { path = "crates/andromeda-entity-map" }
+andromeda-federation = { path = "crates/andromeda-federation" }
 andromeda-health = { path = "crates/andromeda-health" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
 andromeda-layer-guard = { path = "lib/andromeda-layer-guard" }
@@ -32,6 +33,7 @@ andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" 
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
+andromeda-registration = { path = "crates/andromeda-registration" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
 andromeda-test-common = { path = "lib/andromeda-test-common" }
@@ -66,6 +68,7 @@ andromeda-context-commit.workspace = true
 andromeda-context-registry.workspace = true
 andromeda-delivery.workspace = true
 andromeda-entity-map.workspace = true
+andromeda-federation.workspace = true
 andromeda-health.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
@@ -85,6 +88,7 @@ andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
+andromeda-registration.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.89"

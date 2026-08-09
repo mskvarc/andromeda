@@ -7,7 +7,6 @@ use crate::{
     error::AndromedaError,
     http::error::batch::entity_error,
     service::{
-        csource_forwarding::CsourceForwardingService,
         entity::query::EntityQueryService,
         snapshot::{
             query_validation::validate_snapshot_query_shapes,
@@ -19,6 +18,7 @@ use crate::{
     },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::EndpointTransport, request::NotificationDelivery};
+use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
@@ -53,7 +53,7 @@ impl SnapshotService {
         transport: Option<Arc<TransportDispatcher>>,
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
-        forwarding: Arc<CsourceForwardingService>,
+        forwarding: Arc<FederationService>,
         snapshot_concurrency: usize,
     ) -> SnapshotService {
         let executor = Arc::new(SnapshotExecutor::new(Arc::clone(&repo), entity_query, temporal, forwarding));

@@ -19,11 +19,6 @@ use crate::{
         response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
     },
     service::{
-        csource_forwarding::{
-            entity_result::{collect_forwarded_exclusive_attrs, collect_warnings, merge_retrieve_results, strip_exclusive_attrs_from_value},
-            operation::ForwardingOperation,
-            request::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardProvisionRequest, ForwardQueryRequest},
-        },
         entity::{
             provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
             query::EntityQueryService,
@@ -31,6 +26,11 @@ use crate::{
         geo_filter::matches_geo_query,
         subscription_matching::matches_scope_query,
     },
+};
+use andromeda_federation::{
+    entity_result::{collect_forwarded_exclusive_attrs, collect_warnings, merge_retrieve_results, strip_exclusive_attrs_from_value},
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardProvisionRequest, ForwardQueryRequest},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
