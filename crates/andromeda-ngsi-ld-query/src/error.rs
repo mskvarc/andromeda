@@ -141,6 +141,9 @@ pub enum QueryError {
     /// A pattern operand was not a valid regular expression.
     #[error("invalid regular expression")]
     PatternRegex(#[from] regex::Error),
+    /// A repetition operator immediately followed another repetition operator, which PostgreSQL's POSIX engine rejects.
+    #[error("invalid POSIX regular expression: a repetition operator cannot follow another repetition operator")]
+    PatternRepeatedQuantifier,
 
     // -----------------------------------------------------------------------
     // Geo query (NGSI-LD 4.10)

@@ -28,7 +28,6 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     api::tenant::TenantState,
     error::{AndromedaError, ResultInstanceExt},
-    http::{error::problem::NgsiLdError, extractor::typed_path::TypedPath},
 };
 use andromeda_delivery::{
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
@@ -37,6 +36,8 @@ use andromeda_delivery::{
         sse::SseNotificationEvent,
     },
 };
+use andromeda_http_extraction::typed_path::TypedPath;
+use andromeda_http_response::problem_response::ProblemResponse;
 
 /// RAII guard that unregisters an SSE connection when the stream ends.
 struct SseConnectionGuard {
@@ -88,10 +89,10 @@ impl Stream for SseEventStream {
 /// persistent connection that streams notification events as they are dispatched
 /// by the notification worker.
 pub async fn stream(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.
     let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
 
@@ -104,7 +105,7 @@ pub async fn stream(
     .is_ok_and(|t| matches!(t, EndpointTransport::Sse));
 
     if !is_sse {
-        return Err(NgsiLdError::from(
+        return Err(ProblemResponse::from(
             AndromedaError::subscription_validation(
                 "Subscription endpoint is not an SSE transport. Only subscriptions with sse:// endpoint URI support streaming.",
             )

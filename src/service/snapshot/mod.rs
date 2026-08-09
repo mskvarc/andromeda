@@ -5,7 +5,7 @@ pub mod store;
 
 use crate::{
     error::AndromedaError,
-    http::error::batch::entity_error,
+    http::error::batch::snapshot_error,
     service::{
         snapshot::{
             query_validation::validate_snapshot_query_shapes,
@@ -208,7 +208,7 @@ impl SnapshotService {
                     NgsiLdErrorType::ResourceNotFound,
                     "Snapshot removed concurrently before purge",
                 )),
-                Err(error) => failures.push(entity_error(id, &error)),
+                Err(error) => failures.push(snapshot_error(id, &error)),
             }
         }
 

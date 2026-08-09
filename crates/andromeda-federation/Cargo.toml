@@ -9,7 +9,7 @@ workspace = true
 
 [dependencies]
 andromeda-jsonld.workspace = true
-andromeda-ngsi-ld-http-headers.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true

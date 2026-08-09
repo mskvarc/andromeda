@@ -8,7 +8,7 @@ const LINK_KEY: &str = "Link";
 /// The tenant member (clause 6.3.14).
 ///
 /// Spelled as the specification spells the header rather than taken from
-/// [`andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant`]: an HTTP
+/// [`andromeda_http_headers::ngsild_tenant::NgsiLdTenant`]: an HTTP
 /// header name is lowercased because HTTP treats it case-insensitively, and an
 /// MQTT user property and a JSON object member are both case-sensitive.
 const TENANT_KEY: &str = "NGSILD-Tenant";

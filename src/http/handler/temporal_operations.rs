@@ -3,11 +3,6 @@
 use crate::{
     api::tenant::TenantState,
     error::ResultInstanceExt,
-    http::{
-        error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia},
-        response::{collection::NgsiLdCollectionResponse, render::start_rendering},
-    },
     service::temporal::{TemporalQueryResult, TemporalService},
 };
 use andromeda_federation::{
@@ -15,6 +10,8 @@ use andromeda_federation::{
     operation::ForwardingOperation,
     request::{CsrModeFilter, ForwardTemporalQueryRequest},
 };
+use andromeda_http_extraction::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia};
+use andromeda_http_response::{collection::NgsiLdCollectionResponse, problem_response::ProblemResponse, render::start_rendering};
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -25,7 +22,7 @@ use axum::{
 
 /// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query temporal entities via POST body.
 pub async fn query(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -35,11 +32,11 @@ pub async fn query(
         value: request,
         context: body_context,
     }: JsonLd<Query>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);
 
-    let params = TemporalQueryParameters::try_from(request).with_instance(&uri).map_err(NgsiLdError::from)?;
+    let params = TemporalQueryParameters::try_from(request).with_instance(&uri).map_err(ProblemResponse::from)?;
 
     // ETSI GS CIM 009 clause 5.5.15.
     if let Some(snapshot_id) = snapshot_id {
@@ -53,9 +50,10 @@ pub async fn query(
             .query_snapshot_temporal_entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
             .await
             .with_instance(&uri)?;
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
             .with_payload(ResponsePayload::Collection(entities))
-            .render()?;
+            .render()
+            .with_instance(&uri)?;
         return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
     }
 
@@ -103,9 +101,10 @@ pub async fn query(
         (merged, warnings)
     };
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(entities))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);

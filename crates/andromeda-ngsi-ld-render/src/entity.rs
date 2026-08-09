@@ -13,7 +13,7 @@ use crate::{
     language_negotiation::render_attribute_value,
     simplify::{simplify_entity, simplify_value},
 };
-use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{rfc3339::whole_seconds, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
@@ -204,7 +204,7 @@ mod tests {
         entity::{EntityRenderer, render_flat_join},
         simplify::simplify_entity,
     };
-    use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+    use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::entity::Entity;
     use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
     use serde_json::{Value, json};

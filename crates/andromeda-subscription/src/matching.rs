@@ -6,26 +6,17 @@
 
 use crate::compiled::{CompiledCsrSubscription, CompiledSubscription};
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_geometry::relation::matches_geo;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_scopes, geo_property::extract_geo_property_geometry},
+    expanded::query_match::{matches_geo_query, matches_scope_query},
     notification::ChangeOrigin,
     subscription::SubscriptionStatus,
 };
-use andromeda_ngsi_ld_query::{filter::eval, geo::query::GeoQuery, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::filter::eval;
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::debug;
-
-/// Whether an expanded entity satisfies a compiled geo-query (clause 4.10).
-pub fn matches_geo_query(geo_query: &GeoQuery, expanded: &Value) -> bool {
-    let Some(subject) = extract_geo_property_geometry(expanded, geo_query.geoproperty_iri.as_str()) else {
-        return false;
-    };
-    matches_geo(&geo_query.georel, subject.as_ref(), geo_query.geometry.as_ref())
-}
 
 /// Match a context-source subscription against one registration representation (clause 5.12).
 pub fn matches_csource_subscription(sub: &CompiledCsrSubscription, registration: &Value) -> bool {
@@ -215,16 +206,6 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
     }
 
     true
-}
-
-/// Evaluate a parsed `scopeQ` against the scopes an entity carries.
-///
-/// The clause 4.18 semantics live on [`ScopeQuery`]; this reads the scopes off
-/// the expanded payload and asks it. An earlier local reading here had `#`
-/// match exactly one further level, where the stored query and its `lquery`
-/// rendering match one or more.
-pub fn matches_scope_query(query: &ScopeQuery, entity_data: &Value) -> bool {
-    query.matches(&extract_scopes(entity_data))
 }
 
 #[cfg(test)]

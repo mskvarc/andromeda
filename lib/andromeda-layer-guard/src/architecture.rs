@@ -5,9 +5,10 @@ use quote::ToTokens;
 use std::{collections::BTreeSet, fs, path::Path};
 use syn::{
     Item,
+    ItemImpl,
     ItemUse,
     Visibility,
-    visit::{Visit, visit_ident, visit_item, visit_lit_str},
+    visit::{Visit, visit_ident, visit_item, visit_item_impl, visit_lit_str},
 };
 
 /// Assert the structural invariants retired by the seventh architecture pass.
@@ -82,6 +83,18 @@ impl<'ast> Visit<'ast> for ArchitectureVisitor<'_> {
         }
     }
 
+    fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
+        if let Some((_, trait_path, _)) = &item.trait_
+            && let Some(trait_name) = trait_path.segments.last().map(|segment| segment.ident.to_string())
+            && let Some(owner) = technical_http_trait_owner(&trait_name)
+            && !self.path.starts_with(owner)
+        {
+            self.violations
+                .push(format!("{} implements {trait_name} outside its technical owner {owner}", self.path));
+        }
+        visit_item_impl(self, item);
+    }
+
     fn visit_ident(&mut self, identifier: &'ast syn::Ident) {
         if identifier == "AppState" {
             self.violations.push(format!("{} contains retired AppState identifier", self.path));
@@ -94,6 +107,16 @@ impl<'ast> Visit<'ast> for ArchitectureVisitor<'_> {
             self.violations.push(format!("{} contains retired source-identity environment key", self.path));
         }
         visit_lit_str(self, literal);
+    }
+}
+
+/// Return the sole workspace directory permitted to implement one centralized HTTP trait.
+fn technical_http_trait_owner(trait_name: &str) -> Option<&'static str> {
+    match trait_name {
+        "FromRequest" | "FromRequestParts" => Some("crates/andromeda-http-extraction/"),
+        "Header" => Some("crates/andromeda-http-headers/"),
+        "IntoResponse" => Some("crates/andromeda-http-response/"),
+        _ => None,
     }
 }
 
@@ -151,5 +174,22 @@ mod tests {
     fn ignores_test_only_inline_items() {
         let violations = violations("#[cfg(test)] mod tests { pub use crate::name::Value; }");
         assert!(violations.is_empty());
+    }
+
+    #[test]
+    fn rejects_centralized_http_trait_implementations_outside_their_owner() {
+        let violations = violations("impl<S> axum::extract::FromRequestParts<S> for Value {}");
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn accepts_centralized_http_trait_implementations_inside_their_owner() {
+        let syntax = syn::parse_file("impl axum::response::IntoResponse for Value {}").unwrap_or_else(|error| unreachable!("fixture parses: {error}"));
+        let mut visitor = ArchitectureVisitor {
+            path: "crates/andromeda-http-response/src/value.rs",
+            violations: Vec::new(),
+        };
+        visitor.visit_file(&syntax);
+        assert!(visitor.violations.is_empty());
     }
 }

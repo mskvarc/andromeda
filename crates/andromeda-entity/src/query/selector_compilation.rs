@@ -5,7 +5,6 @@
 //! selectors on both, and flattening it into a comma-joined `id`/`type` pair
 //! would match a `(id, type)` pairing no single selector named.
 
-use crate::error::EntityError;
 use andromeda_jsonld::{
     engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
     term_expansion::ContextualExpander,
@@ -13,6 +12,7 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelector,
+    error::QueryError,
     pattern::Pattern,
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
@@ -32,7 +32,7 @@ pub async fn compile_entity_selectors(
     flat_ids: Vec<Uri>,
     flat_id_pattern: Option<&Pattern>,
     flat_type: Option<&TypeExprRaw>,
-) -> Result<Vec<EntitySelector>, EntityError> {
+) -> Result<Vec<EntitySelector>, QueryError> {
     if entity_selectors.is_empty() {
         return Ok(vec![compile_one(engine, context, flat_ids, flat_id_pattern, flat_type).await?]);
     }
@@ -52,7 +52,7 @@ async fn compile_one(
     ids: Vec<Uri>,
     id_pattern: Option<&Pattern>,
     type_raw: Option<&TypeExprRaw>,
-) -> Result<EntitySelector, EntityError> {
+) -> Result<EntitySelector, QueryError> {
     let id_pattern = id_pattern.cloned();
     let type_expr = match type_raw {
         Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(engine, context)).await?),

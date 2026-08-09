@@ -2,7 +2,6 @@
 
 use crate::{
     error::AndromedaError,
-    http::response::content_range::build_content_range,
     temporal_render::{
         aggregation::TemporalAggregationRenderer,
         array_normalizer::TemporalArrayNormalizer,
@@ -18,6 +17,7 @@ use andromeda_context_commit::{
 };
 use andromeda_entity::{port::reader::EntityReader, query::selector_compilation::compile_entity_selectors};
 use andromeda_federation::{outcome::ForwardedTemporalEntities, temporal_result::merge_temporal_query_results};
+use andromeda_http_response::content_range::build_content_range;
 use andromeda_jsonld::{
     compaction::compact_attr_iri,
     context_spec::ContextSpec,

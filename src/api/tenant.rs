@@ -1,55 +1,42 @@
-use crate::http::extractor::tenant::TenantHeader;
-use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
+use andromeda_http_extraction::tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver};
+use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
     body::Body,
-    extract::FromRequestParts,
-    http::{Request, Response, request::Parts},
+    http::{Request, Response, Uri},
     middleware::Next,
 };
+use futures::future::BoxFuture;
 use headers::{Header, HeaderMapExt};
 
 use crate::{
     api::state::{AndromedaState, BrokerState},
     error::{AndromedaError, ResultInstanceExt},
-    http::error::problem::NgsiLdError,
 };
+use andromeda_http_response::problem_response::ProblemResponse;
 
-/// Extracts tenant state for requests that require the tenant to already exist.
-pub struct TenantState(pub AndromedaState);
+/// Existing-tenant extractor specialized to the current aggregate binary state.
+pub(crate) type TenantState = ExistingTenantState<AndromedaState>;
 
-/// Extracts tenant state, creating the tenant database on demand if it does not exist.
-pub struct TenantStateOrCreate(pub AndromedaState);
+/// Provisionable-tenant extractor specialized to the current aggregate binary state.
+pub(crate) type TenantStateOrCreate = ProvisionableTenantState<AndromedaState>;
 
-async fn resolve(parts: &mut Parts, broker: &BrokerState, policy: TenantCreationPolicy) -> Result<AndromedaState, NgsiLdError> {
-    let tenant = TenantHeader::from_request_parts(parts, broker)
-        .await
-        .map_err(|_| NgsiLdError::from(AndromedaError::entity_validation("Invalid NGSILD-Tenant header").with_instance(&parts.uri)))?;
-    let tenant_ref = TenantRef::from_header(tenant.into_inner());
-    let runtime = broker
-        .tenants
-        .resolve_state(&tenant_ref, policy)
-        .await
-        .map_err(AndromedaError::from)
-        .with_instance(&parts.uri)?;
-    Ok((*runtime).clone())
-}
-
-impl FromRequestParts<BrokerState> for TenantState {
-    type Rejection = NgsiLdError;
-
-    async fn from_request_parts(parts: &mut Parts, broker: &BrokerState) -> Result<Self, Self::Rejection> {
-        let state = resolve(parts, broker, TenantCreationPolicy::MustExist).await?;
-        Ok(Self(state))
-    }
-}
-
-impl FromRequestParts<BrokerState> for TenantStateOrCreate {
-    type Rejection = NgsiLdError;
-
-    async fn from_request_parts(parts: &mut Parts, broker: &BrokerState) -> Result<Self, Self::Rejection> {
-        let state = resolve(parts, broker, TenantCreationPolicy::CreateOnDemand).await?;
-        Ok(Self(state))
+impl TenantStateResolver<AndromedaState> for BrokerState {
+    fn resolve_tenant<'a>(
+        &'a self,
+        tenant: &'a TenantRef,
+        creation_policy: TenantCreationPolicy,
+        instance: &'a Uri,
+    ) -> BoxFuture<'a, Result<AndromedaState, ProblemResponse>> {
+        Box::pin(async move {
+            let runtime = self
+                .tenants
+                .resolve_state(tenant, creation_policy)
+                .await
+                .map_err(AndromedaError::from)
+                .with_instance(instance)?;
+            Ok((*runtime).clone())
+        })
     }
 }
 

@@ -4,7 +4,7 @@
 //! a 203 Non-Authoritative Information and adapts the payload to remove or
 //! reformat fields that did not exist in the requested version.
 
-use andromeda_ngsi_ld_http_headers::version::NgsiLdVersion;
+use andromeda_http_headers::version::NgsiLdVersion;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::Value;
 use std::str::FromStr;

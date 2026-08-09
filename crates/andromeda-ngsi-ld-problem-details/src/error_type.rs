@@ -144,18 +144,54 @@ mod tests {
     }
 
     #[test]
-    fn each_category_carries_the_status_table_6_3_2_assigns_it() {
-        pretty_assertions::assert_eq!(NgsiLdErrorType::InvalidRequest.status_code(), StatusCode::BAD_REQUEST);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::BadRequestData.status_code(), StatusCode::BAD_REQUEST);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::AlreadyExists.status_code(), StatusCode::CONFLICT);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::Conflict.status_code(), StatusCode::CONFLICT);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::OperationNotSupported.status_code(), StatusCode::UNPROCESSABLE_ENTITY);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::ResourceNotFound.status_code(), StatusCode::NOT_FOUND);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::NonexistentTenant.status_code(), StatusCode::NOT_FOUND);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::InternalError.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::TooComplexQuery.status_code(), StatusCode::FORBIDDEN);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::TooManyResults.status_code(), StatusCode::FORBIDDEN);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::LdContextNotAvailable.status_code(), StatusCode::GATEWAY_TIMEOUT);
-        pretty_assertions::assert_eq!(NgsiLdErrorType::NoMultiTenantSupport.status_code(), StatusCode::NOT_IMPLEMENTED);
+    fn each_category_carries_its_exact_clause_5_5_2_metadata_and_binding_status() {
+        for (category, suffix, title, status) in [
+            (NgsiLdErrorType::AlreadyExists, "AlreadyExists", "Already exists", StatusCode::CONFLICT),
+            (NgsiLdErrorType::BadRequestData, "BadRequestData", "Bad request data", StatusCode::BAD_REQUEST),
+            (NgsiLdErrorType::Conflict, "Conflict", "Conflict", StatusCode::CONFLICT),
+            (
+                NgsiLdErrorType::InternalError,
+                "InternalError",
+                "Internal error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (NgsiLdErrorType::InvalidRequest, "InvalidRequest", "Invalid request", StatusCode::BAD_REQUEST),
+            (
+                NgsiLdErrorType::LdContextNotAvailable,
+                "LdContextNotAvailable",
+                "LD context not available",
+                StatusCode::GATEWAY_TIMEOUT,
+            ),
+            (
+                NgsiLdErrorType::NoMultiTenantSupport,
+                "NoMultiTenantSupport",
+                "No multi-tenant support",
+                StatusCode::NOT_IMPLEMENTED,
+            ),
+            (
+                NgsiLdErrorType::NonexistentTenant,
+                "NonexistentTenant",
+                "Nonexistent tenant",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                NgsiLdErrorType::OperationNotSupported,
+                "OperationNotSupported",
+                "Operation not supported",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                NgsiLdErrorType::ResourceNotFound,
+                "ResourceNotFound",
+                "Resource not found",
+                StatusCode::NOT_FOUND,
+            ),
+            (NgsiLdErrorType::TooComplexQuery, "TooComplexQuery", "Too complex query", StatusCode::FORBIDDEN),
+            (NgsiLdErrorType::TooManyResults, "TooManyResults", "Too many results", StatusCode::FORBIDDEN),
+        ] {
+            pretty_assertions::assert_eq!(category.type_iri().as_str(), format!("https://uri.etsi.org/ngsi-ld/errors/{suffix}"));
+            pretty_assertions::assert_eq!(category.title(), title);
+            pretty_assertions::assert_eq!(category.status_code(), status);
+        }
     }
 }

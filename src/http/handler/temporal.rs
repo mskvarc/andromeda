@@ -3,19 +3,6 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     error::{AndromedaError, ResultInstanceExt},
-    http::{
-        error::problem::NgsiLdError,
-        extractor::{
-            accept::AcceptFormatNoGeo,
-            context::ContextUrl,
-            jsonld::JsonLd,
-            prefer::PreferHeader,
-            protocol::NgsiLdProtocolHeaders,
-            query::ValidatedQuery,
-            typed_path::TypedPath,
-        },
-        response::{collection::NgsiLdCollectionResponse, render::start_rendering, single::NgsiLdResponse},
-    },
     service::temporal::{CreateOrUpdateResult, TemporalQueryResult, TemporalService},
     temporal_render::simplify::{TemporalSimplifyPayload, TemporalSimplifyRenderer},
 };
@@ -25,9 +12,22 @@ use andromeda_federation::{
     request::{CsrModeFilter, ForwardTemporalQueryRequest},
     temporal_result::merge_temporal_retrieve_results,
 };
+use andromeda_http_extraction::{
+    accept::AcceptFormatNoGeo,
+    context::ContextUrl,
+    jsonld::JsonLd,
+    prefer::PreferHeader,
+    protocol::NgsiLdProtocolHeaders,
+    query::ValidatedQuery,
+    typed_path::TypedPath,
+};
+use andromeda_http_response::{collection::NgsiLdCollectionResponse, problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, time_rel::TimeRel, uri::Uri};
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::{
+    expanded::query_match::{matches_geo_query, matches_scope_query},
+    registration::ForwardingMode,
+};
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate, expansion::expand_q_expr},
     geo::compile::compile_geo_query,
@@ -40,7 +40,6 @@ use andromeda_ngsi_ld_request::{
     query::temporal::TemporalQueryParameters,
 };
 use andromeda_postgresql_temporal_store::params::DeleteScope;
-use andromeda_subscription::matching::{matches_geo_query, matches_scope_query};
 use axum::{
     extract::OriginalUri,
     http::StatusCode,

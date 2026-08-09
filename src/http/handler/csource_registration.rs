@@ -3,16 +3,21 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     error::{AndromedaError, ResultInstanceExt},
-    http::{
-        error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery, typed_path::TypedPath},
-        response::{
-            collection::NgsiLdCollectionResponse,
-            pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
-            render::start_rendering,
-            single::NgsiLdResponse,
-        },
-    },
+};
+use andromeda_http_extraction::{
+    accept::AcceptFormatNoGeo,
+    context::ContextUrl,
+    jsonld::JsonLd,
+    prefer::PreferHeader,
+    query::ValidatedQuery,
+    typed_path::TypedPath,
+};
+use andromeda_http_response::{
+    collection::NgsiLdCollectionResponse,
+    pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+    problem_response::ProblemResponse,
+    render::start_rendering,
+    single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -27,14 +32,14 @@ use serde_json::Value;
 
 /// POST /ngsi-ld/v1/csourceRegistrations -- Register a new context source.
 pub async fn create(
-    TenantStateOrCreate(state): TenantStateOrCreate,
+    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     JsonLd {
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr;
     let context = context.merge(body_context);
 
@@ -45,13 +50,13 @@ pub async fn create(
 
 /// GET /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Retrieve a context source registration.
 pub async fn get(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     TypedPath(registration_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr;
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
@@ -60,20 +65,21 @@ pub async fn get(
 
     let csr = RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(csr))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
 /// GET /ngsi-ld/v1/csourceRegistrations -- Query context source registrations.
 pub async fn query(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr;
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
@@ -88,9 +94,10 @@ pub async fn query(
         .map(|csr| RegistrationRenderer::new(csr).with_sys_attrs(options.sys_attrs).render())
         .collect::<Vec<_>>();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(csrs))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     let total_count = usize::try_from(total)
         .map_err(|error| AndromedaError::internal(format!("registration count does not fit the response platform: {error}")))
         .with_instance(&uri)?;
@@ -114,7 +121,7 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Update a context source registration.
 pub async fn update(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(registration_id): TypedPath<Uri>,
@@ -122,7 +129,7 @@ pub async fn update(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr;
     let context = context.merge(body_context);
     service.update(&registration_id, payload, &context).await.with_instance(&uri)?;
@@ -132,10 +139,10 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/csourceRegistrations/{registration_id} -- Delete a context source registration.
 pub async fn delete(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(registration_id): TypedPath<Uri>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr;
     service.delete(&registration_id).await.with_instance(&uri)?;
 

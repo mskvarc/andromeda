@@ -22,7 +22,6 @@ use tracing::{debug, trace};
 use crate::{
     api::tenant::TenantState,
     error::{AndromedaError, ResultInstanceExt},
-    http::{error::problem::NgsiLdError, extractor::typed_path::TypedPath},
 };
 use andromeda_delivery::{
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
@@ -31,6 +30,8 @@ use andromeda_delivery::{
         ws::WsNotificationMessage,
     },
 };
+use andromeda_http_extraction::typed_path::TypedPath;
+use andromeda_http_response::problem_response::ProblemResponse;
 
 /// RAII guard that unregisters a WebSocket connection when the stream ends.
 struct WsConnectionGuard {
@@ -51,11 +52,11 @@ impl Drop for WsConnectionGuard {
 /// upgrades the HTTP connection to a WebSocket that streams notification
 /// messages as they are dispatched by the notification worker.
 pub async fn stream(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
     ws: axum::extract::WebSocketUpgrade,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.
     let subscription = state.subscriptions.get(&subscription_id).await.with_instance(&uri)?;
 
@@ -67,7 +68,7 @@ pub async fn stream(
     .is_ok_and(|t| matches!(t, EndpointTransport::WebSocket));
 
     if !is_ws {
-        return Err(NgsiLdError::from(
+        return Err(ProblemResponse::from(
             AndromedaError::subscription_validation(
                 "Subscription endpoint is not a WebSocket transport. Only subscriptions with ws:// endpoint URI support WebSocket streaming.",
             )

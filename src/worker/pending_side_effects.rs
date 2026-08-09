@@ -18,7 +18,10 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
     history_record::HistoryRecord,
 };
-use andromeda_entity::side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue};
+use andromeda_entity::{
+    error::EntityError,
+    side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue},
+};
 use chrono::Utc;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
@@ -80,7 +83,7 @@ impl PendingSideEffectsWorker {
         }
     }
 
-    async fn poll_once(&self) -> Result<(), AndromedaError> {
+    async fn poll_once(&self) -> Result<(), EntityError> {
         let leased = self
             .repo
             .lease_batch(&self.config.worker_id, self.config.batch_size, self.config.lease_seconds)

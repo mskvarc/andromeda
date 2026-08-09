@@ -13,3 +13,4 @@ pub mod merge;
 pub mod mutation;
 pub mod node;
 pub mod null_sentinel;
+pub mod query_match;

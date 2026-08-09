@@ -1,0 +1,37 @@
+[package]
+name = "andromeda-http-extraction"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-http-headers.workspace = true
+andromeda-http-response.workspace = true
+andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-render.workspace = true
+andromeda-ngsi-ld-request.workspace = true
+andromeda-tenancy.workspace = true
+axum = "0.8.9"
+futures = "0.3.32"
+headers = "0.4.1"
+iri-rs = { version = "3.4.0", features = ["static"] }
+mediatype = "0.23.0"
+serde = "1.0.228"
+serde_json = "1.0.149"
+serde_urlencoded = "0.7.1"
+sonic-rs = "0.5.8"
+tracing = "0.1.44"
+
+[dev-dependencies]
+andromeda-layer-guard.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.52.1", features = ["macros", "rt"] }
+tower = { version = "0.5.3", features = ["util"] }

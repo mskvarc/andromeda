@@ -7,6 +7,7 @@ use andromeda_entity::{
     port::{discovery::EntityDiscoveryStore, reader::EntityReader},
     sys_attrs::inject_sys_attrs,
 };
+use andromeda_http_headers::media_type::APPLICATION_LD_JSON;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{
@@ -14,20 +15,20 @@ use andromeda_jsonld::{
         processor::JsonLdEngine,
     },
 };
-use andromeda_ngsi_ld_http_headers::media_type::APPLICATION_LD_JSON;
 use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::{entity::Entity, notification::Notification, subscription::Subscription};
+use andromeda_ngsi_ld_model::{
+    entity::Entity,
+    expanded::query_match::{matches_geo_query, matches_scope_query},
+    notification::Notification,
+    subscription::Subscription,
+};
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
 use andromeda_postgresql_context_store::subscription::repo::SubscriptionRepository;
-use andromeda_subscription::{
-    compilation::compile_geo_q,
-    matching::{matches_geo_query, matches_scope_query},
-    store::SubscriptionStore,
-};
+use andromeda_subscription::{compilation::compile_geo_q, store::SubscriptionStore};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};
@@ -253,8 +254,16 @@ impl IntervalWorker {
         let mut offset = 0_i64;
         loop {
             let page = match entity_type {
-                Some(type_name) => self.entity_discovery.get_entities_by_type(type_name, Some(limit), Some(offset)).await?,
-                None => self.entity_discovery.get_all_entities(Some(limit), Some(offset)).await?,
+                Some(type_name) => self
+                    .entity_discovery
+                    .get_entities_by_type(type_name, Some(limit), Some(offset))
+                    .await
+                    .map_err(|error| crate::error::AndromedaError::internal(error.to_string()))?,
+                None => self
+                    .entity_discovery
+                    .get_all_entities(Some(limit), Some(offset))
+                    .await
+                    .map_err(|error| crate::error::AndromedaError::internal(error.to_string()))?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
             kept.extend(page.into_iter().filter(|entity| keep(entity)));

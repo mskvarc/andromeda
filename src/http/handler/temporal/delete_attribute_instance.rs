@@ -7,8 +7,8 @@ use crate::http::handler::temporal::{
     EmptyParams,
     InstanceId,
     IntoResponse,
-    NgsiLdError,
     OriginalUri,
+    ProblemResponse,
     Response,
     ResultInstanceExt,
     StatusCode,
@@ -19,12 +19,12 @@ use crate::http::handler::temporal::{
 };
 
 pub async fn delete_attr_instance(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, InstanceId)>,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     service.delete_attr_instance(&id, &attr_id, &instance_id, &context).await.with_instance(&uri)?;

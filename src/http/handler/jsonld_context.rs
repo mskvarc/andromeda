@@ -3,13 +3,11 @@
 use crate::{
     api::tenant::TenantState,
     error::{AndromedaError, ResultInstanceExt},
-    http::{
-        error::problem::NgsiLdError,
-        extractor::{query::ValidatedQuery, typed_path::TypedPath},
-        origin::request_origin,
-    },
+    http::origin::request_origin,
 };
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
+use andromeda_http_extraction::{query::ValidatedQuery, typed_path::TypedPath};
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
 use axum::{
@@ -22,7 +20,12 @@ use axum::{
 use serde_json::Value;
 
 /// POST /ngsi-ld/v1/jsonldContexts -- Create a hosted JSON-LD context.
-pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalUri, headers: HeaderMap, body: Bytes) -> Result<Response, NgsiLdError> {
+pub async fn create(
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ProblemResponse> {
     let service = &state.contexts;
     let payload: Value = serde_json::from_slice(&body).map_err(|_| AndromedaError::malformed_request("Request body is not valid JSON").with_instance(&uri))?;
 
@@ -35,10 +38,10 @@ pub async fn create(TenantState(state): TenantState, OriginalUri(uri): OriginalU
 
 /// GET /ngsi-ld/v1/jsonldContexts -- Query available JSON-LD contexts.
 pub async fn query(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.contexts;
     let kind = params.kind;
 
@@ -54,11 +57,11 @@ pub async fn query(
 
 /// GET /ngsi-ld/v1/jsonldContexts/{context_id} -- Retrieve a specific JSON-LD context.
 pub async fn get(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(context_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.contexts;
     let detail_level = match params.details {
         Some(true) => ContextDetailLevel::Full,
@@ -72,11 +75,11 @@ pub async fn get(
 
 /// DELETE /ngsi-ld/v1/jsonldContexts/{context_id} -- Delete a JSON-LD context.
 pub async fn delete(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(context_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.contexts;
     let removal = match params.reload {
         Some(true) => ContextRemoval::Reload,

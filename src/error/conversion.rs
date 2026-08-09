@@ -26,7 +26,6 @@ use crate::error::{
 };
 use andromeda_context_commit::error::CommitError;
 use andromeda_context_registry::error::ContextRegistryError;
-use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_registration::error::RegistrationError;
@@ -195,6 +194,7 @@ impl From<QueryError> for AndromedaError {
             | QueryError::QInvalidDate { .. }
             | QueryError::QInvalidTime { .. }
             | QueryError::PatternRegex(_)
+            | QueryError::PatternRepeatedQuantifier
             | QueryError::GeoRel(_)
             | QueryError::IcuCollation(_)
             | QueryError::ParamIdInvalid(_)
@@ -314,30 +314,6 @@ impl From<SubscriptionError> for AndromedaError {
             SubscriptionError::Representation(error) => error.into(),
             SubscriptionError::Identifier(error) => error.into(),
             SubscriptionError::Persistence { detail } | SubscriptionError::Internal { detail } => AndromedaError::internal(detail),
-        }
-    }
-}
-
-// Manual conversion preserves the broker's HTTP-facing entity categories.
-impl From<EntityError> for AndromedaError {
-    fn from(error: EntityError) -> AndromedaError {
-        match error {
-            EntityError::Validation { detail } => AndromedaError::entity_validation(detail),
-            EntityError::NotFound { identifier } => AndromedaError::entity_not_found(identifier.to_string()),
-            EntityError::TypeNotFound { name } => AndromedaError::entity_not_found(name.to_string()),
-            EntityError::AttributeNotFound { name } => AndromedaError::entity_not_found(name.to_string()),
-            EntityError::MemberNotFound { detail } => AndromedaError::entity_not_found(detail),
-            EntityError::AlreadyExists { identifier } => AndromedaError::entity_already_exists(identifier.to_string()),
-            EntityError::OperationNotSupported { detail } => AndromedaError::operation_not_supported(detail),
-            EntityError::JsonLd(error) => error.into(),
-            EntityError::Query(error) => error.into(),
-            EntityError::Request(error) => error.into(),
-            EntityError::Representation(error) => error.into(),
-            EntityError::Identifier(error) => error.into(),
-            EntityError::EntityTypeListIdentifier(error) => error.into(),
-            EntityError::AttributeListIdentifier(error) => error.into(),
-            EntityError::Commit(error) => error.into(),
-            EntityError::Persistence { detail } | EntityError::Internal { detail } => AndromedaError::internal(detail),
         }
     }
 }

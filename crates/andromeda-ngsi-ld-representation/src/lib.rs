@@ -21,7 +21,7 @@
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
 //! the header grammars that carry them, so they live in
-//! `andromeda-ngsi-ld-http-headers` beside those headers rather than being
+//! `andromeda-http-headers` beside those headers rather than being
 //! split from them.
 
 #![deny(missing_docs)]

@@ -4,7 +4,8 @@
 //! used across multiple handler modules (entities, temporal, subscriptions,
 //! context source registrations, snapshots, entity maps).
 
-use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::error::AndromedaError;
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use axum::http::Uri;
 
@@ -17,12 +18,12 @@ use axum::http::Uri;
 /// # Errors
 ///
 /// Returns an `EntityMapValidation` problem when the query names no filter.
-pub fn validate_entity_map_has_filter(query: &EntityQueryParameters, uri: &Uri) -> Result<(), NgsiLdError> {
+pub fn validate_entity_map_has_filter(query: &EntityQueryParameters, uri: &Uri) -> Result<(), ProblemResponse> {
     if query.has_any_filter() {
         return Ok(());
     }
 
-    Err(NgsiLdError::from(
+    Err(ProblemResponse::from(
         AndromedaError::entity_map_validation("At least one query filter must be provided (type, attrs, q, georel, scopeQ, or id)").with_instance(uri),
     ))
 }

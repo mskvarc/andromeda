@@ -52,6 +52,12 @@ impl BatchEntityError {
             },
         }
     }
+
+    /// Attach the registration responsible for a failed distributed operation.
+    pub fn with_registration_id(mut self, registration_id: Uri) -> BatchEntityError {
+        self.registration_id = Some(registration_id);
+        self
+    }
 }
 
 /// The `type` of a batch problem detail.
@@ -200,6 +206,42 @@ mod tests {
         .expect("serialises");
         pretty_assertions::assert_eq!(rendered["success"], json!([]));
         pretty_assertions::assert_eq!(rendered["errors"], json!([]));
+    }
+
+    #[test]
+    fn success_only_and_error_only_results_preserve_exact_identifiers() {
+        let success_only = serde_json::to_value(BatchOperationResult {
+            success: vec![uri("urn:ngsi-ld:Entity:1")],
+            errors: vec![],
+        })
+        .expect("serialises");
+        pretty_assertions::assert_eq!(success_only, json!({"success": ["urn:ngsi-ld:Entity:1"], "errors": []}));
+
+        let error_only = serde_json::to_value(BatchOperationResult {
+            success: vec![],
+            errors: vec![BatchEntityError::new(
+                uri("urn:ngsi-ld:Entity:2"),
+                NgsiLdErrorType::AlreadyExists,
+                "Entity already exists",
+            )],
+        })
+        .expect("serialises");
+        pretty_assertions::assert_eq!(error_only["success"], json!([]));
+        pretty_assertions::assert_eq!(error_only["errors"][0]["entityId"], "urn:ngsi-ld:Entity:2");
+        pretty_assertions::assert_eq!(error_only["errors"][0]["error"]["status"], 409);
+        assert!(error_only["errors"][0].get("registrationId").is_none());
+    }
+
+    #[test]
+    fn distributed_batch_error_uses_the_exact_registration_id_member() {
+        let rendered = serde_json::to_value(
+            BatchEntityError::new(uri("urn:ngsi-ld:Entity:2"), NgsiLdErrorType::InternalError, "forwarding failed")
+                .with_registration_id(uri("urn:ngsi-ld:ContextSourceRegistration:7")),
+        )
+        .expect("serialises");
+        pretty_assertions::assert_eq!(rendered["entityId"], "urn:ngsi-ld:Entity:2");
+        pretty_assertions::assert_eq!(rendered["registrationId"], "urn:ngsi-ld:ContextSourceRegistration:7");
+        assert!(rendered.get("registration_id").is_none());
     }
 
     #[test]

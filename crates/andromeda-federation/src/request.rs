@@ -1,8 +1,8 @@
 //! Typed inputs for context-source federation operations.
 
 use crate::operation::ForwardingOperation;
+use andromeda_http_headers::via::Via;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_http_headers::via::Via;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, type_selection::grammar::TypeExprRaw};
 use iri_rs::IriRefBuf;

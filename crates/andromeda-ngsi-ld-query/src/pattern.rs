@@ -27,6 +27,7 @@
 
 use crate::error::QueryError;
 use regex::Regex;
+use regex_syntax::ast::{Ast, parse::Parser};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
@@ -47,7 +48,12 @@ pub struct Pattern(Regex);
 impl Pattern {
     /// Compile and validate a pattern, rejecting one no engine could run.
     pub fn parse(pattern: &str) -> Result<Pattern, QueryError> {
-        Ok(Pattern(Regex::new(pattern)?))
+        let compiled = Regex::new(pattern)?;
+        let ast = Parser::new().parse(pattern).map_err(|_| QueryError::PatternRepeatedQuantifier)?;
+        if has_repeated_quantifier(&ast) {
+            return Err(QueryError::PatternRepeatedQuantifier);
+        }
+        Ok(Pattern(compiled))
     }
 
     /// The pattern as the client wrote it.
@@ -61,6 +67,24 @@ impl Pattern {
     /// Whether the pattern matches anywhere in `haystack`.
     pub fn is_match(&self, haystack: &str) -> bool {
         self.0.is_match(haystack)
+    }
+}
+
+/// Return whether an expression applies a repetition operator directly to another repetition.
+fn has_repeated_quantifier(ast: &Ast) -> bool {
+    match ast {
+        Ast::Repetition(repetition) => matches!(repetition.ast.as_ref(), Ast::Repetition(_)) || has_repeated_quantifier(&repetition.ast),
+        Ast::Group(group) => has_repeated_quantifier(&group.ast),
+        Ast::Alternation(alternation) => alternation.asts.iter().any(has_repeated_quantifier),
+        Ast::Concat(concatenation) => concatenation.asts.iter().any(has_repeated_quantifier),
+        Ast::Empty(_)
+        | Ast::Flags(_)
+        | Ast::Literal(_)
+        | Ast::Dot(_)
+        | Ast::Assertion(_)
+        | Ast::ClassUnicode(_)
+        | Ast::ClassPerl(_)
+        | Ast::ClassBracketed(_) => false,
     }
 }
 
@@ -127,6 +151,12 @@ mod tests {
         // nothing, which reads as an empty result set.
         let error = Pattern::parse("[").expect_err("must reject");
         assert!(matches!(error, QueryError::PatternRegex(_)), "got {error:?}");
+    }
+
+    #[test]
+    fn a_repeated_quantifier_rejected_by_postgresql_is_rejected_before_storage() {
+        let error = Pattern::parse("invalid_entity_id_pattern**").expect_err("must reject");
+        assert!(matches!(error, QueryError::PatternRepeatedQuantifier), "got {error:?}");
     }
 
     #[test]

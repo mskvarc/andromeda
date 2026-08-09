@@ -3,16 +3,21 @@
 use crate::{
     api::tenant::{TenantState, TenantStateOrCreate},
     error::{AndromedaError, ResultInstanceExt},
-    http::{
-        error::problem::NgsiLdError,
-        extractor::{accept::AcceptFormatNoGeo, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, query::ValidatedQuery, typed_path::TypedPath},
-        response::{
-            collection::NgsiLdCollectionResponse,
-            pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
-            render::start_rendering,
-            single::NgsiLdResponse,
-        },
-    },
+};
+use andromeda_http_extraction::{
+    accept::AcceptFormatNoGeo,
+    context::ContextUrl,
+    jsonld::JsonLd,
+    prefer::PreferHeader,
+    query::ValidatedQuery,
+    typed_path::TypedPath,
+};
+use andromeda_http_response::{
+    collection::NgsiLdCollectionResponse,
+    pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+    problem_response::ProblemResponse,
+    render::start_rendering,
+    single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -31,7 +36,7 @@ use serde_json::Value;
 
 /// POST /ngsi-ld/v1/csourceSubscriptions -- Create a context source subscription.
 pub async fn create(
-    TenantStateOrCreate(state): TenantStateOrCreate,
+    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
@@ -39,7 +44,7 @@ pub async fn create(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr_subscriptions;
     let context = context.merge(body_context);
 
@@ -50,13 +55,13 @@ pub async fn create(
 
 /// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.
 pub async fn get(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr_subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = params.options.unwrap_or_default();
@@ -67,21 +72,22 @@ pub async fn get(
         .with_sys_attrs(options.sys_attrs)
         .render();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(subscription))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     let response = NgsiLdResponse::ok(rendered).into_response();
     Ok(response)
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions -- Query context source subscriptions.
 pub async fn query(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr_subscriptions;
     let context: ContextSpec = context.into_inner();
     let options = params.options.unwrap_or_default();
@@ -108,9 +114,10 @@ pub async fn query(
         })
         .collect::<Vec<_>>();
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(subscriptions))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered);
 
     if options.count == CountPolicy::Emit {
@@ -132,7 +139,7 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.
 pub async fn update(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Uri>,
@@ -140,7 +147,7 @@ pub async fn update(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr_subscriptions;
     let context = context.merge(body_context);
 
@@ -151,10 +158,10 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
 pub async fn delete(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.csr_subscriptions;
     service.delete(&subscription_id).await.with_instance(&uri)?;
 

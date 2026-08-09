@@ -22,7 +22,7 @@ use crate::{
     uri_decoding::decode_percent_encoded_uris,
     version::{VersionAdaptation, VersionRenderer},
 };
-use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use iri_rs::IriRefBuf;
 use serde_json::Value;
@@ -287,7 +287,7 @@ mod tests {
         response::{ResponsePayload, ResponseRenderer},
         version::VersionAdaptation,
     };
-    use andromeda_ngsi_ld_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+    use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
     use iri_rs::IriRefBuf;
     use serde_json::{Value, json};
 

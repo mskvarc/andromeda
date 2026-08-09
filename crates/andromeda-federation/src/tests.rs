@@ -4,7 +4,7 @@ use crate::{
     loop_detected,
     outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteOutcome, ForwardedWriteResult},
 };
-use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::ReceivedProtocol, via::Via};
+use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::ReceivedProtocol, via::Via};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use url::Url;

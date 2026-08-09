@@ -1,0 +1,32 @@
+[package]
+name = "andromeda-http-response"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-http-headers.workspace = true
+andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-render.workspace = true
+axum = "0.8.9"
+chrono = "0.4.44"
+headers = "0.4.1"
+iri-rs = "3.4.0"
+mediatype = "0.23.0"
+serde = "1.0.228"
+sonic-rs = "0.5.8"
+tracing = "0.1.44"
+url = "2.5.8"
+
+[dev-dependencies]
+andromeda-layer-guard.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+pretty_assertions = "1.4.1"
+serde_json = "1.0.149"
+tokio = { version = "1.52.1", features = ["macros", "rt"] }

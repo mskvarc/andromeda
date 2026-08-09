@@ -1,18 +1,19 @@
 //! Handler for the `/health` endpoint.
 
-use crate::{error::AndromedaError, http::error::problem::NgsiLdError};
+use crate::error::AndromedaError;
 use andromeda_health::{
     aggregate::Health,
     report::{HealthCheckResponse, HealthCheckType},
     status::HealthStatus,
 };
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
 
 /// GET /ngsi-ld/v1/health -- Check broker health and return component status.
-pub async fn check(Extension(health): Extension<Health>) -> Result<impl IntoResponse, NgsiLdError> {
+pub async fn check(Extension(health): Extension<Health>) -> Result<impl IntoResponse, ProblemResponse> {
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("HealthCheck:{}", Uuid::new_v4()))
         .build()
         .map_err(AndromedaError::from)?;

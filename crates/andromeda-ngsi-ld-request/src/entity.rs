@@ -14,7 +14,7 @@ use crate::{
     },
     representation_params::deserialize_option_response_format,
 };
-use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};

@@ -8,7 +8,7 @@
 //! enumerates the eight types rather than testing for a language map.
 
 use crate::{entity::serialize_value, error::RenderError};
-use andromeda_ngsi_ld_http_headers::language::{LanguageFilter, LanguageRange};
+use andromeda_http_headers::language::{LanguageFilter, LanguageRange};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, rfc3339, uri::Uri};
 use andromeda_ngsi_ld_model::attribute::{
     instance::{Attribute, AttributeValue},
@@ -214,7 +214,7 @@ impl<'a> NegotiatedProperty<'a> {
 #[cfg(test)]
 mod tests {
     use crate::language_negotiation::render_attribute_value;
-    use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+    use andromeda_http_headers::language::LanguageFilter;
     use andromeda_ngsi_ld_model::attribute::instance::AttributeValue;
     use serde_json::{Value, json};
 

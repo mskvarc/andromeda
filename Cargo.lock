@@ -90,10 +90,13 @@ dependencies = [
  "andromeda-entity-map",
  "andromeda-federation",
  "andromeda-health",
+ "andromeda-http-entity",
+ "andromeda-http-extraction",
+ "andromeda-http-headers",
+ "andromeda-http-response",
  "andromeda-jsonld",
  "andromeda-layer-guard",
  "andromeda-ngsi-ld-geometry",
- "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
@@ -137,7 +140,6 @@ dependencies = [
  "moka",
  "percent-encoding",
  "pretty_assertions",
- "problem_details",
  "regex",
  "reqwest",
  "rumqttc",
@@ -208,8 +210,8 @@ name = "andromeda-delivery"
 version = "0.1.0"
 dependencies = [
  "andromeda-health",
+ "andromeda-http-headers",
  "andromeda-layer-guard",
- "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
@@ -297,9 +299,9 @@ dependencies = [
 name = "andromeda-federation"
 version = "0.1.0"
 dependencies = [
+ "andromeda-http-headers",
  "andromeda-jsonld",
  "andromeda-layer-guard",
- "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
@@ -328,6 +330,117 @@ dependencies = [
  "serde_json",
  "tokio",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-http-entity"
+version = "0.1.0"
+dependencies = [
+ "andromeda-entity",
+ "andromeda-entity-map",
+ "andromeda-federation",
+ "andromeda-http-extraction",
+ "andromeda-http-headers",
+ "andromeda-http-response",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-request",
+ "andromeda-tenancy",
+ "axum",
+ "futures",
+ "headers",
+ "pretty_assertions",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tower",
+ "tracing",
+ "typed-builder",
+]
+
+[[package]]
+name = "andromeda-http-extraction"
+version = "0.1.0"
+dependencies = [
+ "andromeda-http-headers",
+ "andromeda-http-response",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-tenancy",
+ "axum",
+ "futures",
+ "headers",
+ "iri-rs",
+ "mediatype",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sonic-rs",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
+name = "andromeda-http-headers"
+version = "0.1.0"
+dependencies = [
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "derive_more",
+ "headers",
+ "http",
+ "iri-rs",
+ "langtag",
+ "mediatype",
+ "pretty_assertions",
+ "strum",
+ "thiserror 2.0.19",
+ "tracing",
+ "urn-rs",
+]
+
+[[package]]
+name = "andromeda-http-response"
+version = "0.1.0"
+dependencies = [
+ "andromeda-http-headers",
+ "andromeda-jsonld",
+ "andromeda-layer-guard",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-vocabulary",
+ "axum",
+ "chrono",
+ "headers",
+ "iri-rs",
+ "mediatype",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sonic-rs",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -382,28 +495,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.19",
-]
-
-[[package]]
-name = "andromeda-ngsi-ld-http-headers"
-version = "0.1.0"
-dependencies = [
- "andromeda-layer-guard",
- "andromeda-ngsi-ld-lexicon",
- "andromeda-ngsi-ld-query",
- "andromeda-ngsi-ld-representation",
- "andromeda-ngsi-ld-vocabulary",
- "derive_more",
- "headers",
- "http",
- "iri-rs",
- "langtag",
- "mediatype",
- "pretty_assertions",
- "strum",
- "thiserror 2.0.19",
- "tracing",
- "urn-rs",
 ]
 
 [[package]]
@@ -491,6 +582,7 @@ dependencies = [
  "langtag",
  "pretty_assertions",
  "regex",
+ "regex-syntax",
  "serde",
  "serde_json",
  "strum",
@@ -504,8 +596,8 @@ dependencies = [
 name = "andromeda-ngsi-ld-render"
 version = "0.1.0"
 dependencies = [
+ "andromeda-http-headers",
  "andromeda-layer-guard",
- "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-representation",
@@ -540,8 +632,8 @@ dependencies = [
 name = "andromeda-ngsi-ld-request"
 version = "0.1.0"
 dependencies = [
+ "andromeda-http-headers",
  "andromeda-layer-guard",
- "andromeda-ngsi-ld-http-headers",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
@@ -2623,16 +2715,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http-serde"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f056c8559e3757392c8d091e796416e4649d8e49e88b8d76df6c002f05027fd"
-dependencies = [
- "http",
- "serde",
-]
-
-[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4019,19 +4101,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "problem_details"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d50e8b46a2f32e61ae82888734e24627ea0f8c9bc7c5fc8d0c3e0eb7ed0ff5ab"
-dependencies = [
- "axum",
- "http",
- "http-serde",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4398,9 +4467,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.10"
+version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rend"

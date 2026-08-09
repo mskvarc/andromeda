@@ -1,7 +1,7 @@
 //! HTTP execution and header construction for federated requests.
 
 use crate::{FederationService, error::FederationError, outcome::ForwardGetOutcome};
-use andromeda_ngsi_ld_http_headers::{link::header::Link, media_type::APPLICATION_JSON, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
+use andromeda_http_headers::{link::header::Link, media_type::APPLICATION_JSON, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use headers::Header;
 use iri_rs::IriRefBuf;

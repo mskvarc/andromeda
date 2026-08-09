@@ -1,9 +1,7 @@
-//! HTTP layer: extractors, error mapping, handlers, responses, and request validation for NGSI-LD.
+//! Transitional route bindings: error classification, handlers, concern layers, and request validation for NGSI-LD policies not yet extracted.
 
 pub mod error;
-pub mod extractor;
 pub mod handler;
 pub mod layer;
 pub mod origin;
-pub mod response;
 pub mod validation;

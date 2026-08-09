@@ -3,8 +3,9 @@
 use crate::{
     api::state::BrokerState,
     error::{AndromedaError, ResultInstanceExt},
-    http::{error::problem::NgsiLdError, extractor::query::ValidatedQuery},
 };
+use andromeda_http_extraction::query::ValidatedQuery;
+use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::tenant_list::{TenantList, TenantListType};
 use andromeda_ngsi_ld_request::empty::EmptyParams;
@@ -23,7 +24,7 @@ pub async fn query(
     State(broker): State<BrokerState>,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
-) -> Result<impl IntoResponse, NgsiLdError> {
+) -> Result<impl IntoResponse, ProblemResponse> {
     let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("TenantList:{}", Uuid::new_v4()))
         .build()
         .map_err(AndromedaError::from)?;

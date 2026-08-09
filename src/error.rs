@@ -254,6 +254,11 @@ impl ErrorKind {
                 | ErrorKind::TemporalNotFound(_)
         )
     }
+
+    /// Returns `true` only when the requested snapshot does not exist or is not queryable.
+    pub const fn is_snapshot_not_found(&self) -> bool {
+        matches!(self, ErrorKind::SnapshotNotFound(_))
+    }
 }
 
 /// Top-level application error, pairing an [`ErrorKind`] with optional
@@ -290,6 +295,11 @@ impl AndromedaError {
     /// Delegates to [`ErrorKind::is_not_found`].
     pub const fn is_not_found(&self) -> bool {
         self.kind.is_not_found()
+    }
+
+    /// Delegates to [`ErrorKind::is_snapshot_not_found`].
+    pub const fn is_snapshot_not_found(&self) -> bool {
+        self.kind.is_snapshot_not_found()
     }
 
     // -- Resource not found factories ----------------------------------------

@@ -1,17 +1,13 @@
 //! The HTTP surface: which route reaches which handler.
 
 use crate::{
-    api::{state::BrokerState, tenant_factory::BrokerTenantFactory},
+    api::{entity_binding::BrokerEntityStateResolver, state::BrokerState, tenant_factory::BrokerTenantFactory},
     config::runtime::RuntimeConfig,
     error::AndromedaError,
     http::handler::{
-        attribute,
         csource_registration,
         csource_subscription,
-        entity,
         entity_map,
-        entity_operations,
-        entity_type,
         health,
         info,
         jsonld_context,
@@ -28,6 +24,7 @@ use crate::{
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_health::aggregate::Health;
+use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_postgresql_context_store::{
     health::DatabaseHealthIndicator,
     tenant_database::{DatabaseUrl, configure_pool_options},
@@ -38,9 +35,7 @@ use axum::{
     Extension,
     Router,
     extract::DefaultBodyLimit,
-    http::{StatusCode, header},
-    response::IntoResponse,
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
 use tower_helmet::HelmetLayer;
@@ -102,52 +97,19 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
         source_alias: config.info.source_alias.clone(), // clone: configuration and router state own the validated alias
     };
     let max_body = config.performance.max_request_body_bytes;
+    let entity_resolver = Arc::new(BrokerEntityStateResolver::new(Arc::clone(&tenants)));
+    let entity_routes = EntityRoutes::new(entity_resolver).into_router();
     let router = Router::new()
-        .route("/favicon.ico", get(favicon))
-        .nest("/ngsi-ld/v1", build_v1_router().merge(health_router).merge(version_router))
+        .nest("/ngsi-ld/v1", build_v1_router(entity_routes).merge(health_router).merge(version_router))
         .layer(DefaultBodyLimit::max(max_body))
         .layer(HelmetLayer::with_defaults())
         .with_state(broker_state);
     Ok(BrokerHttp { router, tenants })
 }
 
-async fn favicon() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/x-icon")],
-        include_bytes!("favicon.ico").as_slice(),
-    )
-}
-
-fn build_v1_router() -> Router<BrokerState> {
-    let entity_routes = Router::new()
-        .route("/", post(entity::create::create))
-        .route("/", get(entity::query::query))
-        .route("/", delete(entity::delete_by_query::delete_by_query))
-        .route("/", patch(entity::missing_identifier::patch_no_id))
-        .route("/", put(entity::missing_identifier::put_no_id))
-        .route("/{id}", get(entity::retrieve::get))
-        .route("/{id}", delete(entity::delete::delete))
-        .route("/{id}", patch(entity::merge::merge))
-        .route("/{id}", put(entity::replace::update))
-        .route("/{id}/attrs", post(entity::append_attributes::append_attrs))
-        .route("/{id}/attrs", patch(entity::update_attributes::update_attrs))
-        .route("/{id}/attrs/{attr_id}", patch(entity::partial_update_attribute::partial_update_attr))
-        .route("/{id}/attrs/{attr_id}", delete(entity::delete_attribute::delete_attr))
-        .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr));
-
-    let entity_ops_routes = Router::new()
-        .route("/create", post(entity_operations::create::batch_create))
-        .route("/upsert", post(entity_operations::upsert::batch_upsert))
-        .route("/update", post(entity_operations::update::batch_update))
-        .route("/merge", post(entity_operations::merge::batch_merge))
-        .route("/delete", post(entity_operations::delete::batch_delete))
-        .route("/query", post(entity_operations::query::query));
-
-    let types_routes = Router::new().route("/", get(entity_type::query)).route("/{type_}", get(entity_type::get));
+fn build_v1_router(entity_routes: Router) -> Router<BrokerState> {
+    let entity_routes: Router<BrokerState> = entity_routes.with_state(());
     let tenants_routes = Router::new().route("/", get(tenant::query)).route("/evictOrphans", post(tenant::evict_orphans));
-
-    let attributes_routes = Router::new().route("/", get(attribute::query)).route("/{attr_id}", get(attribute::get));
 
     let jsonld_context_routes = Router::new()
         .route("/", post(jsonld_context::create))
@@ -218,11 +180,8 @@ fn build_v1_router() -> Router<BrokerState> {
     let info_routes = Router::new().route("/sourceIdentity", get(info::get));
 
     Router::new()
-        .nest("/entities", entity_routes)
-        .nest("/entityOperations", entity_ops_routes)
-        .nest("/types", types_routes)
+        .merge(entity_routes)
         .nest("/tenants", tenants_routes)
-        .nest("/attributes", attributes_routes)
         .nest("/jsonldContexts", jsonld_context_routes)
         .nest("/temporal/entities", temporal_entity_routes)
         .nest("/temporal/entityOperations", temporal_ops_routes)

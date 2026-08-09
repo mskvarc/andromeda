@@ -57,7 +57,7 @@ mod boundary {
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-health",
             "andromeda-layer-guard",
-            "andromeda-ngsi-ld-http-headers",
+            "andromeda-http-headers",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-model",
             "andromeda-ngsi-ld-vocabulary",

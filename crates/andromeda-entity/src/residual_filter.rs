@@ -3,16 +3,16 @@
 //! The [`ResidualFilter`] type itself lives in the context-store crate, which
 //! owns its construction and structural inspection. This module adds the
 //! in-memory evaluator that finishes what a store declined, because it depends
-//! on [`matches_geo_query`] which is a service-layer concern above the store.
+//! on pure expanded-entity matching owned by the NGSI-LD model layer.
 //!
 //! [`ResidualFilter`]: crate::query_residual::ResidualFilter
-//! [`matches_geo_query`]: andromeda_subscription::matching::matches_geo_query
 
 use crate::query_residual::ResidualFilter;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
     entity_member::{extract_id, extract_scopes, extract_types},
     node::expanded_object_ref,
+    query_match::matches_geo_query,
 };
 use andromeda_ngsi_ld_query::{
     entity_selection::{EntitySelection, EntitySelector},
@@ -22,7 +22,6 @@ use andromeda_ngsi_ld_query::{
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExpr,
 };
-use andromeda_subscription::matching::matches_geo_query;
 use iri_rs::IriBuf;
 use serde_json::Value;
 

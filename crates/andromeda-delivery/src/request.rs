@@ -1,6 +1,6 @@
 //! One notification, ready to hand to a transport.
 
-use andromeda_ngsi_ld_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
+use andromeda_http_headers::{link::header::Link, media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
 use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -126,7 +126,7 @@ pub fn notification_media_type(accept: Option<&MediaTypeBuf>) -> ResponseMediaTy
 #[cfg(test)]
 mod tests {
     use crate::request::{DeliveryRequest, NotificationDelivery, notification_media_type};
-    use andromeda_ngsi_ld_http_headers::{media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
+    use andromeda_http_headers::{media_type::ResponseMediaType, ngsild_tenant::NgsiLdTenant};
     use andromeda_ngsi_ld_lexicon::{tenant::TenantName, uri::Uri};
     use andromeda_ngsi_ld_model::key_value_pair::KeyValuePair;
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;

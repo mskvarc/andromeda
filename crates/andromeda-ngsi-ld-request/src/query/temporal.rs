@@ -20,7 +20,7 @@ use crate::{
         entity_selector::EntitySelectorParams,
     },
 };
-use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
     attribute_name::AttributeName,

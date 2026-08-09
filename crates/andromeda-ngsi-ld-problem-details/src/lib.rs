@@ -18,6 +18,7 @@
 
 pub mod batch_operation;
 pub mod error_type;
+pub mod problem_detail;
 
 #[cfg(test)]
 mod boundary {

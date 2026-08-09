@@ -56,7 +56,8 @@ pub(super) async fn resolve_linked_cached(
     }
     let linked_map = entity_query
         .resolve_linked_entities(std::slice::from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
-        .await?;
+        .await
+        .map_err(|error| AndromedaError::internal(error.to_string()))?;
     let values = linked_map
         .values()
         .filter_map(|entity| match serde_json::to_value(entity) {

@@ -9,7 +9,7 @@ use crate::{
     },
     error::AndromedaError,
 };
-use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
+use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use axum::{
     ServiceExt,
     extract::MatchedPath,

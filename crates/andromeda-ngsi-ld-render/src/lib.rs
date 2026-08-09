@@ -18,7 +18,7 @@
 //!
 //! What a client *asks* for is not here. Media types, `Prefer` tokens and
 //! language ranges arrive as HTTP headers and are spelled in
-//! `andromeda-ngsi-ld-http-headers`; this crate reads the values they carry and
+//! `andromeda-http-headers`; this crate reads the values they carry and
 //! never the request they came from.
 
 #![deny(missing_docs)]
@@ -59,7 +59,7 @@ mod boundary {
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-layer-guard",
-            "andromeda-ngsi-ld-http-headers",
+            "andromeda-http-headers",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-model",
             "andromeda-ngsi-ld-representation",

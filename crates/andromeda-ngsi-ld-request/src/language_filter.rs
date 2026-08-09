@@ -1,6 +1,6 @@
 //! Deserialization of the clause-4.15 NGSI-LD Language Filter.
 
-use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_http_headers::language::LanguageFilter;
 use serde::{Deserialize, Deserializer};
 
 /// Deserialize an optional language filter from its query-string grammar.
@@ -20,7 +20,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::language_filter::deserialize_optional_language_filter;
-    use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+    use andromeda_http_headers::language::LanguageFilter;
     use serde::Deserialize;
 
     #[derive(Deserialize)]

@@ -8,11 +8,11 @@ use crate::http::handler::temporal::{
     CsrModeFilter,
     ForwardingOperation,
     IntoResponse,
-    NgsiLdError,
     NgsiLdProtocolHeaders,
     NgsiLdResponse,
     OriginalUri,
     PreferHeader,
+    ProblemResponse,
     Response,
     ResponsePayload,
     ResultInstanceExt,
@@ -31,14 +31,14 @@ use crate::http::handler::temporal::{
 };
 
 pub async fn get(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     protocol
@@ -59,7 +59,7 @@ pub async fn get(
             .get_snapshot_temporal_entity(&snapshot_id, &id)
             .await
             .with_instance(&uri)?
-            .ok_or_else(|| NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)))?;
+            .ok_or_else(|| ProblemResponse::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)))?;
 
         let key_values = params.is_simplified();
 
@@ -72,9 +72,10 @@ pub async fn get(
         } else {
             entity_data
         };
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
             .with_payload(ResponsePayload::Single(data))
-            .render()?;
+            .render()
+            .with_instance(&uri)?;
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
@@ -123,7 +124,7 @@ pub async fn get(
         match merged {
             Some(value) => (value, content_range, warnings),
             None => {
-                return Err(NgsiLdError::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)));
+                return Err(ProblemResponse::from(AndromedaError::temporal_not_found(id.to_string()).with_instance(&uri)));
             }
         }
     };
@@ -146,9 +147,10 @@ pub async fn get(
         entity_value
     };
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(data))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     let mut builder = NgsiLdResponse::new(status, rendered).with_warnings(warnings);
     if let Some(map_header) = entity_map_header {
         builder = builder.with_entity_map_uri(map_header.into_inner());

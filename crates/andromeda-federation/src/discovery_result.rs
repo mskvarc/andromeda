@@ -1,7 +1,7 @@
 //! Deterministic merging of context-source discovery responses.
 
 use crate::outcome::ForwardedDiscoveryResult;
-use andromeda_ngsi_ld_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use indexmap::IndexMap;
 use serde_json::Value;

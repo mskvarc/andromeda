@@ -8,7 +8,7 @@ use crate::{
     registration_selection::{collect_exclusive_attrs, collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
     request::{ForwardBatchProvisionRequest, ForwardProvisionRequest},
 };
-use andromeda_ngsi_ld_http_headers::{media_type::APPLICATION_LD_JSON, via::Via};
+use andromeda_http_headers::{media_type::APPLICATION_LD_JSON, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use futures::{StreamExt, stream};

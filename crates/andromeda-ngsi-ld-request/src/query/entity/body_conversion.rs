@@ -5,7 +5,7 @@ use crate::{
     error::ParameterError,
     query::{deserialization::OptionalGeoQuery, entity::parameters::EntityQueryParameters, entity_selector::EntitySelectorParams},
 };
-use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_model::query::body::Query;
 
 impl TryFrom<Query> for EntityQueryParameters {

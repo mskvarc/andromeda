@@ -58,7 +58,7 @@ mod boundary {
         /// Anything else is an upward or sideways edge.
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-layer-guard",
-            "andromeda-ngsi-ld-http-headers",
+            "andromeda-http-headers",
             "andromeda-ngsi-ld-lexicon",
             // A request names the model enums a wire parameter parses to (a
             // context `kind`, and so on), so a request may reference the model

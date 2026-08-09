@@ -1,6 +1,6 @@
 //! Typed results of context-source federation attempts.
 
-use andromeda_ngsi_ld_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
 use serde_json::Value;

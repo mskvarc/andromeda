@@ -8,7 +8,7 @@ use crate::{
     outcome::{ForwardGetOutcome, ForwardedTemporalEntities},
     request::{CsrModeFilter, ForwardTemporalQueryRequest},
 };
-use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
+use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;

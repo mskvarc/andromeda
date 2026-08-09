@@ -7,7 +7,7 @@
 //! the broker as JSON-LD and was never a `Entity` at all.
 
 use crate::{entity::EntityRenderer, error::RenderError};
-use andromeda_ngsi_ld_http_headers::language::LanguageFilter;
+use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
 use serde_json::{Map, Value};

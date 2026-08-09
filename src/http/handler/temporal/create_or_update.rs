@@ -6,8 +6,8 @@ use crate::http::handler::temporal::{
     EmptyParams,
     IntoResponse,
     JsonLd,
-    NgsiLdError,
     OriginalUri,
+    ProblemResponse,
     Response,
     ResultInstanceExt,
     StatusCode,
@@ -17,7 +17,7 @@ use crate::http::handler::temporal::{
 };
 
 pub async fn create_or_update(
-    TenantStateOrCreate(state): TenantStateOrCreate,
+    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
@@ -25,7 +25,7 @@ pub async fn create_or_update(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);
     let result = service.create_or_update(payload, &context).await.with_instance(&uri)?;

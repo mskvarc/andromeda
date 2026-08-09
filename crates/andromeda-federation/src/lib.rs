@@ -32,8 +32,8 @@ pub mod temporal_result;
 pub mod transport;
 
 use crate::error::FederationError;
+use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_http_headers::{received_protocol::ReceivedProtocol, via::Via};
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_registration::store::RegistrationStore;
 use std::{sync::Arc, time::Duration};
@@ -117,7 +117,7 @@ mod boundary {
         const ALLOWED_IN_WORKSPACE: &[&str] = &[
             "andromeda-jsonld",
             "andromeda-layer-guard",
-            "andromeda-ngsi-ld-http-headers",
+            "andromeda-http-headers",
             "andromeda-ngsi-ld-lexicon",
             "andromeda-ngsi-ld-model",
             "andromeda-ngsi-ld-query",

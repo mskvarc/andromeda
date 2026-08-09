@@ -5,7 +5,7 @@ use crate::{
     forwarding_url::build_discovery_url,
     outcome::{ForwardGetOutcome, ForwardedDiscoveryResult},
 };
-use andromeda_ngsi_ld_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
+use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriRefBuf;
 use tracing::{debug, warn};

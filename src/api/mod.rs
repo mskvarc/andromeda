@@ -1,4 +1,5 @@
 pub mod context_hit_flush;
+pub mod entity_binding;
 pub mod router;
 pub mod state;
 pub mod tenant;

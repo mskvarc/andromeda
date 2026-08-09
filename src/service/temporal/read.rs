@@ -43,7 +43,14 @@ impl TemporalService {
             return Err(AndromedaError::temporal_not_found(entity_id.to_string()));
         }
 
-        let entity_types = self.entity_reader.get(entity_id).await?.as_ref().map(extract_types).unwrap_or_default();
+        let entity_types = self
+            .entity_reader
+            .get(entity_id)
+            .await
+            .map_err(|error| AndromedaError::internal(error.to_string()))?
+            .as_ref()
+            .map(extract_types)
+            .unwrap_or_default();
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
@@ -103,7 +110,11 @@ impl TemporalService {
         let total_count = id_outcome.total_count;
 
         // Batch-fetch entity payloads to extract types (avoids N+1 queries).
-        let entity_payloads = self.entity_reader.get_batch(&entity_ids).await?;
+        let entity_payloads = self
+            .entity_reader
+            .get_batch(&entity_ids)
+            .await
+            .map_err(|error| AndromedaError::internal(error.to_string()))?;
         let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = entity_payloads
             .iter()
             .map(|(id, payload)| (id.clone(), extract_types(payload))) // clone: the type index owns its validated entity URI.

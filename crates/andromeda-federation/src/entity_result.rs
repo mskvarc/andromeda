@@ -1,7 +1,7 @@
 //! Merging and classification of federated current-entity results.
 
 use crate::outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteResult};
-use andromeda_ngsi_ld_http_headers::ngsild_warning::NgsiLdWarning;
+use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
 use indexmap::IndexMap;

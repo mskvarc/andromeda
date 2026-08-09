@@ -6,8 +6,8 @@ use crate::http::handler::temporal::{
     InstanceId,
     IntoResponse,
     JsonLd,
-    NgsiLdError,
     OriginalUri,
+    ProblemResponse,
     Response,
     ResultInstanceExt,
     StatusCode,
@@ -18,7 +18,7 @@ use crate::http::handler::temporal::{
 };
 
 pub async fn update_attr_instance(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, InstanceId)>,
@@ -26,7 +26,7 @@ pub async fn update_attr_instance(
         value: payload,
         context: body_context,
     }: JsonLd<Value>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);
     service

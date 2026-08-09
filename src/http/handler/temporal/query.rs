@@ -13,10 +13,10 @@ use crate::http::handler::temporal::{
     ForwardingOperation,
     IntoResponse,
     NgsiLdCollectionResponse,
-    NgsiLdError,
     NgsiLdProtocolHeaders,
     OriginalUri,
     PreferHeader,
+    ProblemResponse,
     Response,
     ResponsePayload,
     ResultInstanceExt,
@@ -41,13 +41,13 @@ use crate::http::handler::temporal::{
 };
 
 pub async fn query(
-    TenantState(state): TenantState,
+    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
-) -> Result<Response, NgsiLdError> {
+) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     protocol
@@ -84,9 +84,10 @@ pub async fn query(
         } else {
             entities
         };
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
             .with_payload(ResponsePayload::Collection(values))
-            .render()?;
+            .render()
+            .with_instance(&uri)?;
         let response = NgsiLdCollectionResponse::ok(rendered)
             .with_snapshot_uri(snapshot_id)
             .with_total_count(total as usize);
@@ -259,9 +260,10 @@ pub async fn query(
         entities
     };
 
-    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default())
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Collection(values))
-        .render()?;
+        .render()
+        .with_instance(&uri)?;
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);

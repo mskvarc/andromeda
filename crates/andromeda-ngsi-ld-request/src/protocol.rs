@@ -17,7 +17,7 @@ use crate::{
     options::EntityRepresentationOptions,
     query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
 };
-use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
+use andromeda_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
 use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
@@ -170,7 +170,7 @@ mod tests {
         protocol::ProtocolExtensions,
         query::{entity::parameters::EntityQueryParameters, temporal::TemporalQueryParameters},
     };
-    use andromeda_ngsi_ld_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
+    use andromeda_http_headers::{ngsild_dataset_id::NgsiLdDatasetId, ngsild_response_format::NgsiLdResponseFormat, ngsild_scope::NgsiLdScope};
     use andromeda_ngsi_ld_lexicon::temporal_format::TemporalFormat;
     use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
     use headers::Header;

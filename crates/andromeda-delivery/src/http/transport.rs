@@ -12,7 +12,7 @@ use crate::{
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
-use andromeda_ngsi_ld_http_headers::ngsild_tenant::NgsiLdTenant;
+use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use async_trait::async_trait;
 use headers::Header;
 use moka::future::Cache;
