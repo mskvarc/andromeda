@@ -142,7 +142,7 @@ impl ContextRegistryService {
 
     /// Re-download one cached Context and invalidate its prior in-process value.
     async fn reload(&self, identifier: &Uri) -> Result<(), ContextRegistryError> {
-        let stored = self.store.lookup(identifier).await?.ok_or_else(|| ContextRegistryError::NotFound {
+        let stored = self.store.lookup(identifier).await?.ok_or_else(|| ContextRegistryError::ReloadRequiresCached {
             identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
         })?;
         if stored.kind != ContextKind::Cached {

@@ -2,7 +2,7 @@
 
 use crate::api::context_hit_flush::ContextHitFlushWorker;
 use andromeda_delivery::{dispatch::TransportDispatcher, mqtt::pool::MqttTransportPool};
-use andromeda_task_runtime::supervisor::TaskSupervisor;
+use andromeda_task_runtime::{supervisor::TaskSupervisor, wake_trigger::WakeHandle};
 use andromeda_tenancy::state_factory::TenantRuntime;
 use async_trait::async_trait;
 use sqlx::PgPool;
@@ -18,6 +18,7 @@ pub struct BrokerTenantRuntime {
     pool: PgPool,
     health_shutdown: Option<watch::Sender<bool>>,
     task_supervisor: TaskSupervisor,
+    drain_wakes: Vec<WakeHandle>,
 }
 
 impl BrokerTenantRuntime {
@@ -28,6 +29,7 @@ impl BrokerTenantRuntime {
         pool: PgPool,
         health_shutdown: Option<watch::Sender<bool>>,
         task_supervisor: TaskSupervisor,
+        drain_wakes: Vec<WakeHandle>,
     ) -> BrokerTenantRuntime {
         BrokerTenantRuntime {
             context_hit_flush,
@@ -36,6 +38,7 @@ impl BrokerTenantRuntime {
             pool,
             health_shutdown,
             task_supervisor,
+            drain_wakes,
         }
     }
 
@@ -52,6 +55,7 @@ impl TenantRuntime for BrokerTenantRuntime {
             let _ = shutdown.send(true);
         }
         self.task_supervisor.shutdown().await;
+        drop(self.drain_wakes);
         stop_workers(self.worker_handles).await;
         info!(event = "tenant_workers_stopped");
         self.transport.shutdown().await;

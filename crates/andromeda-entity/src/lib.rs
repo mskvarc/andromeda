@@ -52,8 +52,11 @@ pub mod residual_filter;
 pub mod residual_predicate;
 /// Work a batch write produces but need not finish before answering.
 pub mod side_effect;
+pub mod side_effect_drain;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
+pub mod spatial_reconciliation;
+pub mod spatial_synchronization;
 /// Query capabilities of one entity store.
 pub mod storage_profile;
 /// Injecting clause 4.8 system attributes into an expanded entity.

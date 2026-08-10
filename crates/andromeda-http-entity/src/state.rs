@@ -1,10 +1,13 @@
 //! Focused state resolution for entity route handlers.
 
-use crate::{error::classify_tenancy_error, snapshot_scope::EntitySnapshotScope};
+use crate::snapshot_scope::EntitySnapshotScope;
 use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService};
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
-use andromeda_http_extraction::tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver};
+use andromeda_http_extraction::{
+    classification::classify_tenancy_error,
+    tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
+};
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
 use futures::future::BoxFuture;

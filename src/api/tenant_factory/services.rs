@@ -11,10 +11,10 @@ use crate::{
     event::{
         entity_change_sink::BroadcastEntityChangeSink,
         registration_change_sink::BroadcastRegistrationChangeSink,
+        snapshot_notification_sink::DeliverySnapshotNotificationSink,
         subscription_change_sink::BroadcastSubscriptionChangeSink,
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
-    service::snapshot::{SnapshotService, store::SnapshotStore},
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
@@ -38,6 +38,7 @@ use andromeda_postgresql_context_store::{
 };
 use andromeda_postgresql_temporal_store::repo::TemporalRepository;
 use andromeda_registration::{RegistrationService, store::RegistrationStore};
+use andromeda_snapshot::{executor::SnapshotPreparation, notification::SnapshotNotificationSink, service::SnapshotService, store::SnapshotStore};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::{
     cache::SubscriptionCache,
@@ -77,8 +78,14 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) batch_activity: &'a BatchActivityTracker,
 }
 
+/// Request-facing state and the scheduled snapshot preparation operation composed with it.
+pub(super) struct ConstructedServices {
+    pub(super) state: AndromedaState,
+    pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
+}
+
 /// Construct all request-facing services for one tenant.
-pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Result<AndromedaState, AndromedaError> {
+pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Result<ConstructedServices, AndromedaError> {
     let ServiceConstructionInputs {
         config,
         pool,
@@ -142,24 +149,29 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         Arc::clone(spatial_index),
         tenant.clone(), // clone: the query service owns its tenant partition.
     ));
-    let forwarding = Arc::new(FederationService::new(
-        Arc::clone(registration_store),
-        engine.clone(),
-        config.info.source_alias.clone(), // clone: each forwarding service owns the validated alias.
-        config.performance.forward_csr_concurrency,
-    )?);
+    let forwarding = Arc::new(
+        FederationService::new(
+            Arc::clone(registration_store),
+            engine.clone(),
+            config.info.source_alias.clone(), // clone: each forwarding service owns the validated alias.
+            config.performance.forward_csr_concurrency,
+        )
+        .map_err(|error| AndromedaError::internal(error.to_string()))?,
+    );
     let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
-    let snapshots = Arc::new(SnapshotService::new(
+    let snapshot_notifications: Arc<dyn SnapshotNotificationSink> = Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transports.dispatcher)));
+    let snapshots = Arc::new(SnapshotService::new(Arc::clone(snapshot_store), Some(Arc::clone(&snapshot_notifications))));
+    let snapshot_preparation = Arc::new(SnapshotPreparation::new(
         Arc::clone(snapshot_store),
-        Some(Arc::clone(&transports.dispatcher)),
         Arc::clone(&entity_query),
         Arc::clone(&temporal),
         Arc::clone(&forwarding),
+        Some(snapshot_notifications),
         config.performance.snapshot_concurrency,
     ));
     let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
-    Ok(AndromedaState {
+    let state = AndromedaState {
         entities,
         entity_query,
         entity_discovery: Arc::new(EntityDiscoveryService::new(Arc::clone(entity_discovery_store), engine.clone())),
@@ -193,5 +205,6 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         ws_registry: Arc::clone(&transports.ws_registry),
         ws_channel_buffer_size: config.notifications.ws.channel_buffer_size,
         ws_ping_interval_secs: config.notifications.ws.ping_interval_secs,
-    })
+    };
+    Ok(ConstructedServices { state, snapshot_preparation })
 }

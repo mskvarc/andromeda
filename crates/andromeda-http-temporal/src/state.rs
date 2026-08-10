@@ -1,9 +1,12 @@
 //! Focused tenant-state resolution for temporal route handlers.
 
-use crate::{error::classify_tenancy_error, snapshot_scope::TemporalSnapshotScope};
+use crate::snapshot_scope::TemporalSnapshotScope;
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
-use andromeda_http_extraction::tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver};
+use andromeda_http_extraction::{
+    classification::classify_tenancy_error,
+    tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
+};
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_temporal::service::TemporalService;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};

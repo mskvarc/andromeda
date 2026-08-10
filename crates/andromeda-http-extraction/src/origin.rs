@@ -1,0 +1,33 @@
+//! Reconstruction of the broker origin from an incoming `Host` header.
+
+use axum::http::{HeaderMap, header::HOST};
+use thiserror::Error;
+use url::Url;
+
+/// A malformed `Host` header that cannot identify the broker origin.
+#[derive(Debug, Error)]
+pub enum RequestOriginError {
+    /// The header bytes are not valid visible text.
+    #[error("Host header is not valid text: {detail}")]
+    InvalidText {
+        /// Header decoding detail.
+        detail: String,
+    },
+    /// The header text cannot form an HTTP origin.
+    #[error("Host header does not identify a valid origin: {detail}")]
+    InvalidOrigin {
+        /// URL parsing detail.
+        detail: String,
+    },
+}
+
+/// Parse the request's `Host` header into the origin used for broker-hosted resources.
+pub fn request_origin(headers: &HeaderMap) -> Result<Option<Url>, RequestOriginError> {
+    headers
+        .get(HOST)
+        .map(|value| {
+            let host = value.to_str().map_err(|error| RequestOriginError::InvalidText { detail: error.to_string() })?;
+            Url::parse(&format!("http://{host}")).map_err(|error| RequestOriginError::InvalidOrigin { detail: error.to_string() })
+        })
+        .transpose()
+}

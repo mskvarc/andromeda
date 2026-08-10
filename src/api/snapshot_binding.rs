@@ -1,0 +1,29 @@
+//! Composition of focused snapshot HTTP capabilities.
+
+use crate::api::{state::AndromedaState, tenant_factory::BrokerTenantFactory};
+use andromeda_http_snapshot::state::{SnapshotRouteServices, SnapshotStateResolver};
+use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
+use futures::future::BoxFuture;
+use std::sync::Arc;
+
+/// Resolves one broker tenant and projects only snapshot capabilities.
+pub struct BrokerSnapshotStateResolver {
+    tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>,
+}
+
+impl BrokerSnapshotStateResolver {
+    /// Construct a focused resolver over the tenant runtime manager.
+    pub const fn new(tenants: Arc<TenantRuntimeManager<PostgresTenantRegistry, BrokerTenantFactory>>) -> BrokerSnapshotStateResolver {
+        BrokerSnapshotStateResolver { tenants }
+    }
+}
+
+impl SnapshotStateResolver for BrokerSnapshotStateResolver {
+    fn resolve<'a>(&'a self, tenant: &'a TenantRef, creation_policy: TenantCreationPolicy) -> BoxFuture<'a, Result<Arc<SnapshotRouteServices>, TenancyError>> {
+        Box::pin(async move {
+            let state: Arc<AndromedaState> = self.tenants.resolve_state(tenant, creation_policy).await?;
+            Ok(Arc::new(SnapshotRouteServices::new(Arc::clone(&state.snapshots))))
+        })
+    }
+}

@@ -111,6 +111,35 @@ fn operation_names(operations: Option<&[CsrOperation]>) -> Option<Vec<String>> {
 
 #[async_trait]
 impl RegistrationStore for PostgresRegistrationStore {
+    async fn delete_expired(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+        let rows = sqlx::query(
+            r#"
+            WITH expired AS (
+                DELETE FROM context_source_registrations
+                WHERE expires_at IS NOT NULL AND expires_at <= $1
+                RETURNING *
+            )
+            SELECT id, type, registration_name, description, information,
+                tenant, observation_interval, management_interval,
+                ST_AsGeoJSON(location)::JSONB AS location,
+                ST_AsGeoJSON(observation_space)::JSONB AS observation_space,
+                ST_AsGeoJSON(operation_space)::JSONB AS operation_space,
+                expires_at, endpoint, accept, mode::text AS mode,
+                operations, scope, refresh_rate, management, context_source_info,
+                jsonld_context, context_source_alias, status::text AS status,
+                times_sent, times_failed, last_success, last_failure,
+                created_at, modified_at, additional_properties
+            FROM expired
+            ORDER BY id
+            "#,
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(persistence_error)?;
+        rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+    }
+
     async fn exists(&self, id: &Uri) -> Result<bool, RegistrationError> {
         let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM context_source_registrations WHERE id = $1)")
             .bind(id.as_str())

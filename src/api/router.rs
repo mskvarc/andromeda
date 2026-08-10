@@ -1,15 +1,30 @@
 //! The HTTP surface: which route reaches which handler.
 
 use crate::{
-    api::{entity_binding::BrokerEntityStateResolver, state::BrokerState, temporal_binding::BrokerTemporalStateResolver, tenant_factory::BrokerTenantFactory},
+    api::{
+        context_registry_binding::BrokerContextRegistryStateResolver,
+        entity_binding::BrokerEntityStateResolver,
+        entity_map_binding::BrokerEntityMapStateResolver,
+        registration_binding::BrokerRegistrationStateResolver,
+        snapshot_binding::BrokerSnapshotStateResolver,
+        state::BrokerState,
+        subscription_binding::BrokerSubscriptionStateResolver,
+        temporal_binding::BrokerTemporalStateResolver,
+        tenant_factory::BrokerTenantFactory,
+    },
     config::runtime::RuntimeConfig,
     error::AndromedaError,
-    http::handler::{csource_registration, csource_subscription, entity_map, health, info, jsonld_context, snapshot, sse, subscription, tenant, version, ws},
+    http::handler::{health, info, tenant, version},
     version::service::Version,
 };
 use andromeda_delivery::mqtt::indicator::MqttHealthIndicator;
 use andromeda_health::aggregate::Health;
+use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
+use andromeda_http_entity_map::routes::EntityMapRoutes;
+use andromeda_http_registration::routes::RegistrationRoutes;
+use andromeda_http_snapshot::routes::SnapshotRoutes;
+use andromeda_http_subscription::routes::SubscriptionRoutes;
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_postgresql_context_store::{
     health::DatabaseHealthIndicator,
@@ -22,7 +37,7 @@ use axum::{
     Extension,
     Router,
     extract::DefaultBodyLimit,
-    routing::{delete, get, patch, post},
+    routing::{get, post},
 };
 use std::sync::Arc;
 use tokio::runtime::Handle;
@@ -96,10 +111,30 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
     let entity_routes = EntityRoutes::new(entity_resolver).into_router();
     let temporal_resolver = Arc::new(BrokerTemporalStateResolver::new(Arc::clone(&tenants)));
     let temporal_routes = TemporalRoutes::new(temporal_resolver).into_router();
+    let context_registry_resolver = Arc::new(BrokerContextRegistryStateResolver::new(Arc::clone(&tenants)));
+    let context_registry_routes = ContextRegistryRoutes::new(context_registry_resolver).into_router();
+    let registration_resolver = Arc::new(BrokerRegistrationStateResolver::new(Arc::clone(&tenants)));
+    let registration_routes = RegistrationRoutes::new(registration_resolver).into_router();
+    let subscription_resolver = Arc::new(BrokerSubscriptionStateResolver::new(Arc::clone(&tenants)));
+    let subscription_routes = SubscriptionRoutes::new(subscription_resolver).into_router();
+    let entity_map_resolver = Arc::new(BrokerEntityMapStateResolver::new(Arc::clone(&tenants)));
+    let entity_map_routes = EntityMapRoutes::new(entity_map_resolver).into_router();
+    let snapshot_resolver = Arc::new(BrokerSnapshotStateResolver::new(Arc::clone(&tenants)));
+    let snapshot_routes = SnapshotRoutes::new(snapshot_resolver).into_router();
     let router = Router::new()
         .nest(
             "/ngsi-ld/v1",
-            build_v1_router(entity_routes, temporal_routes).merge(health_router).merge(version_router),
+            build_v1_router(
+                entity_routes,
+                temporal_routes,
+                context_registry_routes,
+                registration_routes,
+                subscription_routes,
+                entity_map_routes,
+                snapshot_routes,
+            )
+            .merge(health_router)
+            .merge(version_router),
         )
         .layer(DefaultBodyLimit::max(max_body))
         .layer(HelmetLayer::with_defaults())
@@ -111,58 +146,23 @@ pub async fn create_router(config: Arc<RuntimeConfig>) -> Result<BrokerHttp, And
     })
 }
 
-fn build_v1_router(entity_routes: Router, temporal_routes: Router) -> Router<BrokerState> {
+fn build_v1_router(
+    entity_routes: Router,
+    temporal_routes: Router,
+    context_registry_routes: Router,
+    registration_routes: Router,
+    subscription_routes: Router,
+    entity_map_routes: Router,
+    snapshot_routes: Router,
+) -> Router<BrokerState> {
     let entity_routes: Router<BrokerState> = entity_routes.with_state(());
     let temporal_routes: Router<BrokerState> = temporal_routes.with_state(());
+    let context_registry_routes: Router<BrokerState> = context_registry_routes.with_state(());
+    let registration_routes: Router<BrokerState> = registration_routes.with_state(());
+    let subscription_routes: Router<BrokerState> = subscription_routes.with_state(());
+    let entity_map_routes: Router<BrokerState> = entity_map_routes.with_state(());
+    let snapshot_routes: Router<BrokerState> = snapshot_routes.with_state(());
     let tenants_routes = Router::new().route("/", get(tenant::query)).route("/evictOrphans", post(tenant::evict_orphans));
-
-    let jsonld_context_routes = Router::new()
-        .route("/", post(jsonld_context::create))
-        .route("/", get(jsonld_context::query))
-        .route("/{context_id}", get(jsonld_context::get))
-        .route("/{context_id}", delete(jsonld_context::delete));
-
-    let entity_map_routes = Router::new()
-        .route("/", get(entity_map::create_from_query))
-        .route("/", post(entity_map::create_from_query_post))
-        .route("/{entity_map_id}", get(entity_map::get))
-        .route("/{entity_map_id}", patch(entity_map::update))
-        .route("/{entity_map_id}", delete(entity_map::delete));
-
-    let temporal_entity_map_routes = Router::new()
-        .route("/", get(entity_map::create_temporal_from_query))
-        .route("/", post(entity_map::create_temporal_from_query_post));
-
-    let subscription_routes = Router::new()
-        .route("/", post(subscription::create))
-        .route("/", get(subscription::query))
-        .route("/{subscription_id}", get(subscription::get))
-        .route("/{subscription_id}", patch(subscription::update))
-        .route("/{subscription_id}", delete(subscription::delete))
-        .route("/{subscription_id}/stream", get(sse::stream))
-        .route("/{subscription_id}/ws", get(ws::stream));
-
-    let csr_routes = Router::new()
-        .route("/", post(csource_registration::create))
-        .route("/", get(csource_registration::query))
-        .route("/{registration_id}", get(csource_registration::get))
-        .route("/{registration_id}", patch(csource_registration::update))
-        .route("/{registration_id}", delete(csource_registration::delete));
-
-    let csr_subscription_routes = Router::new()
-        .route("/", post(csource_subscription::create))
-        .route("/", get(csource_subscription::query))
-        .route("/{subscription_id}", get(csource_subscription::get))
-        .route("/{subscription_id}", patch(csource_subscription::update))
-        .route("/{subscription_id}", delete(csource_subscription::delete));
-
-    let snapshot_routes = Router::new()
-        .route("/", post(snapshot::create))
-        .route("/", delete(snapshot::purge))
-        .route("/{snapshot_id}", get(snapshot::get))
-        .route("/{snapshot_id}", patch(snapshot::update))
-        .route("/{snapshot_id}", delete(snapshot::delete))
-        .route("/{snapshot_id}/clone", post(snapshot::clone));
 
     let info_routes = Router::new().route("/sourceIdentity", get(info::get));
 
@@ -170,12 +170,10 @@ fn build_v1_router(entity_routes: Router, temporal_routes: Router) -> Router<Bro
         .merge(entity_routes)
         .nest("/temporal", temporal_routes)
         .nest("/tenants", tenants_routes)
-        .nest("/jsonldContexts", jsonld_context_routes)
-        .nest("/entityMaps", entity_map_routes)
-        .nest("/temporal/entityMaps", temporal_entity_map_routes)
-        .nest("/subscriptions", subscription_routes)
-        .nest("/csourceRegistrations", csr_routes)
-        .nest("/csourceSubscriptions", csr_subscription_routes)
-        .nest("/snapshots", snapshot_routes)
+        .merge(context_registry_routes)
+        .merge(entity_map_routes)
+        .merge(subscription_routes)
+        .merge(registration_routes)
+        .merge(snapshot_routes)
         .nest("/info", info_routes)
 }

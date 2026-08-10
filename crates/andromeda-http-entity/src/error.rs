@@ -4,7 +4,7 @@ use crate::snapshot_scope::EntitySnapshotError;
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
+use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_ngsi_ld_query::error::QueryError;
@@ -97,17 +97,6 @@ impl EntityHttpClassify for serde_json::Error {
 impl EntityHttpClassify for TenancyError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         classify_tenancy_error(self)
-    }
-}
-
-/// Classify tenant resolution while retaining typed tenancy semantics.
-pub(crate) fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
-    match error {
-        TenancyError::MultiTenancyDisabled => ClassifiedReport::public(NgsiLdErrorType::NoMultiTenantSupport, error.to_string()),
-        TenancyError::UnknownTenant { name } => ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, format!("Tenant {name} does not exist")),
-        TenancyError::RegistryUnavailable { .. } | TenancyError::ProvisioningFailed { .. } | TenancyError::RuntimeUnavailable { .. } => {
-            ClassifiedReport::internal(error)
-        }
     }
 }
 

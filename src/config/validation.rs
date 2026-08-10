@@ -128,6 +128,9 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), AndromedaErr
     if config.outbox.cleanup_after_secs == 0 {
         return Err(AndromedaError::internal("outbox.cleanup_after_secs must be at least 1"));
     }
+    if config.outbox.cleanup_interval_secs == 0 {
+        return Err(AndromedaError::internal("outbox.cleanup_interval_secs must be at least 1"));
+    }
     if config.notifications.sse.channel_buffer_size == 0 {
         return Err(AndromedaError::internal("notifications.sse.channel_buffer_size must be at least 1"));
     }

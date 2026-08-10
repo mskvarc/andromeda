@@ -1,10 +1,6 @@
 //! Composition adapters that supply focused broker capabilities to temporal HTTP routes.
 
-use crate::{
-    api::{state::AndromedaState, tenant_factory::BrokerTenantFactory},
-    error::AndromedaError,
-    service::snapshot::SnapshotService,
-};
+use crate::api::{state::AndromedaState, tenant_factory::BrokerTenantFactory};
 use andromeda_http_temporal::{
     snapshot_scope::{TemporalSnapshotError, TemporalSnapshotScope},
     state::{TemporalRouteServices, TemporalStateResolver},
@@ -12,6 +8,7 @@ use andromeda_http_temporal::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
+use andromeda_snapshot::{error::SnapshotError, service::SnapshotService};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -57,11 +54,18 @@ impl BrokerTemporalSnapshotScope {
     }
 }
 
-fn classify_snapshot_error(error: AndromedaError) -> TemporalSnapshotError {
-    if error.is_snapshot_not_found() {
-        TemporalSnapshotError::NotFound { detail: error.to_string() }
-    } else {
-        TemporalSnapshotError::Internal { detail: error.to_string() }
+fn classify_snapshot_error(error: SnapshotError) -> TemporalSnapshotError {
+    match error {
+        SnapshotError::NotFound { .. } => TemporalSnapshotError::NotFound { detail: error.to_string() },
+        SnapshotError::Validation { .. }
+        | SnapshotError::AlreadyExists { .. }
+        | SnapshotError::Entity(_)
+        | SnapshotError::Temporal(_)
+        | SnapshotError::Federation(_)
+        | SnapshotError::Request(_)
+        | SnapshotError::Representation(_)
+        | SnapshotError::Persistence { .. }
+        | SnapshotError::Internal { .. } => TemporalSnapshotError::Internal { detail: error.to_string() },
     }
 }
 

@@ -91,10 +91,15 @@ dependencies = [
  "andromeda-entity-map",
  "andromeda-federation",
  "andromeda-health",
+ "andromeda-http-context-registry",
  "andromeda-http-entity",
+ "andromeda-http-entity-map",
  "andromeda-http-extraction",
  "andromeda-http-headers",
+ "andromeda-http-registration",
  "andromeda-http-response",
+ "andromeda-http-snapshot",
+ "andromeda-http-subscription",
  "andromeda-http-temporal",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
@@ -106,6 +111,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-notification",
  "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-context-store",
@@ -114,6 +120,7 @@ dependencies = [
  "andromeda-postgresql-temporal-query",
  "andromeda-postgresql-temporal-store",
  "andromeda-registration",
+ "andromeda-snapshot",
  "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-task-runtime",
@@ -344,6 +351,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-http-context-registry"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-context-registry",
+ "andromeda-http-extraction",
+ "andromeda-http-response",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-request",
+ "andromeda-tenancy",
+ "axum",
+ "futures",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "andromeda-http-entity"
 version = "0.1.0"
 dependencies = [
@@ -376,6 +403,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-http-entity-map"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-entity",
+ "andromeda-entity-map",
+ "andromeda-http-extraction",
+ "andromeda-http-response",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
+ "andromeda-tenancy",
+ "axum",
+ "chrono",
+ "futures",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "andromeda-http-extraction"
 version = "0.1.0"
 dependencies = [
@@ -401,9 +454,11 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "sonic-rs",
+ "thiserror 2.0.19",
  "tokio",
  "tower",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -426,6 +481,28 @@ dependencies = [
  "thiserror 2.0.19",
  "tracing",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-http-registration"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-http-extraction",
+ "andromeda-http-response",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
+ "andromeda-registration",
+ "andromeda-tenancy",
+ "axum",
+ "futures",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -452,6 +529,58 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "andromeda-http-snapshot"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-entity",
+ "andromeda-federation",
+ "andromeda-http-extraction",
+ "andromeda-http-response",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-request",
+ "andromeda-snapshot",
+ "andromeda-temporal",
+ "andromeda-tenancy",
+ "axum",
+ "futures",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "andromeda-http-subscription"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-delivery",
+ "andromeda-http-extraction",
+ "andromeda-http-response",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-request",
+ "andromeda-subscription",
+ "andromeda-tenancy",
+ "axum",
+ "futures",
+ "iri-rs",
+ "pretty_assertions",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "typed-builder",
 ]
 
 [[package]]
@@ -698,6 +827,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-notification"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-context-commit",
+ "andromeda-delivery",
+ "andromeda-entity",
+ "andromeda-http-headers",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-geometry",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-render",
+ "andromeda-ngsi-ld-representation",
+ "andromeda-ngsi-ld-vocabulary",
+ "andromeda-registration",
+ "andromeda-spatial-index",
+ "andromeda-subscription",
+ "andromeda-tenancy",
+ "async-lock",
+ "async-trait",
+ "chrono",
+ "derive_more",
+ "futures",
+ "iri-rs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tracing",
+ "typed-builder",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "andromeda-postgresql-atomic-write"
 version = "0.1.0"
 dependencies = [
@@ -751,10 +917,12 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-notification",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",
  "andromeda-registration",
+ "andromeda-snapshot",
  "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-tenancy",
@@ -890,6 +1058,32 @@ dependencies = [
  "typed-builder",
  "url",
  "urn-rs",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-snapshot"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-entity",
+ "andromeda-federation",
+ "andromeda-jsonld",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-ngsi-ld-model",
+ "andromeda-ngsi-ld-query",
+ "andromeda-ngsi-ld-request",
+ "andromeda-temporal",
+ "chrono",
+ "futures",
+ "iso8601-duration",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "url",
  "uuid",
 ]
 

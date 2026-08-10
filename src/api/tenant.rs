@@ -1,4 +1,4 @@
-use andromeda_http_extraction::tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver};
+use andromeda_http_extraction::tenant_state::TenantStateResolver;
 use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
 use axum::{
@@ -14,12 +14,6 @@ use crate::{
     error::{AndromedaError, ResultInstanceExt},
 };
 use andromeda_http_response::problem_response::ProblemResponse;
-
-/// Existing-tenant extractor specialized to the current aggregate binary state.
-pub(crate) type TenantState = ExistingTenantState<AndromedaState>;
-
-/// Provisionable-tenant extractor specialized to the current aggregate binary state.
-pub(crate) type TenantStateOrCreate = ProvisionableTenantState<AndromedaState>;
 
 impl TenantStateResolver<AndromedaState> for BrokerState {
     fn resolve_tenant<'a>(

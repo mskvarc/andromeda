@@ -22,6 +22,7 @@ use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{Subscription, SubscriptionStatus},
 };
+use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde_json::Value;
@@ -279,6 +280,15 @@ where
 
         self.emit_change(self.variant.make_deleted(id.clone())); // clone: the change event owns the identifier.
         Ok(())
+    }
+
+    /// Transition subscriptions due at `cutoff` and publish one variant-owned deletion change for each.
+    pub(crate) async fn expire_due(&self, cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+        let identifiers = self.repo.expire_due(cutoff).await?;
+        for identifier in &identifiers {
+            self.emit_change(self.variant.make_deleted(identifier.clone())); // clone: the policy outcome and change sink each own the identifier.
+        }
+        Ok(identifiers)
     }
 }
 

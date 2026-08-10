@@ -24,11 +24,6 @@ use crate::error::{
     TenancyError,
 };
 use andromeda_context_commit::error::CommitError;
-use andromeda_context_registry::error::ContextRegistryError;
-use andromeda_entity_map::error::EntityMapError;
-use andromeda_federation::error::FederationError;
-use andromeda_registration::error::RegistrationError;
-use andromeda_subscription::error::SubscriptionError;
 
 impl From<andromeda_postgresql_encoding::ewkb::EwkbError> for AndromedaError {
     fn from(error: andromeda_postgresql_encoding::ewkb::EwkbError) -> AndromedaError {
@@ -249,88 +244,6 @@ impl From<ReqwestError> for AndromedaError {
 impl From<CommitError> for AndromedaError {
     fn from(error: CommitError) -> AndromedaError {
         AndromedaError::internal(error.to_string())
-    }
-}
-
-impl From<EntityMapError> for AndromedaError {
-    fn from(error: EntityMapError) -> AndromedaError {
-        match error {
-            EntityMapError::NotFound { identifier } => AndromedaError::entity_map_not_found(identifier.to_string()),
-            EntityMapError::EntityNotInMap { entity_identifier, .. } => AndromedaError::entity_map_not_found(entity_identifier.to_string()),
-            EntityMapError::Persistence { detail } | EntityMapError::Invariant { detail } => AndromedaError::internal(detail),
-        }
-    }
-}
-
-impl From<ContextRegistryError> for AndromedaError {
-    fn from(error: ContextRegistryError) -> AndromedaError {
-        match error {
-            ContextRegistryError::MissingTopLevelContext => AndromedaError::malformed_request("Payload must contain a top-level @context field"),
-            ContextRegistryError::NotFound { identifier } => AndromedaError::context_not_found(identifier.to_string()),
-            ContextRegistryError::CoreContextDeletion => AndromedaError::jsonld_processing("Cannot delete a core context"),
-            ContextRegistryError::ReloadRequiresCached { identifier } => {
-                AndromedaError::jsonld_processing(format!("Cannot reload non-cached context: {identifier}"))
-            }
-            ContextRegistryError::MissingSourceUrl { identifier } => {
-                AndromedaError::jsonld_processing(format!("Cached context has no source URL: {identifier}"))
-            }
-            ContextRegistryError::ContextUnavailable { source_url, detail } => {
-                AndromedaError::context_not_available(format!("Failed to re-download context from {source_url}: {detail}"))
-            }
-            ContextRegistryError::Persistence { detail } | ContextRegistryError::Representation { detail } | ContextRegistryError::Invariant { detail } => {
-                AndromedaError::internal(detail)
-            }
-        }
-    }
-}
-
-// Manual conversion is required because the broker error preserves HTTP-facing
-// categories rather than wrapping policy errors as a single derivable variant.
-impl From<RegistrationError> for AndromedaError {
-    fn from(error: RegistrationError) -> AndromedaError {
-        match error {
-            RegistrationError::Validation { detail } => AndromedaError::csr_validation(detail),
-            RegistrationError::NotFound { identifier } => AndromedaError::csr_not_found(identifier.to_string()),
-            RegistrationError::AlreadyExists { identifier } => AndromedaError::csr_already_exists(identifier.to_string()),
-            RegistrationError::JsonLd(error) => error.into(),
-            RegistrationError::Query(error) => error.into(),
-            RegistrationError::Representation(error) => error.into(),
-            RegistrationError::Identifier(error) => error.into(),
-            RegistrationError::Persistence { detail } | RegistrationError::Internal { detail } => AndromedaError::internal(detail),
-        }
-    }
-}
-
-// Manual conversion preserves the broker's HTTP-facing subscription categories.
-impl From<SubscriptionError> for AndromedaError {
-    fn from(error: SubscriptionError) -> AndromedaError {
-        match error {
-            SubscriptionError::Validation { detail } => AndromedaError::subscription_validation(detail),
-            SubscriptionError::NotFound { identifier } => AndromedaError::subscription_not_found(identifier.to_string()),
-            SubscriptionError::AlreadyExists { identifier } => AndromedaError::subscription_already_exists(identifier.to_string()),
-            SubscriptionError::JsonLd(error) => error.into(),
-            SubscriptionError::Query(error) => error.into(),
-            SubscriptionError::Representation(error) => error.into(),
-            SubscriptionError::Identifier(error) => error.into(),
-            SubscriptionError::Persistence { detail } | SubscriptionError::Internal { detail } => AndromedaError::internal(detail),
-        }
-    }
-}
-
-// Manual conversion is required because distinct federation failures map to
-// conflict, gateway, request-validation, and internal broker categories.
-impl From<FederationError> for AndromedaError {
-    fn from(error: FederationError) -> AndromedaError {
-        match error {
-            FederationError::Conflict { detail } => AndromedaError::conflict(detail),
-            FederationError::Gateway { detail } => AndromedaError::context_source_gateway(detail),
-            FederationError::Registration(error) => error.into(),
-            FederationError::JsonLd(error) => error.into(),
-            FederationError::Query(error) => error.into(),
-            FederationError::Request(error) => error.into(),
-            FederationError::Representation(error) => error.into(),
-            FederationError::Internal { detail } => AndromedaError::internal(detail),
-        }
     }
 }
 

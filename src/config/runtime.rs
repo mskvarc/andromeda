@@ -196,6 +196,7 @@ mod tests {
                 poll_interval_secs: 1,
                 batch_size: 50,
                 cleanup_after_secs: 86400,
+                cleanup_interval_secs: 300,
             },
             notifications: NotificationConfig {
                 sse: SseConfig {

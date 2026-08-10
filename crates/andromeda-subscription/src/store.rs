@@ -133,8 +133,8 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// Expire subscriptions whose `expiresAt` has passed. Returns the identifiers.
-    fn expire_due<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Uri>, SubscriptionError>>
+    /// Expire subscriptions at or before an explicit execution cutoff and return their identifiers.
+    fn expire_due<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<Vec<Uri>, SubscriptionError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;

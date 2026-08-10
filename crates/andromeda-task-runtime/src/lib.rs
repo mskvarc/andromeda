@@ -82,7 +82,9 @@ mod boundary_tests {
             "andromeda-entity",
             "andromeda-entity-map",
             "andromeda-federation",
+            "andromeda-notification",
             "andromeda-registration",
+            "andromeda-snapshot",
             "andromeda-subscription",
             "andromeda-temporal",
         ] {
@@ -95,12 +97,10 @@ mod boundary_tests {
     }
 
     #[test]
-    fn entity_expiry_has_no_legacy_binary_loop_or_runtime_dependency() -> Result<(), Error> {
+    fn no_legacy_worker_layer_or_policy_runtime_dependency_remains() -> Result<(), Error> {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        assert!(!workspace.join("src/worker/data_expiration.rs").exists());
-        let worker_modules = fs::read_to_string(workspace.join("src/worker/mod.rs"))?;
+        assert!(!workspace.join("src/worker").exists());
         let composition = fs::read_to_string(workspace.join("src/api/tenant_factory/workers.rs"))?;
-        assert!(!worker_modules.contains("data_expiration"));
         assert!(!composition.contains("DataExpirationWorker"));
         for independent in ["andromeda-entity", "andromeda-postgresql-context-store"] {
             let manifest = fs::read_to_string(workspace.join("crates").join(independent).join("Cargo.toml"))?;

@@ -17,11 +17,7 @@ mod error;
 mod event;
 mod http;
 mod server;
-mod service;
-mod store_bridge;
 mod version;
-mod worker;
-mod worker_instance_id;
 
 use crate::{
     cli::{Cli, Command, ConfigCommand, OutputFormat},

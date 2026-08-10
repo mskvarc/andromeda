@@ -220,6 +220,15 @@ impl RegistrationMutation {
 
 /// Storing context source registrations (clause 5.10).
 pub trait RegistrationStore: Send + Sync + 'static {
+    /// Delete registrations due at or before an explicit cutoff and return their pre-deletion values.
+    fn delete_expired<'life0, 'async_trait>(
+        &'life0 self,
+        cutoff: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
+    where
+        'life0: 'async_trait,
+        Self: 'async_trait;
+
     /// Whether a registration with this identifier exists.
     fn exists<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
     where

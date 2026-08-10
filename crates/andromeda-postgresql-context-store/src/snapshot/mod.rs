@@ -8,3 +8,4 @@ pub mod params;
 pub mod repo;
 /// Placeholder for persistence-shaped snapshot row structs.
 pub mod rows;
+pub mod store;

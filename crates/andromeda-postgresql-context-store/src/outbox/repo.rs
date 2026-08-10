@@ -1,9 +1,4 @@
-//! The PostgreSQL notification outbox.
-//!
-//! The `OutboxStore` trait impl lives in the binary crate, because the trait
-//! and its associated types (`OutboxEntry`, `WorkerInstanceId`, etc.) are
-//! defined in the binary's service layer. This module provides the struct
-//! and the inherent methods that the binary's trait impl delegates to.
+//! Direct PostgreSQL implementation of the notification-owned outbox port.
 
 use crate::{
     error::ContextStoreError,
@@ -11,8 +6,17 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_notification::{
+    error::NotificationError,
+    outbox_entry::{OutboxEntry, OutboxEntryId},
+    outbox_store::OutboxStore,
+    worker_instance_id::WorkerInstanceId,
+};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{QueryBuilder, postgres::PgPool};
+use tracing::error;
 
 /// Repository for notification outbox persistence operations.
 #[derive(Debug)]
@@ -21,15 +25,105 @@ pub struct OutboxRepository {
     pool: PgPool,
 }
 
+#[async_trait]
+impl OutboxStore for OutboxRepository {
+    async fn claim_pending(&self, worker_id: &WorkerInstanceId, batch_size: i32, max_attempts: i32) -> Result<Vec<OutboxEntry>, NotificationError> {
+        let records = OutboxRepository::claim_pending(self, worker_id.as_ref(), batch_size, max_attempts)
+            .await
+            .map_err(|error| NotificationError::persistence(error.to_string()))?;
+        Ok(records.into_iter().filter_map(into_entry).collect())
+    }
+
+    async fn mark_delivered(&self, id: OutboxEntryId) -> Result<u64, NotificationError> {
+        let result = sqlx::query("UPDATE notification_outbox SET delivered_at = NOW() WHERE id = $1")
+            .bind(id.into_inner())
+            .execute(&self.pool)
+            .await
+            .map_err(|error| NotificationError::persistence(error.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    async fn mark_failed(&self, id: OutboxEntryId, failure: &str, next_attempt_at: DateTime<Utc>) -> Result<u64, NotificationError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE notification_outbox
+            SET attempt_count = attempt_count + 1,
+                delivery_error = $2,
+                next_attempt_at = $3,
+                claimed_at = NULL,
+                claimed_by = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(id.into_inner())
+        .bind(failure)
+        .bind(next_attempt_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| NotificationError::persistence(error.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    async fn mark_terminal(&self, id: OutboxEntryId, failure: &str) -> Result<u64, NotificationError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE notification_outbox
+            SET attempt_count = 2147483647,
+                delivery_error = $2,
+                claimed_at = NULL,
+                claimed_by = NULL
+            WHERE id = $1
+            "#,
+        )
+        .bind(id.into_inner())
+        .bind(failure)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| NotificationError::persistence(error.to_string()))?;
+        Ok(result.rows_affected())
+    }
+
+    async fn delete_delivered_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
+        let result = sqlx::query("DELETE FROM notification_outbox WHERE delivered_at IS NOT NULL AND delivered_at < $1")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await
+            .map_err(|error| NotificationError::persistence(error.to_string()))?;
+        Ok(result.rows_affected())
+    }
+}
+
+/// Keep a validated outbox row and log an unreadable row without blocking its peers.
+fn into_entry(record: Result<OutboxRecord, OutboxRowError>) -> Option<OutboxEntry> {
+    match record {
+        Ok(record) => Some(record_to_entry(record)),
+        Err(error) => {
+            error!(error = %error, event = "outbox_row_unreadable");
+            None
+        }
+    }
+}
+
+/// Project one validated PostgreSQL record into the notification-owned value.
+fn record_to_entry(record: OutboxRecord) -> OutboxEntry {
+    OutboxEntry::builder()
+        .id(OutboxEntryId::from(record.id))
+        .subscription_id(record.subscription_id)
+        .entity_id(record.entity_id)
+        .trigger(record.trigger)
+        .entity_snapshot(record.entity_snapshot)
+        .previous_snapshot(record.previous_snapshot)
+        .changed_attrs(record.changed_attrs)
+        .created_at(record.created_at)
+        .attempt_count(record.attempt_count)
+        .next_attempt_at(record.next_attempt_at)
+        .build()
+}
+
 impl OutboxRepository {
     /// Create a new outbox repository backed by the given connection pool.
     pub fn new(pool: &PgPool) -> OutboxRepository {
         OutboxRepository { pool: pool.clone() } // clone: Arc ref-count bump (PgPool is Arc-based)
-    }
-
-    /// Borrow the pool for trait impls defined outside this crate.
-    pub const fn pool(&self) -> &PgPool {
-        &self.pool
     }
 
     /// Insert a batch of outbox entries within an existing transaction.

@@ -11,6 +11,7 @@ mod create;
 mod delete;
 /// Registration policy failures.
 pub mod error;
+pub mod expiry;
 mod geometry;
 mod identifier;
 mod information_expansion;

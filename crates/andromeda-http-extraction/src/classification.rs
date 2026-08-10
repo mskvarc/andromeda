@@ -1,10 +1,32 @@
 //! Exhaustive classification shared by HTTP extractors.
 
+use crate::origin::RequestOriginError;
 use andromeda_http_response::classified_report::ClassifiedReport;
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_tenancy::error::TenancyError;
+
+/// Classify tenant resolution independently of any policy route binding.
+pub fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
+    match error {
+        TenancyError::MultiTenancyDisabled => ClassifiedReport::public(NgsiLdErrorType::NoMultiTenantSupport, error.to_string()),
+        TenancyError::UnknownTenant { name } => ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, format!("Tenant {name} does not exist")),
+        TenancyError::RegistryUnavailable { .. } | TenancyError::ProvisioningFailed { .. } | TenancyError::RuntimeUnavailable { .. } => {
+            ClassifiedReport::internal(error)
+        }
+    }
+}
+
+/// Classify malformed request-origin headers at the shared extraction boundary.
+pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedReport {
+    match error {
+        RequestOriginError::InvalidText { .. } | RequestOriginError::InvalidOrigin { .. } => {
+            ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string())
+        }
+    }
+}
 
 /// Classify a parameter-model failure using its typed syntax-versus-value distinction.
 pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {

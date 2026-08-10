@@ -1,0 +1,26 @@
+[package]
+name = "andromeda-http-context-registry"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-context-registry.workspace = true
+andromeda-http-extraction.workspace = true
+andromeda-http-response.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-ngsi-ld-request.workspace = true
+andromeda-tenancy.workspace = true
+axum = "0.8.9"
+futures = "0.3.32"
+serde_json = "1.0.149"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.52.1", features = ["macros", "rt"] }
+tower = { version = "0.5.3", features = ["util"] }

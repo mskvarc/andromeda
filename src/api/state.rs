@@ -1,4 +1,4 @@
-use crate::{api::tenant_factory::BrokerTenantFactory, service::snapshot::SnapshotService};
+use crate::api::tenant_factory::BrokerTenantFactory;
 use andromeda_context_registry::service::ContextRegistryService;
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService};
@@ -7,6 +7,7 @@ use andromeda_federation::FederationService;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
 use andromeda_registration::RegistrationService;
+use andromeda_snapshot::service::SnapshotService;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
 use andromeda_temporal::service::TemporalService;
 use andromeda_tenancy::runtime::TenantRuntimeManager;

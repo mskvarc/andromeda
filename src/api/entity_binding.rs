@@ -1,10 +1,6 @@
 //! Composition adapters that supply focused broker capabilities to entity HTTP routes.
 
-use crate::{
-    api::{state::AndromedaState, tenant_factory::BrokerTenantFactory},
-    error::AndromedaError,
-    service::snapshot::SnapshotService,
-};
+use crate::api::{state::AndromedaState, tenant_factory::BrokerTenantFactory};
 use andromeda_http_entity::{
     snapshot_scope::{EntitySnapshotError, EntitySnapshotScope, SnapshotAttributeInfo, SnapshotTypeInfo},
     state::{EntityRouteServices, EntityStateResolver},
@@ -12,6 +8,7 @@ use andromeda_http_entity::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use andromeda_postgresql_context_store::tenant_registry::PostgresTenantRegistry;
+use andromeda_snapshot::{error::SnapshotError, service::SnapshotService};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, runtime::TenantRuntimeManager, tenant_ref::TenantRef};
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -59,11 +56,18 @@ impl BrokerEntitySnapshotScope {
     }
 }
 
-fn classify_snapshot_error(error: AndromedaError) -> EntitySnapshotError {
-    if error.is_snapshot_not_found() {
-        EntitySnapshotError::NotFound { detail: error.to_string() }
-    } else {
-        EntitySnapshotError::Internal { detail: error.to_string() }
+fn classify_snapshot_error(error: SnapshotError) -> EntitySnapshotError {
+    match error {
+        SnapshotError::NotFound { .. } => EntitySnapshotError::NotFound { detail: error.to_string() },
+        SnapshotError::Validation { .. }
+        | SnapshotError::AlreadyExists { .. }
+        | SnapshotError::Entity(_)
+        | SnapshotError::Temporal(_)
+        | SnapshotError::Federation(_)
+        | SnapshotError::Request(_)
+        | SnapshotError::Representation(_)
+        | SnapshotError::Persistence { .. }
+        | SnapshotError::Internal { .. } => EntitySnapshotError::Internal { detail: error.to_string() },
     }
 }
 

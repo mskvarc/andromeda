@@ -18,6 +18,7 @@ pub mod csource_cache;
 pub mod entity;
 /// Subscription policy failures.
 pub mod error;
+pub mod expiry;
 mod fields;
 /// Subscription lifecycle orchestration shared by both subscription kinds.
 pub mod lifecycle;

@@ -4,16 +4,17 @@ use crate::{
     api::context_hit_flush::ContextHitFlushWorker,
     config::{performance::BulkWriteMode, runtime::RuntimeConfig},
     error::AndromedaError,
-    service::snapshot::store::SnapshotStore,
-    worker::spatial_warmup::warmup_location,
 };
 use andromeda_context_registry::hit_store::ContextHitStore;
-use andromeda_entity::port::{
-    discovery::EntityDiscoveryStore,
-    expiry::EntityExpirySource,
-    query::EntityQueryStore,
-    reader::EntityReader,
-    spatial_snapshot::EntitySpatialSnapshotSource,
+use andromeda_entity::{
+    port::{
+        discovery::EntityDiscoveryStore,
+        expiry::EntityExpirySource,
+        query::EntityQueryStore,
+        reader::EntityReader,
+        spatial_snapshot::EntitySpatialSnapshotSource,
+    },
+    spatial_reconciliation::reconcile_location,
 };
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_postgresql_context_store::{
@@ -29,6 +30,7 @@ use andromeda_postgresql_context_store::{
 use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, projection_barrier::ProjectionBarrier};
 use andromeda_postgresql_temporal_store::{repo::TemporalRepository, timescale_features::TimescaleFeatures};
 use andromeda_registration::store::RegistrationStore;
+use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
 use andromeda_tenancy::tenant_ref::TenantRef;
@@ -129,7 +131,7 @@ pub(super) async fn initialize_storage(config: &RuntimeConfig, database_url: &Ur
         tracing::error!(%error, "failed to load subscription cache");
     }
     let spatial_index = Arc::new(SpatialEntityIndex::new());
-    if let Err(error) = warmup_location(&spatial_index, entity_ports.spatial_snapshots.as_ref(), tenant).await {
+    if let Err(error) = reconcile_location(&spatial_index, entity_ports.spatial_snapshots.as_ref(), tenant).await {
         tracing::warn!(%error, "spatial warmup failed");
     }
     Ok(TenantStorage {

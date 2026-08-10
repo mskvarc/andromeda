@@ -9,7 +9,7 @@ use crate::{
         state::AndromedaState,
         tenant_factory::{
             runtime::BrokerTenantRuntime,
-            services::{ServiceConstructionInputs, construct_services},
+            services::{ConstructedServices, ServiceConstructionInputs, construct_services},
             storage::initialize_storage,
             temporal_intent_task::{TemporalIntentRegistration, register_temporal_intent_drain},
             transport::construct_transports,
@@ -173,7 +173,7 @@ async fn build_tenant_state(
     ));
 
     let transports = construct_transports()?;
-    let state = construct_services(
+    let ConstructedServices { state, snapshot_preparation } = construct_services(
         ServiceConstructionInputs::builder()
             .config(config)
             .pool(&pool)
@@ -196,6 +196,8 @@ async fn build_tenant_state(
             .build(),
     )?;
     let entity_policy = Arc::clone(&state.entities); // clone: request handling and expiry scheduling share entity policy.
+    let subscription_policy = Arc::clone(&state.subscriptions); // clone: request handling and scheduled expiry share policy.
+    let csource_subscription_policy = Arc::clone(&state.csr_subscriptions); // clone: same ownership boundary for CSR subscriptions.
     let transport = transports.dispatcher;
     let supervision = supervise_workers(
         WorkerSupervisionInputs::builder()
@@ -205,6 +207,9 @@ async fn build_tenant_state(
             .signals(signals)
             .materializer(storage.materializer)
             .entity_policy(entity_policy)
+            .subscription_policy(subscription_policy)
+            .csource_subscription_policy(csource_subscription_policy)
+            .snapshot_preparation(snapshot_preparation)
             .entity_reader(entity_ports.reader)
             .entity_query_store(entity_ports.query)
             .entity_discovery_store(entity_ports.discovery)
@@ -230,6 +235,7 @@ async fn build_tenant_state(
             pool,
             supervision.health_shutdown,
             supervision.task_supervisor,
+            supervision.drain_wakes,
         ),
     ))
 }

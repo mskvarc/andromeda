@@ -16,6 +16,11 @@ andromeda-entity-map = { path = "crates/andromeda-entity-map" }
 andromeda-federation = { path = "crates/andromeda-federation" }
 andromeda-health = { path = "crates/andromeda-health" }
 andromeda-http-entity = { path = "crates/andromeda-http-entity" }
+andromeda-http-entity-map = { path = "crates/andromeda-http-entity-map" }
+andromeda-http-context-registry = { path = "crates/andromeda-http-context-registry" }
+andromeda-http-registration = { path = "crates/andromeda-http-registration" }
+andromeda-http-subscription = { path = "crates/andromeda-http-subscription" }
+andromeda-http-snapshot = { path = "crates/andromeda-http-snapshot" }
 andromeda-http-temporal = { path = "crates/andromeda-http-temporal" }
 andromeda-http-extraction = { path = "crates/andromeda-http-extraction" }
 andromeda-http-headers = { path = "crates/andromeda-http-headers" }
@@ -31,6 +36,7 @@ andromeda-ngsi-ld-render = { path = "crates/andromeda-ngsi-ld-render" }
 andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
+andromeda-notification = { path = "crates/andromeda-notification" }
 andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
@@ -39,6 +45,7 @@ andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
 andromeda-registration = { path = "crates/andromeda-registration" }
+andromeda-snapshot = { path = "crates/andromeda-snapshot" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-subscription = { path = "crates/andromeda-subscription" }
 andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
@@ -80,6 +87,11 @@ andromeda-entity-map.workspace = true
 andromeda-federation.workspace = true
 andromeda-health.workspace = true
 andromeda-http-entity.workspace = true
+andromeda-http-entity-map.workspace = true
+andromeda-http-context-registry.workspace = true
+andromeda-http-registration.workspace = true
+andromeda-http-subscription.workspace = true
+andromeda-http-snapshot.workspace = true
 andromeda-http-temporal.workspace = true
 andromeda-http-extraction.workspace = true
 andromeda-http-headers.workspace = true
@@ -94,6 +106,7 @@ andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-notification.workspace = true
 andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-context-store.workspace = true
@@ -102,6 +115,7 @@ andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-registration.workspace = true
+andromeda-snapshot.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-task-runtime.workspace = true

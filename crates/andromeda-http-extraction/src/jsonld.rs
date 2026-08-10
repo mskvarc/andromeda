@@ -211,7 +211,7 @@ where
         // this extractor (single entities, small batches). The output is a
         // standard `serde_json::Value`, so downstream code is unchanged.
         let mut value: serde_json::Value =
-            sonic_rs::from_slice(&bytes).map_err(|e| ExtractorRejection::bad_request_data(format!("Invalid JSON: {e}"), uri.clone()))?;
+            sonic_rs::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
         if value.as_array().is_some_and(|a| a.is_empty()) {

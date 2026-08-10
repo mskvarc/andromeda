@@ -108,9 +108,9 @@ macro_rules! impl_subscription_store {
                 Ok(())
             }
 
-            async fn expire_due(&self) -> Result<Vec<Uri>, SubscriptionError> {
-                let rows = sqlx::query(concat!("UPDATE subscriptions SET status = 'expired', is_active = false, modified_at = NOW() WHERE status != 'expired' AND expires_at IS NOT NULL AND expires_at <= NOW() AND kind = '", $kind, "' RETURNING id"))
-                    .fetch_all(&self.pool).await.map_err(persistence_error)?;
+            async fn expire_due(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+                let rows = sqlx::query(concat!("UPDATE subscriptions SET status = 'expired', is_active = false, modified_at = $1 WHERE status != 'expired' AND expires_at IS NOT NULL AND expires_at <= $1 AND kind = '", $kind, "' RETURNING id"))
+                    .bind(cutoff).fetch_all(&self.pool).await.map_err(persistence_error)?;
                 rows.iter()
                     .map(|row| {
                         row.try_get::<String, _>("id")

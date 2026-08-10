@@ -2,7 +2,7 @@
 
 use crate::snapshot_scope::TemporalSnapshotError;
 use andromeda_entity_map::error::EntityMapError;
-use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
+use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
@@ -98,17 +98,6 @@ impl TemporalHttpClassify for TemporalSimplifyError {
 impl TemporalHttpClassify for TenancyError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         classify_tenancy_error(self)
-    }
-}
-
-/// Exhaustively classify tenant resolution for temporal routes.
-pub(crate) fn classify_tenancy_error(error: &TenancyError) -> ClassifiedReport {
-    match error {
-        TenancyError::MultiTenancyDisabled => ClassifiedReport::public(NgsiLdErrorType::NoMultiTenantSupport, error.to_string()),
-        TenancyError::UnknownTenant { name } => ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, format!("Tenant {name} does not exist")),
-        TenancyError::RegistryUnavailable { .. } | TenancyError::ProvisioningFailed { .. } | TenancyError::RuntimeUnavailable { .. } => {
-            ClassifiedReport::internal(error)
-        }
     }
 }
 
