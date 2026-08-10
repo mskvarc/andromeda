@@ -6,23 +6,25 @@
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
-use crate::helpers::{
-    MockServer,
-    clean_database,
-    client,
-    create_entity_local,
-    create_registration,
-    delete_entity,
-    delete_registration,
-    get_entity,
-    jsonld_link_value,
-    unique_id,
-    vehicle_entity,
-    vehicle_entity_second,
-    vehicle_entity_speed_only,
-    vehicle_registration,
-    vehicle_registration_speed_property,
-    vehicle_registration_with_ops,
+use crate::{
+    context_source_adapter::ContextSourceAdapter as MockServer,
+    helpers::{
+        clean_database,
+        client,
+        create_entity_local,
+        create_registration,
+        delete_entity,
+        delete_registration,
+        get_entity,
+        jsonld_link_value,
+        unique_id,
+        vehicle_entity,
+        vehicle_entity_second,
+        vehicle_entity_speed_only,
+        vehicle_registration,
+        vehicle_registration_speed_property,
+        vehicle_registration_with_ops,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -33,9 +35,9 @@ use crate::helpers::{
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-aux");
@@ -67,7 +69,7 @@ async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,9 +80,9 @@ async fn distop_entity_retrieve_auxiliary_merges_local_and_remote_attributes() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-exc");
@@ -116,16 +118,16 @@ async fn distop_entity_retrieve_exclusive_returns_remote_attributes() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve entity with exclusive registration and local=true excludes remote attributes.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-exc-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-exc-local");
@@ -156,7 +158,7 @@ async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -167,9 +169,9 @@ async fn distop_entity_retrieve_exclusive_local_true_excludes_remote() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_inclusive_returns_remote_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc");
@@ -189,16 +191,16 @@ async fn distop_entity_retrieve_inclusive_returns_remote_entity() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve with local=true and inclusive registration returns 404 when entity is only remote.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_inclusive_local_true_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-local");
@@ -221,16 +223,16 @@ async fn distop_entity_retrieve_inclusive_local_true_returns_404() {
     pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Inclusive registration with retrieveEntity operation forwards correctly.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op1");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op1");
@@ -250,16 +252,16 @@ async fn distop_entity_retrieve_inclusive_with_retrieve_entity_op() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieval does not use the query-entity capability.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_with_only_query_entity_does_not_forward() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op2");
@@ -278,16 +280,16 @@ async fn distop_entity_retrieve_with_only_query_entity_does_not_forward() {
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieval does not use the batch-query capability.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-inc-op3");
     let reg_id = unique_id("urn:ngsi-ld:Registration:retrieve-inc-op3");
@@ -306,7 +308,7 @@ async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}")).await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,9 +319,9 @@ async fn distop_entity_retrieve_with_only_query_batch_does_not_forward() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_redirect_merges_two_brokers() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-red");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:retrieve-red-1");
@@ -355,16 +357,16 @@ async fn distop_entity_retrieve_redirect_merges_two_brokers() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve with redirect registration and local=true returns 404.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_redirect_local_true_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:retrieve-red-local");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:retrieve-red-local-1");
@@ -393,5 +395,5 @@ async fn distop_entity_retrieve_redirect_local_true_returns_404() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }

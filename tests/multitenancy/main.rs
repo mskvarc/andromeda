@@ -8,18 +8,21 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, callback_url},
-    db::{TRUNCATE_ALL, pool as shared_pool},
-    error,
+use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
+use andromeda_test_harness::{
+    configuration::RUNTIME_BROKER_BASE as BASE_URL,
+    database_access::connect_test_database,
+    serialized_environment::SerializedEnvironment,
 };
-use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, Notify};
+use std::time::Duration;
 use uuid::Uuid;
+
+#[path = "../support/notification_adapter.rs"]
+pub mod notification_adapter;
+use notification_adapter::NotificationAdapter as NotificationReceiver;
 
 const NONEXISTENT_TENANT_ERROR: &iri_rs::Iri<&str> = error::NONEXISTENT_TENANT;
 
@@ -44,8 +47,28 @@ async fn clean_named_tenant_registry(main_pool: &PgPool) {
     let _ = sqlx::query("DELETE FROM tenants WHERE is_unnamed_default = false").execute(main_pool).await;
 }
 
-async fn reset_broker_state() {
-    let pool = shared_pool().await.expect("acquire shared test pool");
+#[must_use = "finish the multitenancy environment so tenant databases and their background workers are removed"]
+struct MultitenancyEnvironment {
+    serialized: SerializedEnvironment,
+    cleanup_pool: PgPool,
+}
+
+impl MultitenancyEnvironment {
+    async fn finish(mut self) {
+        clean_named_tenant_registry(&self.cleanup_pool).await;
+        evict_broker_orphans().await;
+        drop_orphan_tenant_databases(&self.cleanup_pool).await;
+        self.serialized.reset().await.expect("serialized test database final reset failed");
+        self.cleanup_pool.close().await;
+        self.serialized.finish().await.expect("serialized test database release failed");
+    }
+}
+
+async fn reset_broker_state() -> MultitenancyEnvironment {
+    let mut environment = SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment");
+    let pool = connect_test_database().await.expect("connect to test database");
     clean_named_tenant_registry(&pool).await;
     // Delete order: registry row first so the broker considers runtimes
     // orphans, then evictOrphans so it closes its own sqlx pools, then
@@ -55,7 +78,11 @@ async fn reset_broker_state() {
     // free slots.
     evict_broker_orphans().await;
     drop_orphan_tenant_databases(&pool).await;
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
+    environment.reset().await.expect("serialized test database reset failed");
+    MultitenancyEnvironment {
+        serialized: environment,
+        cleanup_pool: pool,
+    }
 }
 
 /// POST `/tenants/evictOrphans` and assert the broker accepted it.
@@ -215,113 +242,13 @@ fn csr_subscription(id: &str, endpoint_url: &str) -> Value {
     })
 }
 
-// --- NotificationReceiver ---
-
-pub struct CapturedNotification {
-    pub headers: AxumHeaderMap,
-    pub body: Value,
-}
-
-pub struct NotificationReceiver {
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    pub port: u16,
-    endpoint_path: String,
-    notifications: Arc<Mutex<Vec<CapturedNotification>>>,
-    notify: Arc<Notify>,
-}
-
-impl NotificationReceiver {
-    pub async fn start() -> NotificationReceiver {
-        let notifications = Arc::new(Mutex::new(Vec::<CapturedNotification>::new()));
-        let notify = Arc::new(Notify::new());
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let notification_store = notifications.clone();
-        let signal = notify.clone();
-
-        let endpoint_path = format!("/notify-{}", Uuid::new_v4());
-        let app = Router::new().route(
-            &endpoint_path,
-            post(move |headers: AxumHeaderMap, body: Bytes| {
-                let notification_store = notification_store.clone();
-                let signal = signal.clone();
-                async move {
-                    let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-                    notification_store.lock().await.push(CapturedNotification { headers, body: payload });
-                    signal.notify_one();
-                    axum::http::StatusCode::OK.into_response()
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.expect("bind notification receiver");
-        let port = listener.local_addr().expect("notification receiver local address").port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .expect("notification receiver task failure");
-        });
-
-        NotificationReceiver {
-            shutdown: Some(shutdown_tx),
-            port,
-            endpoint_path,
-            notifications,
-            notify,
-        }
-    }
-
-    pub fn endpoint_url(&self) -> String {
-        callback_url(self.port, &self.endpoint_path)
-    }
-
-    pub async fn wait_for_subscription_notification(&self, subscription_id: &str, timeout: Duration) -> CapturedNotification {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            {
-                let mut notifications = self.notifications.lock().await;
-                if let Some(index) = notifications.iter().position(|n| n.body["subscriptionId"].as_str() == Some(subscription_id)) {
-                    return notifications.remove(index);
-                }
-            }
-            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
-            assert!(notified.is_ok(), "timed out waiting for subscription notification after {timeout:?}");
-        }
-    }
-
-    pub async fn wait_for_no_notification_for_subscription(&self, subscription_id: &str, duration: Duration) {
-        tokio::time::sleep(duration).await;
-        let notifications = self.notifications.lock().await;
-        let count = notifications
-            .iter()
-            .filter(|n| n.body["subscriptionId"].as_str() == Some(subscription_id))
-            .count();
-        pretty_assertions::assert_eq!(count, 0, "expected no notifications for subscription {subscription_id}, got {count}");
-    }
-
-    pub fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
-
-impl Drop for NotificationReceiver {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
 // --- Tests ---
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
     let http_client = client();
-    reset_broker_state().await;
+    let environment = reset_broker_state().await;
 
     let id = unique_entity_id("urn:ngsi-ld:Vehicle:tenant-isolation");
     let unnamed_entity = vehicle_entity(&id, "unnamed-default");
@@ -353,13 +280,15 @@ async fn multitenancy_unnamed_and_named_default_tenants_are_isolated() {
     let (status, _, body) = ngsi_request(&http_client, Method::GET, &format!("/entities/{id}"), None, "default", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "named-default");
+
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_non_create_on_unknown_tenant_returns_nonexistent_tenant_error() {
     let http_client = client();
-    reset_broker_state().await;
+    let environment = reset_broker_state().await;
 
     let tenant = format!("unknown-tenant-{}", Uuid::new_v4());
     let id = unique_entity_id("urn:ngsi-ld:Vehicle:noncreate");
@@ -376,13 +305,15 @@ async fn multitenancy_non_create_on_unknown_tenant_returns_nonexistent_tenant_er
         Some(tenant.as_str()),
         "response must echo NGSILD-Tenant header"
     );
+
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     let http_client = client();
-    reset_broker_state().await;
+    let environment = reset_broker_state().await;
 
     // 1. Create Entity
     let tenant_1 = format!("tenant-create-entity-{}", Uuid::new_v4());
@@ -479,13 +410,15 @@ async fn multitenancy_create_operations_implicitly_create_named_tenant() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = ngsi_request(&http_client, Method::GET, &format!("/csourceSubscriptions/{id_6}"), None, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
+
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_named_tenant_error_response_echoes_ngsild_tenant_header() {
     let http_client = client();
-    reset_broker_state().await;
+    let environment = reset_broker_state().await;
 
     let tenant = format!("tenant-error-echo-{}", Uuid::new_v4());
     // Missing required `id` field → BadRequestData, but tenant header must still be echoed
@@ -497,13 +430,15 @@ async fn multitenancy_named_tenant_error_response_echoes_ngsild_tenant_header() 
         Some(tenant.as_str()),
         "error responses in named tenant must echo NGSILD-Tenant header"
     );
+
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_cross_tenant_entity_access_returns_not_found() {
     let http_client = client();
-    reset_broker_state().await;
+    let environment = reset_broker_state().await;
 
     let id = unique_entity_id("urn:ngsi-ld:Vehicle:cross-visibility");
     let tenant_a = format!("tenant-a-{}", Uuid::new_v4());
@@ -528,14 +463,16 @@ async fn multitenancy_cross_tenant_entity_access_returns_not_found() {
         NONEXISTENT_TENANT_ERROR.as_str(),
         "cross-tenant access to entity in non-existent tenant B must return NonexistentTenant"
     );
+
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_unnamed_default_tenant_notifications_omit_tenant_header() {
     let http_client = client();
-    reset_broker_state().await;
-    let mut receiver = NotificationReceiver::start().await;
+    let environment = reset_broker_state().await;
+    let receiver = NotificationReceiver::start().await;
 
     let subscription_id = unique_subscription_id("unnamed-notif");
     let sub = entity_subscription(&subscription_id, &receiver.endpoint_url());
@@ -567,15 +504,16 @@ async fn multitenancy_unnamed_default_tenant_notifications_omit_tenant_header() 
         "notifications for unnamed default tenant must omit NGSILD-Tenant header"
     );
 
-    receiver.stop();
+    receiver.shutdown().await;
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_named_tenant_notifications_include_ngsild_tenant_header() {
     let http_client = client();
-    reset_broker_state().await;
-    let mut receiver = NotificationReceiver::start().await;
+    let environment = reset_broker_state().await;
+    let receiver = NotificationReceiver::start().await;
 
     let tenant = format!("tenant-notif-{}", Uuid::new_v4());
 
@@ -610,15 +548,16 @@ async fn multitenancy_named_tenant_notifications_include_ngsild_tenant_header() 
         "notifications for named tenant must include NGSILD-Tenant header"
     );
 
-    receiver.stop();
+    receiver.shutdown().await;
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_subscription_does_not_receive_events_from_different_tenant() {
     let http_client = client();
-    reset_broker_state().await;
-    let mut receiver = NotificationReceiver::start().await;
+    let environment = reset_broker_state().await;
+    let receiver = NotificationReceiver::start().await;
 
     let tenant_a = format!("tenant-sub-isolation-a-{}", Uuid::new_v4());
     let tenant_b = format!("tenant-sub-isolation-b-{}", Uuid::new_v4());
@@ -664,14 +603,15 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
     let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
     pretty_assertions::assert_eq!(notification.body["subscriptionId"], subscription_id);
 
-    receiver.stop();
+    receiver.shutdown().await;
+    environment.finish().await;
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn multitenancy_tenants_endpoint_returns_tenant_list_object_shape() {
     let http_client = client();
-    reset_broker_state().await;
+    let environment = reset_broker_state().await;
 
     let tenant_a = format!("tenant-list-a-{}", Uuid::new_v4());
     let tenant_b = format!("tenant-list-b-{}", Uuid::new_v4());
@@ -715,4 +655,6 @@ async fn multitenancy_tenants_endpoint_returns_tenant_list_object_shape() {
         tenant_values.contains(&tenant_b.as_str()),
         "tenantList must contain {tenant_b}, got: {tenant_values:?}"
     );
+
+    environment.finish().await;
 }

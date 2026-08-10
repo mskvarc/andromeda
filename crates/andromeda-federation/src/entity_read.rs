@@ -92,7 +92,7 @@ impl FederationService {
                 let url = build_query_url(&csr.access.endpoint, forwarding_qs_ref);
 
                 let mode = csr.access.mode.unwrap_or_default();
-                match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                match self.forward_get(url, context_url, &csr.access, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => {
                         let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, arr);
                         let mut warnings = cs_warnings;
@@ -202,7 +202,7 @@ impl FederationService {
                 let url = build_retrieve_url(&csr.access.endpoint, entity_id, query_string);
 
                 let mode = csr.access.mode.unwrap_or_default();
-                match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                match self.forward_get(url, context_url, &csr.access, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => {
                         let (entities, parse_warnings) = parse_forwarded_entities(&csr.id, vec![obj]);
                         let mut warnings = cs_warnings;

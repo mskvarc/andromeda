@@ -38,7 +38,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn attribute_update_no_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_01_01");
 
@@ -66,7 +66,7 @@ async fn attribute_update_no_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_with_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_01_02");
 
@@ -90,7 +90,7 @@ async fn attribute_update_with_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_with_new_attribute_returns_204_or_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_01_03");
 
@@ -117,7 +117,7 @@ async fn attribute_update_with_new_attribute_returns_204_or_207() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_change_type_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_01_04");
 
@@ -149,7 +149,7 @@ async fn attribute_update_change_type_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_empty_entity_id_returns_error() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -170,7 +170,7 @@ async fn attribute_update_empty_entity_id_returns_error() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -188,7 +188,7 @@ async fn attribute_update_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_nonexistent_entity_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_03_01");
 
@@ -207,7 +207,7 @@ async fn attribute_update_nonexistent_entity_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_invalid_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_04_01");
 
@@ -226,7 +226,7 @@ async fn attribute_update_invalid_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_scope_existing_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_05_01");
 
@@ -253,7 +253,7 @@ async fn attribute_update_scope_existing_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_scope_not_existing_returns_207_or_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_05_02");
 
@@ -282,7 +282,7 @@ async fn attribute_update_scope_not_existing_returns_207_or_204() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_append_single_type_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_06_01");
 
@@ -310,7 +310,7 @@ async fn attribute_update_append_single_type_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_append_multiple_types_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_06_02");
 
@@ -330,7 +330,7 @@ async fn attribute_update_append_multiple_types_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_append_duplicate_type_ignored() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_06_03");
 
@@ -354,7 +354,7 @@ async fn attribute_update_append_duplicate_type_ignored() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_append_type_to_multi_type_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_011_06_04");
 
@@ -387,7 +387,7 @@ async fn attribute_update_append_type_to_multi_type_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_property_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_07_01");
 
@@ -411,7 +411,7 @@ async fn attribute_update_delete_property_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_relationship_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_07_02");
 
@@ -435,7 +435,7 @@ async fn attribute_update_delete_relationship_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_geo_property_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_07_03");
 
@@ -459,7 +459,7 @@ async fn attribute_update_delete_geo_property_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_language_property_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_07_04");
 
@@ -487,7 +487,7 @@ async fn attribute_update_delete_language_property_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_property_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_08_01");
 
@@ -515,7 +515,7 @@ async fn attribute_update_delete_property_instance_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_relationship_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_08_02");
 
@@ -539,7 +539,7 @@ async fn attribute_update_delete_relationship_instance_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_geo_property_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_08_03");
 
@@ -563,7 +563,7 @@ async fn attribute_update_delete_geo_property_instance_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_language_property_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_08_04");
 
@@ -593,7 +593,7 @@ async fn attribute_update_delete_language_property_instance_with_null_success() 
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_default_property_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_09_01");
 
@@ -620,7 +620,7 @@ async fn attribute_update_delete_default_property_instance_with_null_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_default_relationship_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_09_02");
 
@@ -643,7 +643,7 @@ async fn attribute_update_delete_default_relationship_instance_with_null_success
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_default_geo_property_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_09_03");
 
@@ -666,7 +666,7 @@ async fn attribute_update_delete_default_geo_property_instance_with_null_success
 #[tokio::test]
 #[serial]
 async fn attribute_update_delete_default_language_property_instance_with_null_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:update_011_09_04");
 

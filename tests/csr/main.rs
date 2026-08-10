@@ -15,13 +15,10 @@ mod query;
 mod retrieve;
 mod update;
 
-use andromeda_test_common::{
-    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL},
-    error,
-};
+use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail as error};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::Value;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
@@ -40,15 +37,10 @@ fn unique_id(prefix: &str) -> String {
 // Database cleanup
 // ---------------------------------------------------------------------------
 
-const TRUNCATE_REGISTRATIONS: &str = "TRUNCATE context_source_registrations CASCADE";
-
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_REGISTRATIONS)
-        .execute(&pool)
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
         .await
-        .expect("failed to truncate registrations");
-    pool.close().await;
+        .expect("serialized test database environment")
 }
 
 // ---------------------------------------------------------------------------

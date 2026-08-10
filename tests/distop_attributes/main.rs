@@ -8,139 +8,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
-
-use andromeda_test_common::{
-    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL, callback_url},
-    db::TRUNCATE_ALL,
-};
-use axum::{extract::Request, response::IntoResponse};
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::PgPool;
-use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
 
-// ---------------------------------------------------------------------------
-// Mock context source server
-// ---------------------------------------------------------------------------
-
-struct StubEntry {
-    status_code: u16,
-    body: Option<String>,
-    content_type: String,
-    count: AtomicUsize,
-}
-
-struct MockState {
-    stubs: HashMap<(String, String), StubEntry>,
-}
-
-struct MockServer {
-    port: u16,
-    state: Arc<RwLock<MockState>>,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-impl MockServer {
-    async fn start() -> MockServer {
-        let state = Arc::new(RwLock::new(MockState { stubs: HashMap::new() }));
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-        let handler_state = state.clone();
-        let app = axum::Router::new().fallback(move |req: Request| {
-            let state = handler_state.clone();
-            async move {
-                let method = req.method().to_string();
-                let path = req.uri().path().to_string();
-                let s = state.read().await;
-                let key = (method, path);
-                if let Some(entry) = s.stubs.get(&key) {
-                    entry.count.fetch_add(1, Ordering::Relaxed);
-                    let status = axum::http::StatusCode::from_u16(entry.status_code).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-                    if let Some(ref body) = entry.body {
-                        let ct = entry.content_type.clone();
-                        (status, [(axum::http::header::CONTENT_TYPE, ct)], body.clone()).into_response()
-                    } else {
-                        status.into_response()
-                    }
-                } else {
-                    axum::http::StatusCode::NOT_FOUND.into_response()
-                }
-            }
-        });
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap();
-        });
-
-        MockServer {
-            port,
-            state,
-            shutdown: Some(shutdown_tx),
-        }
-    }
-
-    async fn set_stub(&self, method: Method, path: &str, status_code: u16) {
-        let mut s = self.state.write().await;
-        s.stubs.insert(
-            (method.to_string(), path.to_string()),
-            StubEntry {
-                status_code,
-                body: None,
-                content_type: String::new(),
-                count: AtomicUsize::new(0),
-            },
-        );
-    }
-
-    async fn set_stub_with_body(&self, method: Method, path: &str, status_code: u16, body: &Value) {
-        let mut s = self.state.write().await;
-        s.stubs.insert(
-            (method.to_string(), path.to_string()),
-            StubEntry {
-                status_code,
-                body: Some(serde_json::to_string(body).unwrap()),
-                content_type: "application/ld+json".to_string(),
-                count: AtomicUsize::new(0),
-            },
-        );
-    }
-
-    async fn get_count(&self, method: Method, path: &str) -> usize {
-        let s = self.state.read().await;
-        s.stubs
-            .get(&(method.to_string(), path.to_string()))
-            .map_or(0, |e| e.count.load(Ordering::Relaxed))
-    }
-
-    fn url(&self, path: &str) -> String {
-        callback_url(self.port, path)
-    }
-
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
+#[path = "../support/context_source_adapter.rs"]
+pub mod context_source_adapter;
+use context_source_adapter::ContextSourceAdapter as MockServer;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -154,10 +32,10 @@ fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 fn vehicle_entity(id: &str) -> Value {
@@ -264,9 +142,9 @@ fn warning_header_values(headers: &reqwest::header::HeaderMap) -> Vec<String> {
 #[tokio::test]
 #[serial]
 async fn distop_attributes_local_skips_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-local-skip");
 
@@ -290,16 +168,16 @@ async fn distop_attributes_local_skips_forwarding() {
     );
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// list_attributes without local=true forwards to CSR and merges remote attributes.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_merges_remote_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-merge");
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-merge");
@@ -332,16 +210,16 @@ async fn distop_attributes_merges_remote_attributes() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// list_attributes deduplicates attributes that appear in both local and remote results.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_deduplicates_attribute_list() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-dedup");
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-dedup");
@@ -373,16 +251,16 @@ async fn distop_attributes_deduplicates_attribute_list() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// list_attributes with details=true merges detailed attribute objects from local and remote.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_details_merges_remote_attribute_objects() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-details");
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-details");
@@ -413,16 +291,16 @@ async fn distop_attributes_details_merges_remote_attribute_objects() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// list_attributes emits NGSILD-Warning 299 header when a CSR returns an error response.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_warning_on_csr_error_response() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-warn");
 
@@ -442,16 +320,16 @@ async fn distop_attributes_warning_on_csr_error_response() {
     );
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// get_attribute forwards to CSR and merges type name information from remote.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_attribute_info_merges_remote_type_names() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:attrs-info-merge");
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-info-merge");
@@ -481,16 +359,16 @@ async fn distop_attributes_attribute_info_merges_remote_type_names() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// list_attributes emits NGSILD-Warning 199 header when a CSR is unreachable.
 #[tokio::test]
 #[serial]
 async fn distop_attributes_warning_on_csr_unreachable() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:attrs-timeout");
     let endpoint = mock.url("");
@@ -499,7 +377,7 @@ async fn distop_attributes_warning_on_csr_unreachable() {
     pretty_assertions::assert_eq!(create_registration(&c, &reg).await, StatusCode::CREATED);
 
     // Stop mock to simulate unreachable CSR
-    mock.stop();
+    mock.shutdown().await;
 
     let (status, headers, _) = list_attributes(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);

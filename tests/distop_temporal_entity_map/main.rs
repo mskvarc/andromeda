@@ -7,126 +7,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
-
-use andromeda_test_common::{
-    config::{BASE_URL, DATABASE_URL, TEST_SUITE_CONTEXT, callback_url},
-    db::TRUNCATE_ALL,
-};
-use axum::{extract::Request, response::IntoResponse};
+use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::PgPool;
-use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
 
-// ---------------------------------------------------------------------------
-// Mock context source server
-// ---------------------------------------------------------------------------
-
-struct StubEntry {
-    status_code: u16,
-    body: Option<String>,
-    content_type: String,
-    count: AtomicUsize,
-}
-
-struct MockState {
-    stubs: HashMap<(String, String), StubEntry>,
-    total_count: AtomicUsize,
-}
-
-struct MockServer {
-    port: u16,
-    state: Arc<RwLock<MockState>>,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-impl MockServer {
-    async fn start() -> Self {
-        let state = Arc::new(RwLock::new(MockState {
-            stubs: HashMap::new(),
-            total_count: AtomicUsize::new(0),
-        }));
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-        let handler_state = state.clone();
-        let app = axum::Router::new().fallback(move |req: Request| {
-            let state = handler_state.clone();
-            async move {
-                let method = req.method().to_string();
-                let path = req.uri().path().to_string();
-
-                let s = state.read().await;
-                s.total_count.fetch_add(1, Ordering::Relaxed);
-
-                let key = (method, path);
-                if let Some(entry) = s.stubs.get(&key) {
-                    entry.count.fetch_add(1, Ordering::Relaxed);
-                    let status = axum::http::StatusCode::from_u16(entry.status_code).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-                    if let Some(ref body) = entry.body {
-                        let ct = entry.content_type.clone();
-                        (status, [(axum::http::header::CONTENT_TYPE, ct)], body.clone()).into_response()
-                    } else {
-                        status.into_response()
-                    }
-                } else {
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                }
-            }
-        });
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap();
-        });
-
-        Self {
-            port,
-            state,
-            shutdown: Some(shutdown_tx),
-        }
-    }
-
-    async fn set_stub_with_body(&self, method: Method, path: &str, status_code: u16, body: &Value) {
-        let mut s = self.state.write().await;
-        s.stubs.insert(
-            (method.to_string(), path.to_string()),
-            StubEntry {
-                status_code,
-                body: Some(serde_json::to_string(body).unwrap()),
-                content_type: "application/ld+json".to_string(),
-                count: AtomicUsize::new(0),
-            },
-        );
-    }
-
-    fn url(&self, path: &str) -> String {
-        callback_url(self.port, path)
-    }
-
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
+#[path = "../support/context_source_adapter.rs"]
+pub mod context_source_adapter;
+use context_source_adapter::ContextSourceAdapter as MockServer;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -144,10 +35,10 @@ fn jsonld_link_value() -> String {
     format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 fn temporal_vehicle_entity(id: &str) -> Value {
@@ -270,9 +161,9 @@ async fn get_entity_map(client: &Client, id: &str, link: &str) -> (StatusCode, V
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_includes_forwarded_ids() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:tmap-local");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:tmap-remote");
@@ -326,16 +217,16 @@ async fn distop_temporal_entity_map_includes_forwarded_ids() {
 
     delete_temporal_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Temporal EntityMap with local=true only contains local IDs.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_local_only_when_local_true() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:tmap-local-only");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:tmap-remote-only");
@@ -379,16 +270,16 @@ async fn distop_temporal_entity_map_local_only_when_local_true() {
 
     delete_temporal_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Temporal EntityMap scopes subsequent query to map members.
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_scopes_subsequent_query() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-local");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-remote");
@@ -448,7 +339,7 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
     delete_temporal_entity(&c, &local_id).await;
     delete_temporal_entity(&c, &extra_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Temporal query with entityMap=true creates EntityMap and returns 201.
@@ -456,7 +347,7 @@ async fn distop_temporal_entity_map_scopes_subsequent_query() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_creates_map_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tmap-create");
@@ -486,7 +377,7 @@ async fn distop_temporal_entity_map_creates_map_returns_201() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_echoed_in_response() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tmap-echo");
@@ -532,7 +423,7 @@ async fn distop_temporal_entity_map_echoed_in_response() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_retrieve_not_in_map_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-scope-a");
@@ -570,7 +461,7 @@ async fn distop_temporal_entity_map_retrieve_not_in_map_returns_404() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-retrieve-pass");
@@ -610,7 +501,7 @@ async fn distop_temporal_entity_map_retrieve_in_map_succeeds() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tmap-lifetime");
@@ -651,7 +542,7 @@ async fn distop_temporal_entity_map_with_lifetime_sets_expiry() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_entity_map_query_scoped_to_members() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_a = unique_id("urn:ngsi-ld:Vehicle:tmap-query-scope-a");

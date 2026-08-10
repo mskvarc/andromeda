@@ -18,7 +18,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_update_add_instances_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_01_01");
 
@@ -58,7 +58,7 @@ async fn temporal_update_add_instances_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_add_new_attribute_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_01_02");
 
@@ -100,7 +100,7 @@ async fn temporal_update_add_new_attribute_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_multiple_attributes_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_01_03");
 
@@ -151,7 +151,7 @@ async fn temporal_update_multiple_attributes_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_with_relationship_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_02_01");
 
@@ -193,7 +193,7 @@ async fn temporal_update_with_relationship_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_with_geoproperty_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_02_02");
 
@@ -235,7 +235,7 @@ async fn temporal_update_with_geoproperty_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_with_language_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_02_03");
 
@@ -285,7 +285,7 @@ async fn temporal_update_with_language_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_with_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_03_01");
 
@@ -332,7 +332,7 @@ async fn temporal_update_with_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_nonexistent_entity_creates() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_04_01");
 
@@ -361,7 +361,7 @@ async fn temporal_update_nonexistent_entity_creates() {
 #[tokio::test]
 #[serial]
 async fn temporal_update_same_instance_idempotent() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:update_008_05_01");
 

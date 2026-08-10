@@ -8,7 +8,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn batch_delete_entities_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:006_01_01a");
@@ -33,7 +33,7 @@ async fn batch_delete_entities_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_delete_mixed_existing_nonexisting_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:006_02_01a");
@@ -81,7 +81,7 @@ async fn batch_delete_empty_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn batch_delete_duplicate_ids_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:006_04_01");

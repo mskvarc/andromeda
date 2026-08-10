@@ -47,7 +47,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_query_after_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_01_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_01_B");
@@ -71,7 +71,7 @@ async fn temporal_query_after_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_before_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_01_02_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_01_02_B");
@@ -91,7 +91,7 @@ async fn temporal_query_before_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_between_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_01_03_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_01_03_B");
@@ -120,7 +120,7 @@ async fn temporal_query_between_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_attrs_speed_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_02_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_02_B");
@@ -152,7 +152,7 @@ async fn temporal_query_attrs_speed_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_last_n_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_03_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_03_B");
@@ -181,7 +181,7 @@ async fn temporal_query_last_n_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_with_context_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_04_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_04_B");
@@ -205,7 +205,7 @@ async fn temporal_query_with_context_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_by_type_bus_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let vehicle = unique_id("urn:ngsi-ld:Vehicle:query_021_05_A");
     let bus = unique_id("urn:ngsi-ld:Bus:query_021_05_B");
@@ -232,7 +232,7 @@ async fn temporal_query_by_type_bus_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_by_id_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_06_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_06_B");
@@ -258,7 +258,7 @@ async fn temporal_query_by_id_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_by_id_pattern_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_07_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_07_B");
@@ -287,7 +287,7 @@ async fn temporal_query_by_id_pattern_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_q_filter_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_08_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_08_B");
@@ -317,7 +317,7 @@ async fn temporal_query_q_filter_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_geo_near_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_09_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_09_B");
@@ -348,7 +348,7 @@ async fn temporal_query_geo_near_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_geo_within_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_09_02_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_09_02_B");
@@ -377,7 +377,7 @@ async fn temporal_query_geo_within_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_limit_2_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_B");
@@ -402,7 +402,7 @@ async fn temporal_query_limit_2_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_limit_3_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_02_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_11_02_B");
@@ -431,7 +431,7 @@ async fn temporal_query_limit_3_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_missing_type_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body, _) = query_temporal_entities(&c, "timerel=after&timeAt=2020-07-01T12:05:00Z", Some(TEST_SUITE_CONTEXT)).await;
@@ -446,7 +446,7 @@ async fn temporal_query_missing_type_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_post_after_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_B");
@@ -475,7 +475,7 @@ async fn temporal_query_post_after_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_post_before_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_02_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_02_B");
@@ -504,7 +504,7 @@ async fn temporal_query_post_before_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_post_between_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_03_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_03_B");
@@ -534,7 +534,7 @@ async fn temporal_query_post_between_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_post_multiple_types_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_13_04_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_13_04_B");
@@ -573,7 +573,7 @@ async fn temporal_query_post_multiple_types_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_temporal_values_after_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_14_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_14_B");
@@ -601,7 +601,7 @@ async fn temporal_query_temporal_values_after_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_temporal_values_before_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_14_02_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_14_02_B");
@@ -624,7 +624,7 @@ async fn temporal_query_temporal_values_before_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_temporal_values_between_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_14_03_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_14_03_B");
@@ -651,7 +651,7 @@ async fn temporal_query_temporal_values_between_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_pagination_last_n_before_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_B");
@@ -674,7 +674,7 @@ async fn temporal_query_pagination_last_n_before_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_pagination_last_n_between_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_02_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_02_B");
@@ -701,7 +701,7 @@ async fn temporal_query_pagination_last_n_between_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_pagination_last_n_after_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_03_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_03_B");
@@ -724,7 +724,7 @@ async fn temporal_query_pagination_last_n_after_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_pagination_temporal_values_after_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_07_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_15_07_B");
@@ -758,7 +758,7 @@ async fn temporal_query_pagination_temporal_values_after_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_post_pagination_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let v1 = unique_id("urn:ngsi-ld:Vehicle:query_021_16_A");
     let v2 = unique_id("urn:ngsi-ld:Vehicle:query_021_16_B");
@@ -792,7 +792,7 @@ async fn temporal_query_post_pagination_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_aggregated_avg_pt1h_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_01");
 
@@ -813,7 +813,7 @@ async fn temporal_query_aggregated_avg_pt1h_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_aggregated_avg_fuel_level_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_02");
 
@@ -837,7 +837,7 @@ async fn temporal_query_aggregated_avg_fuel_level_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_aggregated_avg_max_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_03");
 
@@ -858,7 +858,7 @@ async fn temporal_query_aggregated_avg_max_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_aggregated_min_max_p1d_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_17_04");
 
@@ -883,7 +883,7 @@ async fn temporal_query_aggregated_min_max_p1d_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_attrs_speed_with_multi_instances_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_01");
 
@@ -907,7 +907,7 @@ async fn temporal_query_attrs_speed_with_multi_instances_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_dataset_common_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_02");
 
@@ -929,7 +929,7 @@ async fn temporal_query_dataset_common_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_dataset_default_instance_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_04");
 
@@ -951,7 +951,7 @@ async fn temporal_query_dataset_default_instance_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_dataset_no_match_returns_empty() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:query_021_18_07");
 
@@ -977,7 +977,7 @@ async fn temporal_query_dataset_no_match_returns_empty() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_format_temporal_values_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_19_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_19_B");
@@ -1004,7 +1004,7 @@ async fn temporal_query_format_temporal_values_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_format_takes_precedence_over_options_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let va = unique_id("urn:ngsi-ld:Vehicle:query_021_19_02_A");
     let vb = unique_id("urn:ngsi-ld:Vehicle:query_021_19_02_B");
@@ -1037,7 +1037,7 @@ async fn temporal_query_format_takes_precedence_over_options_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_invalid_format_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body, _) = query_temporal_entities(
@@ -1053,7 +1053,7 @@ async fn temporal_query_invalid_format_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_invalid_options_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body, _) = query_temporal_entities(
@@ -1069,7 +1069,7 @@ async fn temporal_query_invalid_options_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_query_partial_invalid_options_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body, _) = query_temporal_entities(

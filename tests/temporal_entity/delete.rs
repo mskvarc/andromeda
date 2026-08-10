@@ -16,7 +16,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_delete_entity_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_009_01_01");
 
@@ -49,7 +49,7 @@ async fn temporal_delete_entity_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_delete_empty_id_returns_405() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let resp = c.delete(format!("{BASE_URL}/temporal/entities/")).send().await.expect("request failed");
@@ -63,7 +63,7 @@ async fn temporal_delete_empty_id_returns_405() {
 #[tokio::test]
 #[serial]
 async fn temporal_delete_invalid_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = delete_temporal_entity(&c, "invalidId").await;
@@ -82,7 +82,7 @@ async fn temporal_delete_invalid_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_delete_unknown_id_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_009_03_01");
 
@@ -102,7 +102,7 @@ async fn temporal_delete_unknown_id_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_delete_and_recreate_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_009_04_01");
 

@@ -36,7 +36,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn attribute_delete_default_instance_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_01_01");
 
@@ -57,7 +57,7 @@ async fn attribute_delete_default_instance_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_with_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_01_02");
 
@@ -77,7 +77,7 @@ async fn attribute_delete_with_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_all_instances_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_01_03");
 
@@ -100,7 +100,7 @@ async fn attribute_delete_all_instances_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_empty_entity_id_returns_error() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _) = request_attrs_method(&c, Method::DELETE, "/entities//attrs/speed", None).await;
@@ -113,7 +113,7 @@ async fn attribute_delete_empty_entity_id_returns_error() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _) = request_attrs_method(&c, Method::DELETE, "/entities/not-a-valid-uri/attrs/speed", None).await;
@@ -123,7 +123,7 @@ async fn attribute_delete_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_missing_attribute_name_returns_405() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_02_03");
 
@@ -138,7 +138,7 @@ async fn attribute_delete_missing_attribute_name_returns_405() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_nonexistent_entity_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_01");
 
@@ -149,7 +149,7 @@ async fn attribute_delete_nonexistent_entity_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_nonexistent_attribute_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_02");
 
@@ -164,7 +164,7 @@ async fn attribute_delete_nonexistent_attribute_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_nonexistent_datasetid_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_013_03_03");
 
@@ -183,7 +183,7 @@ async fn attribute_delete_nonexistent_datasetid_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_scope_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:delete_013_04");
 
@@ -206,7 +206,7 @@ async fn attribute_delete_scope_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_observation_space_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:delete_013_05");
 
@@ -225,7 +225,7 @@ async fn attribute_delete_observation_space_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_operation_space_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:delete_013_06");
 
@@ -244,7 +244,7 @@ async fn attribute_delete_operation_space_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_delete_vocab_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:delete_013_07_01");
 

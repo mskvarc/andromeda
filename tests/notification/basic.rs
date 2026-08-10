@@ -1,11 +1,13 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
-use andromeda_test_common::config::{CORE_CONTEXT, callback_url};
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_mocks::server_config::callback_url;
 use reqwest::StatusCode;
 
+use crate::notification_adapter::NotificationAdapter as NotificationReceiver;
+
 use crate::helpers::{
-    NotificationReceiver,
     append_entity_attrs,
     building_minimal_entity,
     building_multi_instances_entity,
@@ -47,7 +49,7 @@ fn notification_contains_entity(notification: &serde_json::Value, entity_id: &st
 #[tokio::test]
 async fn notification_active_subscription_on_attribute_append_delivers_notification() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_01");
@@ -76,7 +78,7 @@ async fn notification_active_subscription_on_attribute_append_delivers_notificat
 #[tokio::test]
 async fn notification_time_interval_subscription_delivers_notification_without_entity_change() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_02");
@@ -103,7 +105,7 @@ async fn notification_time_interval_subscription_delivers_notification_without_e
 #[tokio::test]
 async fn notification_default_subscription_on_attribute_append_delivers_notification() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_03");
@@ -133,7 +135,7 @@ async fn notification_default_subscription_on_attribute_append_delivers_notifica
 #[tokio::test]
 async fn notification_watched_attributes_subscription_delivers_notification_for_matching_attribute() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_04");
@@ -162,7 +164,7 @@ async fn notification_watched_attributes_subscription_delivers_notification_for_
 #[tokio::test]
 async fn notification_query_filter_matching_entity_delivers_notification() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_05");
@@ -194,7 +196,7 @@ async fn notification_query_filter_matching_entity_delivers_notification() {
 #[tokio::test]
 async fn notification_entity_created_trigger_delivers_notification_on_create() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let subscription_id = unique_subscription_id("046_06");
@@ -224,7 +226,7 @@ async fn notification_entity_created_trigger_delivers_notification_on_create() {
 #[tokio::test]
 async fn notification_payload_contains_type_subscription_id_notified_at_and_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_07_01");
@@ -249,7 +251,7 @@ async fn notification_payload_contains_type_subscription_id_notified_at_and_data
 #[tokio::test]
 async fn notification_notification_attributes_filter_only_includes_configured_attributes() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_07_02");
@@ -272,7 +274,7 @@ async fn notification_notification_attributes_filter_only_includes_configured_at
 #[tokio::test]
 async fn notification_core_context_subscription_uses_expanded_attribute_terms() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_07_03");
@@ -300,7 +302,7 @@ async fn notification_core_context_subscription_uses_expanded_attribute_terms() 
 #[tokio::test]
 async fn notification_without_notification_attributes_includes_all_entity_attributes() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_08_01");
@@ -322,7 +324,7 @@ async fn notification_without_notification_attributes_includes_all_entity_attrib
 #[tokio::test]
 async fn notification_key_values_format_sends_scalar_property_values() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let subscription_id = unique_subscription_id("046_08_02");
@@ -348,7 +350,7 @@ async fn notification_key_values_format_sends_scalar_property_values() {
 #[tokio::test]
 async fn notification_receiver_info_adds_custom_headers_to_notification_request() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_09");
@@ -375,7 +377,7 @@ async fn notification_receiver_info_adds_custom_headers_to_notification_request(
 #[tokio::test]
 async fn notification_default_json_format_includes_link_header_and_omits_entity_context() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_10");
@@ -397,7 +399,7 @@ async fn notification_default_json_format_includes_link_header_and_omits_entity_
 #[tokio::test]
 async fn notification_after_successful_delivery_subscription_times_sent_is_incremented() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_11");
@@ -419,7 +421,7 @@ async fn notification_after_successful_delivery_subscription_times_sent_is_incre
 #[tokio::test]
 async fn notification_after_successful_delivery_subscription_status_is_ok_and_timestamps_are_set() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_12");
@@ -444,7 +446,7 @@ async fn notification_after_successful_delivery_subscription_status_is_ok_and_ti
 #[tokio::test]
 async fn notification_failed_delivery_sets_failed_status_and_last_failure_timestamp() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_13");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -452,7 +454,7 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
     let subscription_id = unique_subscription_id("046_13");
     // Same host every other callback uses, on a port nothing listens on, so the
     // delivery failure is a refused connection rather than an unresolvable name.
-    let unreachable_endpoint = callback_url(19999, "/notify");
+    let unreachable_endpoint = callback_url(19999, "/notify").expect("valid callback URL");
     let subscription = subscription_with_endpoint(&subscription_id, &unreachable_endpoint);
     let _ = create_subscription(&http_client, &subscription).await;
     let _ = append_entity_attrs(&http_client, &entity_id, &fragment_air_quality_level()).await;
@@ -476,7 +478,7 @@ async fn notification_failed_delivery_sets_failed_status_and_last_failure_timest
 #[tokio::test]
 async fn notification_jsonld_accept_on_endpoint_omits_link_header_and_includes_entity_context() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_14");
@@ -497,7 +499,7 @@ async fn notification_jsonld_accept_on_endpoint_omits_link_header_and_includes_e
 #[tokio::test]
 async fn notification_throttling_only_emits_one_notification_within_window() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_15");
@@ -520,7 +522,7 @@ async fn notification_throttling_only_emits_one_notification_within_window() {
 #[tokio::test]
 async fn notification_entity_created_trigger_with_matching_type_selector_delivers_notification() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let subscription_id = unique_subscription_id("046_16_01");
@@ -544,7 +546,7 @@ async fn notification_entity_created_trigger_with_matching_type_selector_deliver
 #[tokio::test]
 async fn notification_entity_created_trigger_with_non_matching_type_selector_delays_notification() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let subscription_id = unique_subscription_id("046_16_02");
@@ -567,7 +569,7 @@ async fn notification_entity_created_trigger_with_non_matching_type_selector_del
 #[tokio::test]
 async fn notification_sys_attrs_true_includes_created_and_modified_timestamps() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_17");
@@ -592,7 +594,7 @@ async fn notification_sys_attrs_true_includes_created_and_modified_timestamps() 
 #[tokio::test]
 async fn notification_sys_attrs_false_omits_created_and_modified_timestamps() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_18");
@@ -617,7 +619,7 @@ async fn notification_sys_attrs_false_omits_created_and_modified_timestamps() {
 #[tokio::test]
 async fn notification_dataset_id_filter_emits_notification_for_matching_dataset_instance() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_19");
@@ -644,7 +646,7 @@ async fn notification_dataset_id_filter_emits_notification_for_matching_dataset_
 #[tokio::test]
 async fn notification_subscription_jsonld_context_compacts_notification_payload() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_20");
@@ -673,7 +675,7 @@ async fn notification_subscription_jsonld_context_compacts_notification_payload(
 #[tokio::test]
 async fn notification_entity_deleted_trigger_emits_deleted_entity_payload() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_21_01");
@@ -702,7 +704,7 @@ async fn notification_entity_deleted_trigger_emits_deleted_entity_payload() {
 #[tokio::test]
 async fn notification_entity_deleted_with_sys_attrs_includes_created_and_deleted_timestamps() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_21_02");

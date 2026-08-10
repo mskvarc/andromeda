@@ -4,6 +4,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "../support/notification_adapter.rs"]
+pub mod notification_adapter;
+
 mod attribute_deleted;
 mod basic;
 mod helpers;

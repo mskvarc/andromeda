@@ -33,7 +33,7 @@ fn sorted_strings(val: &Value) -> Vec<String> {
 #[tokio::test]
 #[serial]
 async fn list_entity_types_empty_database_returns_empty_list() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = list_entity_types(&c, "", None).await;
@@ -51,7 +51,7 @@ async fn list_entity_types_empty_database_returns_empty_list() {
 #[tokio::test]
 #[serial]
 async fn list_entity_types_without_context_returns_expanded_uris() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let building_id = unique_id("urn:ngsi-ld:Building:types-no-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:types-no-ctx");
@@ -83,7 +83,7 @@ async fn list_entity_types_without_context_returns_expanded_uris() {
 #[tokio::test]
 #[serial]
 async fn list_entity_types_with_context_returns_compacted_names() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let building_id = unique_id("urn:ngsi-ld:Building:types-with-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:types-with-ctx");

@@ -185,7 +185,7 @@ async fn update_unknown_registration_returns_404() {
 #[tokio::test]
 #[serial]
 async fn update_set_expires_at_to_null_removes_expiration() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-null-exp");
     let reg = csr_with_expiration(&id);

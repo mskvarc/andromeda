@@ -50,7 +50,7 @@ async fn setup_entity_with_instance_id(prefix: &str) -> (reqwest::Client, String
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_01_01").await;
 
     let (status, before) = get_temporal_entity_with_query(&c, &id, "options=sysAttrs", Some(COMPOUND_CONTEXT)).await;
@@ -96,7 +96,7 @@ async fn temporal_attrs_modify_instance_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_01").await;
     let c = client();
 
@@ -113,7 +113,7 @@ async fn temporal_attrs_modify_instance_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_empty_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_02").await;
     let c = client();
 
@@ -125,7 +125,7 @@ async fn temporal_attrs_modify_instance_empty_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_invalid_instance_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_03").await;
 
     let fragment = modify_instance_fragment();
@@ -141,7 +141,7 @@ async fn temporal_attrs_modify_instance_invalid_instance_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_empty_instance_id_returns_405() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_04").await;
 
     let fragment = modify_instance_fragment();
@@ -152,7 +152,7 @@ async fn temporal_attrs_modify_instance_empty_instance_id_returns_405() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_invalid_attribute_name_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_05").await;
 
     let fragment = modify_instance_fragment();
@@ -168,7 +168,7 @@ async fn temporal_attrs_modify_instance_invalid_attribute_name_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_empty_attribute_name_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_02_06").await;
 
     let fragment = modify_instance_fragment();
@@ -183,7 +183,7 @@ async fn temporal_attrs_modify_instance_empty_attribute_name_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_entity_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:modify_016_03_01");
 
@@ -200,7 +200,7 @@ async fn temporal_attrs_modify_instance_entity_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_attribute_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_03_02").await;
 
     let fragment = modify_instance_fragment();
@@ -216,7 +216,7 @@ async fn temporal_attrs_modify_instance_attribute_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_modify_instance_instance_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_016_03_03").await;
 
     let fragment = modify_instance_fragment();

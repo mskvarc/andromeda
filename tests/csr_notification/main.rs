@@ -1,15 +1,11 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
-    db::TRUNCATE_ALL,
-};
-use axum::{Router, body::Bytes, http::StatusCode as AxumStatusCode, routing::post};
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, SecondsFormat, Utc};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, Notify};
+use std::time::Duration;
 use uuid::Uuid;
 
 fn client() -> Client {
@@ -24,10 +20,10 @@ fn unique_registration_id(scenario: &str) -> String {
     format!("urn:ngsi-ld:ContextSourceRegistration:csr-notif:{scenario}:{}", Uuid::new_v4())
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 async fn read_body(response: reqwest::Response) -> Value {
@@ -367,89 +363,38 @@ struct CapturedNotification {
 }
 
 struct NotificationReceiver {
+    server: NotificationServer,
     endpoint_url: String,
-    notifications: Arc<Mutex<Vec<CapturedNotification>>>,
-    notify: Arc<Notify>,
-    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl NotificationReceiver {
     async fn start() -> NotificationReceiver {
-        let notifications = Arc::new(Mutex::new(Vec::<CapturedNotification>::new()));
-        let notify = Arc::new(Notify::new());
-        let shared_notifications = Arc::clone(&notifications);
-        let shared_notify = Arc::clone(&notify);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        let app = Router::new().route(
-            "/notify",
-            post(move |body: Bytes| {
-                let shared_notifications = Arc::clone(&shared_notifications);
-                let shared_notify = Arc::clone(&shared_notify);
-                async move {
-                    let parsed_body = match serde_json::from_slice::<Value>(&body) {
-                        Ok(parsed) => parsed,
-                        Err(_) => Value::Null,
-                    };
-                    let mut guard = shared_notifications.lock().await;
-                    guard.push(CapturedNotification { body: parsed_body });
-                    shared_notify.notify_one();
-                    AxumStatusCode::OK
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.expect("failed to bind notification receiver");
-        let port = listener.local_addr().expect("failed to read notification receiver local address").port();
-
-        tokio::spawn(async move {
-            let server = axum::serve(listener, app).with_graceful_shutdown(async {
-                let _ = shutdown_rx.await;
-            });
-            let _ = server.await;
-        });
-
-        NotificationReceiver {
-            endpoint_url: callback_url(port, "/notify"),
-            notifications,
-            notify,
-            shutdown_tx: Some(shutdown_tx),
-        }
+        let configuration = MockServerConfig::from_environment().expect("valid notification server configuration");
+        let server = NotificationServer::start(configuration).await.expect("notification server starts");
+        let endpoint_url = server.endpoint_url().expect("notification endpoint resolves");
+        NotificationReceiver { server, endpoint_url }
     }
 
     async fn wait_for_notification(&self, timeout: Duration) -> CapturedNotification {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            {
-                let mut guard = self.notifications.lock().await;
-                if !guard.is_empty() {
-                    return guard.remove(0);
-                }
-            }
-            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
-            assert!(notified.is_ok(), "timed out waiting for notification after {timeout:?}");
+        let request = self.server.next_request(timeout).await.expect("notification arrives before timeout");
+        CapturedNotification {
+            body: request.json().expect("notification body is valid JSON"),
         }
     }
 
     async fn wait_for_no_notification(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
-        let guard = self.notifications.lock().await;
-        assert!(guard.is_empty(), "expected no notification, got {}", guard.len());
-    }
-}
-
-impl Drop for NotificationReceiver {
-    fn drop(&mut self) {
-        if let Some(shutdown_tx) = self.shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
-        }
+        let result = self.server.next_request(duration).await;
+        assert!(matches!(
+            result,
+            Err(andromeda_test_mocks::callback_server::CallbackServerError::RequestTimeout(_))
+        ));
     }
 }
 
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_time_interval_subscription_sends_periodic_notification() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -470,7 +415,7 @@ async fn csr_notification_time_interval_subscription_sends_periodic_notification
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_subscription_creation_and_registration_update_emit_trigger_reasons() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -500,7 +445,7 @@ async fn csr_notification_subscription_creation_and_registration_update_emit_tri
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_includes_only_matching_registration_information() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -535,7 +480,7 @@ async fn csr_notification_includes_only_matching_registration_information() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_has_required_csource_notification_structure() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -560,7 +505,7 @@ async fn csr_notification_has_required_csource_notification_structure() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_success_updates_metadata_status_ok() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -589,7 +534,7 @@ async fn csr_notification_success_updates_metadata_status_ok() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_failed_delivery_updates_metadata_status_failed() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let subscription_id = unique_subscription_id("047-06-subscription");
@@ -614,7 +559,7 @@ async fn csr_notification_failed_delivery_updates_metadata_status_failed() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_paused_subscription_does_not_emit_notifications() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -638,7 +583,7 @@ async fn csr_notification_paused_subscription_does_not_emit_notifications() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_expired_subscription_does_not_emit_notifications() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -662,7 +607,7 @@ async fn csr_notification_expired_subscription_does_not_emit_notifications() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_matching_registration_update_emits_updated() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -691,7 +636,7 @@ async fn csr_notification_matching_registration_update_emits_updated() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_non_matching_registration_update_emits_no_longer_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -719,7 +664,7 @@ async fn csr_notification_non_matching_registration_update_emits_no_longer_match
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_temporal_observed_at_matches_observation_interval() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -741,7 +686,7 @@ async fn csr_notification_temporal_observed_at_matches_observation_interval() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_temporal_created_at_matches_management_interval() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -763,7 +708,7 @@ async fn csr_notification_temporal_created_at_matches_management_interval() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_temporal_modified_at_matches_management_interval() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -785,7 +730,7 @@ async fn csr_notification_temporal_modified_at_matches_management_interval() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_watched_attributes_filter_matches_registration() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -807,7 +752,7 @@ async fn csr_notification_watched_attributes_filter_matches_registration() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_without_watched_attributes_matches_any_information() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -829,7 +774,7 @@ async fn csr_notification_without_watched_attributes_matches_any_information() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_geoq_with_geoproperty_matches_location() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -851,7 +796,7 @@ async fn csr_notification_geoq_with_geoproperty_matches_location() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_geoq_without_geoproperty_defaults_to_location() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -873,7 +818,7 @@ async fn csr_notification_geoq_without_geoproperty_defaults_to_location() {
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_subscription_update_to_vehicle_matches_vehicle_registration_only() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -907,7 +852,7 @@ async fn csr_notification_subscription_update_to_vehicle_matches_vehicle_registr
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_subscription_update_to_bus_matches_bus_registration_only() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -941,7 +886,7 @@ async fn csr_notification_subscription_update_to_bus_matches_bus_registration_on
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_subscription_update_to_vehicle_and_bus_matches_both_registrations() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -975,7 +920,7 @@ async fn csr_notification_subscription_update_to_vehicle_and_bus_matches_both_re
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_metadata_times_sent_increments_after_multiple_successes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -1009,7 +954,7 @@ async fn csr_notification_metadata_times_sent_increments_after_multiple_successe
 #[tokio::test]
 #[serial_test::serial]
 async fn csr_notification_expires_at_in_future_results_in_active_status_before_deadline() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let subscription_id = unique_subscription_id("extra-expiration-status");

@@ -30,7 +30,7 @@ fn sort_attribute_details(details: &mut [Value]) {
 #[tokio::test]
 #[serial]
 async fn retrieve_entity_type_info_unknown_type_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:type-info-404");
     let entity = building_simple_attributes(&id);
@@ -55,7 +55,7 @@ async fn retrieve_entity_type_info_unknown_type_returns_404() {
 #[tokio::test]
 #[serial]
 async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:Building:type-info-compact-a");
     let id2 = unique_id("urn:ngsi-ld:Building:type-info-compact-b");
@@ -94,7 +94,7 @@ async fn retrieve_entity_type_info_with_compacted_name_returns_type_info() {
 #[tokio::test]
 #[serial]
 async fn retrieve_entity_type_info_with_expanded_name_returns_type_info() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:Building:type-info-expanded-a");
     let id2 = unique_id("urn:ngsi-ld:Building:type-info-expanded-b");

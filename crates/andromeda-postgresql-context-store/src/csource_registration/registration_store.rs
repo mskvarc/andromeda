@@ -151,6 +151,7 @@ impl RegistrationStore for PostgresRegistrationStore {
 
     async fn create(&self, id: &Uri, params: &CreateCsrParams<'_>) -> Result<(), RegistrationError> {
         let information = params.information.as_ref().map(serde_json::to_value).transpose()?;
+        let context_source_info = params.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
         let operations = operation_names(params.operations.as_deref());
         let scopes = params.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         sqlx::query(
@@ -196,7 +197,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         .bind(scopes.as_deref())
         .bind(params.refresh_rate.as_ref().map(ToString::to_string))
         .bind(params.management.cloned())
-        .bind(params.context_source_info.cloned())
+        .bind(context_source_info)
         .bind(params.jsonld_context.as_ref().map(url::Url::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&params.additional_properties)
@@ -262,6 +263,7 @@ impl RegistrationStore for PostgresRegistrationStore {
 
     async fn update(&self, id: &Uri, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
         let information = serde_json::to_value(&values.information)?;
+        let context_source_info = values.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
         let operations = operation_names(values.operations.as_deref());
         let scopes = values.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         let result = sqlx::query(
@@ -310,7 +312,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         .bind(scopes.as_deref())
         .bind(values.refresh_rate.as_ref().map(ToString::to_string))
         .bind(&values.management)
-        .bind(&values.context_source_info)
+        .bind(context_source_info)
         .bind(values.jsonld_context.as_ref().map(url::Url::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&values.additional_properties)

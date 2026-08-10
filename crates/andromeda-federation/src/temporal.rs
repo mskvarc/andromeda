@@ -69,7 +69,7 @@ impl FederationService {
                 let url = build_temporal_query_url(&csr.access.endpoint, query_string);
 
                 let mode = csr.access.mode.unwrap_or_default();
-                match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                match self.forward_get(url, context_url, &csr.access, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(Value::Array(arr), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
                         entities: arr,
@@ -177,7 +177,7 @@ impl FederationService {
                 let url = build_temporal_retrieve_url(&csr.access.endpoint, entity_id, query_string);
 
                 let mode = csr.access.mode.unwrap_or_default();
-                match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
+                match self.forward_get(url, context_url, &csr.access, csr.tenant.as_ref(), incoming_via).await {
                     ForwardGetOutcome::Success(obj @ Value::Object(_), cs_warnings) => Some(ForwardedTemporalEntities {
                         mode,
                         entities: vec![obj],

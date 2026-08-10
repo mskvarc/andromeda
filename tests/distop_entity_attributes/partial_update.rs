@@ -6,22 +6,24 @@
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
-use crate::helpers::{
-    MockServer,
-    clean_database,
-    client,
-    create_entity,
-    create_registration,
-    delete_entity,
-    delete_registration,
-    fragment_speed_datasetid,
-    get_entity,
-    jsonld_link_value,
-    partial_update_attr,
-    unique_id,
-    vehicle_entity_different,
-    vehicle_registration_redirection_ops,
-    vehicle_registration_speed_redirection_ops,
+use crate::{
+    context_source_adapter::ContextSourceAdapter as MockServer,
+    helpers::{
+        clean_database,
+        client,
+        create_entity,
+        create_registration,
+        delete_entity,
+        delete_registration,
+        fragment_speed_datasetid,
+        get_entity,
+        jsonld_link_value,
+        partial_update_attr,
+        unique_id,
+        vehicle_entity_different,
+        vehicle_registration_redirection_ops,
+        vehicle_registration_speed_redirection_ops,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -32,9 +34,9 @@ use crate::helpers::{
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:partial-inc");
@@ -69,7 +71,7 @@ async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,9 +82,9 @@ async fn distop_entity_attrs_partial_update_inclusive_forwards_and_updates_local
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:partial-exc");
@@ -117,7 +119,7 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,9 +130,9 @@ async fn distop_entity_attrs_partial_update_exclusive_forwards_not_local() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-red");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:partial-red-1");
@@ -161,7 +163,7 @@ async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +174,7 @@ async fn distop_entity_attrs_partial_update_redirect_forwards_to_multiple() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_partial_update_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-notfound");
@@ -185,9 +187,9 @@ async fn distop_entity_attrs_partial_update_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:partial-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:partial-aux");
@@ -216,5 +218,5 @@ async fn distop_entity_attrs_partial_update_auxiliary_no_forwarding() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }

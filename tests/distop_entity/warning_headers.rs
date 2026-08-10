@@ -8,21 +8,23 @@ use reqwest::{Method, StatusCode};
 use serde_json::Value;
 use serial_test::serial;
 
-use crate::helpers::{
-    MockServer,
-    clean_database,
-    client,
-    create_entity_local,
-    create_registration,
-    delete_entity,
-    delete_registration,
-    get_entity,
-    jsonld_link_value,
-    query_entities,
-    unique_id,
-    vehicle_entity,
-    vehicle_registration,
-    warning_header_values,
+use crate::{
+    context_source_adapter::ContextSourceAdapter as MockServer,
+    helpers::{
+        clean_database,
+        client,
+        create_entity_local,
+        create_registration,
+        delete_entity,
+        delete_registration,
+        get_entity,
+        jsonld_link_value,
+        query_entities,
+        unique_id,
+        vehicle_entity,
+        vehicle_registration,
+        warning_header_values,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -33,9 +35,9 @@ use crate::helpers::{
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_context_source_500_returns_warning_299() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-500");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-500");
@@ -54,23 +56,23 @@ async fn distop_entity_query_context_source_500_returns_warning_299() {
     assert!(warnings.iter().any(|w| w.starts_with("299")), "expected warning code 299, got: {warnings:?}");
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query: context source unreachable generates warning code 199.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_context_source_unreachable_returns_warning_199() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-unreachable");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-unreachable");
 
     // Use the mock's URL but stop it so it's unreachable
     let endpoint = mock.url("");
-    mock.stop();
+    mock.shutdown().await;
 
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &endpoint, None);
     let (status, _) = create_registration(&c, &reg).await;
@@ -90,9 +92,9 @@ async fn distop_entity_query_context_source_unreachable_returns_warning_199() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_context_source_invalid_payload_returns_warning_111() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-invalid");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-invalid");
@@ -112,16 +114,16 @@ async fn distop_entity_query_context_source_invalid_payload_returns_warning_111(
     assert!(warnings.iter().any(|w| w.starts_with("111")), "expected warning code 111, got: {warnings:?}");
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query: context source returns 404 generates no warning (spec-compliant).
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_context_source_404_no_warning() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-404");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-404");
@@ -139,16 +141,16 @@ async fn distop_entity_query_context_source_404_no_warning() {
     assert!(warnings.is_empty(), "expected no NGSILD-Warning header for 404, got: {warnings:?}");
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query: successful forwarding generates no warning header.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_successful_forwarding_no_warning() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-success");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-success");
@@ -171,17 +173,17 @@ async fn distop_entity_query_successful_forwarding_no_warning() {
     );
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query: multiple context sources with mixed results generates multiple warnings.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_multiple_sources_mixed_results_multiple_warnings() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock1 = MockServer::start().await;
-    let mut mock2 = MockServer::start().await;
+    let mock1 = MockServer::start().await;
+    let mock2 = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-multi");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:warn-multi-1");
@@ -196,7 +198,7 @@ async fn distop_entity_query_multiple_sources_mixed_results_multiple_warnings() 
 
     // Second CSR: mock stopped (unreachable)
     let endpoint2 = mock2.url("");
-    mock2.stop();
+    mock2.shutdown().await;
 
     let reg2 = vehicle_registration(&reg_id2, Some(&entity_id), &endpoint2, None);
     let (status, _) = create_registration(&c, &reg2).await;
@@ -214,16 +216,16 @@ async fn distop_entity_query_multiple_sources_mixed_results_multiple_warnings() 
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock1.stop();
+    mock1.shutdown().await;
 }
 
 /// Query with local=true skips forwarding, generates no warnings even if CSR would fail.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_local_true_no_warnings() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-local");
@@ -248,7 +250,7 @@ async fn distop_entity_query_local_true_no_warnings() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,9 +261,9 @@ async fn distop_entity_query_local_true_no_warnings() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_context_source_403_returns_warning_299() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-retrieve-403");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-retrieve-403");
@@ -286,16 +288,16 @@ async fn distop_entity_retrieve_context_source_403_returns_warning_299() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve: context source returns 500 generates warning code 299.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_context_source_500_returns_warning_299() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-retrieve-500");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-retrieve-500");
@@ -320,16 +322,16 @@ async fn distop_entity_retrieve_context_source_500_returns_warning_299() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve: context source unreachable generates warning code 199.
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_context_source_unreachable_returns_warning_199() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-retrieve-unreachable");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-retrieve-unreachable");
@@ -341,7 +343,7 @@ async fn distop_entity_retrieve_context_source_unreachable_returns_warning_199()
 
     // Use the mock's URL but stop it so it's unreachable
     let endpoint = mock.url("");
-    mock.stop();
+    mock.shutdown().await;
 
     let reg = vehicle_registration(&reg_id, Some(&entity_id), &endpoint, None);
     let (status, _) = create_registration(&c, &reg).await;
@@ -362,9 +364,9 @@ async fn distop_entity_retrieve_context_source_unreachable_returns_warning_199()
 #[tokio::test]
 #[serial]
 async fn distop_entity_retrieve_successful_forwarding_no_warning() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:warn-retrieve-success");
     let reg_id = unique_id("urn:ngsi-ld:Registration:warn-retrieve-success");
@@ -387,5 +389,5 @@ async fn distop_entity_retrieve_successful_forwarding_no_warning() {
     );
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }

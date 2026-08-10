@@ -4,22 +4,25 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{client::NgsiLdClient, config::TEST_SUITE_CONTEXT, error, scope::TestScope};
+use andromeda_test_client::test_client::TestClient;
+use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail as error};
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-async fn create(client: &NgsiLdClient, entity: &Value) {
+async fn create(client: &TestClient, entity: &Value) {
     let response = client.post_entity(entity).send().await.expect("create entity failed");
     assert_eq!(response.status, StatusCode::CREATED);
 }
 
-async fn query(client: &NgsiLdClient, query_str: &str) -> (StatusCode, Value) {
+async fn query(client: &TestClient, query_str: &str) -> (StatusCode, Value) {
     let response = client
         .query_entities(query_str, "application/ld+json", Some(TEST_SUITE_CONTEXT))
         .await
         .expect("query_entities failed");
-    (response.status, response.body)
+    let body = response.json_value().expect("query response must be valid JSON");
+    (response.status, body)
 }
 
 fn ids_from_response(body: &Value) -> Vec<String> {
@@ -34,7 +37,7 @@ fn id_filter(ids: &[&str]) -> String {
     ids.iter().map(|id| urlencoding::encode(id).into_owned()).collect::<Vec<_>>().join(",")
 }
 
-async fn create_ordering_fixtures(scope: &TestScope, client: &NgsiLdClient) -> (String, String, String) {
+async fn create_ordering_fixtures(scope: &TestEnvironment, client: &TestClient) -> (String, String, String) {
     let id_a = scope.id("Building:order-A");
     let id_b = scope.id("Building:order-B");
     let id_c = scope.id("Building:order-C");
@@ -62,47 +65,47 @@ async fn create_ordering_fixtures(scope: &TestScope, client: &NgsiLdClient) -> (
 
 #[tokio::test]
 async fn entity_order_dist_asc_with_order_from_point_orders_nearest_first() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, client).await;
 
     let filter = id_filter(&[&id_a, &id_b, &id_c]);
     let (status, body) = query(
-        &client,
+        client,
         &format!("type=Building&id={filter}&orderBy=location;dist-asc&orderFrom=%5B13.3986%2C52.5547%5D"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ids_from_response(&body), vec![id_a, id_b, id_c]);
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_dist_desc_with_order_from_point_orders_farthest_first() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, client).await;
 
     let filter = id_filter(&[&id_a, &id_b, &id_c]);
     let (status, body) = query(
-        &client,
+        client,
         &format!("type=Building&id={filter}&orderBy=location;dist-desc&orderFrom=%5B13.3986%2C52.5547%5D"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ids_from_response(&body), vec![id_c, id_b, id_a]);
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_dist_asc_with_order_geometry_line_string_orders_by_distance_to_line() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, client).await;
 
     let filter = id_filter(&[&id_a, &id_b, &id_c]);
     let (status, body) = query(
-        &client,
+        client,
         &format!("type=Building&id={filter}&orderBy=location;dist-asc&orderFrom=%5B%5B2.3%2C48.8%5D%2C%5B2.4%2C48.9%5D%5D&orderGeometry=LineString"),
     )
     .await;
@@ -111,18 +114,18 @@ async fn entity_order_dist_asc_with_order_geometry_line_string_orders_by_distanc
     assert_eq!(ids[0], id_c, "C (Paris) must be nearest to the Paris-area LineString");
     assert_eq!(ids[1], id_b, "B (Berlin south) must be second");
     assert_eq!(ids[2], id_a, "A (Berlin north) must be farthest");
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_dist_asc_without_order_from_uses_geo_query_reference() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, _id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, _id_c) = create_ordering_fixtures(&scope, client).await;
 
     let filter = id_filter(&[&id_a, &id_b]);
     let (status, body) = query(
-        &client,
+        client,
         &format!("type=Building&id={filter}&georel=near;maxDistance%3D%3D50000&geometry=Point&coordinates=%5B13.3986%2C52.5547%5D&orderBy=location;dist-asc"),
     )
     .await;
@@ -131,18 +134,18 @@ async fn entity_order_dist_asc_without_order_from_uses_geo_query_reference() {
     assert_eq!(ids.len(), 2);
     assert_eq!(ids[0], id_a);
     assert_eq!(ids[1], id_b);
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_order_from_takes_precedence_over_geo_query_coordinates() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, _id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, _id_c) = create_ordering_fixtures(&scope, client).await;
 
     let filter = id_filter(&[&id_a, &id_b]);
     let (status, body) = query(
-        &client,
+        client,
         &format!(
             "type=Building&id={filter}&georel=near;maxDistance%3D%3D1000000&geometry=Point&coordinates=%5B2.3522%2C48.8566%5D&orderBy=location;dist-asc&orderFrom=%5B13.3986%2C52.5547%5D"
         ),
@@ -153,53 +156,53 @@ async fn entity_order_order_from_takes_precedence_over_geo_query_coordinates() {
     assert!(ids.len() >= 2);
     assert_eq!(ids[0], id_a);
     assert_eq!(ids[1], id_b);
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_mixed_property_and_distance_ordering_property_takes_precedence() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, client).await;
 
     let filter = id_filter(&[&id_a, &id_b, &id_c]);
     let (status, body) = query(
-        &client,
+        client,
         &format!("type=Building&id={filter}&orderBy=name;asc,location;dist-asc&orderFrom=%5B13.3986%2C52.5547%5D"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ids_from_response(&body), vec![id_a, id_b, id_c]);
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_dist_ordering_without_any_reference_returns_bad_request() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, &client).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (id_a, id_b, id_c) = create_ordering_fixtures(&scope, client).await;
     let filter = id_filter(&[&id_a, &id_b, &id_c]);
 
-    let (status, body) = query(&client, &format!("type=Building&id={filter}&orderBy=location;dist-asc")).await;
+    let (status, body) = query(client, &format!("type=Building&id={filter}&orderBy=location;dist-asc")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["type"].as_str().unwrap(), error::BAD_REQUEST_DATA.as_str());
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn entity_order_invalid_order_from_syntax_returns_bad_request() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
-    let (status, _) = query(&client, "type=Building&orderBy=location;dist-asc&orderFrom=notjson").await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
+    let (status, _) = query(client, "type=Building&orderBy=location;dist-asc&orderFrom=notjson").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
 async fn entity_order_geometry_collection_as_order_geometry_returns_bad_request() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
     let (status, body) = query(
-        &client,
+        client,
         "type=Building&orderBy=location;dist-asc&orderFrom=%5B8%2C40%5D&orderGeometry=GeometryCollection",
     )
     .await;
@@ -209,13 +212,13 @@ async fn entity_order_geometry_collection_as_order_geometry_returns_bad_request(
 
 #[tokio::test]
 async fn entity_order_entities_without_location_excluded_from_dist_ordered_results() {
-    let scope = TestScope::new("entity_order");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("entity_order").await.expect("isolated test environment");
+    let client = scope.client();
 
     let id_with = scope.id("Building:ord-with-loc");
     let id_without = scope.id("Building:ord-no-loc");
     create(
-        &client,
+        client,
         &json!({
             "id": id_with,
             "type": "Building",
@@ -225,7 +228,7 @@ async fn entity_order_entities_without_location_excluded_from_dist_ordered_resul
     )
     .await;
     create(
-        &client,
+        client,
         &json!({
             "id": id_without,
             "type": "Building",
@@ -237,12 +240,12 @@ async fn entity_order_entities_without_location_excluded_from_dist_ordered_resul
 
     let filter = id_filter(&[&id_with, &id_without]);
     let (status, body) = query(
-        &client,
+        client,
         &format!("type=Building&id={filter}&orderBy=location;dist-asc&orderFrom=%5B13.0%2C52.0%5D"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     let ids = ids_from_response(&body);
     assert!(ids.contains(&id_with), "entity with location must appear in results");
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }

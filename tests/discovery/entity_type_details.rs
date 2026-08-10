@@ -47,7 +47,7 @@ fn sort_entity_types(val: &Value) -> Vec<Value> {
 #[tokio::test]
 #[serial]
 async fn list_entity_type_details_without_context_returns_expanded_uris() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let building_id = unique_id("urn:ngsi-ld:Building:type-details-no-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:type-details-no-ctx");
@@ -78,7 +78,7 @@ async fn list_entity_type_details_without_context_returns_expanded_uris() {
 #[tokio::test]
 #[serial]
 async fn list_entity_type_details_with_context_returns_compacted_names() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let building_id = unique_id("urn:ngsi-ld:Building:type-details-with-ctx");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:type-details-with-ctx");

@@ -2,27 +2,34 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{client::NgsiLdClient, scope::TestScope};
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 
 /// Retrieve source identity — returns 200 with ContextSourceIdentity body (5.8.1).
 #[tokio::test]
 async fn info_source_identity_default_returns_200() {
-    let scope = TestScope::new("info");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("info").await.expect("isolated test environment");
+    let client = scope.client();
     let response = client.source_identity(None).await.expect("source_identity request failed");
     assert_eq!(response.status, StatusCode::OK);
-    assert!(response.body["id"].as_str().is_some(), "response body should contain an id field");
-    assert_eq!(response.body["type"], "ContextSourceIdentity", "type field should be ContextSourceIdentity");
+    assert!(
+        response.json_value().expect("response body must be valid JSON")["id"].as_str().is_some(),
+        "response body should contain an id field"
+    );
+    assert_eq!(
+        response.json_value().expect("response body must be valid JSON")["type"],
+        "ContextSourceIdentity",
+        "type field should be ContextSourceIdentity"
+    );
 }
 
 /// `application/json` Accept — Content-Type is application/json, no `@context`
 /// in body, `Link` header present (5.8.1, 5.5.7).
 #[tokio::test]
 async fn info_source_identity_json_accept_returns_no_context_in_body() {
-    let scope = TestScope::new("info");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("info").await.expect("isolated test environment");
+    let client = scope.client();
     let response = client.source_identity(Some("application/json")).await.expect("source_identity request failed");
     assert_eq!(response.status, StatusCode::OK);
     let content_type = response.headers.get("content-type").expect("response should have Content-Type header");
@@ -32,7 +39,7 @@ async fn info_source_identity_json_accept_returns_no_context_in_body() {
         content_type.to_str().unwrap()
     );
     assert!(
-        response.body.get("@context").is_none(),
+        response.json_value().expect("response body must be valid JSON").get("@context").is_none(),
         "application/json response should not embed @context in body"
     );
     assert!(
@@ -45,8 +52,8 @@ async fn info_source_identity_json_accept_returns_no_context_in_body() {
 /// `@context` embedded in body (5.8.1, 5.5.7).
 #[tokio::test]
 async fn info_source_identity_ld_json_accept_returns_context_in_body() {
-    let scope = TestScope::new("info");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("info").await.expect("isolated test environment");
+    let client = scope.client();
     let response = client
         .source_identity(Some("application/ld+json"))
         .await
@@ -59,7 +66,7 @@ async fn info_source_identity_ld_json_accept_returns_context_in_body() {
         content_type.to_str().unwrap()
     );
     assert!(
-        response.body.get("@context").is_some(),
+        response.json_value().expect("response body must be valid JSON").get("@context").is_some(),
         "application/ld+json response should embed @context in body"
     );
 }

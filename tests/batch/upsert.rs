@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::config::COMPOUND_CONTEXT;
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -9,7 +9,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn batch_upsert_new_entities_with_properties_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_01_01a");
@@ -29,7 +29,7 @@ async fn batch_upsert_new_entities_with_properties_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_new_entities_with_relationships_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_01_02a");
@@ -46,7 +46,7 @@ async fn batch_upsert_new_entities_with_relationships_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_new_entities_with_rel_of_property_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_01_03a");
@@ -63,7 +63,7 @@ async fn batch_upsert_new_entities_with_rel_of_property_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_mixed_new_and_existing_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:004_02_01_exist");
@@ -90,7 +90,7 @@ async fn batch_upsert_mixed_new_and_existing_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_mixed_new_and_existing_retrieval_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:004_02_02_exist");
@@ -119,7 +119,7 @@ async fn batch_upsert_mixed_new_and_existing_retrieval_returns_200() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_mixed_with_relationships_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:004_02_03_exist");
@@ -143,7 +143,7 @@ async fn batch_upsert_mixed_with_relationships_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_existing_replace_properties_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_03_01a");
@@ -170,7 +170,7 @@ async fn batch_upsert_existing_replace_properties_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_existing_replace_relationships_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:004_03_02");
@@ -191,7 +191,7 @@ async fn batch_upsert_existing_replace_relationships_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_existing_replace_rel_of_property_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:004_03_03");
@@ -212,7 +212,7 @@ async fn batch_upsert_existing_replace_rel_of_property_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_existing_replace_scope_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:004_03_04");
@@ -233,7 +233,7 @@ async fn batch_upsert_existing_replace_scope_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_existing_replace_types_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:004_03_05");
@@ -250,7 +250,7 @@ async fn batch_upsert_existing_replace_types_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_with_update_option_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:004_04_01_exist");
@@ -274,7 +274,7 @@ async fn batch_upsert_with_update_option_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_with_update_option_retrieval_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:004_04_02_exist");
@@ -295,7 +295,7 @@ async fn batch_upsert_with_update_option_retrieval_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_with_update_option_preserves_scope_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:004_04_03");
@@ -317,7 +317,7 @@ async fn batch_upsert_with_update_option_preserves_scope_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_with_invalid_entity_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_05_01a");
@@ -366,7 +366,7 @@ async fn batch_upsert_empty_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_duplicate_ids_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:004_07_01a");
@@ -387,7 +387,7 @@ async fn batch_upsert_duplicate_ids_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_upsert_with_new_types_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:004_08_01");

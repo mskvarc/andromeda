@@ -1,25 +1,21 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
-    db::TRUNCATE_ALL,
-};
-use axum::{Router, body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
+use andromeda_test_mocks::mqtt_receiver::{MqttCredentials, MqttHost, MqttReceiver as RawMqttReceiver, MqttTopic};
 use reqwest::{Client, StatusCode, header::HeaderMap};
-use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use rumqttc::QoS;
 use serde_json::{Value, json};
-use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, Notify};
+use std::time::Duration;
 use uuid::Uuid;
 
 pub fn client() -> Client {
     Client::new()
 }
 
-pub async fn reset_broker_state() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("connect test database");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
-    pool.close().await;
+pub async fn reset_broker_state() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 pub fn unique_entity_id(prefix: &str) -> String {
@@ -510,128 +506,13 @@ async fn read_json_or_null(response: reqwest::Response) -> Value {
     }
 }
 
-pub struct CapturedNotification {
-    pub headers: AxumHeaderMap,
-    pub body: Value,
-}
-
-pub struct NotificationReceiver {
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    pub port: u16,
-    endpoint_path: String,
-    notifications: Arc<Mutex<Vec<CapturedNotification>>>,
-    notify: Arc<Notify>,
-}
-
-impl NotificationReceiver {
-    pub async fn start() -> Self {
-        let notifications = Arc::new(Mutex::new(Vec::<CapturedNotification>::new()));
-        let notify = Arc::new(Notify::new());
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let notification_store = notifications.clone();
-        let signal = notify.clone();
-
-        let endpoint_path = format!("/notify-{}", Uuid::new_v4());
-        let app = Router::new().route(
-            &endpoint_path,
-            post(move |headers: AxumHeaderMap, body: Bytes| {
-                let notification_store = notification_store.clone();
-                let signal = signal.clone();
-                async move {
-                    let payload = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-                    notification_store.lock().await.push(CapturedNotification { headers, body: payload });
-                    signal.notify_one();
-                    axum::http::StatusCode::OK.into_response()
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.expect("bind notification receiver");
-        let port = listener.local_addr().expect("notification receiver local address").port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .expect("notification receiver task failure");
-        });
-
-        Self {
-            shutdown: Some(shutdown_tx),
-            port,
-            endpoint_path,
-            notifications,
-            notify,
-        }
-    }
-
-    pub fn endpoint_url(&self) -> String {
-        callback_url(self.port, &self.endpoint_path)
-    }
-
-    pub async fn clear_notifications(&self) {
-        self.notifications.lock().await.clear();
-    }
-
-    pub async fn wait_for_subscription_notification(&self, subscription_id: &str, timeout: Duration) -> CapturedNotification {
-        let deadline = tokio::time::Instant::now() + timeout;
-
-        loop {
-            {
-                let mut notifications = self.notifications.lock().await;
-                if let Some(index) = notifications
-                    .iter()
-                    .position(|notification| notification.body["subscriptionId"].as_str() == Some(subscription_id))
-                {
-                    return notifications.remove(index);
-                }
-            }
-
-            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
-            assert!(notified.is_ok(), "timed out waiting for subscription notification after {timeout:?}");
-        }
-    }
-
-    pub async fn wait_for_no_subscription_notification(&self, subscription_id: &str, duration: Duration) {
-        tokio::time::sleep(duration).await;
-        let notifications = self.notifications.lock().await;
-        let matching_count = notifications
-            .iter()
-            .filter(|notification| notification.body["subscriptionId"].as_str() == Some(subscription_id))
-            .count();
-        pretty_assertions::assert_eq!(
-            matching_count,
-            0,
-            "expected no notifications for subscription {subscription_id}, received {matching_count}"
-        );
-    }
-
-    pub fn stop(&mut self) {
-        if let Some(shutdown_tx) = self.shutdown.take() {
-            let _ = shutdown_tx.send(());
-        }
-    }
-}
-
-impl Drop for NotificationReceiver {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
-
 pub struct MqttMessage {
     pub topic: String,
     pub payload: Value,
 }
 
 pub struct MqttReceiver {
-    client: AsyncClient,
-    messages: Arc<Mutex<Vec<MqttMessage>>>,
-    notify: Arc<Notify>,
-    _event_loop: tokio::task::JoinHandle<()>,
+    receiver: RawMqttReceiver,
 }
 
 impl MqttReceiver {
@@ -640,64 +521,25 @@ impl MqttReceiver {
     }
 
     pub async fn connect_with_credentials(host: &str, port: u16, username: Option<&str>, password: Option<&str>) -> Self {
-        let client_id = format!("notification-test-receiver-{}", Uuid::new_v4());
-        let mut options = MqttOptions::new(client_id, host, port);
-        options.set_keep_alive(Duration::from_secs(30));
-
-        if let Some(username) = username {
-            options.set_credentials(username, password.unwrap_or(""));
-        }
-
-        let (client, mut event_loop) = AsyncClient::new(options, 10);
-        let messages = Arc::new(Mutex::new(Vec::<MqttMessage>::new()));
-        let notify = Arc::new(Notify::new());
-
-        let message_store = messages.clone();
-        let signal = notify.clone();
-
-        let event_loop_handle = tokio::spawn(async move {
-            loop {
-                match event_loop.poll().await {
-                    Ok(Event::Incoming(Packet::Publish(publish))) => {
-                        let payload = serde_json::from_slice::<Value>(&publish.payload).unwrap_or(Value::Null);
-                        message_store.lock().await.push(MqttMessage { topic: publish.topic, payload });
-                        signal.notify_one();
-                    }
-                    Ok(_) => {}
-                    Err(_) => break,
-                }
-            }
-        });
-
+        let credentials = username.map(|username| MqttCredentials::new(username, password.unwrap_or("")));
         Self {
-            client,
-            messages,
-            notify,
-            _event_loop: event_loop_handle,
+            receiver: RawMqttReceiver::connect(MqttHost::new(host), port, credentials),
         }
     }
 
     pub async fn subscribe(&self, topic: &str, qos: QoS) {
-        self.client.subscribe(topic, qos).await.expect("mqtt subscribe failed");
+        self.receiver.subscribe(&MqttTopic::new(topic), qos).await.expect("MQTT subscription succeeds");
     }
 
     pub async fn wait_for_message(&self, timeout: Duration) -> MqttMessage {
-        let deadline = tokio::time::Instant::now() + timeout;
-
-        loop {
-            {
-                let mut messages = self.messages.lock().await;
-                if !messages.is_empty() {
-                    return messages.remove(0);
-                }
-            }
-
-            let notified = tokio::time::timeout_at(deadline, self.notify.notified()).await;
-            assert!(notified.is_ok(), "timed out waiting for mqtt message after {timeout:?}");
+        let message = self.receiver.next_message(timeout).await.expect("MQTT notification arrives before timeout");
+        MqttMessage {
+            topic: message.topic.as_str().to_owned(),
+            payload: message.json().expect("MQTT notification body is valid JSON"),
         }
     }
 
     pub async fn disconnect(self) {
-        let _ = self.client.disconnect().await;
+        self.receiver.shutdown().await.expect("MQTT receiver shuts down");
     }
 }

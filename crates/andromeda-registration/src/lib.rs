@@ -7,6 +7,7 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use std::sync::Arc;
 
+mod context_source_properties;
 mod create;
 mod delete;
 /// Registration policy failures.

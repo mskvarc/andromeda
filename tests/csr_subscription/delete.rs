@@ -17,7 +17,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn csr_subscription_delete_existing_returns_204_and_resource_not_found_afterwards() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("delete-existing");
     let payload = csource_subscription_payload(&subscription_id);
@@ -35,7 +35,7 @@ async fn csr_subscription_delete_existing_returns_204_and_resource_not_found_aft
 #[tokio::test]
 #[serial]
 async fn csr_subscription_delete_invalid_uri_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = delete_csource_subscription(&http_client, "invalidUri").await;
@@ -47,7 +47,7 @@ async fn csr_subscription_delete_invalid_uri_returns_400_bad_request_data() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_delete_unknown_id_returns_404_resource_not_found() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = delete_csource_subscription(&http_client, "urn:ngsi-ld:Subscription:unknownSubscription").await;

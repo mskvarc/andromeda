@@ -24,7 +24,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn retrieve_attribute_info_unknown_attribute_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attr-info-404");
     let entity = building_simple_attributes(&id);
@@ -49,7 +49,7 @@ async fn retrieve_attribute_info_unknown_attribute_returns_404() {
 #[tokio::test]
 #[serial]
 async fn retrieve_attribute_info_with_compacted_name_returns_attribute_info() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attr-info-compact");
 
@@ -78,7 +78,7 @@ async fn retrieve_attribute_info_with_compacted_name_returns_attribute_info() {
 #[tokio::test]
 #[serial]
 async fn retrieve_attribute_info_with_expanded_name_returns_attribute_info() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attr-info-expanded");
 
@@ -109,7 +109,7 @@ async fn retrieve_attribute_info_with_expanded_name_returns_attribute_info() {
 #[tokio::test]
 #[serial]
 async fn retrieve_attribute_info_count_reflects_all_entity_instances() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:Building:attr-count-a");
     let id2 = unique_id("urn:ngsi-ld:Building:attr-count-b");

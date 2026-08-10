@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/*", "lib/andromeda-test-common"]
+members = [".", "crates/*"]
 resolver = "3"
 
 [workspace.package]
@@ -60,7 +60,10 @@ andromeda-subscription = { path = "crates/andromeda-subscription" }
 andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
 andromeda-temporal = { path = "crates/andromeda-temporal" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
-andromeda-test-common = { path = "lib/andromeda-test-common" }
+andromeda-test-client = { path = "crates/andromeda-test-client" }
+andromeda-test-fixtures = { path = "crates/andromeda-test-fixtures" }
+andromeda-test-harness = { path = "crates/andromeda-test-harness" }
+andromeda-test-mocks = { path = "crates/andromeda-test-mocks" }
 
 [workspace.lints.clippy]
 branches_sharing_code = "warn"
@@ -99,7 +102,10 @@ tokio = { version = "1.52.1", features = ["full"] }
 shadow-rs = "2.0.0"
 
 [dev-dependencies]
-andromeda-test-common.workspace = true
+andromeda-test-client.workspace = true
+andromeda-test-fixtures.workspace = true
+andromeda-test-harness.workspace = true
+andromeda-test-mocks.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 futures = "0.3.32"

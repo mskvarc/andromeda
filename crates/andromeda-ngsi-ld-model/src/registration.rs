@@ -1,6 +1,6 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
-use crate::subscription::EntitySelector;
+use crate::{key_value_pair::KeyValuePair, subscription::EntitySelector};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
@@ -231,7 +231,7 @@ pub struct ContextSourceAccess {
     /// Context source info.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]
-    pub context_source_info: Option<Value>,
+    pub context_source_info: Option<Vec<KeyValuePair>>,
     /// JSON-LD context for term expansion.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default)]

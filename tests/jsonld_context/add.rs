@@ -26,7 +26,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn add_valid_context_dictionary_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({
@@ -53,7 +53,7 @@ async fn add_valid_context_dictionary_returns_201() {
 #[tokio::test]
 #[serial]
 async fn add_valid_context_uri_list_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({
@@ -97,7 +97,7 @@ async fn add_invalid_context_empty_object_returns_400() {
 #[tokio::test]
 #[serial]
 async fn add_implicitly_created_context_via_subscription() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let sub = json!({
@@ -128,7 +128,7 @@ async fn add_implicitly_created_context_via_subscription() {
 #[tokio::test]
 #[serial]
 async fn add_hosted_context_with_cached_uri_refs() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;
@@ -164,19 +164,19 @@ async fn add_hosted_context_with_cached_uri_refs() {
     let (status, cached) = list_contexts(&c, "kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     assert!(
-        cached.iter().any(|v| v.as_str().is_some_and(|s| s.contains(&format!(":{}", server.port)))),
+        cached.iter().any(|value| value.as_str() == Some(ctx_url.as_str())),
         "referenced URI should be cached"
     );
 
     delete_entity(&c, &entity_id).await;
-    let _ = server;
+    server.shutdown().await;
 }
 
 /// Additional: Add @context with a single string URI -> 201.
 #[tokio::test]
 #[serial]
 async fn add_context_single_string_uri_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({

@@ -39,7 +39,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn entity_merge_empty_fragment_unchanged() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_01_01");
 
@@ -61,7 +61,7 @@ async fn entity_merge_empty_fragment_unchanged() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_simple_properties_updated() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_01_02");
 
@@ -83,7 +83,7 @@ async fn entity_merge_simple_properties_updated() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_new_relationship_added() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_01_03");
 
@@ -106,7 +106,7 @@ async fn entity_merge_new_relationship_added() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_partial_properties_preserved() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_01_04");
 
@@ -136,7 +136,7 @@ async fn entity_merge_partial_properties_preserved() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_invalid_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -155,7 +155,7 @@ async fn entity_merge_invalid_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_missing_id_returns_error() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -177,7 +177,7 @@ async fn entity_merge_missing_id_returns_error() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_02_03");
 
@@ -230,7 +230,7 @@ fn null_languageproperty() -> serde_json::Value {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_property_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_03_01");
 
@@ -254,7 +254,7 @@ async fn entity_merge_delete_property_via_null() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_relationship_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_03_02");
 
@@ -275,7 +275,7 @@ async fn entity_merge_delete_relationship_via_null() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_geoproperty_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_03_03");
 
@@ -296,7 +296,7 @@ async fn entity_merge_delete_geoproperty_via_null() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_languageproperty_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_03_04");
 
@@ -365,7 +365,7 @@ fn null_languageproperty_instance() -> serde_json::Value {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_property_instance_by_datasetid() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_04_01");
 
@@ -393,7 +393,7 @@ async fn entity_merge_delete_property_instance_by_datasetid() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_relationship_instance_by_datasetid() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_04_02");
 
@@ -420,7 +420,7 @@ async fn entity_merge_delete_relationship_instance_by_datasetid() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_geoproperty_instance_by_datasetid() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_04_03");
 
@@ -447,7 +447,7 @@ async fn entity_merge_delete_geoproperty_instance_by_datasetid() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_languageproperty_instance_by_datasetid() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_04_04");
 
@@ -479,7 +479,7 @@ async fn entity_merge_delete_languageproperty_instance_by_datasetid() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_all_property_instances_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_05_01");
 
@@ -500,7 +500,7 @@ async fn entity_merge_delete_all_property_instances_via_null() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_all_relationship_instances_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_05_02");
 
@@ -520,7 +520,7 @@ async fn entity_merge_delete_all_relationship_instances_via_null() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_all_geoproperty_instances_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_05_03");
 
@@ -540,7 +540,7 @@ async fn entity_merge_delete_all_geoproperty_instances_via_null() {
 #[tokio::test]
 #[serial]
 async fn entity_merge_delete_all_languageproperty_instances_via_null() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:merge_056_05_04");
 

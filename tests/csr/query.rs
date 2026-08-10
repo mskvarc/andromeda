@@ -47,7 +47,7 @@ async fn query_with_context(client: &reqwest::Client, qs: &str) -> (StatusCode, 
 #[tokio::test]
 #[serial]
 async fn query_by_entity_type_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-type-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-type-b");
@@ -74,7 +74,7 @@ async fn query_by_entity_type_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_by_attribute_name_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-attr-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-attr-b");
@@ -105,7 +105,7 @@ async fn query_by_attribute_name_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_without_type_or_attrs_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, body) = query_with_context(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -120,7 +120,7 @@ async fn query_without_type_or_attrs_returns_400() {
 #[tokio::test]
 #[serial]
 async fn query_invalid_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, body) = query_with_context(&c, "id=invalidUri").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -131,7 +131,7 @@ async fn query_invalid_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn query_invalid_q_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, body) = query_with_context(&c, "q=(invalidQuery").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -142,7 +142,7 @@ async fn query_invalid_q_returns_400() {
 #[tokio::test]
 #[serial]
 async fn query_invalid_geoquery_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, body) = query_with_context(&c, "georel=within").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -153,7 +153,7 @@ async fn query_invalid_geoquery_returns_400() {
 #[tokio::test]
 #[serial]
 async fn query_invalid_temporal_query_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, body) = query_with_context(&c, "timerel=before").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -168,7 +168,7 @@ async fn query_invalid_temporal_query_returns_400() {
 #[tokio::test]
 #[serial]
 async fn query_fully_qualified_type_without_context_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-fq");
     let reg = csr_detailed_information(&id);
@@ -195,7 +195,7 @@ async fn query_fully_qualified_type_without_context_returns_200() {
 #[tokio::test]
 #[serial]
 async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-entity-info");
     let reg = csr_basic_jsonld(&id);
@@ -218,7 +218,7 @@ async fn query_entity_info_with_type_and_id_pattern_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_registration_without_entity_info_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-no-entity-info");
     let reg = csr_only_properties(&id);
@@ -245,7 +245,7 @@ async fn query_registration_without_entity_info_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_by_type_and_attrs_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-attrs");
     let reg = csr_detailed_information(&id);
@@ -267,7 +267,7 @@ async fn query_by_type_and_attrs_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_by_type_without_attrs_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-type-only");
     let reg = csr_detailed_information(&id);
@@ -293,7 +293,7 @@ async fn query_by_type_without_attrs_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_geoquery_near_point_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-geo-near");
     let reg = csr_with_location(&id);
@@ -320,7 +320,7 @@ async fn query_geoquery_near_point_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_geoquery_within_polygon_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-geo-polygon");
     let reg = csr_with_location(&id);
@@ -350,7 +350,7 @@ async fn query_geoquery_within_polygon_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_without_temporal_query_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-no-temporal");
     let reg = csr_basic_jsonld(&id);
@@ -376,7 +376,7 @@ async fn query_without_temporal_query_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_observation_interval_with_observed_at_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-obs-at");
     let reg = csr_with_observation_interval(&id);
@@ -402,7 +402,7 @@ async fn query_observation_interval_with_observed_at_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_observation_interval_without_timeproperty_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-obs-default");
     let reg = csr_with_observation_interval(&id);
@@ -425,7 +425,7 @@ async fn query_observation_interval_without_timeproperty_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_management_interval_with_created_at_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-mgmt-created");
     let reg = csr_with_management_interval(&id);
@@ -451,7 +451,7 @@ async fn query_management_interval_with_created_at_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_management_interval_with_modified_at_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-mgmt-modified");
     let reg = csr_with_management_interval(&id);
@@ -481,7 +481,7 @@ async fn query_management_interval_with_modified_at_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_by_entity_ids_returns_matching_subset() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-ids-b");
@@ -525,7 +525,7 @@ async fn query_by_entity_ids_returns_matching_subset() {
 #[tokio::test]
 #[serial]
 async fn query_by_q_condition_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-q-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-q-b");
@@ -560,7 +560,7 @@ async fn query_by_q_condition_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn query_pagination_limit_1_offset_1_returns_one_result() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-b");
@@ -587,7 +587,7 @@ async fn query_pagination_limit_1_offset_1_returns_one_result() {
 #[tokio::test]
 #[serial]
 async fn query_pagination_limit_1_offset_0_returns_one_result() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-first-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-first-b");
@@ -614,7 +614,7 @@ async fn query_pagination_limit_1_offset_0_returns_one_result() {
 #[tokio::test]
 #[serial]
 async fn query_pagination_returns_all_matching_within_limit() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-all-a");
     let id2 = unique_id("urn:ngsi-ld:ContextSourceRegistration:query-page-all-b");

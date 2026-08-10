@@ -71,7 +71,7 @@ impl FederationService {
             }
             let url = build_discovery_url(&csr.access.endpoint, path, query_string);
 
-            match self.forward_get(url, context_url, csr.tenant.as_ref(), incoming_via).await {
+            match self.forward_get(url, context_url, &csr.access, csr.tenant.as_ref(), incoming_via).await {
                 ForwardGetOutcome::Success(body, cs_warnings) => {
                     results.push(ForwardedDiscoveryResult {
                         body: Some(body),

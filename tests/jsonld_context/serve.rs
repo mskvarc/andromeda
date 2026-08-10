@@ -29,7 +29,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn serve_context_no_details_returns_context_body() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
@@ -46,7 +46,7 @@ async fn serve_context_no_details_returns_context_body() {
 #[tokio::test]
 #[serial]
 async fn serve_context_details_false_returns_context_body() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
@@ -61,7 +61,7 @@ async fn serve_context_details_false_returns_context_body() {
 #[tokio::test]
 #[serial]
 async fn serve_context_details_true_returns_metadata() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
@@ -85,7 +85,7 @@ async fn serve_unknown_context_returns_404() {
 #[tokio::test]
 #[serial]
 async fn serve_hosted_number_of_hits_increases() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
@@ -118,7 +118,7 @@ async fn serve_hosted_number_of_hits_increases() {
 #[tokio::test]
 #[serial]
 async fn serve_implicitly_created_details_true() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let sub = json!({
@@ -153,7 +153,7 @@ async fn serve_implicitly_created_details_true() {
 #[tokio::test]
 #[serial]
 async fn serve_implicitly_created_number_of_hits_increases() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let sub = json!({
@@ -202,14 +202,14 @@ async fn serve_implicitly_created_number_of_hits_increases() {
 #[tokio::test]
 #[serial]
 async fn serve_cached_context_after_server_down() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let (mut server, ctx_url) = setup_cached_context(&c).await;
+    let (server, ctx_url) = setup_cached_context(&c).await;
 
     let cached_id = find_cached_context_id(&c, &ctx_url).await;
 
     // Stop the context server
-    server.stop();
+    server.shutdown().await;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Attempt delete with reload (should fail)
@@ -228,7 +228,7 @@ async fn serve_cached_context_after_server_down() {
 #[tokio::test]
 #[serial]
 async fn serve_cached_number_of_hits_increases() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;

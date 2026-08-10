@@ -2,6 +2,7 @@
 
 use crate::{
     RegistrationService,
+    context_source_properties::expand_context_source_properties,
     error::RegistrationError,
     payload::extract_update_fragment,
     resolved_update::apply_fragment,
@@ -23,6 +24,7 @@ impl RegistrationService {
             return Err(RegistrationError::csr_validation("endpoint must not be null"));
         }
 
+        let expanded_properties = expand_context_source_properties(&self.engine, &payload, context).await?;
         let mut payload = payload;
         if let Some(information) = payload.get_mut("information") {
             self.expand_information(information, context).await?;
@@ -31,7 +33,8 @@ impl RegistrationService {
         let existing = self.repo.get(id).await?.ok_or_else(|| RegistrationError::not_found(id))?;
         let pre_update_snapshot =
             serde_json::to_value(&existing).map_err(|error| RegistrationError::internal(format!("Failed to serialize the pre-update CSR: {error}")))?;
-        let fragment = extract_update_fragment(&payload)?;
+        let mut fragment = extract_update_fragment(&payload)?;
+        fragment.additional_properties = expanded_properties;
         let resolved = apply_fragment(existing, &fragment)?;
         self.repo.update(id, &resolved).await?.require_applied(id)?;
 

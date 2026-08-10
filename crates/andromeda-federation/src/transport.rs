@@ -3,8 +3,11 @@
 use crate::{FederationService, error::FederationError, outcome::ForwardGetOutcome};
 use andromeda_http_headers::{link::header::Link, media_type::APPLICATION_JSON, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceAccess};
 use headers::Header;
 use iri_rs::IriRefBuf;
+use reqwest::header::{HeaderName, HeaderValue};
+use std::str::FromStr;
 use tracing::{debug, warn};
 use url::Url;
 
@@ -14,6 +17,7 @@ impl FederationService {
         &self,
         url: Result<Url, FederationError>,
         context_url: Option<&IriRefBuf>,
+        access: &ContextSourceAccess,
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> ForwardGetOutcome {
@@ -23,9 +27,10 @@ impl FederationService {
         };
         debug!("CS forwarding GET {}", url);
 
-        let request = self
-            .build_request(reqwest::Method::GET, &url, context_url, tenant, incoming_via)
-            .header("Accept", APPLICATION_JSON.to_string());
+        let request = match self.build_request(reqwest::Method::GET, &url, context_url, access, tenant, incoming_via) {
+            Ok(request) => request,
+            Err(error) => return ForwardGetOutcome::NetworkError(error.to_string()),
+        };
 
         let (status, warning_header, bytes) = match self.send_request(request).await {
             Ok(result) => result,
@@ -64,17 +69,35 @@ impl FederationService {
         method: reqwest::Method,
         url: &Url,
         context_url: Option<&IriRefBuf>,
+        access: &ContextSourceAccess,
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
-    ) -> reqwest::RequestBuilder {
+    ) -> Result<reqwest::RequestBuilder, FederationError> {
         let mut request = self.http_client.request(method, url.clone()).header("Connection", "close");
 
-        if let Some(context_iri) = context_url {
+        let pairs = access.context_source_info.as_deref().unwrap_or_default();
+        let configured_context = pair_value(pairs, "jsonldContext").or_else(|| access.jsonld_context.as_ref().map(Url::as_str));
+        let configured_context = configured_context
+            .map(IriRefBuf::from_str)
+            .transpose()
+            .map_err(|error| FederationError::internal(format!("invalid contextSourceInfo jsonldContext: {error}")))?;
+        let effective_context = configured_context.as_ref().or(context_url);
+        if let Some(context_iri) = effective_context {
             let link = Link::jsonld_context(context_iri.clone()); // clone: the header owns the validated IRI reference.
             if let Some(value) = link.to_header_value() {
                 request = request.header("Link", value);
             }
         }
+
+        let accept = pair_value(pairs, "accept")
+            .map(str::to_owned)
+            .or_else(|| access.accept.as_ref().map(ToString::to_string))
+            .unwrap_or_else(|| APPLICATION_JSON.to_string());
+        request = request.header("Accept", accept);
+        if let Some(content_type) = forwarded_content_type(access) {
+            request = request.header("Content-Type", content_type);
+        }
+        request = apply_custom_headers(request, pairs)?;
 
         if let Some(name) = tenant {
             let tenant_header = NgsiLdTenant::new(name.clone()); // clone: TenantName is borrowed, header needs ownership
@@ -94,6 +117,45 @@ impl FederationService {
             request = request.header("via", value);
         }
 
-        request
+        Ok(request)
     }
+}
+
+pub(crate) fn forwarded_content_type(access: &ContextSourceAccess) -> Option<&str> {
+    let pairs = access.context_source_info.as_deref().unwrap_or_default();
+    pair_value(pairs, "contentType").or_else(|| {
+        if pair_value(pairs, "jsonldContext").is_some() || access.jsonld_context.is_some() {
+            Some("application/json")
+        } else {
+            None
+        }
+    })
+}
+
+fn pair_value<'a>(pairs: &'a [KeyValuePair], key: &str) -> Option<&'a str> {
+    pairs.iter().find(|pair| pair.key == key).map(|pair| pair.value.as_str())
+}
+
+fn apply_custom_headers(mut request: reqwest::RequestBuilder, pairs: &[KeyValuePair]) -> Result<reqwest::RequestBuilder, FederationError> {
+    for pair in pairs {
+        let key = pair.key.as_str();
+        if matches!(key, "accept" | "contentType" | "jsonldContext") || pair.value == "urn:ngsi-ld:request" {
+            continue;
+        }
+        if protected_header(key) {
+            continue;
+        }
+        let name = HeaderName::from_str(key).map_err(|error| FederationError::internal(format!("invalid contextSourceInfo header name '{key}': {error}")))?;
+        let value = HeaderValue::from_str(pair.value.as_str())
+            .map_err(|error| FederationError::internal(format!("invalid contextSourceInfo value for '{key}': {error}")))?;
+        request = request.header(name, value);
+    }
+    Ok(request)
+}
+
+fn protected_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection" | "content-length" | "host" | "ngsild-tenant" | "transfer-encoding" | "via"
+    )
 }

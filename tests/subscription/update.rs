@@ -27,7 +27,7 @@ use crate::helpers::{
 #[tokio::test]
 async fn subscription_update_missing_id_path_returns_method_not_allowed() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let fragment = update_fragment();
 
     let (status, _) = raw_subscription_request(
@@ -46,7 +46,7 @@ async fn subscription_update_missing_id_path_returns_method_not_allowed() {
 #[tokio::test]
 async fn subscription_update_invalid_id_returns_bad_request_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, body) = update_subscription(&http_client, "InvalidUri", &update_fragment(), false).await;
 
@@ -58,7 +58,7 @@ async fn subscription_update_invalid_id_returns_bad_request_data() {
 #[tokio::test]
 async fn subscription_update_unknown_id_returns_resource_not_found() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, body) = update_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", &update_fragment(), false).await;
 
@@ -70,7 +70,7 @@ async fn subscription_update_unknown_id_returns_resource_not_found() {
 #[tokio::test]
 async fn subscription_update_invalid_fragment_returns_bad_request_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-invalid-fragment");
     let payload = default_subscription(&subscription_id);
 
@@ -87,7 +87,7 @@ async fn subscription_update_invalid_fragment_returns_bad_request_data() {
 #[tokio::test]
 async fn subscription_update_null_mandatory_properties_returns_bad_request_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-null-mandatory-properties");
     let payload = default_subscription(&subscription_id);
 
@@ -104,7 +104,7 @@ async fn subscription_update_null_mandatory_properties_returns_bad_request_data(
 #[tokio::test]
 async fn subscription_update_entities_with_context_returns_no_content() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-entities-with-context");
     let payload = default_subscription(&subscription_id);
 
@@ -124,7 +124,7 @@ async fn subscription_update_entities_with_context_returns_no_content() {
 #[tokio::test]
 async fn subscription_update_entities_without_accept_context_still_updates_entities() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-entities-without-context");
     let payload = default_subscription(&subscription_id);
 
@@ -144,7 +144,7 @@ async fn subscription_update_entities_without_accept_context_still_updates_entit
 #[tokio::test]
 async fn subscription_update_notification_endpoint_returns_no_content_and_persists_changes() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-endpoint");
     let payload = default_subscription(&subscription_id);
 
@@ -165,7 +165,7 @@ async fn subscription_update_notification_endpoint_returns_no_content_and_persis
 #[tokio::test]
 async fn subscription_update_paused_subscription_with_is_active_true_sets_active_status() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-is-active-true");
     let payload = inactive_subscription(&subscription_id);
 
@@ -185,7 +185,7 @@ async fn subscription_update_paused_subscription_with_is_active_true_sets_active
 #[tokio::test]
 async fn subscription_update_paused_subscription_with_is_active_and_future_expires_sets_active_status() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-active-with-expires");
     let payload = inactive_subscription(&subscription_id);
 
@@ -205,7 +205,7 @@ async fn subscription_update_paused_subscription_with_is_active_and_future_expir
 #[tokio::test]
 async fn subscription_update_active_subscription_with_is_active_false_sets_paused_status() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-pause");
     let payload = default_subscription(&subscription_id);
 
@@ -225,7 +225,7 @@ async fn subscription_update_active_subscription_with_is_active_false_sets_pause
 #[tokio::test]
 async fn subscription_update_expired_subscription_with_future_expires_reactivates_subscription() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-reactivate-expired");
     let payload = default_subscription(&subscription_id);
 
@@ -255,7 +255,7 @@ async fn subscription_update_expired_subscription_with_future_expires_reactivate
 #[tokio::test]
 async fn subscription_update_with_past_expires_at_returns_bad_request_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("update-past-expires");
     let payload = default_subscription(&subscription_id);
 

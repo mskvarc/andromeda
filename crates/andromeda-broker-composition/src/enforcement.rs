@@ -64,10 +64,12 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-task-runtime",
         "andromeda-temporal",
         "andromeda-tenancy",
-        "andromeda-test-common",
     ],
     allow_workspace_dev_dependencies: [
-        "andromeda-test-common",
+        "andromeda-test-client",
+        "andromeda-test-fixtures",
+        "andromeda-test-harness",
+        "andromeda-test-mocks",
     ],
     allow_production_dependencies: all,
 }

@@ -4,34 +4,36 @@
 //! Tests querying entities across context sources with different registration modes,
 //! entityMap, and splitEntities functionality.
 
-use andromeda_test_common::config::BASE_URL;
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use serial_test::serial;
 
-use crate::helpers::{
-    MockServer,
-    clean_database,
-    client,
-    create_entity,
-    create_entity_local,
-    create_registration,
-    delete_entity,
-    delete_registration,
-    jsonld_link_value,
-    query_entities,
-    query_entities_post,
-    unique_id,
-    vehicle_entity,
-    vehicle_entity_different_ld,
-    vehicle_entity_second,
-    vehicle_entity_second_ld,
-    vehicle_entity_speed_only,
-    vehicle_entity_with_scope,
-    vehicle_entity_with_speed,
-    vehicle_registration,
-    vehicle_registration_speed_property,
-    vehicle_registration_with_ops,
+use crate::{
+    context_source_adapter::ContextSourceAdapter as MockServer,
+    helpers::{
+        clean_database,
+        client,
+        create_entity,
+        create_entity_local,
+        create_registration,
+        delete_entity,
+        delete_registration,
+        jsonld_link_value,
+        query_entities,
+        query_entities_post,
+        unique_id,
+        vehicle_entity,
+        vehicle_entity_different_ld,
+        vehicle_entity_second,
+        vehicle_entity_second_ld,
+        vehicle_entity_speed_only,
+        vehicle_entity_with_scope,
+        vehicle_entity_with_speed,
+        vehicle_registration,
+        vehicle_registration_speed_property,
+        vehicle_registration_with_ops,
+    },
 };
 use urlencoding::encode;
 
@@ -43,9 +45,9 @@ use urlencoding::encode;
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_auxiliary_merges_local_and_remote() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-aux");
@@ -81,7 +83,7 @@ async fn distop_entity_query_auxiliary_merges_local_and_remote() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -92,9 +94,9 @@ async fn distop_entity_query_auxiliary_merges_local_and_remote() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_exclusive_returns_remote() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-exc");
@@ -132,16 +134,16 @@ async fn distop_entity_query_exclusive_returns_remote() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Exclusive with queryEntity operation forwards correctly.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_exclusive_with_query_entity_op() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-exc-op1");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-exc-op1");
@@ -170,16 +172,16 @@ async fn distop_entity_query_exclusive_with_query_entity_op() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Exclusive with queryBatch operation forwards correctly.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_exclusive_with_query_batch_op() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-exc-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-exc-op2");
@@ -208,7 +210,7 @@ async fn distop_entity_query_exclusive_with_query_batch_op() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,9 +221,9 @@ async fn distop_entity_query_exclusive_with_query_batch_op() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_redirect_returns_remote() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-red");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-red");
@@ -244,16 +246,16 @@ async fn distop_entity_query_redirect_returns_remote() {
     assert!(entries.iter().any(|e| e["id"] == entity_id));
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Redirect with queryEntity operation forwards correctly.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_redirect_with_query_entity_op() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-red-op1");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-red-op1");
@@ -276,16 +278,16 @@ async fn distop_entity_query_redirect_with_query_entity_op() {
     assert!(entries.iter().any(|e| e["id"] == entity_id));
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// A GET entity query does not use the batch-query capability.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_redirect_with_only_query_batch_does_not_forward() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-red-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-red-op2");
@@ -309,7 +311,7 @@ async fn distop_entity_query_redirect_with_only_query_batch_does_not_forward() {
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/broker1/ngsi-ld/v1/entities").await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,9 +322,9 @@ async fn distop_entity_query_redirect_with_only_query_batch_does_not_forward() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_by_type() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-type");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-type");
@@ -345,16 +347,16 @@ async fn distop_entity_query_inclusive_by_type() {
     assert!(entries.iter().any(|e| e["id"] == entity_id));
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query by type with missing attribute returns empty result.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_missing_attr_returns_empty() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-attr");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-attr");
@@ -377,16 +379,16 @@ async fn distop_entity_query_inclusive_missing_attr_returns_empty() {
     assert!(entries.is_empty(), "no entity should have speed attribute, got {body:?}");
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query by type and attribute with two sources returns entity with requested attribute.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_by_type_and_attr_two_sources() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id_local = unique_id("urn:ngsi-ld:Vehicle:query-inc-local");
     let entity_id_remote = unique_id("urn:ngsi-ld:Vehicle:query-inc-remote");
@@ -419,16 +421,16 @@ async fn distop_entity_query_inclusive_by_type_and_attr_two_sources() {
 
     delete_entity(&c, &entity_id_local).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query by type with attribute in neither source returns empty.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_attr_in_neither_returns_empty() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id_local = unique_id("urn:ngsi-ld:Vehicle:query-inc-neither-local");
     let entity_id_remote = unique_id("urn:ngsi-ld:Vehicle:query-inc-neither-remote");
@@ -458,16 +460,16 @@ async fn distop_entity_query_inclusive_attr_in_neither_returns_empty() {
 
     delete_entity(&c, &entity_id_local).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query merges same-ID entity from both local and remote sources.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_merges_same_id() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-merge");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-merge");
@@ -503,16 +505,16 @@ async fn distop_entity_query_inclusive_merges_same_id() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query with local=true and inclusive registration (no local entities) returns empty.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_local_true_returns_empty() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-local");
@@ -535,16 +537,16 @@ async fn distop_entity_query_inclusive_local_true_returns_empty() {
     assert!(entries.is_empty(), "local=true should return empty when no local entities");
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query by entity ID with queryEntity operation.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_by_id_with_query_entity_op() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-id-op1");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-id-op1");
@@ -568,16 +570,16 @@ async fn distop_entity_query_inclusive_by_id_with_query_entity_op() {
     assert!(entries.iter().any(|e| e["id"] == entity_id));
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// A GET query by entity ID does not use the batch-query capability.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_inclusive_by_id_with_only_query_batch_does_not_forward() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-inc-id-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-inc-id-op2");
@@ -602,16 +604,16 @@ async fn distop_entity_query_inclusive_by_id_with_only_query_batch_does_not_forw
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Query via POST /entityOperations/query with queryBatch operation.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_post_with_query_batch_op() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-post-op1");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-post-op1");
@@ -638,16 +640,16 @@ async fn distop_entity_query_post_with_query_batch_op() {
     assert!(entries.iter().any(|e| e["id"] == entity_id));
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// A batch POST query does not use the single-query capability.
 #[tokio::test]
 #[serial]
 async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:query-post-op2");
     let reg_id = unique_id("urn:ngsi-ld:Registration:query-post-op2");
@@ -675,7 +677,7 @@ async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
     pretty_assertions::assert_eq!(mock.get_count(Method::GET, "/ngsi-ld/v1/entities").await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -686,9 +688,9 @@ async fn distop_entity_query_post_with_only_query_entity_does_not_forward() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_map_includes_forwarded_entity_ids() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:map-local");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:map-remote");
@@ -739,16 +741,16 @@ async fn distop_entity_map_includes_forwarded_entity_ids() {
 
     delete_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// EntityMap with local=true only contains local entity IDs.
 #[tokio::test]
 #[serial]
 async fn distop_entity_map_local_true_excludes_remote() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:map-local-only");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:map-remote-only");
@@ -787,7 +789,7 @@ async fn distop_entity_map_local_true_excludes_remote() {
 
     delete_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -798,9 +800,9 @@ async fn distop_entity_map_local_true_excludes_remote() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_split_entities_q_filter_post_merge() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:split-local");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:split-remote");
@@ -838,16 +840,16 @@ async fn distop_entity_split_entities_q_filter_post_merge() {
 
     delete_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// splitEntities without filter returns all entities from both sources.
 #[tokio::test]
 #[serial]
 async fn distop_entity_split_entities_returns_all_without_filter() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:split-all-local");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:split-all-remote");
@@ -877,16 +879,16 @@ async fn distop_entity_split_entities_returns_all_without_filter() {
 
     delete_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// splitEntities with scopeQ filter applied post-merge.
 #[tokio::test]
 #[serial]
 async fn distop_entity_split_entities_scope_filter_post_merge() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let local_id = unique_id("urn:ngsi-ld:Vehicle:scope-local");
     let remote_id = unique_id("urn:ngsi-ld:Vehicle:scope-remote");
@@ -923,5 +925,5 @@ async fn distop_entity_split_entities_scope_filter_post_merge() {
 
     delete_entity(&c, &local_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }

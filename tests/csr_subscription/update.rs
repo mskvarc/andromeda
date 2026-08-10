@@ -20,7 +20,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn csr_subscription_update_existing_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("update-existing");
     let payload = csource_subscription_payload(&subscription_id);
@@ -37,7 +37,7 @@ async fn csr_subscription_update_existing_returns_204() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_update_invalid_uri_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let fragment = update_notification_fragment();
 
@@ -50,7 +50,7 @@ async fn csr_subscription_update_invalid_uri_returns_400_bad_request_data() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_update_unknown_id_returns_404_resource_not_found() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let fragment = update_notification_fragment();
 
@@ -63,7 +63,7 @@ async fn csr_subscription_update_unknown_id_returns_404_resource_not_found() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_update_invalid_type_fragment_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("update-invalid-type-fragment");
     let payload = csource_subscription_payload(&subscription_id);
@@ -81,7 +81,7 @@ async fn csr_subscription_update_invalid_type_fragment_returns_400_bad_request_d
 #[tokio::test]
 #[serial]
 async fn csr_subscription_update_invalid_notification_fragment_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("update-invalid-notification-fragment");
     let payload = csource_subscription_payload(&subscription_id);
@@ -99,7 +99,7 @@ async fn csr_subscription_update_invalid_notification_fragment_returns_400_bad_r
 #[tokio::test]
 #[serial]
 async fn csr_subscription_update_malformed_json_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("update-malformed-json");
     let payload = csource_subscription_payload(&subscription_id);

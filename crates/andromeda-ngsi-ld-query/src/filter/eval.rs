@@ -1,4 +1,4 @@
-//! In-memory evaluation of parsed `q` filter expressions against expanded JSON-LD entities.
+//! In-memory evaluation of parsed `q` filter expressions against expanded JSON-LD entities and canonical-keyed Context Source properties.
 
 use crate::filter::{
     expression::Expr,
@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 
 /// Evaluate a parsed `q` expression against an expanded JSON-LD entity.
 ///
-/// The entity should be a single expanded JSON-LD object (not wrapped in an array).
+/// The input may be a single expanded JSON-LD object, its one-element array document, or canonical-keyed Context Source properties in normalized or scalar registration form.
 pub fn evaluate(expr: &Expr, entity: &Value) -> bool {
     let obj = match entity {
         Value::Array(arr) => arr.first().and_then(Value::as_object),
@@ -97,7 +97,7 @@ fn value_members() -> [(&'static str, &'static str, bool); 7] {
 }
 
 /// Resolve every value an attribute path addresses in an expanded JSON-LD
-/// entity object.
+/// entity object or a canonical-keyed Context Source property map.
 ///
 /// Navigates `obj[attr]` -> each instance -> sub-attrs -> the family's value
 /// member, then the optional value path for compound values.
@@ -108,13 +108,20 @@ fn value_members() -> [(&'static str, &'static str, bool); 7] {
 /// Restricting this to the first instance made a `datasetId`-partitioned
 /// attribute match on whichever instance happened to serialise first.
 fn resolve_values(obj: &Map<String, Value>, path: &AttrPath) -> Vec<ResolvedTarget> {
-    let Some(instances) = obj.get(path.attr.as_str()).and_then(Value::as_array) else {
+    let Some(attribute) = obj.get(path.attr.as_str()) else {
         return Vec::new();
     };
-    if path.match_all_languages {
-        return instances.iter().flat_map(|instance| resolve_all_languages(instance, path)).collect();
+    if let Some(instances) = attribute.as_array() {
+        if path.match_all_languages {
+            return instances.iter().flat_map(|instance| resolve_all_languages(instance, path)).collect();
+        }
+        return instances.iter().filter_map(|instance| resolve_instance_value(instance, path)).collect();
     }
-    instances.iter().filter_map(|instance| resolve_instance_value(instance, path)).collect()
+    if path.match_all_languages {
+        resolve_all_languages(attribute, path)
+    } else {
+        resolve_instance_value(attribute, path).into_iter().collect()
+    }
 }
 
 /// Resolve the `[*]` language-suppression form: every language's value of a
@@ -184,7 +191,16 @@ fn terminal_value(node: &Value) -> Option<(&Value, bool)> {
     if let Some(raw) = node.get("@value") {
         return Some((raw, false));
     }
-    node.get("@id").map(|raw| (raw, false))
+    if let Some(raw) = node.get("@id") {
+        return Some((raw, false));
+    }
+    if let Some(raw) = node.get("value") {
+        return Some((raw, false));
+    }
+    match node {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => Some((node, false)),
+        Value::Array(_) | Value::Object(_) => None,
+    }
 }
 
 /// Evaluate an equality comparison (`==`/`!=`) against a scalar, a range, or a
@@ -404,6 +420,22 @@ mod tests {
     fn eval_string_equal() {
         let expr = parse("\"https://example.com/brandName\"==\"Mercedes\"").unwrap();
         assert!(evaluate(&expr, &vehicle_entity()));
+    }
+
+    #[test]
+    fn eval_context_source_normalized_property() {
+        let properties = serde_json::json!({
+            "https://example.com/sourceGroup": {"type": "Property", "value": "alpha"}
+        });
+        let expr = parse("\"https://example.com/sourceGroup\"==\"alpha\"").unwrap();
+        assert!(evaluate(&expr, &properties));
+    }
+
+    #[test]
+    fn eval_context_source_scalar_property() {
+        let properties = serde_json::json!({"https://example.com/sourceGroup": "alpha"});
+        let expr = parse("\"https://example.com/sourceGroup\"==\"alpha\"").unwrap();
+        assert!(evaluate(&expr, &properties));
     }
 
     #[test]

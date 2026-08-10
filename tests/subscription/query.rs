@@ -34,7 +34,7 @@ async fn create_three_subscriptions(http_client: &reqwest::Client, suffix: &str)
 #[tokio::test]
 async fn subscription_query_returns_created_subscriptions_in_result_set() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let ids = create_three_subscriptions(&http_client, "all").await;
 
     let (status, _, body) = query_subscriptions(&http_client, "", true).await;
@@ -52,7 +52,7 @@ async fn subscription_query_returns_created_subscriptions_in_result_set() {
 #[tokio::test]
 async fn subscription_query_with_limit_one_offset_one_returns_single_item_and_prev_next_links() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let _ = create_three_subscriptions(&http_client, "paginate-mid").await;
 
     let (status, headers, body) = query_subscriptions(&http_client, "limit=1&offset=1", false).await;
@@ -71,7 +71,7 @@ async fn subscription_query_with_limit_one_offset_one_returns_single_item_and_pr
 #[tokio::test]
 async fn subscription_query_with_limit_one_offset_two_returns_single_item_and_prev_link_only() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let _ = create_three_subscriptions(&http_client, "paginate-last").await;
 
     let (status, headers, body) = query_subscriptions(&http_client, "limit=1&offset=2", false).await;
@@ -89,7 +89,7 @@ async fn subscription_query_with_limit_one_offset_two_returns_single_item_and_pr
 #[tokio::test]
 async fn subscription_query_with_high_limit_returns_created_subscriptions() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let ids = create_three_subscriptions(&http_client, "paginate-all").await;
 
     for _ in 0..6 {
@@ -113,7 +113,7 @@ async fn subscription_query_with_high_limit_returns_created_subscriptions() {
 #[tokio::test]
 async fn subscription_query_with_invalid_parameter_returns_bad_request() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, _, body) = query_subscriptions(&http_client, "invalidParam=invalidValue", false).await;
 

@@ -1,21 +1,18 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL},
-    db::TRUNCATE_ALL,
-};
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 pub fn client() -> Client {
     Client::new()
 }
 
-pub async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("connect test database");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
-    pool.close().await;
+pub async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 pub fn unique_id(prefix: &str) -> String {

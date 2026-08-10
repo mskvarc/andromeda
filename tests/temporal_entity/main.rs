@@ -19,15 +19,16 @@ mod query;
 mod retrieve;
 mod update;
 
-use andromeda_test_common::{
-    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL, TEST_SUITE_CONTEXT},
-    db::TRUNCATE_ALL,
-    header::jsonld_link_header,
-};
+use andromeda_test_client::header::jsonld_link_header as try_jsonld_link_header;
+use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use uuid::Uuid;
+
+fn jsonld_link_header(context_url: &str) -> reqwest::header::HeaderValue {
+    try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,10 +42,10 @@ fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 /// Parse Content-Range header: `date-time <start>-<end>/<size>`

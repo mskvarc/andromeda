@@ -9,17 +9,18 @@
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
-    db::TRUNCATE_ALL,
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::{
+    configuration::RUNTIME_BROKER_BASE as BASE_URL,
+    database_access::connect_test_database,
+    serialized_environment::SerializedEnvironment,
 };
-use axum::{body::Bytes, http::HeaderMap as AxumHeaderMap, response::IntoResponse, routing::post};
+use andromeda_test_mocks::{callback_server::CallbackServerError, notification_server::NotificationServer, server_config::MockServerConfig};
 use reqwest::{Client, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
 use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
-use tokio::sync::{Mutex, Notify};
+use std::time::Duration;
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -34,10 +35,10 @@ fn unique_id(prefix: &str) -> String {
     format!("{prefix}:{}", Uuid::new_v4())
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("connect test database");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("truncate test tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 // ---------------------------------------------------------------------------
@@ -334,102 +335,35 @@ pub struct CapturedNotification {
 }
 
 pub struct NotificationReceiver {
-    pub port: u16,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-    notifications: Arc<Mutex<Vec<CapturedNotification>>>,
-    notify: Arc<Notify>,
+    server: NotificationServer,
 }
 
 impl NotificationReceiver {
     pub async fn start() -> Self {
-        let notifications: Arc<Mutex<Vec<CapturedNotification>>> = Arc::new(Mutex::new(Vec::new()));
-        let notify = Arc::new(Notify::new());
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-        let notifs = notifications.clone();
-        let ntf = notify.clone();
-
-        let app = axum::Router::new().route(
-            "/notify",
-            post(move |headers: AxumHeaderMap, body: Bytes| {
-                let notifs = notifs.clone();
-                let ntf = ntf.clone();
-                async move {
-                    let json: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
-                    let mut reqwest_headers = HeaderMap::new();
-                    for (k, v) in &headers {
-                        if let Ok(name) = reqwest::header::HeaderName::from_bytes(k.as_str().as_bytes())
-                            && let Ok(val) = reqwest::header::HeaderValue::from_bytes(v.as_bytes())
-                        {
-                            reqwest_headers.insert(name, val);
-                        }
-                    }
-                    notifs.lock().await.push(CapturedNotification {
-                        headers: reqwest_headers,
-                        body: json,
-                    });
-                    ntf.notify_one();
-                    axum::http::StatusCode::OK.into_response()
-                }
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap();
-        });
-
-        Self {
-            port,
-            shutdown: Some(shutdown_tx),
-            notifications,
-            notify,
-        }
+        let configuration = MockServerConfig::from_environment().expect("valid notification server configuration");
+        let server = NotificationServer::start(configuration).await.expect("notification server starts");
+        Self { server }
     }
 
     pub fn endpoint_url(&self) -> String {
-        callback_url(self.port, "/notify")
+        self.server.endpoint_url().expect("notification endpoint resolves")
     }
 
     pub async fn wait_for_notification(&self, timeout: Duration) -> CapturedNotification {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            {
-                let mut notifs = self.notifications.lock().await;
-                if !notifs.is_empty() {
-                    return notifs.remove(0);
-                }
-            }
-            if tokio::time::timeout_at(deadline, self.notify.notified()).await.is_err() {
-                unreachable!("timed out waiting for notification after {timeout:?}");
-            }
+        let request = self.server.next_request(timeout).await.expect("notification arrives before timeout");
+        let body = request.json().expect("notification body is valid JSON");
+        CapturedNotification {
+            headers: request.headers,
+            body,
         }
     }
 
     pub async fn wait_for_no_notification(&self, duration: Duration) {
-        tokio::time::sleep(duration).await;
-        let notifs = self.notifications.lock().await;
-        assert!(notifs.is_empty(), "expected no notifications but received {}", notifs.len());
-    }
-
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
+        match self.server.next_request(duration).await {
+            Err(CallbackServerError::RequestTimeout(_)) => {}
+            Ok(request) => unreachable!("expected no notification but received {}", request.uri),
+            Err(error) => unreachable!("notification server failed while checking absence: {error}"),
         }
-    }
-}
-
-impl Drop for NotificationReceiver {
-    fn drop(&mut self) {
-        self.stop();
     }
 }
 
@@ -446,7 +380,7 @@ async fn assert_snapshot_create_rejected(client: &Client, body: Value) {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_exact_snapshot_and_query_discriminators_are_accepted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let body = json!({"type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{"type": "Query"}]});
 
@@ -461,35 +395,35 @@ async fn snapshot_api_exact_snapshot_and_query_discriminators_are_accepted() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_missing_snapshot_discriminator_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"snapshotQueries": [{"type": "Query"}]})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_incorrect_snapshot_discriminator_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"type": "Query", "snapshotQueries": [{"type": "Query"}]})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_missing_query_discriminator_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotQueries": [{}]})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_incorrect_query_discriminator_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotQueries": [{"type": "Snapshot"}]})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_unknown_member_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(
         &client(),
         json!({"type": "Snapshot", "snapshotQueries": [{"type": "Query"}], "snapshotPriorty": 5}),
@@ -500,21 +434,21 @@ async fn snapshot_api_unknown_member_is_rejected() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_without_query_collections_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot"})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_with_two_empty_query_collections_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotQueries": [], "snapshotTemporalQueries": []})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_entity_query_with_temporal_query_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(
         &client(),
         json!({
@@ -531,14 +465,14 @@ async fn snapshot_api_entity_query_with_temporal_query_is_rejected() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_temporal_query_without_temporal_query_member_is_rejected() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     assert_snapshot_create_rejected(&client(), json!({"type": "Snapshot", "snapshotTemporalQueries": [{"type": "Query"}]})).await;
 }
 
 #[tokio::test]
 #[serial]
 async fn snapshot_api_create_returns_201_with_location() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({"snapshotLifetime": "PT1H", "snapshotPriority": 5});
@@ -556,7 +490,7 @@ async fn snapshot_api_create_returns_201_with_location() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_create_with_custom_id_uses_provided_id() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let custom_id = format!("urn:ngsi-ld:Snapshot:custom-{}", Uuid::new_v4());
@@ -572,7 +506,7 @@ async fn snapshot_api_create_with_custom_id_uses_provided_id() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_create_duplicate_returns_409() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = format!("urn:ngsi-ld:Snapshot:dup-{}", Uuid::new_v4());
@@ -589,7 +523,7 @@ async fn snapshot_api_create_duplicate_returns_409() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_get_returns_200_with_metadata() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
@@ -607,7 +541,7 @@ async fn snapshot_api_get_returns_200_with_metadata() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_get_nonexistent_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _) = get_snapshot(&c, "urn:ngsi-ld:Snapshot:doesnotexist").await;
@@ -617,7 +551,7 @@ async fn snapshot_api_get_nonexistent_returns_404() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_update_lifetime_and_priority_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 3})).await;
@@ -633,7 +567,7 @@ async fn snapshot_api_update_lifetime_and_priority_returns_200() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_update_invalid_priority_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
@@ -648,7 +582,7 @@ async fn snapshot_api_update_invalid_priority_returns_400() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_delete_returns_204_and_removes_snapshot() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
@@ -661,7 +595,7 @@ async fn snapshot_api_delete_returns_204_and_removes_snapshot() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_delete_nonexistent_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     pretty_assertions::assert_eq!(delete_snapshot(&c, "urn:ngsi-ld:Snapshot:ghost").await, StatusCode::NOT_FOUND);
@@ -670,7 +604,7 @@ async fn snapshot_api_delete_nonexistent_returns_404() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_clone_returns_201_with_new_id_and_inherited_priority() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 7})).await;
@@ -694,7 +628,7 @@ async fn snapshot_api_clone_returns_201_with_new_id_and_inherited_priority() {
 #[serial]
 async fn snapshot_api_purge_without_q_returns_400() {
     // Clause 5.16.7 / 6.36.3.2: DELETE /snapshots requires a `q` query parameter.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     for _ in 0..2 {
@@ -709,7 +643,7 @@ async fn snapshot_api_purge_without_q_returns_400() {
 #[serial]
 async fn snapshot_api_purge_no_match_returns_404() {
     // Clause 6.36.3.2: no matching snapshot -> 404 ResourceNotFound.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, _) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 5})).await;
@@ -724,7 +658,7 @@ async fn snapshot_api_purge_no_match_returns_404() {
 #[serial]
 async fn snapshot_api_purge_full_match_returns_204() {
     // Clause 6.36.3.2: all matched snapshots deleted -> 204.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     for _ in 0..3 {
@@ -744,7 +678,7 @@ async fn snapshot_api_purge_full_match_returns_204() {
 #[serial]
 async fn snapshot_api_purge_malformed_q_returns_400() {
     // Clause 6.3.2: invalid `q` expression -> 400 BadRequestData.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = purge_snapshots_with_q(&c, "bogusField==value").await;
@@ -756,7 +690,7 @@ async fn snapshot_api_purge_malformed_q_returns_400() {
 #[serial]
 async fn snapshot_api_purge_by_priority_does_not_touch_other_priorities() {
     // Clause 5.16.7: purge must only delete snapshots matching the filter.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, keep) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H", "snapshotPriority": 9})).await;
@@ -779,7 +713,7 @@ async fn snapshot_api_purge_by_priority_does_not_touch_other_priorities() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_default_priority_is_5() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
@@ -792,7 +726,7 @@ async fn snapshot_api_default_priority_is_5() {
 #[tokio::test]
 #[serial]
 async fn snapshot_api_full_lifecycle_create_get_update_clone_delete() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     // 1. Create
@@ -832,7 +766,7 @@ async fn snapshot_api_full_lifecycle_create_get_update_clone_delete() {
 #[tokio::test]
 #[serial]
 async fn snapshot_notification_create_sends_notification_with_correct_fields() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -866,7 +800,7 @@ async fn snapshot_notification_create_sends_notification_with_correct_fields() {
 #[tokio::test]
 #[serial]
 async fn snapshot_notification_create_without_endpoint_sends_no_notification() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -885,7 +819,7 @@ async fn snapshot_notification_create_without_endpoint_sends_no_notification() {
 #[tokio::test]
 #[serial]
 async fn snapshot_notification_update_sends_notification_with_updated_fields() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -920,7 +854,7 @@ async fn snapshot_notification_update_sends_notification_with_updated_fields() {
 #[tokio::test]
 #[serial]
 async fn snapshot_notification_receiver_info_headers_forwarded_to_endpoint() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -949,7 +883,7 @@ async fn snapshot_notification_receiver_info_headers_forwarded_to_endpoint() {
 #[tokio::test]
 #[serial]
 async fn snapshot_notification_clone_sends_notification_for_cloned_snapshot() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -989,7 +923,7 @@ async fn snapshot_notification_clone_sends_notification_for_cloned_snapshot() {
 #[tokio::test]
 #[serial]
 async fn snapshot_notification_clone_without_endpoint_sends_no_notification() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let receiver = NotificationReceiver::start().await;
 
@@ -1014,9 +948,9 @@ async fn snapshot_notification_clone_without_endpoint_sends_no_notification() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_query_entities_returns_snapshot_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (status, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
@@ -1047,9 +981,9 @@ async fn snapshot_scoping_query_entities_returns_snapshot_entities() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_get_entity_scoped_to_snapshot_returns_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1073,9 +1007,9 @@ async fn snapshot_scoping_get_entity_scoped_to_snapshot_returns_entity() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_get_live_entity_not_in_snapshot_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1106,7 +1040,7 @@ async fn snapshot_scoping_get_live_entity_not_in_snapshot_returns_404() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_nonexistent_snapshot_id_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, _) = query_entities_scoped(&c, Some("Vehicle"), "urn:ngsi-ld:Snapshot:doesnotexist").await;
@@ -1116,9 +1050,9 @@ async fn snapshot_scoping_nonexistent_snapshot_id_returns_404() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_snapshot_isolates_from_live_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1158,9 +1092,9 @@ async fn snapshot_scoping_snapshot_isolates_from_live_entities() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_query_with_type_filter_returns_matching_entities_only() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1191,9 +1125,9 @@ async fn snapshot_scoping_query_with_type_filter_returns_matching_entities_only(
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_get_entity_with_attrs_filter_projects_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1228,9 +1162,9 @@ async fn snapshot_scoping_get_entity_with_attrs_filter_projects_attributes() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_query_temporal_entities_scoped_to_snapshot() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1269,9 +1203,9 @@ async fn snapshot_scoping_query_temporal_entities_scoped_to_snapshot() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_get_temporal_entity_scoped_to_snapshot() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1304,7 +1238,7 @@ async fn snapshot_scoping_get_temporal_entity_scoped_to_snapshot() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_temporal_nonexistent_snapshot_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, _) = query_temporal_entities_scoped(&c, Some("Vehicle"), "urn:ngsi-ld:Snapshot:nope").await;
@@ -1314,7 +1248,7 @@ async fn snapshot_scoping_temporal_nonexistent_snapshot_returns_404() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_empty_snapshot_header_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let resp = c
@@ -1329,7 +1263,7 @@ async fn snapshot_scoping_empty_snapshot_header_returns_400() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_preparing_snapshot_not_available_for_scoping() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     // Newly created snapshots default to status "preparing".
@@ -1351,9 +1285,9 @@ async fn snapshot_scoping_preparing_snapshot_not_available_for_scoping() {
 #[serial]
 async fn snapshot_scoping_entity_batch_query_returns_frozen_entities() {
     // Clause 5.5.15 + 5.7.11: POST /entityOperations/query honours NGSILD-Snapshot.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1378,9 +1312,9 @@ async fn snapshot_scoping_entity_batch_query_returns_frozen_entities() {
 #[serial]
 async fn snapshot_scoping_temporal_batch_query_returns_frozen_history() {
     // Clause 5.5.15 + 5.7.3.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1409,9 +1343,9 @@ async fn snapshot_scoping_temporal_batch_query_returns_frozen_history() {
 #[serial]
 async fn snapshot_scoping_types_query_returns_frozen_types() {
     // Clause 5.7.5 + 5.5.15.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1444,9 +1378,9 @@ async fn snapshot_scoping_types_query_returns_frozen_types() {
 #[serial]
 async fn snapshot_scoping_type_detail_returns_entity_count_and_attributes() {
     // Clause 5.7.6 + 5.5.15.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1480,9 +1414,9 @@ async fn snapshot_scoping_type_detail_returns_entity_count_and_attributes() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_type_detail_returns_404_when_absent() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1500,9 +1434,9 @@ async fn snapshot_scoping_type_detail_returns_404_when_absent() {
 #[serial]
 async fn snapshot_scoping_attributes_query_returns_frozen_attrs() {
     // Clause 5.7.7 + 5.5.15.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1534,9 +1468,9 @@ async fn snapshot_scoping_attributes_query_returns_frozen_attrs() {
 #[serial]
 async fn snapshot_scoping_attribute_detail_returns_count_and_types() {
     // Clause 5.7.8 + 5.5.15.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1570,9 +1504,9 @@ async fn snapshot_scoping_attribute_detail_returns_count_and_types() {
 #[tokio::test]
 #[serial]
 async fn snapshot_scoping_attribute_detail_returns_404_when_absent() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let pool = PgPool::connect(DATABASE_URL).await.expect("db connect");
+    let pool = connect_test_database().await.expect("db connect");
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;
     let snap_id = created["id"].as_str().unwrap().to_string();
@@ -1590,7 +1524,7 @@ async fn snapshot_scoping_attribute_detail_returns_404_when_absent() {
 #[serial]
 async fn snapshot_scoping_subscription_query_ignores_snapshot_header() {
     // Clause 5.5.15: scoping MUST NOT apply to management resources.
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (_, _, created) = create_snapshot(&c, &json!({"snapshotLifetime": "PT1H"})).await;

@@ -1,9 +1,10 @@
 //! Context-source registration query policy.
 
-use crate::{RegistrationService, error::RegistrationError};
+use crate::{RegistrationService, context_source_properties::compact_context_source_properties, error::RegistrationError};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
+    filter::expansion::expand_q_expr,
     geo::compile as geo_compile,
     pagination::{CountPolicy, Pagination},
     projection::expansion::expand_attrs,
@@ -20,10 +21,17 @@ impl RegistrationService {
         let compiled = self.compile_csr_query(params, context).await?;
         let page = self.repo.query_compiled(&compiled).await?;
         let mut values = Vec::with_capacity(page.registrations.len());
-        for registration in page.registrations {
+        for mut registration in page.registrations {
+            let additional_properties = registration.additional_properties.take();
             let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
             if let Some(information) = value.get_mut("information") {
                 self.compact_information(information, context).await?;
+            }
+            if let Some(properties) = additional_properties
+                && let Some(compacted) = compact_context_source_properties(&self.engine, properties, context).await?
+                && let (Some(target), Some(source)) = (value.as_object_mut(), compacted.as_object())
+            {
+                target.extend(source.iter().map(|(key, member)| (key.clone(), member.clone()))); // clone: the response object owns compacted members after the temporary document is dropped.
             }
             values.push(value);
         }
@@ -42,6 +50,10 @@ impl RegistrationService {
         };
         let expanded_attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander).await?;
+        let q_expr = match params.q.clone() {
+            Some(expression) => Some(expand_q_expr(expression, &expander).await?), // clone: compilation owns and rewrites the request expression without mutating cached parameters.
+            None => None,
+        };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
             Some(
                 CompiledCsrTemporalFilter::builder()
@@ -58,7 +70,7 @@ impl RegistrationService {
             .entity_type(expanded_type)
             .id_pattern(params.id_pattern.clone()) // clone: the compiled query owns the validated pattern.
             .attrs(expanded_attrs)
-            .q_expr(params.q.clone()) // clone: the compiled query owns the parsed expression.
+            .q_expr(q_expr)
             .geo(geo)
             .temporal(temporal)
             .pagination(Pagination {

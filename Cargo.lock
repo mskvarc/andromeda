@@ -84,7 +84,10 @@ name = "andromeda"
 version = "0.1.0"
 dependencies = [
  "andromeda-broker-composition",
- "andromeda-test-common",
+ "andromeda-test-client",
+ "andromeda-test-fixtures",
+ "andromeda-test-harness",
+ "andromeda-test-mocks",
  "axum",
  "chrono",
  "clap",
@@ -164,7 +167,6 @@ dependencies = [
  "andromeda-task-runtime",
  "andromeda-temporal",
  "andromeda-tenancy",
- "andromeda-test-common",
  "async-trait",
  "chrono",
  "compact_str",
@@ -1398,21 +1400,73 @@ dependencies = [
 ]
 
 [[package]]
-name = "andromeda-test-common"
+name = "andromeda-test-client"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
- "axum",
+ "andromeda-http-headers",
+ "bytes",
+ "http",
+ "iri-rs",
+ "mediatype",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+ "urlencoding",
+]
+
+[[package]]
+name = "andromeda-test-fixtures"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "chrono",
  "dashmap",
  "iri-rs",
- "pretty_assertions",
- "reqwest",
- "rumqttc",
+ "serde_json",
+ "thiserror 2.0.19",
+ "typed-builder",
+ "url",
+]
+
+[[package]]
+name = "andromeda-test-harness"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-test-client",
+ "futures",
+ "http",
+ "iri-rs",
  "serde_json",
  "sqlx",
  "thiserror 2.0.19",
  "tokio",
- "urlencoding",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "andromeda-test-mocks"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-http-headers",
+ "axum",
+ "bytes",
+ "dashmap",
+ "http",
+ "reqwest",
+ "rumqttc",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+ "typed-builder",
+ "url",
  "uuid",
 ]
 

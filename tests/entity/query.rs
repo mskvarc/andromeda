@@ -41,7 +41,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn entity_query_by_ids_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:query_ids_1");
     let id2 = unique_id("urn:ngsi-ld:Building:query_ids_2");
@@ -67,7 +67,7 @@ async fn entity_query_by_ids_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_by_type_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id = unique_id("urn:ngsi-ld:Building:query_type");
@@ -92,7 +92,7 @@ async fn entity_query_by_type_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_by_id_pattern_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let prefix = format!("urn:ngsi-ld:Building:idpat_{}", uuid::Uuid::new_v4());
     let id1 = format!("{prefix}a");
@@ -117,7 +117,7 @@ async fn entity_query_by_id_pattern_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_by_attrs_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:query_attrs_1");
     let id2 = unique_id("urn:ngsi-ld:Building:query_attrs_2");
@@ -141,7 +141,7 @@ async fn entity_query_by_attrs_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_by_geoquery_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geo_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geo_2");
@@ -164,7 +164,7 @@ async fn entity_query_by_geoquery_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_scope_full_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:scope_full_1");
     let id2 = unique_id("urn:ngsi-ld:Building:scope_full_2");
@@ -189,7 +189,7 @@ async fn entity_query_scope_full_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_scope_plus_wildcard_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:scope_plus_1");
     let id2 = unique_id("urn:ngsi-ld:Building:scope_plus_2");
@@ -214,7 +214,7 @@ async fn entity_query_scope_plus_wildcard_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_scope_hash_wildcard_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:scope_hash_1");
     let id2 = unique_id("urn:ngsi-ld:Building:scope_hash_2");
@@ -239,7 +239,7 @@ async fn entity_query_scope_hash_wildcard_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_scope_nonempty_returns_entities_with_scope() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:scope_nonempty_1");
     let id2 = unique_id("urn:ngsi-ld:Building:scope_nonempty_2");
@@ -264,7 +264,7 @@ async fn entity_query_scope_nonempty_returns_entities_with_scope() {
 #[tokio::test]
 #[serial]
 async fn entity_query_scope_and_returns_intersection() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:scope_and_1");
     let id2 = unique_id("urn:ngsi-ld:Building:scope_and_2");
@@ -289,7 +289,7 @@ async fn entity_query_scope_and_returns_intersection() {
 #[tokio::test]
 #[serial]
 async fn entity_query_scope_or_returns_union() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:scope_or_1");
     let id2 = unique_id("urn:ngsi-ld:Building:scope_or_2");
@@ -318,7 +318,7 @@ async fn entity_query_scope_or_returns_union() {
 #[tokio::test]
 #[serial]
 async fn entity_query_post_by_id_returns_matching_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:post_id_1");
     let id2 = unique_id("urn:ngsi-ld:Building:post_id_2");
@@ -344,7 +344,7 @@ async fn entity_query_post_by_id_returns_matching_entity() {
 #[tokio::test]
 #[serial]
 async fn entity_query_post_by_type_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:post_type");
     let vehicle_id1 = unique_id("urn:ngsi-ld:Vehicle:post_type_1");
@@ -369,7 +369,7 @@ async fn entity_query_post_by_type_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_post_by_id_pattern_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let prefix = format!("urn:ngsi-ld:Building:postpat_{}", uuid::Uuid::new_v4());
     let id1 = format!("{prefix}a");
@@ -394,7 +394,7 @@ async fn entity_query_post_by_id_pattern_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_post_by_attrs_returns_matching_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let building_id = unique_id("urn:ngsi-ld:Building:post_attrs");
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:post_attrs");
@@ -417,7 +417,7 @@ async fn entity_query_post_by_attrs_returns_matching_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_post_geojson_returns_feature_collection() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let vehicle_id = unique_id("urn:ngsi-ld:Vehicle:post_geojson");
     let parking_id = unique_id("urn:ngsi-ld:OffStreetParking:post_geojson");
@@ -438,7 +438,7 @@ async fn entity_query_post_geojson_returns_feature_collection() {
 #[tokio::test]
 #[serial]
 async fn entity_query_post_two_ids_returns_both() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:post_two_1");
     let id2 = unique_id("urn:ngsi-ld:Building:post_two_2");
@@ -507,7 +507,7 @@ async fn entity_query_invalid_georel_returns_bad_request() {
 #[tokio::test]
 #[serial]
 async fn entity_query_key_values_returns_simplified() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:kv_1");
     let id2 = unique_id("urn:ngsi-ld:Building:kv_2");
@@ -534,7 +534,7 @@ async fn entity_query_key_values_returns_simplified() {
 #[tokio::test]
 #[serial]
 async fn entity_query_geojson_returns_feature_collection() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geojson_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geojson_2");
@@ -556,7 +556,7 @@ async fn entity_query_geojson_returns_feature_collection() {
 #[tokio::test]
 #[serial]
 async fn entity_query_with_limit_returns_limited_results() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:limit_1");
     let id2 = unique_id("urn:ngsi-ld:Building:limit_2");
@@ -581,7 +581,7 @@ async fn entity_query_with_limit_returns_limited_results() {
 #[tokio::test]
 #[serial]
 async fn entity_query_count_returns_header() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:count_1");
     let id2 = unique_id("urn:ngsi-ld:Building:count_2");
@@ -597,7 +597,7 @@ async fn entity_query_count_returns_header() {
 #[tokio::test]
 #[serial]
 async fn entity_query_count_with_q_returns_filtered_count() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:count_q_1");
     let id2 = unique_id("urn:ngsi-ld:Building:count_q_2");
@@ -623,7 +623,7 @@ async fn entity_query_count_with_q_returns_filtered_count() {
 #[tokio::test]
 #[serial]
 async fn entity_query_type_selection_one_type() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:MultiTypes:type_sel_1");
     let id2 = unique_id("urn:ngsi-ld:MultiTypes:type_sel_2");
@@ -643,7 +643,7 @@ async fn entity_query_type_selection_one_type() {
 #[tokio::test]
 #[serial]
 async fn entity_query_type_selection_and_operator() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:MultiTypes:type_and_1");
     let id2 = unique_id("urn:ngsi-ld:MultiTypes:type_and_2");
@@ -663,7 +663,7 @@ async fn entity_query_type_selection_and_operator() {
 #[tokio::test]
 #[serial]
 async fn entity_query_type_selection_or_operator() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:MultiTypes:type_or_1");
     let id2 = unique_id("urn:ngsi-ld:MultiTypes:type_or_2");
@@ -687,7 +687,7 @@ async fn entity_query_type_selection_or_operator() {
 #[tokio::test]
 #[serial]
 async fn entity_query_q_name_equals_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:q_name_1");
     let id2 = unique_id("urn:ngsi-ld:Building:q_name_2");
@@ -711,7 +711,7 @@ async fn entity_query_q_name_equals_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn entity_query_q_relationship_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:q_rel_1");
     let id2 = unique_id("urn:ngsi-ld:Building:q_rel_2");
@@ -739,7 +739,7 @@ async fn entity_query_q_relationship_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn entity_query_geo_equals_point_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geo_eq_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geo_eq_2");
@@ -758,7 +758,7 @@ async fn entity_query_geo_equals_point_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn entity_query_geo_near_max_distance_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geo_near_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geo_near_2");
@@ -777,7 +777,7 @@ async fn entity_query_geo_near_max_distance_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn entity_query_geo_within_polygon_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geo_within_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geo_within_2");
@@ -802,7 +802,7 @@ async fn entity_query_geo_within_polygon_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn entity_query_geo_polygon_equals_returns_matching() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id1 = unique_id("urn:ngsi-ld:Building:geo_poly_1");
     let id2 = unique_id("urn:ngsi-ld:Building:geo_poly_2");
@@ -824,7 +824,7 @@ async fn entity_query_geo_polygon_equals_returns_matching() {
 #[tokio::test]
 #[serial]
 async fn entity_query_dataset_attrs_only_returns_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:dataset_attrs");
 
@@ -864,7 +864,7 @@ fn building_multi_instances(id: &str) -> serde_json::Value {
 #[tokio::test]
 #[serial]
 async fn entity_query_dataset_id_only_returns_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:dataset_id");
 
@@ -886,7 +886,7 @@ async fn entity_query_dataset_id_only_returns_entity() {
 #[tokio::test]
 #[serial]
 async fn entity_query_dataset_default_instance_returns_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
     let id = unique_id("urn:ngsi-ld:Building:dataset_default");
 
@@ -906,7 +906,7 @@ async fn entity_query_dataset_default_instance_returns_entity() {
 #[tokio::test]
 #[serial]
 async fn entity_query_inline_linked_returns_nested_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id1 = unique_id("urn:ngsi-ld:Building:linked_1");
@@ -941,7 +941,7 @@ async fn entity_query_inline_linked_returns_nested_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_flat_linked_returns_flattened_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id1 = unique_id("urn:ngsi-ld:Building:flat_1");
@@ -974,7 +974,7 @@ async fn entity_query_flat_linked_returns_flattened_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_inline_two_level_returns_nested() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id1 = unique_id("urn:ngsi-ld:Building:twolevel_1");
@@ -1013,7 +1013,7 @@ async fn entity_query_inline_two_level_returns_nested() {
 #[tokio::test]
 #[serial]
 async fn entity_query_flat_two_level_returns_all_entities() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id1 = unique_id("urn:ngsi-ld:Building:twolevel_flat_1");
@@ -1050,7 +1050,7 @@ async fn entity_query_flat_two_level_returns_all_entities() {
 #[tokio::test]
 #[serial]
 async fn entity_query_inline_linked_sys_attrs_returns_created_at() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id = unique_id("urn:ngsi-ld:Building:linked_sys_1");
@@ -1080,7 +1080,7 @@ async fn entity_query_inline_linked_sys_attrs_returns_created_at() {
 #[tokio::test]
 #[serial]
 async fn entity_query_flat_linked_sys_attrs_returns_created_at() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let client = client();
 
     let building_id = unique_id("urn:ngsi-ld:Building:flat_sys_1");

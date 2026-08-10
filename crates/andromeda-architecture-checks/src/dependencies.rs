@@ -2,6 +2,14 @@
 
 use std::{fs, path::Path};
 
+/// Focused test-infrastructure crate names that may only be production dependencies of one another.
+const TEST_INFRASTRUCTURE_CRATES: &[&str] = &[
+    "andromeda-test-client",
+    "andromeda-test-fixtures",
+    "andromeda-test-harness",
+    "andromeda-test-mocks",
+];
+
 /// Which dependency table a declaration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DependencyKind {
@@ -139,6 +147,73 @@ pub fn assert_development_only(crate_root: &str, dependency: &str) {
     }
 }
 
+/// Assert that production workspace packages do not ship focused test infrastructure.
+///
+/// Test-infrastructure crates may compose one another. Every other workspace
+/// package may name them only through a development dependency.
+///
+/// # Panics
+///
+/// Panics when a production package declares a focused test crate as a normal
+/// or build dependency, or when a discovered manifest cannot be read.
+pub fn assert_test_infrastructure_is_development_only(workspace_root: &str) {
+    let root = Path::new(workspace_root);
+    for path in workspace_manifest_paths(root) {
+        let manifest = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
+        let package = package_name(&manifest);
+        if package.is_some_and(|name| TEST_INFRASTRUCTURE_CRATES.contains(&name)) {
+            continue;
+        }
+        for (kind, dependency) in declarations(&manifest) {
+            assert!(
+                !TEST_INFRASTRUCTURE_CRATES.contains(&dependency) || kind == DependencyKind::Development,
+                "{} declares test infrastructure {dependency} as a {kind:?} dependency",
+                path.display()
+            );
+        }
+    }
+}
+
+/// Discover root and crate manifests without walking generated output.
+fn workspace_manifest_paths(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut paths = vec![root.join("Cargo.toml")];
+    for parent in [root.join("crates"), root.join("lib")] {
+        if !parent.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(&parent).unwrap_or_else(|error| unreachable!("{} is readable: {error}", parent.display())) {
+            let path = entry
+                .unwrap_or_else(|error| unreachable!("an entry of {} is readable: {error}", parent.display()))
+                .path()
+                .join("Cargo.toml");
+            if path.exists() {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
+    paths
+}
+
+/// Read the package name from the package table of a Cargo manifest.
+fn package_name(manifest: &str) -> Option<&str> {
+    let mut in_package = false;
+    for line in manifest.lines().map(str::trim) {
+        if line == "[package]" {
+            in_package = true;
+            continue;
+        }
+        if line.starts_with('[') {
+            in_package = false;
+            continue;
+        }
+        if in_package && let Some(value) = line.strip_prefix("name").and_then(|rest| rest.trim_start().strip_prefix('=')) {
+            return Some(value.trim().trim_matches('"'));
+        }
+    }
+    None
+}
+
 /// The rule itself, over declarations already read.
 ///
 /// Separate from [`assert_dependency_boundary`] so that what the rule rejects can be
@@ -198,6 +273,10 @@ fn declarations(manifest: &str) -> Vec<(DependencyKind, &str)> {
         let rest: Vec<&str> = segments.collect();
 
         match (DependencyKind::of_table(first), rest.as_slice()) {
+            // Workspace dependency declarations are version/path aliases, not
+            // package edges. The consuming package's own dependency table is
+            // the authoritative edge and is checked separately.
+            (_, _) if first == "workspace" => {}
             // `[dependencies.serde]` names one dependency and opens a table of
             // its own keys, none of which is a dependency name.
             (Some(kind), [name]) => declared.push((kind, name.trim_matches('"'))),

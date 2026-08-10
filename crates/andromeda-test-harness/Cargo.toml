@@ -1,0 +1,24 @@
+[package]
+name = "andromeda-test-harness"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-test-client.workspace = true
+futures = "0.3.32"
+http = "1.4.0"
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres"] }
+thiserror = "2.0.18"
+tokio = { version = "1.52.1", features = ["sync", "time"] }
+url = "2.5.8"
+uuid = { version = "1.23.1", features = ["v4"] }
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+serde_json = "1.0.149"
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "time"] }

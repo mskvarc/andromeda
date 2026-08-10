@@ -7,7 +7,10 @@
 use crate::{error::RegistrationError, resolved_update::ResolvedCsrUpdate};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
+};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
@@ -73,7 +76,7 @@ pub struct CreateCsrParams<'a> {
     pub management: Option<&'a Value>,
     /// Additional context source metadata entries.
     #[builder(default)]
-    pub context_source_info: Option<&'a Value>,
+    pub context_source_info: Option<Vec<KeyValuePair>>,
     /// JSON-LD context associated with this registration.
     #[builder(default)]
     pub jsonld_context: Option<Url>,
@@ -178,7 +181,7 @@ pub struct CsrUpdateFragment {
     pub management: Option<Option<Value>>,
     /// Updated context source metadata entries.
     #[builder(default)]
-    pub context_source_info: Option<Option<Value>>,
+    pub context_source_info: Option<Option<Vec<KeyValuePair>>>,
     /// Updated JSON-LD context reference.
     #[builder(default)]
     pub jsonld_context: Option<Option<Url>>,

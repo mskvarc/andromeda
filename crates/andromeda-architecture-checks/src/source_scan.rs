@@ -30,6 +30,7 @@ pub(crate) fn workspace_sources(workspace_root: &Path) -> Vec<RustSource> {
     let excluded = sources.iter().flat_map(test_only_external_modules).collect::<Vec<_>>();
     sources.retain(|source| {
         !is_test_only(&source.syntax.attrs)
+            && !source.workspace_path.starts_with("crates/andromeda-test-")
             && !excluded
                 .iter()
                 .any(|excluded_path| source.absolute_path == *excluded_path || source.absolute_path.starts_with(excluded_path))

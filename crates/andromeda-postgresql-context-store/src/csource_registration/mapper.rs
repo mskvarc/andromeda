@@ -2,15 +2,18 @@
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
-use andromeda_ngsi_ld_model::registration::{
-    ContextSourceAccess,
-    ContextSourceRegistration,
-    CsrOperation,
-    CsrStatus,
-    ForwardingMode,
-    RegistrationCoverage,
-    RegistrationHealth,
-    RegistrationLifecycle,
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    registration::{
+        ContextSourceAccess,
+        ContextSourceRegistration,
+        CsrOperation,
+        CsrStatus,
+        ForwardingMode,
+        RegistrationCoverage,
+        RegistrationHealth,
+        RegistrationLifecycle,
+    },
 };
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
@@ -79,7 +82,11 @@ pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistrati
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR refreshRate: {e}")))?;
     let management: Option<Value> = row.get("management");
-    let context_source_info: Option<Value> = row.get("context_source_info");
+    let context_source_info = row
+        .get::<Option<Value>, _>("context_source_info")
+        .map(serde_json::from_value::<Vec<KeyValuePair>>)
+        .transpose()
+        .map_err(|error| ContextStoreError::Internal(format!("Invalid CSR contextSourceInfo: {error}")))?;
     let jsonld_context: Option<Url> = row
         .get::<Option<String>, _>("jsonld_context")
         .as_deref()

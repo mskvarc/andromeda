@@ -1,17 +1,52 @@
-//! `@context` cache expiration tests (NGSI-LD 6.3.16).
-//!
-//! NGSI-LD 6.3.16 mandates that a broker respects `Cache-Control` and
-//! `Expires` when fetching external `@context` documents, with a
-//! heuristic fallback when neither is present.
-//!
-//! Exercising the cache respects-headers behaviour requires a local HTTP
-//! server that serves `@context` documents with controlled response
-//! headers and counts inbound fetches. That infrastructure (akin to the
-//! `ContextSourceMock` in `andromeda-test-common::mock`) does not yet
-//! have a JSON-LD-context-specific variant. Scaffold documents the gap.
+//! Remote `@context` cache-control integration tests (NGSI-LD 6.3.16).
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
+use axum::{
+    body::Bytes,
+    http::{HeaderMap, HeaderValue, header::CACHE_CONTROL},
+};
+use pretty_assertions::assert_eq;
+use reqwest::StatusCode;
+use serde_json::json;
+use uuid::Uuid;
+
 #[tokio::test]
-#[ignore = "Needs a host-local JSON-LD @context server that counts fetches and returns chosen Cache-Control/Expires headers; follow-up: add a `ContextDocumentServer` helper to andromeda-test-common::mock and populate the scenarios."]
-async fn cache_expiration_follow_up_requires_context_document_server() {}
+async fn cache_expiration_max_age_zero_refetches_the_remote_context() {
+    let environment = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let client = environment.client().clone(); // clone: the client remains usable while the environment retains cleanup ownership.
+    let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("context server must start");
+    let path = CallbackPath::parse(format!("/cache-expiration-{}.jsonld", Uuid::new_v4())).expect("absolute context path");
+    let mut headers = HeaderMap::new();
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("max-age=0"));
+    let context_url = server
+        .serve(
+            path.clone(), // clone: the server retains the route while the test uses it for request counts.
+            Bytes::from_static(br#"{"@context":{"Device":"https://example.org/Device","temperature":"https://example.org/temperature"}}"#),
+            headers,
+        )
+        .await
+        .expect("context route must be configured");
+
+    for sequence in 1..=2 {
+        let entity = json!({
+            "id": format!("urn:ngsi-ld:Device:cache-expiration:{sequence}:{}", Uuid::new_v4()),
+            "type": "Device",
+            "temperature": {"type": "Property", "value": sequence},
+            "@context": [context_url]
+        });
+        let created = client.post_entity(&entity).send().await.expect("entity creation failed");
+        assert_eq!(created.status, StatusCode::CREATED);
+    }
+    assert!(
+        server.request_count(&path) >= 2,
+        "max-age=0 must force a fresh remote context fetch for the second request"
+    );
+
+    server.shutdown().await.expect("context server shutdown failed");
+    environment.reset_and_finish().await.expect("post-test reset failed");
+}

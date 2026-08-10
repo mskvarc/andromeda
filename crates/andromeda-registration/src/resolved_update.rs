@@ -7,7 +7,10 @@
 use crate::{error::RegistrationError, store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName};
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -49,7 +52,7 @@ pub struct ResolvedCsrUpdate {
     /// New management object.
     pub management: Option<Value>,
     /// New context-source-info object.
-    pub context_source_info: Option<Value>,
+    pub context_source_info: Option<Vec<KeyValuePair>>,
     /// New JSON-LD context identifier.
     pub jsonld_context: Option<Url>,
     /// New Via alias pseudonym.

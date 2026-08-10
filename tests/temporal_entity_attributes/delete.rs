@@ -28,7 +28,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_attribute_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_01_01");
 
@@ -59,7 +59,7 @@ async fn temporal_attrs_delete_attribute_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_with_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_01_02");
 
@@ -89,7 +89,7 @@ async fn temporal_attrs_delete_with_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_with_deleteall_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_01_03");
 
@@ -122,7 +122,7 @@ async fn temporal_attrs_delete_with_deleteall_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_empty_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = request_temporal_attrs(&c, Method::DELETE, "/temporal/entities//attrs/fuelLevel", None).await;
@@ -137,7 +137,7 @@ async fn temporal_attrs_delete_empty_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, body) = delete_temporal_attr(&c, "invalidId", "speed").await;
@@ -152,7 +152,7 @@ async fn temporal_attrs_delete_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_invalid_attribute_name_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_02_03");
 
@@ -176,7 +176,7 @@ async fn temporal_attrs_delete_invalid_attribute_name_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_entity_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_03_01");
 
@@ -192,7 +192,7 @@ async fn temporal_attrs_delete_entity_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_attribute_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_03_02");
 
@@ -212,7 +212,7 @@ async fn temporal_attrs_delete_attribute_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_nonexistent_datasetid_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_015_03_03");
 

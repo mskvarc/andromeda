@@ -4,12 +4,12 @@
 //! Uses the standard Rust test harness with `#[tokio::test]` and raw `reqwest`.
 //! Requires a running Andromeda instance on `127.0.0.1:1056` with a clean database.
 
-use andromeda_test_common::config::{BASE_URL, CORE_CONTEXT};
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::Client;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const BASE: &iri_rs::Iri<&str> = BASE_URL;
 const CTX: &iri_rs::Iri<&str> = CORE_CONTEXT;
 
 fn uid(prefix: &str) -> String {
@@ -18,7 +18,7 @@ fn uid(prefix: &str) -> String {
 
 async fn create(client: &Client, entity: &Value) {
     let resp = client
-        .post(format!("{BASE}/temporal/entities"))
+        .post(format!("{BASE_URL}/temporal/entities"))
         .header("Content-Type", "application/ld+json")
         .json(entity)
         .send()
@@ -34,12 +34,12 @@ async fn create(client: &Client, entity: &Value) {
 }
 
 async fn delete(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE}/temporal/entities/{}", urlencoding::encode(id))).send().await;
+    let _ = client.delete(format!("{BASE_URL}/temporal/entities/{}", urlencoding::encode(id))).send().await;
 }
 
 async fn get_aggregated(client: &Client, id: &str, methods: &str, period: Option<&str>) -> Value {
     let encoded_id = urlencoding::encode(id);
-    let mut url = format!("{BASE}/temporal/entities/{encoded_id}?format=aggregatedValues&aggrMethods={methods}");
+    let mut url = format!("{BASE_URL}/temporal/entities/{encoded_id}?format=aggregatedValues&aggrMethods={methods}");
     if let Some(p) = period {
         url.push_str(&format!("&aggrPeriodDuration={p}"));
     }
@@ -61,7 +61,7 @@ async fn get_aggregated(client: &Client, id: &str, methods: &str, period: Option
 
 async fn get_aggregated_raw(client: &Client, id: &str, query: &str) -> reqwest::Response {
     let encoded_id = urlencoding::encode(id);
-    let url = format!("{BASE}/temporal/entities/{encoded_id}?{query}");
+    let url = format!("{BASE_URL}/temporal/entities/{encoded_id}?{query}");
     client
         .get(&url)
         .header("Accept", "application/ld+json")

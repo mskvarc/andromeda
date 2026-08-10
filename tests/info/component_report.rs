@@ -2,7 +2,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{client::NgsiLdClient, db::pool, scope::TestScope};
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode, header::CONTENT_TYPE};
 use serde_json::{Map, Value};
@@ -25,8 +25,10 @@ fn assert_non_empty_string(component: &Map<String, Value>, member: &str) {
 /// The extension response keeps its stable envelope and complete Andromeda build metadata.
 #[tokio::test]
 async fn info_component_report_active_profile_returns_stable_envelope() {
-    let scope = TestScope::new("info-component-report-envelope");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("info-component-report-envelope")
+        .await
+        .expect("isolated test environment");
+    let client = scope.client();
     let response = client
         .raw(Method::GET, "/ngsi-ld/v1/version")
         .send()
@@ -38,15 +40,13 @@ async fn info_component_report_active_profile_returns_stable_envelope() {
         response.headers.get(CONTENT_TYPE).and_then(|value| value.to_str().ok()),
         Some("application/json")
     );
-    let id = response.body["id"].as_str().expect("component report id must be a string");
+    let body = response.json_value().expect("component report must be valid JSON");
+    let id = body["id"].as_str().expect("component report id must be a string");
     assert!(id.starts_with("urn:ngsi-ld:ComponentReportList:"), "unexpected component report id: {id}");
-    assert_eq!(response.body["type"], "ComponentReportList");
-    assert!(
-        response.body.get("@context").is_none(),
-        "the broker extension must not invent a JSON-LD context"
-    );
+    assert_eq!(body["type"], "ComponentReportList");
+    assert!(body.get("@context").is_none(), "the broker extension must not invent a JSON-LD context");
 
-    let components = response.body["components"].as_array().expect("components must be an array");
+    let components = body["components"].as_array().expect("components must be an array");
     let andromeda = component(components, "andromeda");
     for member in [
         "version",
@@ -62,13 +62,16 @@ async fn info_component_report_active_profile_returns_stable_envelope() {
         assert_non_empty_string(andromeda, member);
     }
     assert!(andromeda.get("gitClean").is_some_and(Value::is_boolean), "gitClean must be a boolean");
+    scope.finish().await.expect("cleanup failed");
 }
 
 /// Storage entries are derived from the selected PostgreSQL profile and installed extensions.
 #[tokio::test]
 async fn info_component_report_storage_entries_match_active_database_components() {
-    let scope = TestScope::new("info-component-report-storage");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("info-component-report-storage")
+        .await
+        .expect("isolated test environment");
+    let client = scope.client();
     let response = client
         .raw(Method::GET, "/ngsi-ld/v1/version")
         .send()
@@ -76,21 +79,21 @@ async fn info_component_report_storage_entries_match_active_database_components(
         .expect("component report request failed");
     assert_eq!(response.status, StatusCode::OK);
 
-    let components = response.body["components"].as_array().expect("components must be an array");
+    let body = response.json_value().expect("component report must be valid JSON");
+    let components = body["components"].as_array().expect("components must be an array");
     let component_names = components
         .iter()
         .map(|entry| entry["component"].as_str().expect("component name must be a string"))
         .collect::<BTreeSet<_>>();
     assert_eq!(component_names.len(), components.len(), "component names must not be duplicated");
 
-    let database = pool().await.expect("database pool acquisition failed");
     let row = sqlx::query(
         "SELECT current_setting('server_version') AS pg_version, \
          (SELECT extversion FROM pg_extension WHERE extname = 'postgis') AS postgis_version, \
          (SELECT extversion FROM pg_extension WHERE extname = 'timescaledb') AS timescaledb_version, \
          current_setting('timescaledb.license', true) AS timescaledb_license",
     )
-    .fetch_one(&database)
+    .fetch_one(scope.database_pool())
     .await
     .expect("active database component query failed");
     let postgresql_version: String = row.get("pg_version");
@@ -120,4 +123,5 @@ async fn info_component_report_storage_entries_match_active_database_components(
         component_names, expected_names,
         "the response must report exactly the active composition components"
     );
+    scope.finish().await.expect("cleanup failed");
 }

@@ -24,7 +24,7 @@ use crate::{
 #[tokio::test]
 #[serial]
 async fn delete_hosted_context_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
@@ -78,7 +78,7 @@ async fn delete_unknown_with_reload_invalid_returns_400() {
 #[tokio::test]
 #[serial]
 async fn delete_hosted_with_reload_true_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let ctx_id = create_hosted_context(&c).await;
 
@@ -90,7 +90,7 @@ async fn delete_hosted_with_reload_true_returns_400() {
 #[tokio::test]
 #[serial]
 async fn delete_implicitly_created_context_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (sub_id, ctx_id) = create_implicit_context(&c).await;
 
@@ -105,7 +105,7 @@ async fn delete_implicitly_created_context_returns_204() {
 #[tokio::test]
 #[serial]
 async fn delete_implicitly_created_with_reload_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (sub_id, ctx_id) = create_implicit_context(&c).await;
 
@@ -154,7 +154,7 @@ async fn delete_and_reload_core_context_returns_204() {
 #[tokio::test]
 #[serial]
 async fn delete_cached_context_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (_server, ctx_url) = setup_cached_context(&c).await;
 
@@ -169,14 +169,14 @@ async fn delete_cached_context_returns_204() {
 #[tokio::test]
 #[serial]
 async fn delete_cached_reload_server_unavailable_returns_504() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let (mut server, ctx_url) = setup_cached_context(&c).await;
+    let (server, ctx_url) = setup_cached_context(&c).await;
 
     let cached_id = find_cached_context_id(&c, &ctx_url).await;
 
     // Stop the context server
-    server.stop();
+    server.shutdown().await;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Attempt delete with reload -- should fail since server is down

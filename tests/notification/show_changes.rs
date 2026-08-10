@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use reqwest::StatusCode;
 
+use crate::notification_adapter::NotificationAdapter as NotificationReceiver;
+
 use crate::helpers::{
-    NotificationReceiver,
     append_entity_attrs,
     base_subscription,
     building_different_attribute_types_entity,
@@ -58,7 +59,7 @@ async fn create_show_changes_trigger_subscription(http_client: &reqwest::Client,
 #[tokio::test]
 async fn notification_show_changes_property_update_contains_previous_value() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_31_01");
@@ -75,7 +76,7 @@ async fn notification_show_changes_property_update_contains_previous_value() {
 #[tokio::test]
 async fn notification_show_changes_relationship_update_contains_previous_object() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_31_02");
@@ -92,7 +93,7 @@ async fn notification_show_changes_relationship_update_contains_previous_object(
 #[tokio::test]
 async fn notification_show_changes_geoproperty_update_contains_previous_value() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_31_03");
@@ -109,7 +110,7 @@ async fn notification_show_changes_geoproperty_update_contains_previous_value() 
 #[tokio::test]
 async fn notification_show_changes_language_property_update_contains_previous_language_map() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_31_04");
@@ -126,7 +127,7 @@ async fn notification_show_changes_language_property_update_contains_previous_la
 #[tokio::test]
 async fn notification_show_changes_json_property_partial_update_contains_previous_json() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_32");
@@ -143,7 +144,7 @@ async fn notification_show_changes_json_property_partial_update_contains_previou
 #[tokio::test]
 async fn notification_show_changes_vocab_property_partial_update_contains_previous_vocab() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_33");
@@ -160,7 +161,7 @@ async fn notification_show_changes_vocab_property_partial_update_contains_previo
 #[tokio::test]
 async fn notification_show_changes_attribute_deleted_property_contains_previous_value() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_34_01");
@@ -177,7 +178,7 @@ async fn notification_show_changes_attribute_deleted_property_contains_previous_
 #[tokio::test]
 async fn notification_show_changes_attribute_deleted_relationship_contains_previous_object() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_34_02");
@@ -194,7 +195,7 @@ async fn notification_show_changes_attribute_deleted_relationship_contains_previ
 #[tokio::test]
 async fn notification_show_changes_attribute_deleted_geoproperty_contains_previous_value() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_34_03");
@@ -211,7 +212,7 @@ async fn notification_show_changes_attribute_deleted_geoproperty_contains_previo
 #[tokio::test]
 async fn notification_show_changes_attribute_deleted_language_property_contains_previous_language_map() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_34_04");
@@ -228,7 +229,7 @@ async fn notification_show_changes_attribute_deleted_language_property_contains_
 #[tokio::test]
 async fn notification_show_changes_attribute_deleted_json_property_contains_previous_json() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_35");
@@ -245,7 +246,7 @@ async fn notification_show_changes_attribute_deleted_json_property_contains_prev
 #[tokio::test]
 async fn notification_show_changes_attribute_deleted_vocab_property_contains_previous_vocab() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_36");
@@ -262,7 +263,7 @@ async fn notification_show_changes_attribute_deleted_vocab_property_contains_pre
 #[tokio::test]
 async fn notification_show_changes_entity_deleted_contains_previous_values_for_multiple_attribute_types() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_37");
@@ -281,7 +282,7 @@ async fn notification_show_changes_entity_deleted_contains_previous_values_for_m
 #[tokio::test]
 async fn notification_show_changes_entity_deleted_json_property_contains_previous_json() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_38");
@@ -298,7 +299,7 @@ async fn notification_show_changes_entity_deleted_json_property_contains_previou
 #[tokio::test]
 async fn notification_show_changes_entity_deleted_vocab_property_contains_previous_vocab() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_39");
@@ -315,7 +316,7 @@ async fn notification_show_changes_entity_deleted_vocab_property_contains_previo
 #[tokio::test]
 async fn notification_show_changes_entity_created_does_not_include_previous_fields() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let subscription_id = create_show_changes_trigger_subscription(&http_client, "046_40", "entityCreated", &receiver).await;
@@ -334,7 +335,7 @@ async fn notification_show_changes_entity_created_does_not_include_previous_fiel
 #[tokio::test]
 async fn notification_show_changes_attribute_created_does_not_include_previous_fields() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_41");

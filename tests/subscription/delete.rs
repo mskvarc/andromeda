@@ -17,7 +17,7 @@ use crate::helpers::{
 #[tokio::test]
 async fn subscription_delete_missing_id_path_returns_method_not_allowed() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, _) = raw_subscription_request(&http_client, Method::DELETE, "/subscriptions/", None, None).await;
 
@@ -28,7 +28,7 @@ async fn subscription_delete_missing_id_path_returns_method_not_allowed() {
 #[tokio::test]
 async fn subscription_delete_invalid_id_returns_bad_request_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, body_bytes) = delete_subscription(&http_client, "InvalidUri").await;
     let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
@@ -41,7 +41,7 @@ async fn subscription_delete_invalid_id_returns_bad_request_data() {
 #[tokio::test]
 async fn subscription_delete_unknown_id_returns_resource_not_found() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, body_bytes) = delete_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown").await;
     let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or_default();
@@ -54,7 +54,7 @@ async fn subscription_delete_unknown_id_returns_resource_not_found() {
 #[tokio::test]
 async fn subscription_delete_existing_id_returns_no_content_and_removes_subscription() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("delete-existing");
     let payload = default_subscription(&subscription_id);
 

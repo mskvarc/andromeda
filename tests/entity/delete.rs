@@ -17,7 +17,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn entity_delete_existing_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:delete_002_01_01");
     let entity = building_simple_attributes(&id);
@@ -40,7 +40,7 @@ async fn entity_delete_existing_success() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_missing_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _) = request_method_on_collection(&c, Method::DELETE, None).await;
@@ -50,7 +50,7 @@ async fn entity_delete_missing_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_invalid_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = delete_entity(&c, "thisisaninvaliduri").await;
@@ -65,7 +65,7 @@ async fn entity_delete_invalid_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:delete_002_03_01");
 

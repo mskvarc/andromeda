@@ -15,21 +15,17 @@ mod delete;
 mod list;
 mod serve;
 
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, callback_url},
-    db::TRUNCATE_ALL,
-    error,
-};
-use axum::response::IntoResponse;
+use andromeda_test_client::broker_endpoint::BrokerEndpoint;
+use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
+use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};
+use axum::{body::Bytes, http::HeaderMap};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use std::{
     collections::HashMap,
-    sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
@@ -49,10 +45,10 @@ fn unique_id(prefix: &str) -> String {
 // Database cleanup
 // ---------------------------------------------------------------------------
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 // ---------------------------------------------------------------------------
@@ -60,62 +56,44 @@ async fn clean_database() {
 // ---------------------------------------------------------------------------
 
 struct ContextServer {
-    port: u16,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    server: JsonLdContextServer,
+    urls: HashMap<String, String>,
 }
 
 impl ContextServer {
     async fn start(routes: HashMap<String, String>) -> Self {
-        let routes = Arc::new(RwLock::new(routes));
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-        let app = axum::Router::new().fallback(move |req: axum::extract::Request| {
-            let store = routes.clone();
-            async move {
-                let path = req.uri().path().to_string();
-                let routes = store.read().await;
-                if let Some(body) = routes.get(&path) {
-                    (
-                        axum::http::StatusCode::OK,
-                        [(axum::http::header::CONTENT_TYPE, "application/ld+json")],
-                        body.clone(),
-                    )
-                        .into_response()
-                } else {
-                    axum::http::StatusCode::NOT_FOUND.into_response()
-                }
-            }
-        });
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
+        let server = JsonLdContextServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+            .await
+            .expect("JSON-LD context server must start");
+        let mut urls = HashMap::new();
+        for (path, body) in routes {
+            let callback_path = CallbackPath::parse(path.clone()).expect("context route must be absolute");
+            let url = server
+                .serve(callback_path, Bytes::from(body), HeaderMap::new())
                 .await
-                .unwrap();
-        });
-
-        Self {
-            port,
-            shutdown: Some(shutdown_tx),
+                .expect("context route must be configured");
+            urls.insert(path, url.to_string());
         }
+        ContextServer { server, urls }
     }
 
     /// URL the broker dials to fetch a served `@context`, on whichever host
     /// name reaches this test process.
     fn url(&self, path: &str) -> String {
-        callback_url(self.port, path)
+        self.urls.get(path).expect("configured context route").clone() // clone: callers own callback URL text independently of the server.
     }
 
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
+    async fn shutdown(self) {
+        self.server.shutdown().await.expect("context server shutdown failed");
     }
+}
+
+fn broker_url(path: &str) -> String {
+    BrokerEndpoint::from_environment()
+        .expect("valid broker endpoint")
+        .join(path)
+        .expect("valid broker-relative test path")
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +103,7 @@ impl ContextServer {
 /// POST /jsonldContexts, return (status, location, body).
 async fn create_context(client: &Client, body: &Value) -> (StatusCode, Option<String>, Value) {
     let resp = client
-        .post(format!("{BASE_URL}/jsonldContexts"))
+        .post(broker_url("jsonldContexts"))
         .header("Content-Type", "application/json")
         .json(body)
         .send()
@@ -142,7 +120,7 @@ async fn get_context(client: &Client, id: &str, query: &str) -> (StatusCode, Val
     let encoded = urlencoding::encode(id);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
-        .get(format!("{BASE_URL}/jsonldContexts/{encoded}{sep}{query}"))
+        .get(broker_url(&format!("jsonldContexts/{encoded}{sep}{query}")))
         .send()
         .await
         .expect("get_context request failed");
@@ -187,7 +165,7 @@ async fn wait_for_hits_above(client: &Client, ctx_id: &str, baseline: u64) -> u6
 async fn list_contexts(client: &Client, query: &str) -> (StatusCode, Vec<Value>) {
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
-        .get(format!("{BASE_URL}/jsonldContexts{sep}{query}"))
+        .get(broker_url(&format!("jsonldContexts{sep}{query}")))
         .send()
         .await
         .expect("list_contexts request failed");
@@ -201,7 +179,7 @@ async fn delete_context(client: &Client, id: &str, query: &str) -> (StatusCode, 
     let encoded = urlencoding::encode(id);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
-        .delete(format!("{BASE_URL}/jsonldContexts/{encoded}{sep}{query}"))
+        .delete(broker_url(&format!("jsonldContexts/{encoded}{sep}{query}")))
         .send()
         .await
         .expect("delete_context request failed");
@@ -215,7 +193,7 @@ async fn delete_context_raw(client: &Client, id: &str, query: &str) -> (StatusCo
     let encoded = urlencoding::encode(id);
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
-        .delete(format!("{BASE_URL}/jsonldContexts/{encoded}{sep}{query}"))
+        .delete(broker_url(&format!("jsonldContexts/{encoded}{sep}{query}")))
         .send()
         .await
         .expect("delete_context_raw request failed");
@@ -227,7 +205,7 @@ async fn delete_context_raw(client: &Client, id: &str, query: &str) -> (StatusCo
 /// POST /entities with JSON-LD body.
 async fn create_entity(client: &Client, body: &Value) -> (StatusCode, Option<String>) {
     let resp = client
-        .post(format!("{BASE_URL}/entities"))
+        .post(broker_url("entities"))
         .header("Content-Type", "application/ld+json")
         .json(body)
         .send()
@@ -240,13 +218,13 @@ async fn create_entity(client: &Client, body: &Value) -> (StatusCode, Option<Str
 
 /// DELETE /entities/{id}.
 async fn delete_entity(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE_URL}/entities/{id}")).send().await;
+    let _ = client.delete(broker_url(&format!("entities/{id}"))).send().await;
 }
 
 /// POST /subscriptions with JSON-LD body.
 async fn create_subscription(client: &Client, body: &Value) -> (StatusCode, Option<String>) {
     let resp = client
-        .post(format!("{BASE_URL}/subscriptions"))
+        .post(broker_url("subscriptions"))
         .header("Content-Type", "application/ld+json")
         .json(body)
         .send()
@@ -259,7 +237,7 @@ async fn create_subscription(client: &Client, body: &Value) -> (StatusCode, Opti
 
 /// DELETE /subscriptions/{id}.
 async fn delete_subscription(client: &Client, id: &str) {
-    let _ = client.delete(format!("{BASE_URL}/subscriptions/{id}")).send().await;
+    let _ = client.delete(broker_url(&format!("subscriptions/{id}"))).send().await;
 }
 
 /// Extract the last path segment (ID) from a Location header or URI string.

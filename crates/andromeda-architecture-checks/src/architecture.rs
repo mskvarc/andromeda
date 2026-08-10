@@ -73,6 +73,114 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
     );
 }
 
+/// Assert source boundaries specific to the focused integration-test infrastructure.
+///
+/// # Panics
+///
+/// Panics when root tests contain direct global truncation, when the retired
+/// umbrella crate name returns, or when a focused test crate introduces a
+/// generic dumping-ground module.
+pub fn assert_test_infrastructure_invariants(workspace_root: &str) {
+    let root = Path::new(workspace_root);
+    let mut violations = Vec::new();
+    scan_test_sources(root, &mut violations);
+    scan_test_crate_modules(root, &mut violations);
+    let retired_manifest = root.join("lib/andromeda-test-common/Cargo.toml");
+    if retired_manifest.exists() {
+        violations.push("retired lib/andromeda-test-common manifest exists".to_owned());
+    }
+    let violations = violations.into_iter().collect::<BTreeSet<_>>();
+    assert!(
+        violations.is_empty(),
+        "test infrastructure invariant violations:\n{}",
+        violations.into_iter().collect::<Vec<_>>().join("\n")
+    );
+}
+
+/// Scan root integration-test sources for retired names and direct global SQL resets.
+fn scan_test_sources(root: &Path, violations: &mut Vec<String>) {
+    let tests = root.join("tests");
+    for path in rust_files_below(&tests) {
+        let source = fs::read_to_string(&path).unwrap_or_else(|error| unreachable!("{} is readable: {error}", path.display()));
+        let relative = path.strip_prefix(root).unwrap_or(&path).display();
+        if source.contains(concat!("andromeda_test_", "common")) || source.contains(concat!("andromeda-test-", "common")) {
+            violations.push(format!("{relative} contains the retired test-common name"));
+        }
+        if source.contains("TcpListener::bind") || source.contains("axum::serve") {
+            violations.push(format!("{relative} binds a callback listener outside andromeda-test-mocks"));
+        }
+        let syntax = syn::parse_file(&source).unwrap_or_else(|error| unreachable!("{} parses as Rust: {error}", path.display()));
+        let mut visitor = TestInfrastructureVisitor {
+            path: relative.to_string(),
+            violations: Vec::new(),
+        };
+        visitor.visit_file(&syntax);
+        violations.extend(visitor.violations);
+    }
+}
+
+/// Reject generic module names inside the four focused test crates.
+fn scan_test_crate_modules(root: &Path, violations: &mut Vec<String>) {
+    let crates = root.join("crates");
+    for crate_name in [
+        "andromeda-test-client",
+        "andromeda-test-fixtures",
+        "andromeda-test-harness",
+        "andromeda-test-mocks",
+    ] {
+        let source_root = crates.join(crate_name).join("src");
+        for path in rust_files_below(&source_root) {
+            let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or_default();
+            let parent = path.parent().and_then(Path::file_name).and_then(|value| value.to_str()).unwrap_or_default();
+            if ["common", "utils", "helpers", "shared", "misc"].contains(&stem)
+                || (stem == "mod" && ["common", "utils", "helpers", "shared", "misc"].contains(&parent))
+            {
+                violations.push(format!("{} uses a generic shared-infrastructure module name", path.display()));
+            }
+        }
+    }
+}
+
+/// Recursively discover Rust files below one existing directory.
+fn rust_files_below(root: &Path) -> Vec<std::path::PathBuf> {
+    if !root.exists() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory).unwrap_or_else(|error| unreachable!("{} is readable: {error}", directory.display())) {
+            let path = entry
+                .unwrap_or_else(|error| unreachable!("an entry of {} is readable: {error}", directory.display()))
+                .path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// SQL-string visitor for root integration-test source.
+struct TestInfrastructureVisitor {
+    /// Workspace-relative source path.
+    path: String,
+    /// Violations found in the source.
+    violations: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for TestInfrastructureVisitor {
+    fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
+        if literal.value().trim_start().to_ascii_uppercase().starts_with("TRUNCATE ") {
+            self.violations.push(format!("{} contains direct global TRUNCATE SQL", self.path));
+        }
+        visit_lit_str(self, literal);
+    }
+}
+
 /// Find public re-exports and over-qualified inline paths in one syntax tree.
 struct ArchitectureVisitor<'path> {
     /// Workspace-relative file currently scanned.

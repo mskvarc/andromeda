@@ -30,7 +30,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn entity_delete_by_query_by_type_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:dq_type_1");
@@ -69,7 +69,7 @@ async fn entity_delete_by_query_by_type_success() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_by_query_by_id_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:dq_id_1");
@@ -99,7 +99,7 @@ async fn entity_delete_by_query_by_id_success() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_by_query_by_id_pattern_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:dq_pat_match1");
@@ -133,7 +133,7 @@ async fn entity_delete_by_query_by_id_pattern_success() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_by_query_by_q_filter_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id_high = unique_id("urn:ngsi-ld:Building:dq_q_high");
@@ -168,7 +168,7 @@ async fn entity_delete_by_query_by_q_filter_success() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_by_query_empty_result_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _) = delete_entities_by_query(&c, "type=NonExistentType&local=true", Some(TEST_SUITE_CONTEXT)).await;
@@ -182,7 +182,7 @@ async fn entity_delete_by_query_empty_result_returns_204() {
 #[tokio::test]
 #[serial]
 async fn entity_delete_by_query_no_filters_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _) = delete_entities_by_query(&c, "", None).await;

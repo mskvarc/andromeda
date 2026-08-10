@@ -26,7 +26,11 @@ use jsonld::{LoadError, Loader, RemoteDocument};
 use jsonld_syntax::Parse;
 use mediatype::{MediaType, MediaTypeBuf, Name, names};
 use moka::future::Cache;
-use reqwest::{Client, header::CONTENT_TYPE, redirect::Policy};
+use reqwest::{
+    Client,
+    header::{CACHE_CONTROL, CONTENT_TYPE},
+    redirect::Policy,
+};
 use serde_json::Value;
 use std::{
     sync::{
@@ -52,6 +56,17 @@ struct LoadedContext {
     value: Arc<jsonld_syntax::Value>,
     /// Where the cached document's durability and hit accounting live.
     durability: ContextDurability,
+    /// Whether the remote response permits retaining this L1 entry.
+    cacheable: bool,
+}
+
+#[derive(Debug)]
+/// Parsed remote context and its response-specific storage permission.
+struct FetchedContext {
+    /// Parsed JSON-LD document.
+    value: jsonld_syntax::Value,
+    /// Whether response caching directives permit storage.
+    cacheable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +222,7 @@ impl HttpContextLoader {
                     return Ok(LoadedContext {
                         value,
                         durability: ContextDurability::Registry,
+                        cacheable: true,
                     });
                 }
 
@@ -218,6 +234,7 @@ impl HttpContextLoader {
                             return Ok(LoadedContext {
                                 value: Arc::new(without_embedded_core_context(&url_iri, parsed)),
                                 durability: ContextDurability::Durable,
+                                cacheable: true,
                             });
                         }
                         Ok(None) => {}
@@ -238,8 +255,15 @@ impl HttpContextLoader {
                 }
 
                 match fetch_and_parse(&client, &url_iri, max_bytes).await {
-                    Ok(value) => {
-                        let normalized = without_embedded_core_context(&url_iri, value);
+                    Ok(fetched) => {
+                        let normalized = without_embedded_core_context(&url_iri, fetched.value);
+                        if !fetched.cacheable {
+                            return Ok(LoadedContext {
+                                value: Arc::new(normalized),
+                                durability: ContextDurability::Registry,
+                                cacheable: false,
+                            });
+                        }
                         // Written to L2 only here, on the first remote-fetch
                         // success: the row carries no counter, because hit
                         // accounting is the HitCounter's job.
@@ -263,17 +287,20 @@ impl HttpContextLoader {
                             return Ok(LoadedContext {
                                 value: Arc::new(normalized),
                                 durability,
+                                cacheable: true,
                             });
                         }
                         Ok(LoadedContext {
                             value: Arc::new(normalized),
                             durability: ContextDurability::Registry,
+                            cacheable: true,
                         })
                     }
                     Err(error) => match registry.get(&url_iri) {
                         Some(value) => Ok(LoadedContext {
                             value,
                             durability: ContextDurability::Registry,
+                            cacheable: true,
                         }),
                         None => Err(error),
                     },
@@ -282,6 +309,9 @@ impl HttpContextLoader {
             .await;
 
         let loaded = result?;
+        if !loaded.cacheable {
+            self.cache.invalidate(url).await;
+        }
         if !initialized.load(Ordering::Relaxed) {
             self.record_cached_access(url, &loaded).await;
         } else if matches!(loaded.durability, ContextDurability::Durable) {
@@ -346,8 +376,8 @@ impl HttpContextLoader {
         if self.allow_remote == RemoteContextFetch::Deny {
             return Err(LoaderError::fetch_disabled(url.clone()));
         }
-        let value = fetch_and_parse(&self.client, url, self.max_context_bytes).await?;
-        Ok(Arc::new(without_embedded_core_context(url, value)))
+        let fetched = fetch_and_parse(&self.client, url, self.max_context_bytes).await?;
+        Ok(Arc::new(without_embedded_core_context(url, fetched.value)))
     }
 }
 
@@ -370,7 +400,7 @@ fn ld_json_media_type() -> MediaTypeBuf {
 
 /// Fetch a context over HTTP and parse it, refusing anything that is not
 /// JSON-shaped or is larger than the configured limit.
-async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<jsonld_syntax::Value, LoaderError> {
+async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<FetchedContext, LoaderError> {
     let response = client
         .get(url.as_str())
         .header("Accept", format!("{APPLICATION_LD_JSON}, {APPLICATION_JSON}"))
@@ -406,6 +436,12 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
         return Err(too_large(url.clone(), len as usize, max_bytes));
     }
 
+    let cacheable = response
+        .headers()
+        .get_all(CACHE_CONTROL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .all(cache_control_allows_storage);
     let bytes = response.bytes().await.map_err(|error| LoaderError {
         url: url.clone(),
         kind: LoaderErrorKind::Request(error.to_string()),
@@ -434,7 +470,18 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
         url: url.clone(),
         kind: LoaderErrorKind::Invalid(error.to_string()),
     })?;
-    Ok(value)
+    Ok(FetchedContext { value, cacheable })
+}
+
+/// Whether one Cache-Control field permits retaining the remote context.
+fn cache_control_allows_storage(value: &str) -> bool {
+    !value.split(',').map(str::trim).any(|directive| {
+        directive.eq_ignore_ascii_case("no-store")
+            || directive.eq_ignore_ascii_case("no-cache")
+            || directive
+                .split_once('=')
+                .is_some_and(|(name, seconds)| name.trim().eq_ignore_ascii_case("max-age") && seconds.trim() == "0")
+    })
 }
 
 /// Whether a `Content-Type` names something a context can be parsed from.
@@ -464,7 +511,7 @@ mod tests {
     use crate::{
         context_registry::ContextRegistry,
         engine::options::RemoteContextFetch,
-        loader::http::{HttpContextLoader, is_json_like},
+        loader::http::{HttpContextLoader, cache_control_allows_storage, is_json_like},
     };
     use iri_rs::IriBuf;
     use jsonld::Loader;
@@ -542,6 +589,16 @@ mod tests {
         }
         for rejected in ["text/html", "application/octet-stream", "not a media type"] {
             assert!(!is_json_like(rejected), "{rejected} must be refused");
+        }
+    }
+
+    #[test]
+    fn cache_control_directives_that_require_revalidation_are_not_stored() {
+        for value in ["no-store", "NO-CACHE", "public, max-age=0"] {
+            assert!(!cache_control_allows_storage(value), "{value} must disable storage");
+        }
+        for value in ["public, max-age=60", "immutable"] {
+            assert!(cache_control_allows_storage(value), "{value} permits storage");
         }
     }
 }

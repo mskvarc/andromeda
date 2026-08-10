@@ -24,7 +24,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_with_id_returns_201_and_location() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-basic");
     let payload = csource_subscription_payload(&subscription_id);
@@ -39,7 +39,7 @@ async fn csr_subscription_create_with_id_returns_201_and_location() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_without_id_returns_201_and_generated_id() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let mut payload = csource_subscription_payload("urn:ngsi-ld:Subscription:placeholder");
     if let Value::Object(object) = &mut payload {
@@ -57,7 +57,7 @@ async fn csr_subscription_create_without_id_returns_201_and_generated_id() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_without_is_active_defaults_status_to_active() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-default-active");
     let payload = csource_subscription_payload(&subscription_id);
@@ -73,7 +73,7 @@ async fn csr_subscription_create_without_is_active_defaults_status_to_active() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_inactive_sets_status_to_paused() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-inactive");
     let payload = inactive_csource_subscription_payload(&subscription_id);
@@ -90,7 +90,7 @@ async fn csr_subscription_create_inactive_sets_status_to_paused() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_with_expires_at_becomes_expired_after_deadline() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-expiring");
     let expires_at = (Utc::now() + Duration::seconds(3)).to_rfc3339_opts(SecondsFormat::Secs, true);
@@ -109,7 +109,7 @@ async fn csr_subscription_create_with_expires_at_becomes_expired_after_deadline(
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_without_expires_at_remains_active() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-no-expiration");
     let payload = csource_subscription_payload(&subscription_id);
@@ -127,7 +127,7 @@ async fn csr_subscription_create_without_expires_at_remains_active() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_duplicate_id_returns_409_already_exists() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-duplicate");
     let payload = csource_subscription_payload(&subscription_id);
@@ -143,7 +143,7 @@ async fn csr_subscription_create_duplicate_id_returns_409_already_exists() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_without_notification_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-missing-notification");
     let payload = csource_subscription_without_notification_payload(&subscription_id);
@@ -157,7 +157,7 @@ async fn csr_subscription_create_without_notification_returns_400_bad_request_da
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_with_invalid_type_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-invalid-type");
     let payload = invalid_type_csource_subscription_payload(&subscription_id);
@@ -171,7 +171,7 @@ async fn csr_subscription_create_with_invalid_type_returns_400_bad_request_data(
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_with_invalid_query_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-invalid-query");
     let payload = invalid_query_csource_subscription_payload(&subscription_id);
@@ -185,7 +185,7 @@ async fn csr_subscription_create_with_invalid_query_returns_400_bad_request_data
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_with_empty_watched_attributes_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-empty-watched-attributes");
     let payload = empty_watched_attributes_csource_subscription_payload(&subscription_id);
@@ -199,7 +199,7 @@ async fn csr_subscription_create_with_empty_watched_attributes_returns_400_bad_r
 #[tokio::test]
 #[serial]
 async fn csr_subscription_create_with_past_expires_at_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("create-past-expiration");
     let payload = expires_at_csource_subscription_payload(&subscription_id, "2018-08-01T22:07:00Z");

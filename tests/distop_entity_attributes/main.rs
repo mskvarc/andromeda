@@ -18,6 +18,9 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+#[path = "../support/context_source_adapter.rs"]
+pub mod context_source_adapter;
+
 mod append;
 mod delete;
 mod helpers;

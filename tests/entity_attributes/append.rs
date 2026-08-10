@@ -37,7 +37,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn attribute_append_new_attribute_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_01_01");
 
@@ -66,7 +66,7 @@ async fn attribute_append_new_attribute_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_with_different_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_01_02");
 
@@ -98,7 +98,7 @@ async fn attribute_append_with_different_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_empty_entity_id_returns_error() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -119,7 +119,7 @@ async fn attribute_append_empty_entity_id_returns_error() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -138,7 +138,7 @@ async fn attribute_append_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_nonexistent_entity_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_03_01");
 
@@ -158,7 +158,7 @@ async fn attribute_append_nonexistent_entity_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_invalid_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_05_01");
 
@@ -177,7 +177,7 @@ async fn attribute_append_invalid_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_no_overwrite_existing_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_04_01");
 
@@ -203,7 +203,7 @@ async fn attribute_append_no_overwrite_existing_returns_207() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_no_overwrite_new_instance_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_04_02");
 
@@ -232,7 +232,7 @@ async fn attribute_append_no_overwrite_new_instance_returns_204() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_language_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_06_01");
 
@@ -267,7 +267,7 @@ async fn attribute_append_language_property_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_scope_with_overwrite_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:append_010_07_01");
 
@@ -294,7 +294,7 @@ async fn attribute_append_scope_with_overwrite_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_scope_with_no_overwrite_returns_multi_status_or_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:append_010_07_02");
 
@@ -325,7 +325,7 @@ async fn attribute_append_scope_with_no_overwrite_returns_multi_status_or_204() 
 #[tokio::test]
 #[serial]
 async fn attribute_append_observation_space_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:append_010_08");
 
@@ -354,7 +354,7 @@ async fn attribute_append_observation_space_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_operation_space_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:append_010_09");
 
@@ -387,7 +387,7 @@ async fn attribute_append_operation_space_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_json_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_10_01");
 
@@ -422,7 +422,7 @@ async fn attribute_append_json_property_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_append_vocab_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:append_010_11_01");
 

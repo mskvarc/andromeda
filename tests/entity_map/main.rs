@@ -8,16 +8,15 @@
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL, TEST_SUITE_CONTEXT},
-    db::TRUNCATE_ALL,
-    error,
+use andromeda_test_fixtures::{
+    context::{CORE_CONTEXT, TEST_SUITE_CONTEXT},
+    problem_detail as error,
 };
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use chrono::{Duration, Utc};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::PgPool;
 use urlencoding::encode;
 use uuid::Uuid;
 
@@ -61,10 +60,10 @@ fn vehicle_entity_with_speed(id: &str, speed: i64) -> Value {
     })
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 async fn create_entity(client: &Client, entity: &Value) -> (StatusCode, Option<String>) {
@@ -219,7 +218,7 @@ async fn setup_single_vehicle(client: &Client, id: &str) {
 #[tokio::test]
 #[serial]
 async fn entity_map_retrieve_existing_map_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-retr");
     setup_single_vehicle(&c, &id).await;
@@ -253,7 +252,7 @@ async fn entity_map_retrieve_existing_map_returns_200() {
 #[tokio::test]
 #[serial]
 async fn entity_map_retrieve_nonexistent_map_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, body) = get_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent", "application/json").await;
@@ -264,7 +263,7 @@ async fn entity_map_retrieve_nonexistent_map_returns_404() {
 #[tokio::test]
 #[serial]
 async fn entity_map_retrieve_invalid_map_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, body) = get_entity_map(&c, "not-a-valid-uri", "application/json").await;
@@ -275,7 +274,7 @@ async fn entity_map_retrieve_invalid_map_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_update_valid_expires_at_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-upd");
     setup_single_vehicle(&c, &id).await;
@@ -299,7 +298,7 @@ async fn entity_map_update_valid_expires_at_returns_204() {
 #[tokio::test]
 #[serial]
 async fn entity_map_update_output_only_fields_ignored_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-upd-oof");
     setup_single_vehicle(&c, &id).await;
@@ -323,7 +322,7 @@ async fn entity_map_update_output_only_fields_ignored_returns_204() {
 #[tokio::test]
 #[serial]
 async fn entity_map_update_nonexistent_map_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let patch = json!({ "expiresAt": (Utc::now() + Duration::hours(1)).to_rfc3339() });
@@ -335,7 +334,7 @@ async fn entity_map_update_nonexistent_map_returns_404() {
 #[tokio::test]
 #[serial]
 async fn entity_map_update_invalid_expires_at_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-upd-bad");
     setup_single_vehicle(&c, &id).await;
@@ -356,7 +355,7 @@ async fn entity_map_update_invalid_expires_at_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_update_past_expires_at_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-upd-past");
     setup_single_vehicle(&c, &id).await;
@@ -377,7 +376,7 @@ async fn entity_map_update_past_expires_at_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_delete_existing_map_then_retrieve_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-del");
     setup_single_vehicle(&c, &id).await;
@@ -399,7 +398,7 @@ async fn entity_map_delete_existing_map_then_retrieve_returns_404() {
 #[tokio::test]
 #[serial]
 async fn entity_map_delete_nonexistent_map_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let status = delete_entity_map(&c, "urn:ngsi-ld:EntityMap:nonexistent").await;
@@ -409,7 +408,7 @@ async fn entity_map_delete_nonexistent_map_returns_404() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_by_type_returns_201_with_headers() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:Vehicle:em-create1");
     let id2 = unique_id("urn:ngsi-ld:Vehicle:em-create2");
@@ -448,7 +447,7 @@ async fn entity_map_create_from_get_by_type_returns_201_with_headers() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_with_q_filter_returns_only_matching_ids() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id1 = unique_id("urn:ngsi-ld:Vehicle:em-q1");
     let id2 = unique_id("urn:ngsi-ld:Vehicle:em-q2");
@@ -474,7 +473,7 @@ async fn entity_map_create_from_get_with_q_filter_returns_only_matching_ids() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_with_lifetime_pt5m_sets_expires_at_in_range() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-lt");
     setup_single_vehicle(&c, &id).await;
@@ -495,7 +494,7 @@ async fn entity_map_create_from_get_with_lifetime_pt5m_sets_expires_at_in_range(
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_without_filters_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, body) = create_entity_map_from_get(&c, "local=true").await;
@@ -506,7 +505,7 @@ async fn entity_map_create_from_get_without_filters_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_with_invalid_lifetime_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-lt-invalid");
     setup_single_vehicle(&c, &id).await;
@@ -521,7 +520,7 @@ async fn entity_map_create_from_get_with_invalid_lifetime_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_post_with_entities_filter_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-post");
     setup_single_vehicle(&c, &id).await;
@@ -543,7 +542,7 @@ async fn entity_map_create_from_post_with_entities_filter_returns_201() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_post_without_filters_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({ "type": "Query" });
@@ -555,7 +554,7 @@ async fn entity_map_create_from_post_without_filters_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_with_empty_result_returns_201_empty_entity_map() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, _, body) = create_entity_map_from_get(&c, "type=NonExistentType12345").await;
@@ -571,7 +570,7 @@ async fn entity_map_create_from_get_with_empty_result_returns_201_empty_entity_m
 #[tokio::test]
 #[serial]
 async fn entity_map_create_from_get_with_many_entities_returns_full_entity_map() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let mut ids = Vec::new();
 
@@ -597,7 +596,7 @@ async fn entity_map_create_from_get_with_many_entities_returns_full_entity_map()
 #[tokio::test]
 #[serial]
 async fn entity_map_temporal_create_from_get_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-temp");
     setup_single_vehicle(&c, &id).await;
@@ -615,7 +614,7 @@ async fn entity_map_temporal_create_from_get_returns_201() {
 #[tokio::test]
 #[serial]
 async fn entity_map_temporal_create_from_post_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-temp-post");
     setup_single_vehicle(&c, &id).await;
@@ -637,7 +636,7 @@ async fn entity_map_temporal_create_from_post_returns_201() {
 #[tokio::test]
 #[serial]
 async fn entity_map_query_entities_with_entity_map_true_returns_201_and_header() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-int");
     setup_single_vehicle(&c, &id).await;
@@ -664,7 +663,7 @@ async fn entity_map_query_entities_with_entity_map_true_returns_201_and_header()
 #[tokio::test]
 #[serial]
 async fn entity_map_query_entities_without_entity_map_returns_200_without_header() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-int-false");
     setup_single_vehicle(&c, &id).await;
@@ -679,7 +678,7 @@ async fn entity_map_query_entities_without_entity_map_returns_200_without_header
 #[tokio::test]
 #[serial]
 async fn entity_map_pagination_query_with_frozen_map_covers_all_ids_without_duplicates() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let mut created_ids = Vec::new();
 
@@ -740,7 +739,7 @@ async fn entity_map_pagination_query_with_frozen_map_covers_all_ids_without_dupl
 #[tokio::test]
 #[serial]
 async fn entity_map_pagination_new_entity_created_after_map_is_not_in_results() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Vehicle:em-new1");
@@ -770,7 +769,7 @@ async fn entity_map_pagination_new_entity_created_after_map_is_not_in_results() 
 #[tokio::test]
 #[serial]
 async fn entity_map_pagination_deleted_entity_is_skipped_from_results() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Vehicle:em-dsk1");
@@ -807,7 +806,7 @@ async fn entity_map_pagination_deleted_entity_is_skipped_from_results() {
 #[tokio::test]
 #[serial]
 async fn entity_map_pagination_query_with_count_returns_results_count_header() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let mut ids = Vec::new();
 
@@ -841,7 +840,7 @@ async fn entity_map_pagination_query_with_count_returns_results_count_header() {
 #[tokio::test]
 #[serial]
 async fn entity_map_content_negotiation_accept_application_json_returns_link_header_without_context_body() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-cn-json");
     setup_single_vehicle(&c, &id).await;
@@ -862,7 +861,7 @@ async fn entity_map_content_negotiation_accept_application_json_returns_link_hea
 #[tokio::test]
 #[serial]
 async fn entity_map_content_negotiation_accept_application_ld_json_returns_context_in_body() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-cn-ldjson");
     setup_single_vehicle(&c, &id).await;
@@ -882,7 +881,7 @@ async fn entity_map_content_negotiation_accept_application_ld_json_returns_conte
 #[tokio::test]
 #[serial]
 async fn entity_map_api_rejects_unknown_query_parameter_with_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let resp = c
@@ -900,7 +899,7 @@ async fn entity_map_api_rejects_unknown_query_parameter_with_400() {
 #[tokio::test]
 #[serial]
 async fn entity_map_create_entity_using_core_context_succeeds_for_baseline() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:em-baseline");
 

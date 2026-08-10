@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::config::COMPOUND_CONTEXT;
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -9,7 +9,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:057_01_01a");
@@ -36,7 +36,7 @@ async fn batch_merge_empty_fragment_preserves_entities_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_merge_properties_updates_values_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:057_01_02a");
@@ -63,7 +63,7 @@ async fn batch_merge_properties_updates_values_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_merge_relationship_adds_to_entities_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:057_01_03a");
@@ -89,7 +89,7 @@ async fn batch_merge_relationship_adds_to_entities_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_merge_partial_preserves_sub_attributes_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:057_01_04a");
@@ -117,7 +117,7 @@ async fn batch_merge_partial_preserves_sub_attributes_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_merge_mixed_existing_nonexisting_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id1 = unique_id("urn:ngsi-ld:Building:057_02_01a");

@@ -47,7 +47,7 @@ async fn setup_entity_with_instance_id(prefix: &str) -> (reqwest::Client, String
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_01_01").await;
 
     let (status, bytes, _) = delete_temporal_attr_instance(&c, &id, "speed", &instance_id).await;
@@ -78,7 +78,7 @@ async fn temporal_attrs_delete_instance_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_01").await;
     let c = client();
 
@@ -94,7 +94,7 @@ async fn temporal_attrs_delete_instance_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_empty_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (_, _, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_02").await;
     let c = client();
 
@@ -105,7 +105,7 @@ async fn temporal_attrs_delete_instance_empty_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_invalid_instance_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_03").await;
 
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "speed", "invalidId").await;
@@ -120,7 +120,7 @@ async fn temporal_attrs_delete_instance_invalid_instance_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_invalid_attribute_name_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_04").await;
 
     let (status, _, body) = delete_temporal_attr_instance(&c, &id, "invalid(Name", &instance_id).await;
@@ -135,7 +135,7 @@ async fn temporal_attrs_delete_instance_invalid_attribute_name_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_empty_attribute_name_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_02_05").await;
 
     let (status, _) = request_temporal_attrs(&c, Method::DELETE, &format!("/temporal/entities/{id}/attrs//{instance_id}"), None).await;
@@ -149,7 +149,7 @@ async fn temporal_attrs_delete_instance_empty_attribute_name_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_entity_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:delete_inst_017_03_01");
 
@@ -165,7 +165,7 @@ async fn temporal_attrs_delete_instance_entity_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_attribute_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_03_02").await;
 
     // Try to delete instance of non-existent attribute
@@ -181,7 +181,7 @@ async fn temporal_attrs_delete_instance_attribute_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_delete_instance_instance_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let (c, id, _) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:delete_inst_017_03_03").await;
 
     // Try to delete non-existent instance (valid URN format but doesn't exist)

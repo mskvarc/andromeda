@@ -9,38 +9,40 @@
 //! - Multi-status responses for partial success/failure
 //! - local=true parameter to skip forwarding
 
-use andromeda_test_common::config::BASE_URL;
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
 use serial_test::serial;
 
-use crate::helpers::{
-    MockServer,
-    clean_database,
-    client,
-    create_entity,
-    create_entity_local,
-    create_registration,
-    delete_entity,
-    delete_entity_local,
-    delete_entity_with_status,
-    delete_registration,
-    get_entity,
-    jsonld_link_value,
-    merge_entity,
-    query_entities,
-    replace_entity,
-    unique_id,
-    vehicle_entity,
-    vehicle_entity_different_ld,
-    vehicle_entity_json,
-    vehicle_entity_second,
-    vehicle_entity_second_ld,
-    vehicle_entity_speed_only,
-    vehicle_registration_redirection_ops,
-    vehicle_registration_speed_default_ops,
-    vehicle_registration_speed_redirection_ops,
-    vehicle_replacement_json,
+use crate::{
+    context_source_adapter::ContextSourceAdapter as MockServer,
+    helpers::{
+        clean_database,
+        client,
+        create_entity,
+        create_entity_local,
+        create_registration,
+        delete_entity,
+        delete_entity_local,
+        delete_entity_with_status,
+        delete_registration,
+        get_entity,
+        jsonld_link_value,
+        merge_entity,
+        query_entities,
+        replace_entity,
+        unique_id,
+        vehicle_entity,
+        vehicle_entity_different_ld,
+        vehicle_entity_json,
+        vehicle_entity_second,
+        vehicle_entity_second_ld,
+        vehicle_entity_speed_only,
+        vehicle_registration_redirection_ops,
+        vehicle_registration_speed_default_ops,
+        vehicle_registration_speed_redirection_ops,
+        vehicle_replacement_json,
+    },
 };
 
 // ===========================================================================
@@ -51,9 +53,9 @@ use crate::helpers::{
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_inclusive_forwards_to_context_source() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-inc");
@@ -78,16 +80,16 @@ async fn distop_entity_create_inclusive_forwards_to_context_source() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity with exclusive registration forwards only exclusive attributes.
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_exclusive_forwards_exclusive_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exc");
@@ -119,16 +121,16 @@ async fn distop_entity_create_exclusive_forwards_exclusive_attributes() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entities with redirect registrations forwards to multiple context sources.
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_redirect_forwards_to_multiple_sources() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:create-red-1");
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:create-red-2");
@@ -158,16 +160,16 @@ async fn distop_entity_create_redirect_forwards_to_multiple_sources() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity without redirection operations should not forward.
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_without_redirection_ops_no_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-no-ops");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-no-ops");
@@ -194,16 +196,16 @@ async fn distop_entity_create_without_redirection_ops_no_forwarding() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity with malformed ID returns 400.
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_malformed_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-malformed");
 
@@ -223,16 +225,16 @@ async fn distop_entity_create_malformed_id_returns_400() {
     assert!(entities.is_empty());
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity already existing locally returns 207 (local conflict, remote success).
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_existing_locally_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exist-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exist-local");
@@ -270,16 +272,16 @@ async fn distop_entity_create_existing_locally_returns_207() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity already existing on both returns 207.
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_existing_on_both_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exist-both");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exist-both");
@@ -313,16 +315,16 @@ async fn distop_entity_create_existing_on_both_returns_207() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity already existing remotely returns 207 (local success, remote conflict).
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_existing_remotely_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-exist-remote");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-exist-remote");
@@ -358,16 +360,16 @@ async fn distop_entity_create_existing_remotely_returns_207() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Create entity with local=true skips forwarding.
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_local_true_skips_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-local");
@@ -385,7 +387,7 @@ async fn distop_entity_create_local_true_skips_forwarding() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ===========================================================================
@@ -396,9 +398,9 @@ async fn distop_entity_create_local_true_skips_forwarding() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_inclusive_forwards_to_context_source() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-inc");
@@ -424,16 +426,16 @@ async fn distop_entity_delete_inclusive_forwards_to_context_source() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Delete entity with exclusive registration forwards to context source.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_exclusive_forwards_to_context_source() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-exc");
@@ -455,16 +457,16 @@ async fn distop_entity_delete_exclusive_forwards_to_context_source() {
     assert!(mock.get_count(Method::DELETE, &delete_path).await > 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Delete entities with redirect registrations forwards to multiple context sources.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_redirect_forwards_to_multiple_sources() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id1 = unique_id("urn:ngsi-ld:Vehicle:delete-red-1");
     let entity_id2 = unique_id("urn:ngsi-ld:Vehicle:delete-red-2");
@@ -508,16 +510,16 @@ async fn distop_entity_delete_redirect_forwards_to_multiple_sources() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Delete entity: local success, remote failure returns 207.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_local_success_remote_failure_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-local-ok");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-local-ok");
@@ -543,16 +545,16 @@ async fn distop_entity_delete_local_success_remote_failure_returns_207() {
     pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Delete entity: local failure, remote success returns 207.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_local_failure_remote_success_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-remote-ok");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-remote-ok");
@@ -573,16 +575,16 @@ async fn distop_entity_delete_local_failure_remote_success_returns_207() {
     pretty_assertions::assert_eq!(errors[0]["error"]["status"], 404);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Exclusive ownership without delete capability returns a conflict.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-no-ops");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-no-ops");
@@ -606,16 +608,16 @@ async fn distop_entity_delete_exclusive_without_operation_returns_conflict() {
     pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path).await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Delete entity with local=true skips forwarding.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_local_true_skips_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-local");
@@ -635,7 +637,7 @@ async fn distop_entity_delete_local_true_skips_forwarding() {
     pretty_assertions::assert_eq!(mock.get_total_count().await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ===========================================================================
@@ -646,9 +648,9 @@ async fn distop_entity_delete_local_true_skips_forwarding() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_merge_exclusive_forwards_exclusive_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:merge-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:merge-exc");
@@ -680,16 +682,16 @@ async fn distop_entity_merge_exclusive_forwards_exclusive_attributes() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Merge entity with inclusive registration updates both.
 #[tokio::test]
 #[serial]
 async fn distop_entity_merge_inclusive_updates_local_and_forwards() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:merge-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:merge-inc");
@@ -727,16 +729,16 @@ async fn distop_entity_merge_inclusive_updates_local_and_forwards() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Merge entity with redirect registrations forwards to multiple sources.
 #[tokio::test]
 #[serial]
 async fn distop_entity_merge_redirect_forwards_to_multiple_sources() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:merge-red");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:merge-red-1");
@@ -765,7 +767,7 @@ async fn distop_entity_merge_redirect_forwards_to_multiple_sources() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ===========================================================================
@@ -776,9 +778,9 @@ async fn distop_entity_merge_redirect_forwards_to_multiple_sources() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_replace_exclusive_forwards_exclusive_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:replace-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:replace-exc");
@@ -810,16 +812,16 @@ async fn distop_entity_replace_exclusive_forwards_exclusive_attributes() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Replace entity with inclusive registration replaces both.
 #[tokio::test]
 #[serial]
 async fn distop_entity_replace_inclusive_replaces_local_and_forwards() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:replace-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:replace-inc");
@@ -859,16 +861,16 @@ async fn distop_entity_replace_inclusive_replaces_local_and_forwards() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Replace entity with redirect registrations forwards to multiple sources.
 #[tokio::test]
 #[serial]
 async fn distop_entity_replace_redirect_forwards_to_multiple_sources() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:replace-red");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:replace-red-1");
@@ -897,7 +899,7 @@ async fn distop_entity_replace_redirect_forwards_to_multiple_sources() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ===========================================================================
@@ -908,9 +910,9 @@ async fn distop_entity_replace_redirect_forwards_to_multiple_sources() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_create_auxiliary_creates_locally_only() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:create-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:create-aux");
@@ -931,16 +933,16 @@ async fn distop_entity_create_auxiliary_creates_locally_only() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Delete entity with auxiliary registration deletes locally only.
 #[tokio::test]
 #[serial]
 async fn distop_entity_delete_auxiliary_deletes_locally_only() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:delete-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:delete-aux");
@@ -963,14 +965,14 @@ async fn distop_entity_delete_auxiliary_deletes_locally_only() {
     pretty_assertions::assert_eq!(mock.get_count(Method::DELETE, &delete_path).await, 0);
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Merge entity not found returns 404.
 #[tokio::test]
 #[serial]
 async fn distop_entity_merge_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:merge-notfound");
@@ -984,7 +986,7 @@ async fn distop_entity_merge_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_replace_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:replace-notfound");

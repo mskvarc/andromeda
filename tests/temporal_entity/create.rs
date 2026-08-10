@@ -27,7 +27,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_create_entity_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_01_01");
 
@@ -62,7 +62,7 @@ async fn temporal_create_entity_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_entity_with_plural_values_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_plural_values");
 
@@ -96,7 +96,7 @@ async fn temporal_create_entity_with_plural_values_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_entity_without_context_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_01_02");
 
@@ -125,7 +125,7 @@ async fn temporal_create_entity_without_context_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_invalid_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = create_temporal_entity_raw(&c, b"{invalid json", "application/ld+json").await;
@@ -140,7 +140,7 @@ async fn temporal_create_invalid_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_empty_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = create_temporal_entity_raw(&c, b"", "application/ld+json").await;
@@ -159,7 +159,7 @@ async fn temporal_create_empty_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_missing_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity = json!({
@@ -177,7 +177,7 @@ async fn temporal_create_missing_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_invalid_uri_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity = json!({
@@ -200,7 +200,7 @@ async fn temporal_create_invalid_uri_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_duplicate_returns_409() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_04_01");
 
@@ -233,7 +233,7 @@ async fn temporal_create_duplicate_returns_409() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_missing_type_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_05_01");
 
@@ -256,7 +256,7 @@ async fn temporal_create_missing_type_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_with_relationship_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_06_01");
 
@@ -285,7 +285,7 @@ async fn temporal_create_with_relationship_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_with_geoproperty_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_06_02");
 
@@ -317,7 +317,7 @@ async fn temporal_create_with_geoproperty_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_with_language_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_06_03");
 
@@ -346,7 +346,7 @@ async fn temporal_create_with_language_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_with_json_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_06_04");
 
@@ -375,7 +375,7 @@ async fn temporal_create_with_json_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_with_vocab_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_06_05");
 
@@ -408,7 +408,7 @@ async fn temporal_create_with_vocab_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_create_with_multiple_dataset_instances_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:create_007_07_01");
 

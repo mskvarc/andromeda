@@ -6,15 +6,17 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{client::NgsiLdClient, config::TEST_SUITE_CONTEXT, header::jsonld_link_header, scope::TestScope};
+use andromeda_test_client::header::jsonld_link_header;
+use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
+use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
 #[tokio::test]
 async fn spatial_simplified_geojson_flattens_properties_in_feature() {
-    let scope = TestScope::new("spatial_simplified");
-    let client = NgsiLdClient::new(&scope).await;
+    let scope = TestEnvironment::from_suite("spatial_simplified").await.expect("isolated test environment");
+    let client = scope.client();
     let id = scope.id("Building:simplified-geojson");
 
     let create = client
@@ -38,14 +40,15 @@ async fn spatial_simplified_geojson_flattens_properties_in_feature() {
     let response = client
         .raw(Method::GET, &query)
         .header("Accept", "application/geo+json")
-        .header("Link", &jsonld_link_header(TEST_SUITE_CONTEXT))
+        .header("Link", jsonld_link_header(TEST_SUITE_CONTEXT).expect("test context Link must be valid"))
         .send()
         .await
         .expect("GeoJSON query failed");
     assert_eq!(response.status, StatusCode::OK);
-    assert_eq!(response.body["type"], "FeatureCollection");
+    let body = response.json_value().expect("response body must be valid JSON");
+    assert_eq!(body["type"], "FeatureCollection");
 
-    let features = response.body["features"].as_array().expect("features array missing");
+    let features = body["features"].as_array().expect("features array missing");
     let feature = features
         .iter()
         .find(|feature| feature["id"].as_str() == Some(&id))
@@ -59,5 +62,5 @@ async fn spatial_simplified_geojson_flattens_properties_in_feature() {
     // Location stays at geometry, not properties.
     assert_eq!(feature["geometry"]["type"], "Point");
 
-    scope.cleanup().await.expect("cleanup failed");
+    scope.finish().await.expect("cleanup failed");
 }

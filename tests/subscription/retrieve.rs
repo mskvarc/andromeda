@@ -15,7 +15,7 @@ use crate::helpers::{
 #[tokio::test]
 async fn subscription_retrieve_invalid_id_returns_bad_request_data() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, body) = retrieve_subscription(&http_client, "InvalidUri", false).await;
 
@@ -27,7 +27,7 @@ async fn subscription_retrieve_invalid_id_returns_bad_request_data() {
 #[tokio::test]
 async fn subscription_retrieve_unknown_id_returns_resource_not_found() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
 
     let (status, body) = retrieve_subscription(&http_client, "urn:ngsi-ld:Subscription:unknown", false).await;
 
@@ -39,7 +39,7 @@ async fn subscription_retrieve_unknown_id_returns_resource_not_found() {
 #[tokio::test]
 async fn subscription_retrieve_existing_id_returns_subscription_payload() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let subscription_id = unique_subscription_id("retrieve-existing");
     let payload = default_subscription(&subscription_id);
 

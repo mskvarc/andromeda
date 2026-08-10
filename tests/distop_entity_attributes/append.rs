@@ -6,24 +6,26 @@
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
-use crate::helpers::{
-    MockServer,
-    append_entity_attrs,
-    append_entity_attrs_no_overwrite,
-    clean_database,
-    client,
-    create_entity,
-    create_entity_local,
-    create_registration,
-    delete_entity,
-    delete_registration,
-    fragment_speed_isparked,
-    get_entity,
-    jsonld_link_value,
-    unique_id,
-    vehicle_entity,
-    vehicle_registration_redirection_ops,
-    vehicle_registration_speed_redirection_ops,
+use crate::{
+    context_source_adapter::ContextSourceAdapter as MockServer,
+    helpers::{
+        append_entity_attrs,
+        append_entity_attrs_no_overwrite,
+        clean_database,
+        client,
+        create_entity,
+        create_entity_local,
+        create_registration,
+        delete_entity,
+        delete_registration,
+        fragment_speed_isparked,
+        get_entity,
+        jsonld_link_value,
+        unique_id,
+        vehicle_entity,
+        vehicle_registration_redirection_ops,
+        vehicle_registration_speed_redirection_ops,
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -34,9 +36,9 @@ use crate::helpers::{
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:append-inc");
@@ -76,7 +78,7 @@ async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,9 +89,9 @@ async fn distop_entity_attrs_append_inclusive_forwards_and_updates_local() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:append-exc");
@@ -123,7 +125,7 @@ async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +136,9 @@ async fn distop_entity_attrs_append_exclusive_forwards_not_local() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-red");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:append-red-1");
@@ -171,7 +173,7 @@ async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,9 +184,9 @@ async fn distop_entity_attrs_append_redirect_forwards_to_multiple() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_nooverwrite_inclusive_preserves_existing() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-noow-inc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:append-noow-inc");
@@ -223,16 +225,16 @@ async fn distop_entity_attrs_append_nooverwrite_inclusive_preserves_existing() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Append with noOverwrite and exclusive registration.
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_nooverwrite_exclusive_forwards() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-noow-exc");
     let reg_id = unique_id("urn:ngsi-ld:Registration:append-noow-exc");
@@ -260,16 +262,16 @@ async fn distop_entity_attrs_append_nooverwrite_exclusive_forwards() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Append with noOverwrite and redirect registrations.
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-noow-red");
     let reg_id1 = unique_id("urn:ngsi-ld:Registration:append-noow-red-1");
@@ -300,7 +302,7 @@ async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() 
 
     delete_registration(&c, &reg_id1).await;
     delete_registration(&c, &reg_id2).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +313,7 @@ async fn distop_entity_attrs_append_nooverwrite_redirect_forwards_to_multiple() 
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-notfound");
@@ -324,9 +326,9 @@ async fn distop_entity_attrs_append_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn distop_entity_attrs_append_auxiliary_no_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:append-aux");
     let reg_id = unique_id("urn:ngsi-ld:Registration:append-aux");
@@ -360,5 +362,5 @@ async fn distop_entity_attrs_append_auxiliary_no_forwarding() {
 
     delete_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }

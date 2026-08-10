@@ -5,14 +5,10 @@ mod query;
 mod retrieve;
 mod update;
 
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT, DATABASE_URL},
-    db::TRUNCATE_ALL,
-    error,
-};
+use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, StatusCode, header::LOCATION};
 use serde_json::{Value, json};
-use sqlx::PgPool;
 use uuid::Uuid;
 
 const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
@@ -27,10 +23,10 @@ fn unique_subscription_id(scenario: &str) -> String {
     format!("urn:ngsi-ld:Subscription:csr-sub:{scenario}:{}", Uuid::new_v4())
 }
 
-pub async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+pub async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 async fn read_body(response: reqwest::Response) -> Value {

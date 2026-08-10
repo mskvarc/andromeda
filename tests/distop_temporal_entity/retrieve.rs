@@ -4,146 +4,15 @@
 //! Tests distributed operations on single temporal entity retrieval:
 //! local-only retrieval, attribute merging from context sources, error handling.
 
-use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
-};
-
-use andromeda_test_common::{
-    config::{BASE_URL, DATABASE_URL, TEST_SUITE_CONTEXT, callback_url},
-    db::TRUNCATE_ALL,
-};
-use axum::{extract::Request, response::IntoResponse};
+use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
-use sqlx::PgPool;
-use tokio::sync::RwLock;
 use urlencoding::encode;
 use uuid::Uuid;
 
-// ---------------------------------------------------------------------------
-// Mock context source server
-// ---------------------------------------------------------------------------
-
-struct StubEntry {
-    status_code: u16,
-    body: Option<String>,
-    content_type: String,
-    count: AtomicUsize,
-}
-
-struct MockState {
-    stubs: HashMap<(String, String), StubEntry>,
-    total_count: AtomicUsize,
-}
-
-struct MockServer {
-    port: u16,
-    state: Arc<RwLock<MockState>>,
-    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-impl MockServer {
-    async fn start() -> Self {
-        let state = Arc::new(RwLock::new(MockState {
-            stubs: HashMap::new(),
-            total_count: AtomicUsize::new(0),
-        }));
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-
-        let handler_state = state.clone();
-        let app = axum::Router::new().fallback(move |req: Request| {
-            let state = handler_state.clone();
-            async move {
-                let method = req.method().to_string();
-                let path = req.uri().path().to_string();
-
-                let s = state.read().await;
-                s.total_count.fetch_add(1, Ordering::Relaxed);
-
-                let key = (method, path);
-                if let Some(entry) = s.stubs.get(&key) {
-                    entry.count.fetch_add(1, Ordering::Relaxed);
-                    let status = axum::http::StatusCode::from_u16(entry.status_code).unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
-                    if let Some(ref body) = entry.body {
-                        let ct = entry.content_type.clone();
-                        (status, [(axum::http::header::CONTENT_TYPE, ct)], body.clone()).into_response()
-                    } else {
-                        status.into_response()
-                    }
-                } else {
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
-                }
-            }
-        });
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .unwrap();
-        });
-
-        Self {
-            port,
-            state,
-            shutdown: Some(shutdown_tx),
-        }
-    }
-
-    async fn set_stub(&self, method: Method, path: &str, status_code: u16) {
-        let mut s = self.state.write().await;
-        s.stubs.insert(
-            (method.to_string(), path.to_string()),
-            StubEntry {
-                status_code,
-                body: None,
-                content_type: "application/ld+json".to_string(),
-                count: AtomicUsize::new(0),
-            },
-        );
-    }
-
-    async fn set_stub_with_body(&self, method: Method, path: &str, status_code: u16, body: &Value) {
-        let mut s = self.state.write().await;
-        s.stubs.insert(
-            (method.to_string(), path.to_string()),
-            StubEntry {
-                status_code,
-                body: Some(serde_json::to_string(body).unwrap()),
-                content_type: "application/ld+json".to_string(),
-                count: AtomicUsize::new(0),
-            },
-        );
-    }
-
-    async fn get_count(&self, method: Method, path: &str) -> usize {
-        let s = self.state.read().await;
-        s.stubs
-            .get(&(method.to_string(), path.to_string()))
-            .map_or(0, |e| e.count.load(Ordering::Relaxed))
-    }
-
-    fn url(&self, path: &str) -> String {
-        callback_url(self.port, path)
-    }
-
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown.take() {
-            let _ = tx.send(());
-        }
-    }
-}
+use crate::context_source_adapter::ContextSourceAdapter as MockServer;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -161,10 +30,10 @@ fn jsonld_link_value() -> String {
     format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(&TRUNCATE_ALL).execute(&pool).await.expect("failed to truncate tables");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 fn temporal_vehicle_entity(id: &str) -> Value {
@@ -268,9 +137,9 @@ fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_retrieve_local_true_skips_forwarding() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-local");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tr-local");
@@ -301,7 +170,7 @@ async fn distop_temporal_retrieve_local_true_skips_forwarding() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve merges local and remote temporal entity attributes.
@@ -309,9 +178,9 @@ async fn distop_temporal_retrieve_local_true_skips_forwarding() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-merge");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tr-merge");
@@ -342,7 +211,7 @@ async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve returns entity only from remote context source when no local entity exists.
@@ -350,9 +219,9 @@ async fn distop_temporal_retrieve_merges_local_and_remote_attributes() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_retrieve_remote_only_entity() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-remote-only");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tr-remote-only");
@@ -376,7 +245,7 @@ async fn distop_temporal_retrieve_remote_only_entity() {
     assert!(body.get("speed").is_some(), "remote entity speed should be present");
 
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve returns NGSILD-Warning header when context source returns error.
@@ -384,9 +253,9 @@ async fn distop_temporal_retrieve_remote_only_entity() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_retrieve_warning_on_context_source_error() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-warn");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tr-warn");
@@ -410,7 +279,7 @@ async fn distop_temporal_retrieve_warning_on_context_source_error() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }
 
 /// Retrieve with exclusive CSR returns only remote entity (local not considered).
@@ -418,9 +287,9 @@ async fn distop_temporal_retrieve_warning_on_context_source_error() {
 #[tokio::test]
 #[serial]
 async fn distop_temporal_retrieve_exclusive_mode_returns_remote() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
-    let mut mock = MockServer::start().await;
+    let mock = MockServer::start().await;
 
     let entity_id = unique_id("urn:ngsi-ld:Vehicle:tr-exclusive");
     let reg_id = unique_id("urn:ngsi-ld:Registration:tr-exclusive");
@@ -460,5 +329,5 @@ async fn distop_temporal_retrieve_exclusive_mode_returns_remote() {
 
     delete_temporal_entity(&c, &entity_id).await;
     delete_registration(&c, &reg_id).await;
-    mock.stop();
+    mock.shutdown().await;
 }

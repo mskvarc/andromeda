@@ -1,5 +1,5 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
-use andromeda_test_common::config::COMPOUND_CONTEXT;
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
@@ -9,7 +9,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn batch_update_properties_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:005_01_01a");
@@ -36,7 +36,7 @@ async fn batch_update_properties_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_update_relationships_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:005_01_02a");
@@ -62,7 +62,7 @@ async fn batch_update_relationships_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_update_relationship_of_property_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:005_01_03a");
@@ -84,7 +84,7 @@ async fn batch_update_relationship_of_property_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_update_no_overwrite_existing_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:005_02_01");
@@ -105,7 +105,7 @@ async fn batch_update_no_overwrite_existing_returns_207() {
 #[tokio::test]
 #[serial]
 async fn batch_update_no_overwrite_new_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:005_02_02");
@@ -126,7 +126,7 @@ async fn batch_update_no_overwrite_new_returns_204() {
 #[tokio::test]
 #[serial]
 async fn batch_update_no_overwrite_mixed_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:005_02_03");
@@ -143,7 +143,7 @@ async fn batch_update_no_overwrite_mixed_returns_207() {
 #[tokio::test]
 #[serial]
 async fn batch_update_mixed_existing_nonexisting_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id1 = unique_id("urn:ngsi-ld:Building:005_03_01a");
@@ -200,7 +200,7 @@ async fn batch_update_invalid_json_ld_returns_207() {
 #[tokio::test]
 #[serial]
 async fn batch_update_entity_type_returns_204() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:005_05_01");

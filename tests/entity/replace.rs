@@ -33,7 +33,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn entity_replace_success_createdat_preserved() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:replace_054_01_01");
 
@@ -67,7 +67,7 @@ async fn entity_replace_success_createdat_preserved() {
 #[tokio::test]
 #[serial]
 async fn entity_replace_invalid_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let replacement = json!({
@@ -87,7 +87,7 @@ async fn entity_replace_invalid_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_replace_missing_id_returns_error() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let replacement = json!({
@@ -110,7 +110,7 @@ async fn entity_replace_missing_id_returns_error() {
 #[tokio::test]
 #[serial]
 async fn entity_replace_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:replace_054_02_03");
 
@@ -135,7 +135,7 @@ async fn entity_replace_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn entity_replace_with_scopes_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:replace_054_03_01");
 

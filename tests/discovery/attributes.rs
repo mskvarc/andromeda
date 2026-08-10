@@ -32,7 +32,7 @@ fn sorted_strings(val: &Value) -> Vec<String> {
 #[tokio::test]
 #[serial]
 async fn list_attributes_empty_database_returns_empty_list() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = list_attributes(&c, "", None).await;
@@ -50,7 +50,7 @@ async fn list_attributes_empty_database_returns_empty_list() {
 #[tokio::test]
 #[serial]
 async fn list_attributes_without_context_returns_expanded_uris() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attrs-no-ctx");
 
@@ -76,7 +76,7 @@ async fn list_attributes_without_context_returns_expanded_uris() {
 #[tokio::test]
 #[serial]
 async fn list_attributes_with_context_returns_compacted_names() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:attrs-with-ctx");
 

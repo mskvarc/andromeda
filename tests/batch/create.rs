@@ -8,7 +8,7 @@ use serde_json::json;
 #[tokio::test]
 #[serial]
 async fn batch_create_minimal_entities_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_01_01a");
@@ -33,7 +33,7 @@ async fn batch_create_minimal_entities_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_with_properties_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_01_02a");
@@ -54,7 +54,7 @@ async fn batch_create_with_properties_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_with_relationships_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_01_03a");
@@ -75,7 +75,7 @@ async fn batch_create_with_relationships_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_with_relationship_of_property_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_01_04a");
@@ -92,7 +92,7 @@ async fn batch_create_with_relationship_of_property_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_with_existing_entity_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let existing_id = unique_id("urn:ngsi-ld:Building:003_02_01_exist");
@@ -142,7 +142,7 @@ async fn batch_create_empty_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn batch_create_json_with_link_header_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_04_01a");
@@ -160,7 +160,7 @@ async fn batch_create_json_with_link_header_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_json_with_link_header_retrieval_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:003_04_02");
@@ -179,7 +179,7 @@ async fn batch_create_json_with_link_header_retrieval_returns_200() {
 #[tokio::test]
 #[serial]
 async fn batch_create_default_context_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_05_01a");
@@ -200,7 +200,7 @@ async fn batch_create_default_context_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_default_context_retrieval_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:003_05_02");
@@ -219,7 +219,7 @@ async fn batch_create_default_context_retrieval_returns_200() {
 #[tokio::test]
 #[serial]
 async fn batch_create_json_with_context_in_body_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:003_06_01");
@@ -234,7 +234,7 @@ async fn batch_create_json_with_context_in_body_returns_207() {
 #[tokio::test]
 #[serial]
 async fn batch_create_ld_json_with_context_returns_201() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_07_01a");
@@ -251,7 +251,7 @@ async fn batch_create_ld_json_with_context_returns_201() {
 #[tokio::test]
 #[serial]
 async fn batch_create_ld_json_with_context_retrieval_returns_200() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:003_07_02");
@@ -270,7 +270,7 @@ async fn batch_create_ld_json_with_context_retrieval_returns_200() {
 #[tokio::test]
 #[serial]
 async fn batch_create_ld_json_without_context_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:003_08_01");
@@ -285,7 +285,7 @@ async fn batch_create_ld_json_without_context_returns_207() {
 #[tokio::test]
 #[serial]
 async fn batch_create_ld_json_with_link_header_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id = unique_id("urn:ngsi-ld:Building:003_09_01");
@@ -300,7 +300,7 @@ async fn batch_create_ld_json_with_link_header_returns_400() {
 #[tokio::test]
 #[serial]
 async fn batch_create_duplicate_ids_in_batch_returns_207() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let id1 = unique_id("urn:ngsi-ld:Building:003_10_01a");

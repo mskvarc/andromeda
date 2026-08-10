@@ -6,7 +6,10 @@ use crate::{
     store::{CreateCsrParams, CsrUpdateFragment},
 };
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName};
-use andromeda_ngsi_ld_model::registration::{CsrOperation, ForwardingMode, RegistrationInfo};
+use andromeda_ngsi_ld_model::{
+    key_value_pair::KeyValuePair,
+    registration::{CsrOperation, ForwardingMode, RegistrationInfo},
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -69,7 +72,7 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'
         scope: deserialize_member(payload, "scope")?,
         refresh_rate: payload.get("refreshRate").map(|value| parse_duration_value(value, "refreshRate")).transpose()?,
         management: payload.get("management"),
-        context_source_info: payload.get("contextSourceInfo"),
+        context_source_info: deserialize_member::<Vec<KeyValuePair>>(payload, "contextSourceInfo")?,
         jsonld_context: deserialize_member::<Url>(payload, "jsonldContext")?,
         context_source_alias: deserialize_member::<ContextSourcePseudonym>(payload, "contextSourceAlias")?,
         additional_properties: extract_additional_properties(payload),
@@ -164,7 +167,7 @@ pub(super) fn extract_update_fragment(fragment: &Value) -> Result<CsrUpdateFragm
             .transpose()?,
         refresh_rate: extract_optional_duration(fragment, "refreshRate")?,
         management: extract_optional_value(fragment, "management"),
-        context_source_info: extract_optional_value(fragment, "contextSourceInfo"),
+        context_source_info: extract_optional_typed::<Vec<KeyValuePair>>(fragment, "contextSourceInfo")?,
         jsonld_context: extract_optional_typed::<Url>(fragment, "jsonldContext")?,
         context_source_alias: extract_optional_typed::<ContextSourcePseudonym>(fragment, "contextSourceAlias")?,
         additional_properties: extract_additional_properties(fragment),

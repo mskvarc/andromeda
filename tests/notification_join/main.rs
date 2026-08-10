@@ -4,23 +4,26 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{client::NgsiLdClient, config::CORE_CONTEXT, mock::notification_http::NotificationReceiver, scope::TestScope};
+use andromeda_test_client::test_client::TestClient;
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::environment::TestEnvironment;
+use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use std::time::Duration;
 
-async fn create(client: &NgsiLdClient, entity: &Value) {
+async fn create(client: &TestClient, entity: &Value) {
     let response = client.post_entity(entity).send().await.expect("create entity failed");
     assert_eq!(response.status, StatusCode::CREATED);
 }
 
-async fn append_attrs(client: &NgsiLdClient, entity_id: &str, fragment: &Value) {
+async fn append_attrs(client: &TestClient, entity_id: &str, fragment: &Value) {
     let response = client.append_entity_attrs(entity_id, fragment).await.expect("append_entity_attrs failed");
     assert_eq!(response.status, StatusCode::NO_CONTENT);
 }
 
-async fn create_subscription(client: &NgsiLdClient, body: &Value) {
+async fn create_subscription(client: &TestClient, body: &Value) {
     let response = client.create_subscription(body).await.expect("create_subscription failed");
     assert_eq!(response.status, StatusCode::CREATED);
     tokio::time::sleep(Duration::from_millis(150)).await;
@@ -49,13 +52,15 @@ fn trigger_fragment() -> Value {
 
 #[tokio::test]
 async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entities() {
-    let scope = TestScope::new("notification_join");
-    let client = NgsiLdClient::new(&scope).await;
-    let receiver = NotificationReceiver::start().await;
+    let scope = TestEnvironment::from_suite("notification_join").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = NotificationServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("notification server must start");
 
     let country_id = scope.id("Country:jl3-France");
     create(
-        &client,
+        client,
         &json!({
             "id": country_id,
             "type": "Country",
@@ -67,7 +72,7 @@ async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entitie
 
     let city_id = scope.id("City:jl3-Paris");
     create(
-        &client,
+        client,
         &json!({
             "id": city_id,
             "type": "City",
@@ -80,7 +85,7 @@ async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entitie
 
     let building_id = scope.id("Building:jl3");
     create(
-        &client,
+        client,
         &json!({
             "id": building_id,
             "type": "Building",
@@ -91,30 +96,40 @@ async fn notification_join_level_3_delivers_three_depth_levels_of_linked_entitie
     .await;
 
     let subscription_id = scope.id("Subscription:jl3");
-    let sub = subscription_with_flat_join(&subscription_id, &building_id, &receiver.endpoint_url(), Some(3));
-    create_subscription(&client, &sub).await;
+    let sub = subscription_with_flat_join(
+        &subscription_id,
+        &building_id,
+        &receiver.endpoint_url().expect("notification endpoint must be valid"),
+        Some(3),
+    );
+    create_subscription(client, &sub).await;
 
-    append_attrs(&client, &building_id, &trigger_fragment()).await;
+    append_attrs(client, &building_id, &trigger_fragment()).await;
 
-    let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    let data = notification.body["data"].as_array().expect("data must be an array");
+    let notification = receiver.next_request(Duration::from_secs(5)).await.expect("notification must arrive");
+    let notification_body: Value = notification.json().expect("notification must be valid JSON");
+    assert_eq!(notification_body["subscriptionId"], subscription_id);
+    let data = notification_body["data"].as_array().expect("data must be an array");
     assert!(data.len() >= 3, "joinLevel=3 must include building + city + country, got {}", data.len());
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()));
     assert!(ids.contains(&city_id.as_str()));
     assert!(ids.contains(&country_id.as_str()));
-    scope.cleanup().await.expect("cleanup failed");
+    receiver.shutdown().await.expect("notification server shutdown failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
-    let scope = TestScope::new("notification_join");
-    let client = NgsiLdClient::new(&scope).await;
-    let receiver = NotificationReceiver::start().await;
+    let scope = TestEnvironment::from_suite("notification_join").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = NotificationServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("notification server must start");
 
     let country_id = scope.id("Country:jldef-Germany");
     create(
-        &client,
+        client,
         &json!({
             "id": country_id,
             "type": "Country",
@@ -126,7 +141,7 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
 
     let city_id = scope.id("City:jldef-Berlin");
     create(
-        &client,
+        client,
         &json!({
             "id": city_id,
             "type": "City",
@@ -138,7 +153,7 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
 
     let building_id = scope.id("Building:jldef");
     create(
-        &client,
+        client,
         &json!({
             "id": building_id,
             "type": "Building",
@@ -149,30 +164,40 @@ async fn notification_join_level_default_is_1_when_omitted_from_subscription() {
     .await;
 
     let subscription_id = scope.id("Subscription:jldef");
-    let sub = subscription_with_flat_join(&subscription_id, &building_id, &receiver.endpoint_url(), None);
-    create_subscription(&client, &sub).await;
+    let sub = subscription_with_flat_join(
+        &subscription_id,
+        &building_id,
+        &receiver.endpoint_url().expect("notification endpoint must be valid"),
+        None,
+    );
+    create_subscription(client, &sub).await;
 
-    append_attrs(&client, &building_id, &trigger_fragment()).await;
+    append_attrs(client, &building_id, &trigger_fragment()).await;
 
-    let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    let data = notification.body["data"].as_array().expect("data must be an array");
+    let notification = receiver.next_request(Duration::from_secs(5)).await.expect("notification must arrive");
+    let notification_body: Value = notification.json().expect("notification must be valid JSON");
+    assert_eq!(notification_body["subscriptionId"], subscription_id);
+    let data = notification_body["data"].as_array().expect("data must be an array");
     assert_eq!(data.len(), 2, "default joinLevel=1 must return building + city");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()));
     assert!(ids.contains(&city_id.as_str()));
     assert!(!ids.contains(&country_id.as_str()), "country at depth 2 must not appear with default joinLevel");
-    scope.cleanup().await.expect("cleanup failed");
+    receiver.shutdown().await.expect("notification server shutdown failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities() {
-    let scope = TestScope::new("notification_join");
-    let client = NgsiLdClient::new(&scope).await;
-    let receiver = NotificationReceiver::start().await;
+    let scope = TestEnvironment::from_suite("notification_join").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = NotificationServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("notification server must start");
 
     let country_id = scope.id("Country:jl1-Spain");
     create(
-        &client,
+        client,
         &json!({
             "id": country_id,
             "type": "Country",
@@ -184,7 +209,7 @@ async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities()
 
     let city_id = scope.id("City:jl1-Madrid");
     create(
-        &client,
+        client,
         &json!({
             "id": city_id,
             "type": "City",
@@ -196,7 +221,7 @@ async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities()
 
     let building_id = scope.id("Building:jl1");
     create(
-        &client,
+        client,
         &json!({
             "id": building_id,
             "type": "Building",
@@ -207,30 +232,40 @@ async fn notification_join_level_1_delivers_one_depth_level_of_linked_entities()
     .await;
 
     let subscription_id = scope.id("Subscription:jl1");
-    let sub = subscription_with_flat_join(&subscription_id, &building_id, &receiver.endpoint_url(), Some(1));
-    create_subscription(&client, &sub).await;
+    let sub = subscription_with_flat_join(
+        &subscription_id,
+        &building_id,
+        &receiver.endpoint_url().expect("notification endpoint must be valid"),
+        Some(1),
+    );
+    create_subscription(client, &sub).await;
 
-    append_attrs(&client, &building_id, &trigger_fragment()).await;
+    append_attrs(client, &building_id, &trigger_fragment()).await;
 
-    let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    let data = notification.body["data"].as_array().expect("data must be an array");
+    let notification = receiver.next_request(Duration::from_secs(5)).await.expect("notification must arrive");
+    let notification_body: Value = notification.json().expect("notification must be valid JSON");
+    assert_eq!(notification_body["subscriptionId"], subscription_id);
+    let data = notification_body["data"].as_array().expect("data must be an array");
     assert_eq!(data.len(), 2, "joinLevel=1 must return building + directly-linked city");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()));
     assert!(ids.contains(&city_id.as_str()));
     assert!(!ids.contains(&country_id.as_str()));
-    scope.cleanup().await.expect("cleanup failed");
+    receiver.shutdown().await.expect("notification server shutdown failed");
+    scope.finish().await.expect("cleanup failed");
 }
 
 #[tokio::test]
 async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities() {
-    let scope = TestScope::new("notification_join");
-    let client = NgsiLdClient::new(&scope).await;
-    let receiver = NotificationReceiver::start().await;
+    let scope = TestEnvironment::from_suite("notification_join").await.expect("isolated test environment");
+    let client = scope.client();
+    let receiver = NotificationServer::start(MockServerConfig::from_environment().expect("valid callback configuration"))
+        .await
+        .expect("notification server must start");
 
     let continent_id = scope.id("Continent:jl2-Europe");
     create(
-        &client,
+        client,
         &json!({
             "id": continent_id,
             "type": "Continent",
@@ -242,7 +277,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
 
     let country_id = scope.id("Country:jl2-Italy");
     create(
-        &client,
+        client,
         &json!({
             "id": country_id,
             "type": "Country",
@@ -255,7 +290,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
 
     let city_id = scope.id("City:jl2-Rome");
     create(
-        &client,
+        client,
         &json!({
             "id": city_id,
             "type": "City",
@@ -267,7 +302,7 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
 
     let building_id = scope.id("Building:jl2");
     create(
-        &client,
+        client,
         &json!({
             "id": building_id,
             "type": "Building",
@@ -278,18 +313,26 @@ async fn notification_join_level_2_delivers_two_depth_levels_of_linked_entities(
     .await;
 
     let subscription_id = scope.id("Subscription:jl2");
-    let sub = subscription_with_flat_join(&subscription_id, &building_id, &receiver.endpoint_url(), Some(2));
-    create_subscription(&client, &sub).await;
+    let sub = subscription_with_flat_join(
+        &subscription_id,
+        &building_id,
+        &receiver.endpoint_url().expect("notification endpoint must be valid"),
+        Some(2),
+    );
+    create_subscription(client, &sub).await;
 
-    append_attrs(&client, &building_id, &trigger_fragment()).await;
+    append_attrs(client, &building_id, &trigger_fragment()).await;
 
-    let notification = receiver.wait_for_subscription_notification(&subscription_id, Duration::from_secs(5)).await;
-    let data = notification.body["data"].as_array().expect("data must be an array");
+    let notification = receiver.next_request(Duration::from_secs(5)).await.expect("notification must arrive");
+    let notification_body: Value = notification.json().expect("notification must be valid JSON");
+    assert_eq!(notification_body["subscriptionId"], subscription_id);
+    let data = notification_body["data"].as_array().expect("data must be an array");
     assert_eq!(data.len(), 3, "joinLevel=2 must return building + city + country");
     let ids: Vec<&str> = data.iter().filter_map(|d| d["id"].as_str()).collect();
     assert!(ids.contains(&building_id.as_str()));
     assert!(ids.contains(&city_id.as_str()));
     assert!(ids.contains(&country_id.as_str()));
     assert!(!ids.contains(&continent_id.as_str()));
-    scope.cleanup().await.expect("cleanup failed");
+    receiver.shutdown().await.expect("notification server shutdown failed");
+    scope.finish().await.expect("cleanup failed");
 }

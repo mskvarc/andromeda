@@ -42,7 +42,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_basic_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_01");
 
@@ -61,7 +61,7 @@ async fn temporal_retrieve_basic_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_with_context_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_02");
 
@@ -82,7 +82,7 @@ async fn temporal_retrieve_with_context_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_attrs_fuel_level_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_03_01");
 
@@ -99,7 +99,7 @@ async fn temporal_retrieve_attrs_fuel_level_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_attrs_multiple_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_03_02");
 
@@ -120,7 +120,7 @@ async fn temporal_retrieve_attrs_multiple_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_timerel_after_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_04_01");
 
@@ -150,7 +150,7 @@ async fn temporal_retrieve_timerel_after_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_timerel_before_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_04_02");
 
@@ -180,7 +180,7 @@ async fn temporal_retrieve_timerel_before_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_timerel_between_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_04_03");
 
@@ -214,7 +214,7 @@ async fn temporal_retrieve_timerel_between_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_last_n_4_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_05_01");
 
@@ -237,7 +237,7 @@ async fn temporal_retrieve_last_n_4_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_last_n_7_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_05_02");
 
@@ -260,7 +260,7 @@ async fn temporal_retrieve_last_n_7_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_invalid_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body, _) = get_temporal_entity(&c, "invalidUri", "", "application/ld+json", None).await;
@@ -271,7 +271,7 @@ async fn temporal_retrieve_invalid_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_nonexistent_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body, _) = get_temporal_entity(&c, "urn:ngsi-ld:Vehicle:unknownEntity", "", "application/ld+json", None).await;
@@ -282,7 +282,7 @@ async fn temporal_retrieve_nonexistent_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_unknown_attrs_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_08");
 
@@ -298,7 +298,7 @@ async fn temporal_retrieve_unknown_attrs_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_after_missing_timeat_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_09_01");
 
@@ -314,7 +314,7 @@ async fn temporal_retrieve_after_missing_timeat_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_before_missing_timeat_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_09_02");
 
@@ -330,7 +330,7 @@ async fn temporal_retrieve_before_missing_timeat_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_between_missing_endtimeat_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_09_03");
 
@@ -350,7 +350,7 @@ async fn temporal_retrieve_between_missing_endtimeat_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_temporal_values_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_10");
 
@@ -374,7 +374,7 @@ async fn temporal_retrieve_temporal_values_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_aggregated_avg_pt1h_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_01");
 
@@ -397,7 +397,7 @@ async fn temporal_retrieve_aggregated_avg_pt1h_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_aggregated_avg_fuel_level_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_02");
 
@@ -421,7 +421,7 @@ async fn temporal_retrieve_aggregated_avg_fuel_level_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_aggregated_avg_max_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_03");
 
@@ -444,7 +444,7 @@ async fn temporal_retrieve_aggregated_avg_max_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_aggregated_min_max_p1d_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_11_04");
 
@@ -471,7 +471,7 @@ async fn temporal_retrieve_aggregated_min_max_p1d_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_language_property_normalized_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_12_01");
 
@@ -494,7 +494,7 @@ async fn temporal_retrieve_language_property_normalized_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_language_property_simplified_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_12_02");
 
@@ -518,7 +518,7 @@ async fn temporal_retrieve_language_property_simplified_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_pagination_basic_returns_206() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_01");
 
@@ -544,7 +544,7 @@ async fn temporal_retrieve_pagination_basic_returns_206() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_pagination_last_n_returns_206() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_02");
 
@@ -567,7 +567,7 @@ async fn temporal_retrieve_pagination_last_n_returns_206() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_pagination_last_n_before_returns_206() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_03");
 
@@ -597,7 +597,7 @@ async fn temporal_retrieve_pagination_last_n_before_returns_206() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_pagination_after_returns_206() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_08");
 
@@ -629,7 +629,7 @@ async fn temporal_retrieve_pagination_after_returns_206() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_09");
 
@@ -665,7 +665,7 @@ async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_json_property_normalized_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_15_01");
 
@@ -687,7 +687,7 @@ async fn temporal_retrieve_json_property_normalized_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_json_property_simplified_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_15_02");
 
@@ -711,7 +711,7 @@ async fn temporal_retrieve_json_property_simplified_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_vocab_property_normalized_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_16_01");
 
@@ -733,7 +733,7 @@ async fn temporal_retrieve_vocab_property_normalized_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_vocab_property_simplified_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_16_02");
 
@@ -757,7 +757,7 @@ async fn temporal_retrieve_vocab_property_simplified_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_deleted_at_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_17_01");
 
@@ -784,7 +784,7 @@ async fn temporal_retrieve_deleted_at_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_deleted_at_relationship_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_17_02");
 
@@ -810,7 +810,7 @@ async fn temporal_retrieve_deleted_at_relationship_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_deleted_at_language_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_17_03");
 
@@ -840,7 +840,7 @@ async fn temporal_retrieve_deleted_at_language_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_18_01");
 
@@ -878,7 +878,7 @@ async fn temporal_retrieve_deleted_at_temporal_values_property_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_deleted_at_scope_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_19");
 
@@ -902,7 +902,7 @@ async fn temporal_retrieve_deleted_at_scope_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_retrieve_deleted_at_temporal_values_scope_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_20");
 

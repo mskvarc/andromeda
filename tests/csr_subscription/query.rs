@@ -25,7 +25,7 @@ async fn create_subscriptions(http_client: &reqwest::Client, count: usize) {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_all_returns_at_least_created_subscriptions() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 2).await;
 
@@ -39,7 +39,7 @@ async fn csr_subscription_query_all_returns_at_least_created_subscriptions() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_limit_1_returns_one_result() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 3).await;
 
@@ -53,7 +53,7 @@ async fn csr_subscription_query_limit_1_returns_one_result() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_limit_2_returns_two_results() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 3).await;
 
@@ -67,7 +67,7 @@ async fn csr_subscription_query_limit_2_returns_two_results() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_limit_above_total_returns_all_results() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 3).await;
 
@@ -81,7 +81,7 @@ async fn csr_subscription_query_limit_above_total_returns_all_results() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_limit_1_offset_1_returns_one_result() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 3).await;
 
@@ -95,7 +95,7 @@ async fn csr_subscription_query_limit_1_offset_1_returns_one_result() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_limit_2_offset_2_returns_one_result() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 3).await;
 
@@ -109,7 +109,7 @@ async fn csr_subscription_query_limit_2_offset_2_returns_one_result() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_limit_15_offset_0_returns_all_results() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     create_subscriptions(&http_client, 3).await;
 
@@ -123,7 +123,7 @@ async fn csr_subscription_query_limit_15_offset_0_returns_all_results() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_negative_limit_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=-5&offset=2").await;
@@ -135,7 +135,7 @@ async fn csr_subscription_query_negative_limit_returns_400_bad_request_data() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_negative_offset_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=2&offset=-3").await;
@@ -147,7 +147,7 @@ async fn csr_subscription_query_negative_offset_returns_400_bad_request_data() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_zero_limit_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=0&offset=0").await;
@@ -159,7 +159,7 @@ async fn csr_subscription_query_zero_limit_returns_400_bad_request_data() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_query_non_numeric_limit_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = raw_get(&http_client, "/csourceSubscriptions?limit=abc&offset=0").await;

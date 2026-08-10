@@ -1,0 +1,20 @@
+[package]
+name = "andromeda-test-fixtures"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = { version = "0.4.44", features = ["serde"] }
+dashmap = { version = "6.1.0", features = ["inline"] }
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+typed-builder = "0.23.2"
+url = { version = "2.5.8", features = ["serde"] }
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true

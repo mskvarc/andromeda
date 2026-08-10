@@ -18,13 +18,10 @@ mod entity_type_details;
 mod entity_type_info;
 mod entity_types;
 
-use andromeda_test_common::{
-    config::{BASE_URL, COMPOUND_CONTEXT, DATABASE_URL},
-    error,
-};
+use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail as error};
+use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use sqlx::PgPool;
 use uuid::Uuid;
 
 const COMPOUND_CONTEXT_URL: &iri_rs::Iri<&str> = COMPOUND_CONTEXT;
@@ -42,12 +39,10 @@ fn unique_id(prefix: &str) -> String {
 // Database cleanup
 // ---------------------------------------------------------------------------
 
-const TRUNCATE_ENTITIES: &str = "TRUNCATE entities CASCADE";
-
-async fn clean_database() {
-    let pool = PgPool::connect(DATABASE_URL).await.expect("failed to connect to database for cleanup");
-    sqlx::query(TRUNCATE_ENTITIES).execute(&pool).await.expect("failed to truncate entities");
-    pool.close().await;
+async fn clean_database() -> SerializedEnvironment {
+    SerializedEnvironment::from_environment_reset()
+        .await
+        .expect("serialized test database environment")
 }
 
 // ---------------------------------------------------------------------------

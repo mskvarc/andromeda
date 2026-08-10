@@ -2,6 +2,7 @@
 
 use crate::{
     RegistrationService,
+    context_source_properties::expand_context_source_properties,
     error::RegistrationError,
     identifier::generate_registration_id,
     payload::extract_create_params,
@@ -40,12 +41,14 @@ impl RegistrationService {
         });
         self.engine.expand(validation_document, context).await?;
 
+        let expanded_properties = expand_context_source_properties(&self.engine, &payload, context).await?;
         let mut payload = payload;
         if let Some(information) = payload.get_mut("information") {
             self.expand_information(information, context).await?;
         }
 
-        let params = extract_create_params(&payload)?;
+        let mut params = extract_create_params(&payload)?;
+        params.additional_properties = expanded_properties;
         self.repo.create(&id, &params).await?;
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the change event and response each own the identifier.

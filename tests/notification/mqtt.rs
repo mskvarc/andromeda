@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 use std::time::Duration;
 
-use andromeda_test_common::config::callback_host;
+use andromeda_test_mocks::server_config::MockServerConfig;
 use reqwest::StatusCode;
 use rumqttc::QoS;
 
@@ -28,14 +28,22 @@ const MQTT_AUTH_BROKER_PORT: u16 = 9883;
 const TOPIC_PREFIX: &str = "andromeda-test/notifications";
 
 fn mqtt_uri(topic: &str) -> String {
-    format!("mqtt://{}:{MQTT_BROKER_PORT}/{topic}", callback_host())
+    let config = MockServerConfig::from_environment().expect("valid callback server configuration");
+    format!("mqtt://{}:{MQTT_BROKER_PORT}/{topic}", config.visible_host())
+}
+
+fn callback_host() -> String {
+    MockServerConfig::from_environment()
+        .expect("valid callback server configuration")
+        .visible_host()
+        .to_string()
 }
 
 #[serial_test::serial]
 #[tokio::test]
 async fn notification_mqtt_endpoint_without_user_and_default_port_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -62,7 +70,7 @@ async fn notification_mqtt_endpoint_without_user_and_default_port_delivers_messa
 #[tokio::test]
 async fn notification_mqtt_default_qos_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -86,7 +94,7 @@ async fn notification_mqtt_default_qos_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_qos_1_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_02/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -110,7 +118,7 @@ async fn notification_mqtt_qos_1_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_qos_2_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_03/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::ExactlyOnce).await;
@@ -134,7 +142,7 @@ async fn notification_mqtt_qos_2_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_default_protocol_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -158,7 +166,7 @@ async fn notification_mqtt_default_protocol_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_version_3_1_1_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_02/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -182,7 +190,7 @@ async fn notification_mqtt_version_3_1_1_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_version_5_0_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_03/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -206,7 +214,7 @@ async fn notification_mqtt_version_5_0_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_payload_contains_metadata_and_body_envelope() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_04_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -237,7 +245,7 @@ async fn notification_mqtt_payload_contains_metadata_and_body_envelope() {
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_02/{}", uuid::Uuid::new_v4());
     let receiver =
         MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
@@ -263,7 +271,7 @@ async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delive
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_03/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
@@ -288,7 +296,7 @@ async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_username_and_password_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_04/{}", uuid::Uuid::new_v4());
     let receiver =
         MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
@@ -314,7 +322,7 @@ async fn notification_mqtt_endpoint_with_username_and_password_delivers_message(
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_username_password_and_port_delivers_message() {
     let http_client = client();
-    crate::helpers::reset_broker_state().await;
+    let _serialized_environment = crate::helpers::reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_05/{}", uuid::Uuid::new_v4());
     let receiver =
         MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;

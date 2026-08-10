@@ -32,7 +32,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn attribute_replace_existing_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_01_01");
 
@@ -57,7 +57,7 @@ async fn attribute_replace_existing_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_with_type_change_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_01_02");
 
@@ -86,7 +86,7 @@ async fn attribute_replace_with_type_change_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_default_instance_returns_404_when_no_default() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_02_01");
 
@@ -112,7 +112,7 @@ async fn attribute_replace_default_instance_returns_404_when_no_default() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_specific_instance_by_datasetid_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_02_02");
 
@@ -137,7 +137,7 @@ async fn attribute_replace_specific_instance_by_datasetid_success() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = json!({
@@ -153,7 +153,7 @@ async fn attribute_replace_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_nonexistent_entity_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_03_02");
 
@@ -170,7 +170,7 @@ async fn attribute_replace_nonexistent_entity_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_invalid_attribute_name_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_03_03");
 
@@ -191,7 +191,7 @@ async fn attribute_replace_invalid_attribute_name_returns_400() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_nonexistent_attribute_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:replace_055_03_04");
 
@@ -212,7 +212,7 @@ async fn attribute_replace_nonexistent_attribute_returns_404() {
 #[tokio::test]
 #[serial]
 async fn attribute_replace_scope_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:replace_055_03_05");
 

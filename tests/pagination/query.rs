@@ -2,13 +2,13 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use andromeda_test_common::{client::NgsiLdClient, config::CORE_CONTEXT, scope::TestScope};
+use andromeda_test_client::test_client::TestClient;
+use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use pretty_assertions::{assert_eq, assert_ne};
 use reqwest::{StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
-
-const SUITE: &str = "pagination";
 
 fn default_subscription(id: &str) -> Value {
     json!({
@@ -34,14 +34,13 @@ fn default_registration(id: &str) -> Value {
     })
 }
 
-async fn make_scope() -> (TestScope, NgsiLdClient) {
-    let scope = TestScope::global(SUITE);
-    scope.global_truncate().await.expect("global truncate failed");
-    let client = NgsiLdClient::new(&scope).await;
+async fn make_scope() -> (SerializedEnvironment, TestClient) {
+    let scope = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let client = scope.client().clone();
     (scope, client)
 }
 
-async fn create_subscriptions(client: &NgsiLdClient, count: usize, tag: &str) -> Vec<String> {
+async fn create_subscriptions(client: &TestClient, count: usize, tag: &str) -> Vec<String> {
     let mut ids = Vec::with_capacity(count);
     for index in 0..count {
         let id = format!("urn:ngsi-ld:Subscription:{tag}:{index}:{}", uuid::Uuid::new_v4());
@@ -55,7 +54,7 @@ async fn create_subscriptions(client: &NgsiLdClient, count: usize, tag: &str) ->
     ids
 }
 
-async fn create_registrations(client: &NgsiLdClient, count: usize, tag: &str) -> Vec<String> {
+async fn create_registrations(client: &TestClient, count: usize, tag: &str) -> Vec<String> {
     let mut ids = Vec::with_capacity(count);
     for index in 0..count {
         let id = format!("urn:ngsi-ld:ContextSourceRegistration:{tag}:{index}:{}", uuid::Uuid::new_v4());
@@ -97,7 +96,7 @@ fn find_context_link_header(headers: &HeaderMap) -> Option<String> {
     collect_link_headers(headers).into_iter().find(|header| header.contains("json-ld#context"))
 }
 
-async fn query_subscriptions(client: &NgsiLdClient, query: &str, accept: &str) -> (StatusCode, HeaderMap, Value) {
+async fn query_subscriptions(client: &TestClient, query: &str, accept: &str) -> (StatusCode, HeaderMap, Value) {
     let path = if query.is_empty() {
         "/ngsi-ld/v1/subscriptions".to_owned()
     } else {
@@ -109,10 +108,11 @@ async fn query_subscriptions(client: &NgsiLdClient, query: &str, accept: &str) -
         .send()
         .await
         .expect("query subscriptions failed");
-    (response.status, response.headers, response.body)
+    let body = response.json_value().expect("subscription query response must be valid JSON");
+    (response.status, response.headers, body)
 }
 
-async fn query_registrations(client: &NgsiLdClient, query: &str, accept: &str) -> (StatusCode, HeaderMap, Value) {
+async fn query_registrations(client: &TestClient, query: &str, accept: &str) -> (StatusCode, HeaderMap, Value) {
     let path = if query.is_empty() {
         "/ngsi-ld/v1/csourceRegistrations".to_owned()
     } else {
@@ -124,7 +124,8 @@ async fn query_registrations(client: &NgsiLdClient, query: &str, accept: &str) -
         .send()
         .await
         .expect("query registrations failed");
-    (response.status, response.headers, response.body)
+    let body = response.json_value().expect("registration query response must be valid JSON");
+    (response.status, response.headers, body)
 }
 
 fn extract_link_segment<'a>(header: &'a str, rel_name: &str) -> Option<&'a str> {
@@ -151,8 +152,7 @@ async fn pagination_subscriptions_middle_page_returns_prev_and_next_in_single_li
     assert!(pagination.contains("rel=\"next\""));
     assert!(pagination.contains("offset=0"));
     assert!(pagination.contains("offset=2"));
-    scope.cleanup().await.expect("cleanup failed");
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -166,7 +166,7 @@ async fn pagination_subscriptions_first_page_returns_next_only() {
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -180,7 +180,7 @@ async fn pagination_subscriptions_last_page_returns_prev_only() {
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -192,7 +192,7 @@ async fn pagination_subscriptions_single_page_returns_no_pagination_link() {
     let (status, headers, _) = query_subscriptions(&client, "limit=10&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     assert!(find_pagination_link_header(&headers).is_none());
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -212,7 +212,7 @@ async fn pagination_subscriptions_context_and_pagination_are_separate_link_heade
     assert!(context.is_some());
     assert!(pagination.is_some());
     assert_ne!(context, pagination);
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -225,7 +225,7 @@ async fn pagination_subscriptions_pagination_links_include_json_ld_media_type() 
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("type=\"application/ld+json\""));
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -240,7 +240,7 @@ async fn pagination_registrations_middle_page_returns_first_last_prev_next() {
     for rel in ["first", "last", "prev", "next"] {
         assert!(pagination.contains(&format!("rel=\"{rel}\"")), "should have {rel}: {pagination}");
     }
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -256,7 +256,7 @@ async fn pagination_registrations_first_page_has_first_last_next_without_prev() 
     assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"next\""));
     assert!(!pagination.contains("rel=\"prev\""));
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -272,7 +272,7 @@ async fn pagination_registrations_last_page_has_first_last_prev_without_next() {
     assert!(pagination.contains("rel=\"last\""));
     assert!(pagination.contains("rel=\"prev\""));
     assert!(!pagination.contains("rel=\"next\""));
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -287,7 +287,7 @@ async fn pagination_registrations_first_link_points_to_offset_zero() {
     let first_segment = extract_link_segment(&pagination, "first").expect("first segment missing");
     let first_url = extract_url(first_segment);
     assert!(first_url.contains("offset=0"), "first link should have offset=0: {first_url}");
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -302,7 +302,7 @@ async fn pagination_registrations_last_link_points_to_correct_offset() {
     let last_segment = extract_link_segment(&pagination, "last").expect("last segment missing");
     let last_url = extract_url(last_segment);
     assert!(last_url.contains("offset=4"), "last link should have offset=4: {last_url}");
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -315,7 +315,7 @@ async fn pagination_registrations_no_media_type_on_pagination_links() {
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(!pagination.contains("type=\""), "no media type param on registration pagination: {pagination}");
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -328,7 +328,7 @@ async fn pagination_link_header_urls_preserve_non_pagination_query_params() {
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
     assert!(pagination.contains("limit="));
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }
 
 #[tokio::test]
@@ -345,5 +345,5 @@ async fn pagination_each_link_value_is_parseable_rfc8288() {
         assert!(trimmed.starts_with('<'), "link-value should start with '<': {trimmed}");
         assert!(trimmed.contains("rel="), "link-value should have rel=: {trimmed}");
     }
-    scope.global_truncate().await.expect("post-test truncate failed");
+    scope.reset_and_finish().await.expect("post-test reset failed");
 }

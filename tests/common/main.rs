@@ -13,10 +13,8 @@
 
 mod errors;
 
-use andromeda_test_common::{
-    config::{BASE_URL, CORE_CONTEXT},
-    error,
-};
+use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use uuid::Uuid;

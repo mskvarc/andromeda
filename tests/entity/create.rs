@@ -45,7 +45,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn entity_create_minimal_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_01_01");
     let entity = building_minimal(&id);
@@ -63,7 +63,7 @@ async fn entity_create_minimal_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_with_properties_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_01_02");
     let entity = building_simple_attributes(&id);
@@ -88,7 +88,7 @@ async fn entity_create_with_properties_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_with_relationship_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_01_03");
     let entity = building_relationship_of_property(&id);
@@ -110,7 +110,7 @@ async fn entity_create_with_relationship_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_with_location_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_01_04");
     let entity = building_location(&id);
@@ -129,7 +129,7 @@ async fn entity_create_with_location_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_non_core_geoproperty_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_01_05");
     let entity = building_non_core_geoproperty(&id);
@@ -150,7 +150,7 @@ async fn entity_create_non_core_geoproperty_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_invalid_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = create_entity_raw(&c, b"{\"id\":\"urn:ngsi-ld:Building:invalid\",,\"type\":\"Building\"}", "application/ld+json").await;
@@ -162,7 +162,7 @@ async fn entity_create_invalid_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_create_empty_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let (status, body) = create_entity_raw(&c, b"[]", "application/ld+json").await;
@@ -173,7 +173,7 @@ async fn entity_create_empty_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_create_invalid_type_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_02_04");
     let entity = json!({
@@ -193,7 +193,7 @@ async fn entity_create_invalid_type_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_create_duplicate_id_returns_409() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_03_01");
     let entity = building_minimal(&id);
@@ -216,7 +216,7 @@ async fn entity_create_duplicate_id_returns_409() {
 #[tokio::test]
 #[serial]
 async fn entity_create_json_with_link_header_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_04_01");
     let entity = json!({
@@ -250,7 +250,7 @@ async fn entity_create_json_with_link_header_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_json_with_link_header_no_context_retrieval() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_04_02");
     let entity = json!({
@@ -278,7 +278,7 @@ async fn entity_create_json_with_link_header_no_context_retrieval() {
 #[tokio::test]
 #[serial]
 async fn entity_create_default_context_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_05_01");
     let entity = json!({
@@ -302,7 +302,7 @@ async fn entity_create_default_context_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_default_context_retrieval() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_05_02");
     let entity = json!({
@@ -334,7 +334,7 @@ async fn entity_create_default_context_retrieval() {
 #[tokio::test]
 #[serial]
 async fn entity_create_json_with_context_in_body_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_06_01");
     let entity = json!({
@@ -358,7 +358,7 @@ async fn entity_create_json_with_context_in_body_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_create_ld_json_with_context_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_07_01");
     let entity = building_simple_attributes(&id);
@@ -377,7 +377,7 @@ async fn entity_create_ld_json_with_context_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_ld_json_with_context_retrieval() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_07_02");
     let entity = building_simple_attributes(&id);
@@ -399,7 +399,7 @@ async fn entity_create_ld_json_with_context_retrieval() {
 #[tokio::test]
 #[serial]
 async fn entity_create_ld_json_without_context_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_08_01");
     let entity = json!({
@@ -422,7 +422,7 @@ async fn entity_create_ld_json_without_context_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_create_ld_json_with_link_header_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_09_01");
     let entity = building_simple_attributes(&id);
@@ -438,7 +438,7 @@ async fn entity_create_ld_json_with_link_header_returns_400() {
 #[tokio::test]
 #[serial]
 async fn entity_create_language_property_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_10_01");
     let entity = building_language_property(&id);
@@ -462,7 +462,7 @@ async fn entity_create_language_property_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_one_scope_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_11_01");
     let entity = building_with_one_scope(&id);
@@ -478,7 +478,7 @@ async fn entity_create_one_scope_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_many_scopes_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_11_02");
     let entity = building_with_many_scopes(&id);
@@ -499,7 +499,7 @@ async fn entity_create_many_scopes_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_observation_space_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_12");
     let entity = building_observation_space(&id);
@@ -519,7 +519,7 @@ async fn entity_create_observation_space_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_operation_space_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_13");
     let entity = building_operation_space(&id);
@@ -540,7 +540,7 @@ async fn entity_create_operation_space_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_json_property_object_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_14_01");
     let entity = building_json_property_object(&id);
@@ -557,7 +557,7 @@ async fn entity_create_json_property_object_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_json_property_array_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_14_02");
     let entity = building_json_property_array(&id);
@@ -579,7 +579,7 @@ async fn entity_create_json_property_array_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_vocab_property_string_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_15_01");
     let entity = building_vocab_property_string(&id);
@@ -595,7 +595,7 @@ async fn entity_create_vocab_property_string_success() {
 #[tokio::test]
 #[serial]
 async fn entity_create_vocab_property_array_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Building:create_001_15_02");
     let entity = building_vocab_property_array(&id);

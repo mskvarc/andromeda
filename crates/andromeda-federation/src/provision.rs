@@ -7,10 +7,11 @@ use crate::{
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult},
     registration_selection::{collect_exclusive_attrs, collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
     request::{ForwardBatchProvisionRequest, ForwardProvisionRequest},
+    transport::forwarded_content_type,
 };
 use andromeda_http_headers::{media_type::APPLICATION_LD_JSON, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::registration::{ContextSourceAccess, ForwardingMode};
 use futures::{StreamExt, stream};
 use iri_rs::IriRefBuf;
 use serde_json::Value;
@@ -116,6 +117,7 @@ impl FederationService {
                         request_ref.method.clone(),
                         filtered_body.as_deref(),
                         request_ref.context_url,
+                        &csr.access,
                         csr.tenant.as_ref(),
                         request_ref.incoming_via,
                     )
@@ -214,6 +216,7 @@ impl FederationService {
                         reqwest::Method::POST,
                         Some(request_ref.body),
                         request_ref.context_url,
+                        &csr.access,
                         csr.tenant.as_ref(),
                         request_ref.incoming_via,
                     )
@@ -265,16 +268,20 @@ impl FederationService {
         method: reqwest::Method,
         body: Option<&[u8]>,
         context_url: Option<&IriRefBuf>,
+        access: &ContextSourceAccess,
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> Result<(u16, Option<Value>), FederationError> {
         let url = url?;
         debug!("CS forwarding {} {}", method, url);
 
-        let mut request = self.build_request(method, &url, context_url, tenant, incoming_via);
+        let mut request = self.build_request(method, &url, context_url, access, tenant, incoming_via)?;
 
         if let Some(body_bytes) = body {
-            request = request.header("Content-Type", APPLICATION_LD_JSON.to_string()).body(body_bytes.to_vec());
+            if forwarded_content_type(access).is_none() {
+                request = request.header("Content-Type", APPLICATION_LD_JSON.to_string());
+            }
+            request = request.body(body_bytes.to_vec());
         }
 
         let (status, _warning, bytes) = self.send_request(request).await?;

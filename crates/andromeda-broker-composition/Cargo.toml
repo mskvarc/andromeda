@@ -99,6 +99,5 @@ shadow-rs = "2.0.0"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-andromeda-test-common.workspace = true
 pretty_assertions = "1.4.1"
 serial_test = "3.4.0"

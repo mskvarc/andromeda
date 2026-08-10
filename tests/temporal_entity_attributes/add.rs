@@ -28,7 +28,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_attribute_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_01");
 
@@ -58,7 +58,7 @@ async fn temporal_attrs_add_attribute_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_multiple_attributes_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_02");
 
@@ -92,7 +92,7 @@ async fn temporal_attrs_add_multiple_attributes_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_relationship_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_03");
 
@@ -123,7 +123,7 @@ async fn temporal_attrs_add_relationship_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_geoproperty_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_04");
 
@@ -154,7 +154,7 @@ async fn temporal_attrs_add_geoproperty_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_instances_to_existing_attribute_success() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_01_05");
 
@@ -186,7 +186,7 @@ async fn temporal_attrs_add_instances_to_existing_attribute_success() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_empty_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = add_attribute_fragment();
@@ -202,7 +202,7 @@ async fn temporal_attrs_add_empty_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_invalid_entity_id_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let fragment = add_attribute_fragment();
@@ -222,7 +222,7 @@ async fn temporal_attrs_add_invalid_entity_id_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_entity_not_found_returns_404() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_03_01");
 
@@ -243,7 +243,7 @@ async fn temporal_attrs_add_entity_not_found_returns_404() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_invalid_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_04_01");
 
@@ -264,7 +264,7 @@ async fn temporal_attrs_add_invalid_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_empty_json_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_04_02");
 
@@ -285,7 +285,7 @@ async fn temporal_attrs_add_empty_json_returns_400() {
 #[tokio::test]
 #[serial]
 async fn temporal_attrs_add_empty_object_returns_400() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:add_014_04_03");
 

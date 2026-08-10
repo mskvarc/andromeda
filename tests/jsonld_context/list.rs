@@ -92,7 +92,7 @@ async fn create_implicit_context_for_list(c: &reqwest::Client) -> String {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_no_params() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -102,7 +102,7 @@ async fn list_no_contexts_no_params() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -112,7 +112,7 @@ async fn list_no_contexts_kind_hosted() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_kind_cached() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -122,7 +122,7 @@ async fn list_no_contexts_kind_cached() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_kind_implicitly_created() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "kind=ImplicitlyCreated").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -132,7 +132,7 @@ async fn list_no_contexts_kind_implicitly_created() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_details_false() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -142,7 +142,7 @@ async fn list_no_contexts_details_false() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_details_false_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -152,7 +152,7 @@ async fn list_no_contexts_details_false_kind_hosted() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_details_false_kind_cached() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false&kind=Cached").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -162,7 +162,7 @@ async fn list_no_contexts_details_false_kind_cached() {
 #[tokio::test]
 #[serial]
 async fn list_no_contexts_details_false_kind_implicitly_created() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let (status, contexts) = list_contexts(&c, "details=false&kind=ImplicitlyCreated").await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
@@ -174,7 +174,7 @@ async fn list_no_contexts_details_false_kind_implicitly_created() {
 #[tokio::test]
 #[serial]
 async fn list_one_context_no_params() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
@@ -185,7 +185,7 @@ async fn list_one_context_no_params() {
 #[tokio::test]
 #[serial]
 async fn list_one_context_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
@@ -196,7 +196,7 @@ async fn list_one_context_kind_hosted() {
 #[tokio::test]
 #[serial]
 async fn list_one_context_details_false() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
@@ -207,7 +207,7 @@ async fn list_one_context_details_false() {
 #[tokio::test]
 #[serial]
 async fn list_one_context_details_false_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uri = create_one_context(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
@@ -220,7 +220,7 @@ async fn list_one_context_details_false_kind_hosted() {
 #[tokio::test]
 #[serial]
 async fn list_multiple_contexts_no_params() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "").await;
@@ -231,7 +231,7 @@ async fn list_multiple_contexts_no_params() {
 #[tokio::test]
 #[serial]
 async fn list_multiple_contexts_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "kind=Hosted").await;
@@ -242,7 +242,7 @@ async fn list_multiple_contexts_kind_hosted() {
 #[tokio::test]
 #[serial]
 async fn list_multiple_contexts_details_false() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false").await;
@@ -253,7 +253,7 @@ async fn list_multiple_contexts_details_false() {
 #[tokio::test]
 #[serial]
 async fn list_multiple_contexts_details_false_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let uris = create_three_contexts(&c).await;
     let (status, contexts) = list_contexts(&c, "details=false&kind=Hosted").await;
@@ -266,11 +266,7 @@ async fn list_multiple_contexts_details_false_kind_hosted() {
 #[tokio::test]
 async fn list_invalid_kind_returns_400() {
     let c = client();
-    let resp = c
-        .get(format!("{}/jsonldContexts?kind=other", crate::BASE_URL))
-        .send()
-        .await
-        .expect("request failed");
+    let resp = c.get(crate::broker_url("jsonldContexts?kind=other")).send().await.expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -280,11 +276,7 @@ async fn list_invalid_kind_returns_400() {
 #[tokio::test]
 async fn list_invalid_details_returns_400() {
     let c = client();
-    let resp = c
-        .get(format!("{}/jsonldContexts?details=other", crate::BASE_URL))
-        .send()
-        .await
-        .expect("request failed");
+    let resp = c.get(crate::broker_url("jsonldContexts?details=other")).send().await.expect("request failed");
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or_default();
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -295,7 +287,7 @@ async fn list_invalid_details_returns_400() {
 async fn list_invalid_kind_with_details_true_returns_400() {
     let c = client();
     let resp = c
-        .get(format!("{}/jsonldContexts?details=true&kind=other", crate::BASE_URL))
+        .get(crate::broker_url("jsonldContexts?details=true&kind=other"))
         .send()
         .await
         .expect("request failed");
@@ -309,7 +301,7 @@ async fn list_invalid_kind_with_details_true_returns_400() {
 async fn list_invalid_details_with_kind_hosted_returns_400() {
     let c = client();
     let resp = c
-        .get(format!("{}/jsonldContexts?details=other&kind=Hosted", crate::BASE_URL))
+        .get(crate::broker_url("jsonldContexts?details=other&kind=Hosted"))
         .send()
         .await
         .expect("request failed");
@@ -323,7 +315,7 @@ async fn list_invalid_details_with_kind_hosted_returns_400() {
 async fn list_invalid_details_and_kind_returns_400() {
     let c = client();
     let resp = c
-        .get(format!("{}/jsonldContexts?details=other&kind=other", crate::BASE_URL))
+        .get(crate::broker_url("jsonldContexts?details=other&kind=other"))
         .send()
         .await
         .expect("request failed");
@@ -338,7 +330,7 @@ async fn list_invalid_details_and_kind_returns_400() {
 #[tokio::test]
 #[serial]
 async fn list_details_true_no_kind() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({
@@ -366,7 +358,7 @@ async fn list_details_true_no_kind() {
 #[tokio::test]
 #[serial]
 async fn list_details_true_kind_hosted() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let body = json!({
@@ -396,7 +388,7 @@ async fn list_details_true_kind_hosted() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_no_params() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -413,7 +405,7 @@ async fn list_implicit_no_params() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_kind_hosted_is_empty() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -427,7 +419,7 @@ async fn list_implicit_kind_hosted_is_empty() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_kind_cached() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -441,7 +433,7 @@ async fn list_implicit_kind_cached() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_kind_implicitly_created() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -455,7 +447,7 @@ async fn list_implicit_kind_implicitly_created() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_details_false() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -472,7 +464,7 @@ async fn list_implicit_details_false() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_details_false_kind_hosted_is_empty() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -486,7 +478,7 @@ async fn list_implicit_details_false_kind_hosted_is_empty() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_details_false_kind_cached() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -500,7 +492,7 @@ async fn list_implicit_details_false_kind_cached() {
 #[tokio::test]
 #[serial]
 async fn list_implicit_details_false_kind_implicitly_created() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
     let sub_id = create_implicit_context_for_list(&c).await;
 
@@ -516,7 +508,7 @@ async fn list_implicit_details_false_kind_implicitly_created() {
 #[tokio::test]
 #[serial]
 async fn list_cached_contexts_with_details() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let c = client();
 
     let ctx_content = r#"{"@context":{"X1":"urn:ngsi-ld:attributes:X1"}}"#;

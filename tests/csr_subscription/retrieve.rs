@@ -16,7 +16,7 @@ use serial_test::serial;
 #[tokio::test]
 #[serial]
 async fn csr_subscription_retrieve_existing_by_id_returns_200_with_subscription() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("retrieve-existing");
     let payload = csource_subscription_payload(&subscription_id);
@@ -34,7 +34,7 @@ async fn csr_subscription_retrieve_existing_by_id_returns_200_with_subscription(
 #[tokio::test]
 #[serial]
 async fn csr_subscription_retrieve_invalid_uri_returns_400_bad_request_data() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = retrieve_csource_subscription(&http_client, "invalidUri", None).await;
@@ -46,7 +46,7 @@ async fn csr_subscription_retrieve_invalid_uri_returns_400_bad_request_data() {
 #[tokio::test]
 #[serial]
 async fn csr_subscription_retrieve_unknown_id_returns_404_resource_not_found() {
-    clean_database().await;
+    let _serialized_environment = clean_database().await;
     let http_client = client();
 
     let (status, body) = retrieve_csource_subscription(&http_client, "urn:ngsi-ld:Subscription:unknownSubscription", None).await;
