@@ -4,6 +4,24 @@
 use crate::db_name_prefix::DbNamePrefix;
 use confique::Config;
 use serde::Serialize;
+use thiserror::Error;
+
+/// Invalid tenancy provisioning or runtime-cache configuration.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+pub enum TenancyConfigError {
+    /// Per-tenant pool size was configured as zero.
+    #[error("tenancy.tenant_max_connections must be at least 1")]
+    ZeroTenantMaxConnections,
+    /// Runtime idle retention was configured as zero.
+    #[error("tenancy.runtime_idle_ttl_seconds must be at least 1")]
+    ZeroRuntimeIdleTtl,
+    /// Runtime cache capacity was configured as zero.
+    #[error("tenancy.runtime_max_cached must be at least 1")]
+    ZeroRuntimeMaxCached,
+    /// Runtime janitor cadence was configured as zero.
+    #[error("tenancy.janitor_interval_seconds must be at least 1")]
+    ZeroJanitorInterval,
+}
 
 /// Multi-tenancy configuration.
 ///
@@ -40,4 +58,42 @@ pub struct TenancyConfig {
     /// How often the janitor sweeps for idle and orphaned runtimes.
     #[config(env = "ANDROMEDA_TENANCY_JANITOR_INTERVAL_SECONDS", default = 30)]
     pub janitor_interval_seconds: u64,
+}
+
+impl TenancyConfig {
+    /// Validate tenant pool and runtime-cache limits.
+    pub const fn validate(&self) -> Result<(), TenancyConfigError> {
+        if self.tenant_max_connections == 0 {
+            return Err(TenancyConfigError::ZeroTenantMaxConnections);
+        }
+        if self.runtime_idle_ttl_seconds == 0 {
+            return Err(TenancyConfigError::ZeroRuntimeIdleTtl);
+        }
+        if self.runtime_max_cached == 0 {
+            return Err(TenancyConfigError::ZeroRuntimeMaxCached);
+        }
+        if self.janitor_interval_seconds == 0 {
+            return Err(TenancyConfigError::ZeroJanitorInterval);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::{TenancyConfig, TenancyConfigError};
+    use crate::db_name_prefix::DbNamePrefix;
+
+    #[test]
+    fn zero_runtime_cache_capacity_is_rejected() {
+        let config = TenancyConfig {
+            enabled: true,
+            tenant_db_prefix: DbNamePrefix::try_from("andromeda_tenant").expect("database prefix"),
+            tenant_max_connections: 16,
+            runtime_idle_ttl_seconds: 900,
+            runtime_max_cached: 0,
+            janitor_interval_seconds: 30,
+        };
+        assert_eq!(config.validate(), Err(TenancyConfigError::ZeroRuntimeMaxCached));
+    }
 }

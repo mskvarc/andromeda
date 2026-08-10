@@ -1,12 +1,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR update tests (NGSI-LD 5.9.3)
 
-use reqwest::StatusCode;
-use serial_test::serial;
-
 use crate::{
     BAD_REQUEST_DATA_TYPE,
-    INVALID_REQUEST_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
     clean_database,
     cleanup_registration,
@@ -25,6 +21,8 @@ use crate::{
     update_registration,
     update_registration_raw,
 };
+use reqwest::StatusCode;
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // 5.9.3 -- Update endpoint
@@ -32,6 +30,7 @@ use crate::{
 
 /// PATCH endpoint field on existing CSR -- 204 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_endpoint_returns_204() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-endpoint");
@@ -57,6 +56,7 @@ async fn update_endpoint_returns_204() {
 
 /// PATCH with invalid URI -- 400 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_invalid_uri_returns_400() {
     let c = client();
     let fragment = fragment_different_type("invalidURI");
@@ -77,6 +77,7 @@ async fn update_invalid_uri_returns_400() {
 
 /// PATCH with body of different data type than existing registration -- 400 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_wrong_data_type_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-wrong-type");
@@ -104,6 +105,7 @@ async fn update_wrong_data_type_returns_400() {
 
 /// PATCH attempting to remove mandatory property (information=null) -- 400 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_remove_mandatory_property_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-remove-mand");
@@ -131,6 +133,7 @@ async fn update_remove_mandatory_property_returns_400() {
 
 /// PATCH with malformed JSON body -- 400 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_malformed_json_returns_400() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-malformed");
@@ -142,7 +145,7 @@ async fn update_malformed_json_returns_400() {
     let raw = csr_invalid_json_string();
     let (status, body) = update_registration_raw(&c, &id, raw.as_bytes(), "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
     assert!(body["title"].is_string(), "response should contain title");
 
     cleanup_registration(&c, &id).await;
@@ -154,6 +157,7 @@ async fn update_malformed_json_returns_400() {
 
 /// PATCH unknown registration -- 404 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_unknown_registration_returns_404() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-unknown");
@@ -206,6 +210,7 @@ async fn update_set_expires_at_to_null_removes_expiration() {
 
 /// PATCH /csourceRegistrations/ with no ID -- 405 (5.9.3).
 #[tokio::test]
+#[serial]
 async fn update_without_id_in_url_returns_405() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:update-no-id");

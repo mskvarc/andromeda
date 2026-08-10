@@ -19,6 +19,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod administration;
 pub mod config;
 pub mod creation_policy;
 pub mod database;

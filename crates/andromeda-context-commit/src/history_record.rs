@@ -23,10 +23,9 @@ pub fn tombstone(attr: &AttributeName, dataset_id: Option<&Uri>) -> HistoryRecor
     })
 }
 
-/// Build the observations and tombstones produced by a full entity
-/// replacement under NGSI-LD clause 5.6.3.
-pub fn replacement_history(observed: &Arc<Value>, previous: &Value, replacement: &Value) -> Vec<HistoryRecord> {
-    let removed = removed_attribute_instances(previous, replacement);
+/// Build the observations and exact instance tombstones produced by a payload mutation.
+pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value) -> Vec<HistoryRecord> {
+    let removed = removed_attribute_instances(previous, current);
     let mut history = Vec::with_capacity(removed.len() + 1);
     history.push(HistoryRecord::Observations(Arc::clone(observed))); // clone: history and change-event paths share the observed payload.
     history.extend(removed.into_iter().map(HistoryRecord::Tombstone));
@@ -35,7 +34,8 @@ pub fn replacement_history(observed: &Arc<Value>, previous: &Value, replacement:
 
 #[cfg(test)]
 mod tests {
-    use crate::history_record::{HistoryRecord, replacement_history};
+    use crate::history_record::{HistoryRecord, mutation_history};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::json;
     use std::sync::Arc;
 
@@ -51,8 +51,46 @@ mod tests {
             "https://example.org/speed": [{"@type": ["https://uri.etsi.org/ngsi-ld/Property"]}]
         }]);
         let observed = Arc::new(replacement.clone()); // clone: the test compares the replacement after sharing it.
-        let history = replacement_history(&observed, &previous, &replacement);
+        let history = mutation_history(&observed, &previous, &replacement);
         assert!(history[0].is_observations());
         assert!(history.iter().any(HistoryRecord::is_tombstone));
+    }
+
+    #[test]
+    fn mutation_history_tombstones_the_exact_removed_dataset_instance() {
+        let dataset_a = "urn:ngsi-ld:Dataset:a";
+        let dataset_b = "urn:ngsi-ld:Dataset:b";
+        let instance = |dataset_id: &str| {
+            json!({
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
+            })
+        };
+        let previous = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://example.com/speed": [instance(dataset_a), instance(dataset_b)]
+        }]);
+        let current = json!([{
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            "https://example.com/speed": [instance(dataset_b)]
+        }]);
+        let observed = Arc::new(json!([{
+            "https://example.com/speed": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_a}]
+            }]
+        }]));
+
+        let history = mutation_history(&observed, &previous, &current);
+
+        pretty_assertions::assert_eq!(history.len(), 2);
+        assert!(history[1].is_tombstone());
+        let HistoryRecord::Tombstone(key) = &history[1] else {
+            return;
+        };
+        pretty_assertions::assert_eq!(key.attr.as_str(), "https://example.com/speed");
+        pretty_assertions::assert_eq!(key.dataset_id.as_ref().map(Uri::as_str), Some(dataset_a));
     }
 }

@@ -36,7 +36,20 @@ pub fn assert_retired_architecture_invariants(workspace_root: &str) {
 
     let retired_paths = [
         "src/core",
+        "src/api",
+        "src/broker",
+        "src/config",
+        "src/error",
+        "src/error.rs",
+        "src/event",
+        "src/http",
         "src/http/handler/types.rs",
+        "src/api/router.rs",
+        "src/api/tenant.rs",
+        "src/server.rs",
+        "src/version",
+        "src/worker",
+        "crates/andromeda-workers",
         "src/service/temporal.rs",
         "src/repository/temporal/repo.rs",
     ];
@@ -98,6 +111,9 @@ impl<'ast> Visit<'ast> for ArchitectureVisitor<'_> {
     fn visit_ident(&mut self, identifier: &'ast syn::Ident) {
         if identifier == "AppState" {
             self.violations.push(format!("{} contains retired AppState identifier", self.path));
+        }
+        if identifier == "AndromedaError" {
+            self.violations.push(format!("{} contains retired AndromedaError identifier", self.path));
         }
         visit_ident(self, identifier);
     }

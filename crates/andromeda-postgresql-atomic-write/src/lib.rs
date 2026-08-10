@@ -11,6 +11,8 @@
 mod columns;
 /// Native PostgreSQL implementation of the context commit port.
 pub mod committer;
+/// PostgreSQL atomic-write execution configuration.
+pub mod config;
 mod deferred_history;
 mod entity_group;
 mod history;
@@ -32,7 +34,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",
     ],
-    allow_production_dependencies: ["sqlx"],
+    allow_production_dependencies: ["confique", "sqlx"],
 }
 
 #[cfg(test)]

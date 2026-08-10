@@ -1,9 +1,9 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR deletion tests (NGSI-LD 5.9.4)
 
-use reqwest::StatusCode;
-
 use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, csr_basic_jsonld, delete_registration, request, retrieve_registration, unique_id};
+use reqwest::StatusCode;
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // 5.9.4 -- Delete by ID
@@ -11,6 +11,7 @@ use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, csr_basic_jsonld
 
 /// Delete existing CSR by ID -- 204, then retrieve returns 404 (5.9.4).
 #[tokio::test]
+#[serial]
 async fn delete_existing_registration_returns_204() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:delete-existing");
@@ -32,6 +33,7 @@ async fn delete_existing_registration_returns_204() {
 
 /// DELETE /csourceRegistrations/ with no ID (empty path) -- 405 (5.9.4).
 #[tokio::test]
+#[serial]
 async fn delete_without_id_returns_405() {
     let c = client();
     let (status, _) = request(&c, reqwest::Method::DELETE, "/csourceRegistrations/", None, None, None, None).await;
@@ -40,6 +42,7 @@ async fn delete_without_id_returns_405() {
 
 /// DELETE with invalid URI -- 400 (5.9.4).
 #[tokio::test]
+#[serial]
 async fn delete_invalid_uri_returns_400() {
     let c = client();
     let (status, body) = delete_registration(&c, "invalidURI").await;
@@ -54,6 +57,7 @@ async fn delete_invalid_uri_returns_400() {
 
 /// DELETE unknown registration -- 404 (5.9.4).
 #[tokio::test]
+#[serial]
 async fn delete_unknown_registration_returns_404() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:delete-unknown");

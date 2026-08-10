@@ -7,10 +7,13 @@ request_timeout_secs = 30
 response_compression = "enabled"
 request_decompression = "enabled"
 cors = "permissive"
+max_request_body_bytes = 67108864
 
 [database]
 url = "postgres://postgres:postgres@localhost:5432/postgres"
 max_connections = 64
+preload_attribute_names = true
+context_hit_flush_secs = 5
 
 [jsonld]
 allow_remote_contexts = true
@@ -37,18 +40,23 @@ janitor_interval_seconds = 30
 source_id = "urn:ngsi-ld:ContextSourceIdentity:andromeda"
 source_alias = "andromeda"
 
-[performance]
+[entity]
 # If omitted, defaults to min(database.max_connections, 25)
 # batch_concurrency = 5
 batch_chunk_size = 512
 batch_large_threshold = 512
 batch_prepare_blocking_threshold = 128
-batch_side_effect_queue_capacity = 8
 # batch_async_side_effect_threshold = 512
-entity_expiry_batch_size = 1000
-max_request_body_bytes = 67108864
-snapshot_concurrency = 4
-forward_csr_concurrency = 16
+expiry_batch_size = 1000
+
+[federation]
+forward_concurrency = 16
+
+[postgresql_write]
+bulk_mode = "unnest"
+
+[snapshot]
+preparation_concurrency = 4
 
 [outbox]
 enabled = false

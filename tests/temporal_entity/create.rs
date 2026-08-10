@@ -61,6 +61,40 @@ async fn temporal_create_entity_success() {
 
 #[tokio::test]
 #[serial]
+async fn temporal_create_entity_with_plural_values_success() {
+    clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Vehicle:create_plural_values");
+
+    let entity = json!({
+        "id": &id,
+        "type": "Vehicle",
+        "speed": {
+            "type": "Property",
+            "datasetId": "urn:ngsi-ld:Dataset:sensor",
+            "values": [
+                {"value": 55, "observedAt": "2020-08-01T12:00:00Z"},
+                {"value": 61, "observedAt": "2020-08-01T13:00:00Z"}
+            ]
+        },
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+
+    let status = create_temporal_entity(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    pretty_assertions::assert_eq!(body["speed"].as_array().map(Vec::len), Some(2));
+    assert!(
+        body["speed"]
+            .as_array()
+            .is_some_and(|observations| { observations.iter().all(|observation| observation["datasetId"] == "urn:ngsi-ld:Dataset:sensor") })
+    );
+}
+
+#[tokio::test]
+#[serial]
 async fn temporal_create_entity_without_context_success() {
     clean_database().await;
     let c = client();

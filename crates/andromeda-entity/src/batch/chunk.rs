@@ -11,12 +11,15 @@ use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
     entity_mutation::{EntityMutation, EntityRecord},
-    history_record::HistoryRecord,
+    history_record::{HistoryRecord, tombstone},
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::WriteOutcome,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+use andromeda_ngsi_ld_model::{
+    expanded::instance_key::removed_attribute_instances,
+    notification::{ChangeOrigin, NotificationTrigger},
+};
 use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
@@ -118,7 +121,18 @@ impl ChunkWrite {
 
     /// The write that overwrites an existing entity with `merged`, having
     /// observed `observed`.
-    pub(super) fn update(id: Uri, merged: Arc<Value>, observed: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
+    pub(super) fn update(
+        id: Uri,
+        previous: &Value,
+        merged: Arc<Value>,
+        observed: Arc<Value>,
+        changed_attributes: Vec<AttributeName>,
+        precondition: Precondition,
+    ) -> ChunkWrite {
+        let tombstones = removed_attribute_instances(previous, &merged)
+            .into_iter()
+            .map(|key| tombstone(&key.attr, key.dataset_id.as_ref()))
+            .collect();
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,
@@ -127,7 +141,7 @@ impl ChunkWrite {
             observed,
             changed_attributes,
             precondition,
-            tombstones: Vec::new(),
+            tombstones,
         }
     }
 }

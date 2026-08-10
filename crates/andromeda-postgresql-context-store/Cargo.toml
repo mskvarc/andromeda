@@ -8,6 +8,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-component-report.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-registry.workspace = true
 andromeda-entity.workspace = true
@@ -29,6 +30,7 @@ andromeda-subscription.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.89"
 chrono = { version = "0.4.44", features = ["serde"] }
+confique = "0.4.0"
 dashmap = { version = "6.1.0", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["is_variant"] }
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }

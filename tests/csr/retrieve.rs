@@ -1,8 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 //! CSR retrieval tests (NGSI-LD 5.10.1, 6.3.5)
 
-use reqwest::StatusCode;
-
 use crate::{
     BAD_REQUEST_DATA_TYPE,
     COMPOUND_CONTEXT_URL,
@@ -17,6 +15,8 @@ use crate::{
     strip_ignored_keys,
     unique_id,
 };
+use reqwest::StatusCode;
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // 5.10.1 -- Retrieve with invalid ID
@@ -24,6 +24,7 @@ use crate::{
 
 /// Retrieve with non-URI ID -- 400 (5.10.1).
 #[tokio::test]
+#[serial]
 async fn retrieve_invalid_id_returns_400() {
     let c = client();
     let (status, body) = retrieve_registration(&c, "invalidUri", None, None).await;
@@ -37,6 +38,7 @@ async fn retrieve_invalid_id_returns_400() {
 
 /// Retrieve non-existent registration -- 404 (5.10.1).
 #[tokio::test]
+#[serial]
 async fn retrieve_unknown_registration_returns_404() {
     let c = client();
     let (status, body) = retrieve_registration(&c, "urn:ngsi-ld:ContextSourceRegistration:unknownRegistration", None, None).await;
@@ -50,6 +52,7 @@ async fn retrieve_unknown_registration_returns_404() {
 
 /// Retrieve without Link header -- custom terms rendered as FQNs (5.10.1, 5.5.7).
 #[tokio::test]
+#[serial]
 async fn retrieve_without_context_returns_expanded_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-expanded");
@@ -76,6 +79,7 @@ async fn retrieve_without_context_returns_expanded_format() {
 
 /// Retrieve with compound context Link header -- compacted names (5.10.1, 5.5.7).
 #[tokio::test]
+#[serial]
 async fn retrieve_with_context_returns_compacted_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-compacted");
@@ -102,6 +106,7 @@ async fn retrieve_with_context_returns_compacted_format() {
 
 /// Empty JSON-LD context (no Link header) -- same as expanded format (6.3.5).
 #[tokio::test]
+#[serial]
 async fn retrieve_empty_jsonld_context_returns_expanded_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-empty-ctx");
@@ -124,6 +129,7 @@ async fn retrieve_empty_jsonld_context_returns_expanded_format() {
 
 /// Creation-time JSON-LD context with Link header -- same as compacted format (6.3.5).
 #[tokio::test]
+#[serial]
 async fn retrieve_creation_time_context_returns_compacted_format() {
     let c = client();
     let id = unique_id("urn:ngsi-ld:ContextSourceRegistration:retrieve-creation-ctx");

@@ -5,7 +5,6 @@ use serde_json::json;
 use crate::helpers::{
     ALREADY_EXISTS_TYPE,
     BAD_REQUEST_DATA_TYPE,
-    INVALID_REQUEST_TYPE,
     LD_CONTEXT_NOT_AVAILABLE_TYPE,
     client,
     create_subscription,
@@ -33,7 +32,7 @@ async fn subscription_create_valid_payload_returns_created_and_retrievable() {
 
 #[serial_test::serial]
 #[tokio::test]
-async fn subscription_create_invalid_json_returns_bad_request() {
+async fn subscription_create_invalid_json_returns_bad_request_data() {
     let http_client = client();
     crate::helpers::reset_broker_state().await;
     let raw = r#"{"id":"urn:ngsi-ld:Subscription:invalid",,"type":"Subscription"}"#;
@@ -41,7 +40,7 @@ async fn subscription_create_invalid_json_returns_bad_request() {
     let (status, body) = raw_subscription_request(&http_client, Method::POST, "/subscriptions", Some(raw.as_bytes()), Some("application/ld+json")).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], INVALID_REQUEST_TYPE.as_str());
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 }
 
 #[serial_test::serial]

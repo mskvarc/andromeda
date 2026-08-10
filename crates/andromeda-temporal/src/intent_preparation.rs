@@ -7,9 +7,10 @@ use crate::{
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute},
+    expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute, null_sentinel::instance_is_null_sentinel},
     temporal::{TemporalHistoryRow, TemporalValue},
 };
+use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -86,35 +87,93 @@ fn append_payload_entries(
             if !is_ngsi_ld_attribute_instance(instance_object) {
                 continue;
             }
+            if instance_is_null_sentinel(instance) {
+                continue;
+            }
             let attribute_type = detect_attribute_type(instance);
-            let value = extract_temporal_value(instance, attribute_type)?;
-            let dataset_id = extract_dataset_id(instance)?;
-            let observed_at = extract_observed_at(instance)?;
-            let ordinal = ordinal(entries.len())?;
-            let (instance_id, client_supplied_instance_id) = extract_instance_id(instance)?.map_or_else(
-                || generated_instance_id(intent_id, ordinal, "attribute").map(|generated| (generated, false)),
-                |provided| Ok((provided, true)),
-            )?;
-            entries.push(TemporalAppendEntry::Observation {
-                row: TemporalHistoryRow {
-                    attribute_name: attribute_name.clone(), // clone: each observation owns its attribute name.
-                    attribute_type,
-                    dataset_id,
-                    value,
-                    observed_at,
-                    time: observed_at.unwrap_or(recorded_at),
-                    created_at: recorded_at,
-                    modified_at: recorded_at,
-                    instance_id,
-                    metadata: collect_metadata(instance),
-                    partition_total: None,
-                },
-                client_supplied_instance_id,
-                recorded_at,
-            });
+            if let Some(observations) = temporal_observations(instance, attribute_type) {
+                for observation in observations {
+                    let observation = merge_temporal_observation(instance_object, observation, attribute_type);
+                    append_observation(intent_id, &attribute_name, attribute_type, &observation, recorded_at, entries)?;
+                }
+            } else {
+                append_observation(intent_id, &attribute_name, attribute_type, instance, recorded_at, entries)?;
+            }
         }
     }
     Ok(())
+}
+
+/// Append one expanded observation after its temporal envelope has been removed.
+fn append_observation(
+    intent_id: TemporalIntentId,
+    attribute_name: &AttributeName,
+    attribute_type: AttributeType,
+    instance: &Value,
+    recorded_at: DateTime<Utc>,
+    entries: &mut Vec<TemporalAppendEntry>,
+) -> Result<(), TemporalError> {
+    let value = extract_temporal_value(instance, attribute_type)?;
+    let dataset_id = extract_dataset_id(instance)?;
+    let observed_at = extract_observed_at(instance)?;
+    let ordinal = ordinal(entries.len())?;
+    let (instance_id, client_supplied_instance_id) = extract_instance_id(instance)?.map_or_else(
+        || generated_instance_id(intent_id, ordinal, "attribute").map(|generated| (generated, false)),
+        |provided| Ok((provided, true)),
+    )?;
+    entries.push(TemporalAppendEntry::Observation {
+        row: TemporalHistoryRow {
+            attribute_name: attribute_name.clone(), // clone: each observation owns its attribute name.
+            attribute_type,
+            dataset_id,
+            value,
+            observed_at,
+            time: observed_at.unwrap_or(recorded_at),
+            created_at: recorded_at,
+            modified_at: recorded_at,
+            instance_id,
+            metadata: collect_metadata(instance),
+            partition_total: None,
+        },
+        client_supplied_instance_id,
+        recorded_at,
+    });
+    Ok(())
+}
+
+/// Borrow the observations nested below a plural temporal value member.
+fn temporal_observations(instance: &Value, attribute_type: AttributeType) -> Option<&[Value]> {
+    instance
+        .get(temporal_values_key(attribute_type))
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(|value| value.get("@list"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+}
+
+/// Combine one temporal observation with its attribute-instance envelope.
+fn merge_temporal_observation(envelope: &Map<String, Value>, observation: &Value, attribute_type: AttributeType) -> Value {
+    let mut merged = envelope
+        .iter()
+        .filter(|(key, _)| key.as_str() != temporal_values_key(attribute_type))
+        .map(|(key, value)| (key.clone(), value.clone())) // clone: each prepared observation owns inherited envelope members.
+        .collect::<Map<String, Value>>();
+    if let Some(observation) = observation.as_object() {
+        merged.extend(observation.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: the durable observation owns its expanded members.
+    }
+    Value::Object(merged)
+}
+
+/// Return the expanded plural temporal-value member for an attribute kind.
+fn temporal_values_key(attribute_type: AttributeType) -> &'static str {
+    match attribute_type {
+        AttributeType::Relationship | AttributeType::ListRelationship => expanded_properties::OBJECTS.as_str(),
+        AttributeType::LanguageProperty => expanded_properties::LANGUAGE_MAPS.as_str(),
+        AttributeType::JsonProperty => expanded_properties::JSONS.as_str(),
+        AttributeType::VocabProperty => expanded_properties::VOCABS.as_str(),
+        AttributeType::Property | AttributeType::GeoProperty | AttributeType::ListProperty => expanded_properties::VALUES.as_str(),
+    }
 }
 
 /// Append validated scope observations found in the expanded scope member.
@@ -240,10 +299,15 @@ fn is_dedicated_key(key: &str) -> bool {
         || key == expanded_properties::JSON.as_str()
         || key == expanded_properties::LANGUAGE_MAP.as_str()
         || key == expanded_properties::OBJECT.as_str()
+        || key == expanded_properties::OBJECTS.as_str()
         || key == expanded_properties::VALUE.as_str()
+        || key == expanded_properties::VALUES.as_str()
         || key == expanded_properties::VOCAB.as_str()
+        || key == expanded_properties::VOCABS.as_str()
         || key == expanded_properties::INSTANCE_ID.as_str()
         || key == expanded_properties::OBSERVED_AT.as_str()
+        || key == expanded_properties::LANGUAGE_MAPS.as_str()
+        || key == expanded_properties::JSONS.as_str()
 }
 
 /// Decode one expanded attribute value into its neutral temporal form.
@@ -266,7 +330,8 @@ fn relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> 
         .and_then(|value| value.get("@id"))
         .and_then(Value::as_str)
         .ok_or_else(|| TemporalError::validation("Relationship missing object"))?;
-    raw.parse::<Uri>()
+    decode_percent_encoded_uri(raw)
+        .parse::<Uri>()
         .map(TemporalValue::Uri)
         .map_err(|error| TemporalError::validation(format!("Relationship object is not a valid URI: {error}")))
 }
@@ -376,4 +441,118 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
 /// Borrow the first value of one expanded array member.
 fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
     instance.get(key).and_then(Value::as_array).and_then(|values| values.first())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{append_intent::TemporalAppendEntry, intent_preparation::prepare};
+    use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use chrono::{TimeZone, Utc};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    fn null_sentinel_is_not_decoded_as_a_geoproperty_observation() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let attribute_name = "https://example.com/location".parse::<AttributeName>().expect("valid attribute name");
+        let dataset_id = "urn:ngsi-ld:Dataset:a".parse::<Uri>().expect("valid dataset identifier");
+        let payload = Arc::new(json!([{
+            "@id": entity_id,
+            "https://example.com/location": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/GeoProperty"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "urn:ngsi-ld:null"}],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
+            }]
+        }]));
+        let history = [HistoryRecord::Observations(payload), tombstone(&attribute_name, Some(&dataset_id))];
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+
+        let intent = prepare(&entity_id, &history, recorded_at)
+            .expect("null sentinel must not fail temporal preparation")
+            .expect("the tombstone produces an intent");
+
+        pretty_assertions::assert_eq!(intent.entries.len(), 1);
+        assert!(matches!(
+            &intent.entries[0],
+            TemporalAppendEntry::Tombstone {
+                attribute_name: actual_attribute,
+                dataset_id: Some(actual_dataset),
+                ..
+            } if actual_attribute == &attribute_name && actual_dataset == &dataset_id
+        ));
+    }
+
+    #[test]
+    fn plural_temporal_values_are_prepared_as_individual_observations() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let payload = Arc::new(json!([{
+            "@id": entity_id,
+            "https://example.com/speed": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:sensor"}],
+                "https://uri.etsi.org/ngsi-ld/hasValues": [{"@list": [
+                    {
+                        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 55}],
+                        "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2020-08-01T12:00:00Z"}]
+                    },
+                    {
+                        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 61}],
+                        "https://uri.etsi.org/ngsi-ld/observedAt": [{"@value": "2020-08-01T13:00:00Z"}]
+                    }
+                ]}]
+            }]
+        }]));
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+
+        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], recorded_at)
+            .expect("plural temporal values must be valid")
+            .expect("observations produce an intent");
+
+        pretty_assertions::assert_eq!(intent.entries.len(), 2);
+        let rows = intent
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                TemporalAppendEntry::Observation { row, .. } => Some(row),
+                TemporalAppendEntry::Tombstone { .. } | TemporalAppendEntry::Scope { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(rows.len(), 2);
+        pretty_assertions::assert_eq!(rows[0].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(55.0));
+        pretty_assertions::assert_eq!(rows[1].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(61.0));
+        assert!(rows.iter().all(|row| {
+            row.dataset_id
+                .as_ref()
+                .is_some_and(|dataset_id| dataset_id.as_str() == "urn:ngsi-ld:Dataset:sensor")
+        }));
+    }
+
+    #[test]
+    fn percent_encoded_relationship_target_is_validated_after_decoding() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let payload = Arc::new(json!([{
+            "@id": entity_id,
+            "https://example.com/ref": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Relationship"],
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn%3Angsi-ld%3ABuilding%3A1"}]
+            }]
+        }]));
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+
+        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], recorded_at)
+            .expect("encoded relationship target must be valid")
+            .expect("the relationship produces an intent");
+
+        assert!(matches!(
+            &intent.entries[0],
+            TemporalAppendEntry::Observation {
+                row: andromeda_ngsi_ld_model::temporal::TemporalHistoryRow {
+                    value: andromeda_ngsi_ld_model::temporal::TemporalValue::Uri(uri),
+                    ..
+                },
+                ..
+            } if uri.as_str() == "urn:ngsi-ld:Building:1"
+        ));
+    }
 }

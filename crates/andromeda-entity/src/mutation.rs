@@ -8,7 +8,7 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
     entity_mutation::{EntityMutation, EntityRecord},
-    history_record::{HistoryRecord, replacement_history, tombstone},
+    history_record::{HistoryRecord, mutation_history},
     precondition::Precondition,
     write_outcome::single,
 };
@@ -142,10 +142,7 @@ impl EntityService {
                     previous_attributes.as_ref(),
                 ));
 
-                let mut history = vec![HistoryRecord::Observations(Arc::clone(&patch_expanded))]; // clone: Arc ref-count bump
-                for deleted_attr in &deleted_attrs {
-                    history.push(tombstone(deleted_attr, None));
-                }
+                let history = mutation_history(&patch_expanded, previous, &merged);
 
                 let write = AtomicWrite::builder()
                     .entity_id(Arc::new(entity_uri.clone())) // clone: the computed write owns its validated identifier.
@@ -220,7 +217,7 @@ impl EntityService {
         let types = self
             .commit_computed_write(&entity_uri, |previous| {
                 let types = extract_types(previous);
-                let history = replacement_history(&payload, previous, &payload);
+                let history = mutation_history(&payload, previous, &payload);
                 let outbox = self.build_outbox_entries(&entity_uri, &types, NotificationTrigger::EntityUpdated, &changed_attrs, Some(&payload), None);
                 let write = AtomicWrite::builder()
                     .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump; the identifier outlives the attempt

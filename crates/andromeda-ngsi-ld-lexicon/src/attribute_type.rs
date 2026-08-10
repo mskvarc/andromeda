@@ -134,6 +134,7 @@ impl AttributeType {
         match self {
             Self::Property => &[
                 compact_properties::VALUE,
+                compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE,
                 compact_properties::UNIT_CODE,
                 compact_properties::VALUE_TYPE,
@@ -148,6 +149,7 @@ impl AttributeType {
             ],
             Self::Relationship => &[
                 compact_properties::OBJECT,
+                compact_properties::OBJECTS,
                 compact_properties::PREVIOUS_OBJECT,
                 compact_properties::OBJECT_TYPE,
                 compact_properties::ENTITY,
@@ -162,6 +164,7 @@ impl AttributeType {
             ],
             Self::GeoProperty => &[
                 compact_properties::VALUE,
+                compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE,
                 compact_properties::VALUE_TYPE,
                 compact_properties::OBSERVED_AT,
@@ -175,6 +178,7 @@ impl AttributeType {
             ],
             Self::VocabProperty => &[
                 compact_properties::VOCAB,
+                compact_properties::VOCABS,
                 compact_properties::PREVIOUS_VOCAB,
                 compact_properties::VALUE_TYPE,
                 compact_properties::OBSERVED_AT,
@@ -188,6 +192,7 @@ impl AttributeType {
             ],
             Self::LanguageProperty => &[
                 compact_properties::LANGUAGE_MAP,
+                compact_properties::LANGUAGE_MAPS,
                 compact_properties::PREVIOUS_LANGUAGE_MAP,
                 compact_properties::VALUE_TYPE,
                 compact_properties::OBSERVED_AT,
@@ -201,6 +206,7 @@ impl AttributeType {
             ],
             Self::JsonProperty => &[
                 compact_properties::JSON,
+                compact_properties::JSONS,
                 compact_properties::PREVIOUS_JSON,
                 compact_properties::VALUE_TYPE,
                 compact_properties::OBSERVED_AT,
@@ -214,6 +220,7 @@ impl AttributeType {
             ],
             Self::ListProperty => &[
                 compact_properties::VALUE_LIST,
+                compact_properties::VALUES,
                 compact_properties::PREVIOUS_VALUE_LIST,
                 compact_properties::VALUE_TYPE,
                 compact_properties::OBSERVED_AT,
@@ -227,6 +234,7 @@ impl AttributeType {
             ],
             Self::ListRelationship => &[
                 compact_properties::OBJECT_LIST,
+                compact_properties::OBJECTS,
                 compact_properties::PREVIOUS_OBJECT_LIST,
                 compact_properties::OBJECT_TYPE,
                 compact_properties::ENTITY_LIST,

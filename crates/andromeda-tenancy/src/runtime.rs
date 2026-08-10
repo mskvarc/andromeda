@@ -1,6 +1,7 @@
 //! Holding a bounded set of tenant runtimes open, and letting go of the rest.
 
 use crate::{
+    administration::{OrphanTenantEvictor, TenantDirectory},
     config::TenancyConfig,
     creation_policy::TenantCreationPolicy,
     database::TenantDatabase,
@@ -9,6 +10,7 @@ use crate::{
     tenant_ref::TenantRef,
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use std::{
     collections::HashSet,
@@ -306,6 +308,20 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
             }
         }
         evicted
+    }
+}
+
+#[async_trait]
+impl<D: TenantDatabase, F: TenantStateFactory> TenantDirectory for TenantRuntimeManager<D, F> {
+    async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
+        TenantRuntimeManager::registered_tenants(self).await
+    }
+}
+
+#[async_trait]
+impl<D: TenantDatabase, F: TenantStateFactory> OrphanTenantEvictor for TenantRuntimeManager<D, F> {
+    async fn evict_orphan_runtimes(&self) -> usize {
+        TenantRuntimeManager::evict_orphan_runtimes(self).await
     }
 }
 

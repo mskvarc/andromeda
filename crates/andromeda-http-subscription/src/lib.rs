@@ -2,6 +2,8 @@
 
 #![deny(missing_docs)]
 
+/// Streaming subscription transport configuration.
+pub mod config;
 mod csource_subscription;
 pub mod error;
 pub mod routes;
@@ -26,7 +28,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: ["axum", "tokio"],
+    allow_production_dependencies: ["axum", "confique", "tokio"],
 }
 
 #[cfg(test)]

@@ -1,0 +1,27 @@
+[package]
+name = "andromeda-http-stack"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-http-headers.workspace = true
+andromeda-http-tenancy.workspace = true
+axum = "0.8.9"
+confique = "0.4.0"
+headers = "0.4.1"
+serde = { version = "1.0.228", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
+thiserror = "2.0.18"
+tower = "0.5.3"
+tower-helmet = "0.3.0"
+tower-http = { version = "0.6.8", features = ["compression-full", "cors", "decompression-full", "normalize-path", "request-id", "sensitive-headers", "timeout", "trace"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.52.1", features = ["macros", "rt"] }

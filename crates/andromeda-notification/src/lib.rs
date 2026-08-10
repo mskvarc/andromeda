@@ -45,7 +45,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: [],
+    allow_production_dependencies: ["confique"],
 }
 
 #[cfg(test)]

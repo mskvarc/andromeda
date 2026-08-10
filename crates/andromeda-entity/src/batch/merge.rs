@@ -32,12 +32,12 @@ impl EntityService {
         let mut writes = Vec::with_capacity(prepared.len());
         for prepared_entity in prepared {
             let id = prepared_entity.id;
-            let Some(mut existing) = existing_map.get(&id).cloned() else {
-                // clone: the merge mutates its own copy of the stored payload
+            let Some(previous) = existing_map.get(&id) else {
                 let error = EntityError::not_found(&id);
                 errors.push((id, error));
                 continue;
             };
+            let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
 
             if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded) {
                 errors.push((id, error.into()));
@@ -46,6 +46,7 @@ impl EntityService {
 
             writes.push(ChunkWrite::update(
                 id,
+                previous,
                 Arc::new(existing),
                 Arc::new(prepared_entity.expanded),
                 prepared_entity.changed_attributes,

@@ -1,0 +1,37 @@
+[package]
+name = "andromeda-http-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-component-report.workspace = true
+andromeda-http-component-report.workspace = true
+andromeda-http-context-registry.workspace = true
+andromeda-http-entity.workspace = true
+andromeda-http-entity-map.workspace = true
+andromeda-http-health.workspace = true
+andromeda-http-registration.workspace = true
+andromeda-http-snapshot.workspace = true
+andromeda-http-source-identity.workspace = true
+andromeda-http-stack.workspace = true
+andromeda-http-subscription.workspace = true
+andromeda-http-temporal.workspace = true
+andromeda-http-tenancy.workspace = true
+axum = "0.8.9"
+tower-http = { version = "0.6.8", features = ["normalize-path"] }
+typed-builder = "0.23.2"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+andromeda-health.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-tenancy.workspace = true
+async-trait = "0.1.89"
+futures = "0.3.32"
+pretty_assertions = "1.4.1"
+tokio = { version = "1.52.1", features = ["macros", "rt"] }
+tower = { version = "0.5.3", features = ["util"] }

@@ -2,6 +2,9 @@
 
 #![deny(missing_docs)]
 
+/// Federation operation configuration.
+pub mod config;
+
 /// Context-source discovery request execution.
 pub mod discovery;
 /// Discovery response merging.
@@ -118,5 +121,5 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["reqwest"],
+    allow_production_dependencies: ["confique", "reqwest"],
 }

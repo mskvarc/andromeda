@@ -70,6 +70,7 @@ macro_rules! forbid_sql {
 #[macro_export]
 macro_rules! workspace_architecture {
     {
+        workspace_root: $workspace_root:literal,
         domain_string_inventory: $inventory:literal,
         no_raw_iri_or_media_constants,
         retired_architecture $(,)?
@@ -81,7 +82,7 @@ macro_rules! workspace_architecture {
             #[test]
             fn production_domain_strings_match_the_reviewed_inventory() {
                 $crate::domain_string::assert_domain_string_inventory_text(
-                    env!("CARGO_MANIFEST_DIR"),
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
                     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $inventory)),
                 );
             }
@@ -89,13 +90,13 @@ macro_rules! workspace_architecture {
             /// Production constants do not encode IRIs or media types as strings.
             #[test]
             fn production_constants_do_not_encode_iris_or_media_types_as_strings() {
-                $crate::raw_constant::assert_no_raw_iri_or_media_constants(env!("CARGO_MANIFEST_DIR"));
+                $crate::raw_constant::assert_no_raw_iri_or_media_constants(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
 
             /// Retired architecture surfaces remain absent.
             #[test]
             fn retired_architecture_surfaces_do_not_return() {
-                $crate::architecture::assert_retired_architecture_invariants(env!("CARGO_MANIFEST_DIR"));
+                $crate::architecture::assert_retired_architecture_invariants(concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root));
             }
         }
     };

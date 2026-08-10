@@ -16,6 +16,8 @@ pub mod batch_activity;
 pub mod change_sink;
 /// Cache of compiled entity queries, owned by the query service.
 pub mod compiled_cache;
+/// Entity execution and background-operation configuration.
+pub mod config;
 /// Entity type and attribute discovery operations.
 pub mod discovery;
 /// Versioned entity snapshots used by optimistic writes.
@@ -55,6 +57,8 @@ pub mod side_effect;
 pub mod side_effect_drain;
 /// The durable side-effect queue port.
 pub mod side_effect_queue;
+/// Entity spatial-index synchronization configuration.
+pub mod spatial_config;
 pub mod spatial_reconciliation;
 pub mod spatial_synchronization;
 /// Query capabilities of one entity store.
@@ -203,5 +207,5 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: [],
+    allow_production_dependencies: ["confique"],
 }

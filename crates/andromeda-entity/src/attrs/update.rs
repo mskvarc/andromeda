@@ -7,7 +7,7 @@ use crate::{
     error::EntityError,
     expanded_member::{extract_attribute_keys, unwrap_expanded_ref},
 };
-use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
+use andromeda_context_commit::history_record::mutation_history;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -54,12 +54,8 @@ impl EntityService {
                 let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
                 let deleted: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
-                let mut history = vec![HistoryRecord::Observations(Arc::clone(&expanded))]; // clone: Arc ref-count bump
-                for deleted_attr in &deleted {
-                    history.push(tombstone(deleted_attr, None));
-                }
-
                 let merged = Arc::new(existing);
+                let history = mutation_history(&expanded, previous, &merged);
                 let write = payload_write(&entity_uri, &merged, history);
                 Ok((
                     write,

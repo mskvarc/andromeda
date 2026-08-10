@@ -271,6 +271,26 @@ mod tests {
     }
 
     #[test]
+    fn plural_temporal_values_are_not_normalized_as_a_sub_attribute() {
+        let mut payload = json!({
+            "id": "urn:ngsi-ld:Device:1",
+            "type": "Device",
+            "speed": {
+                "type": "Property",
+                "values": [
+                    {"value": 42, "observedAt": "2024-01-01T00:00:00Z"},
+                    {"value": 43, "observedAt": "2024-01-01T01:00:00Z"}
+                ]
+            }
+        });
+        let untouched = payload.clone(); // clone: the expectation compares against the input.
+
+        normalize_entity_attributes(&mut payload);
+
+        pretty_assertions::assert_eq!(payload, untouched);
+    }
+
+    #[test]
     fn a_concise_sub_attribute_is_wrapped_but_a_reserved_member_is_not() {
         let mut payload = json!({
             "id": "urn:ngsi-ld:Device:1",

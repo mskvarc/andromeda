@@ -9,6 +9,7 @@
 
 use andromeda_ngsi_ld_vocabulary::compact::{classes as compact_classes, properties as compact_properties};
 use serde_json::Value;
+use std::borrow::Cow;
 
 /// Decode percent-encoded URIs in Relationship `object` and ListRelationship
 /// `objectList` fields.
@@ -61,16 +62,29 @@ pub fn decode_percent_encoded_uris(value: &mut Value) {
 /// Decode a single percent-encoded URI in place, leaving it unchanged when it
 /// carries no `%` or does not decode as UTF-8.
 fn decode_uri_in_place(uri: &mut String) {
+    if let Cow::Owned(decoded) = decode_percent_encoded_uri(uri) {
+        *uri = decoded;
+    }
+}
+
+/// Decode one percent-encoded URI without altering an undecodable or unescaped value.
+///
+/// Temporal intent preparation uses the same narrow rule before validating a
+/// Relationship target for typed history storage. This keeps current-entity
+/// storage unchanged while preventing its durable temporal consequence from
+/// assigning different semantics to the same target.
+pub fn decode_percent_encoded_uri(uri: &str) -> Cow<'_, str> {
     if uri.contains('%')
         && let Ok(decoded) = percent_encoding::percent_decode_str(uri).decode_utf8()
     {
-        *uri = decoded.into_owned();
+        return decoded;
     }
+    Cow::Borrowed(uri)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::uri_decoding::decode_percent_encoded_uris;
+    use crate::uri_decoding::{decode_percent_encoded_uri, decode_percent_encoded_uris};
     use serde_json::json;
 
     #[test]
@@ -81,6 +95,12 @@ mod tests {
         });
         decode_percent_encoded_uris(&mut value);
         pretty_assertions::assert_eq!(value["ref"]["object"], "urn:ngsi-ld:Building:1");
+    }
+
+    #[test]
+    fn single_uri_decoding_borrows_plain_input_and_owns_decoded_input() {
+        assert!(matches!(decode_percent_encoded_uri("urn:ngsi-ld:Building:1"), std::borrow::Cow::Borrowed(_)));
+        pretty_assertions::assert_eq!(decode_percent_encoded_uri("urn%3Angsi-ld%3ABuilding%3A1"), "urn:ngsi-ld:Building:1");
     }
 
     #[test]

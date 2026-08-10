@@ -100,7 +100,8 @@ mod boundary_tests {
     fn no_legacy_worker_layer_or_policy_runtime_dependency_remains() -> Result<(), Error> {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         assert!(!workspace.join("src/worker").exists());
-        let composition = fs::read_to_string(workspace.join("src/api/tenant_factory/workers.rs"))?;
+        assert!(!workspace.join("crates/andromeda-workers").exists());
+        let composition = fs::read_to_string(workspace.join("crates/andromeda-broker-composition/src/tenant_factory/tasks.rs"))?;
         assert!(!composition.contains("DataExpirationWorker"));
         for independent in ["andromeda-entity", "andromeda-postgresql-context-store"] {
             let manifest = fs::read_to_string(workspace.join("crates").join(independent).join("Cargo.toml"))?;

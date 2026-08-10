@@ -1,87 +1,80 @@
-//! The Andromeda NGSI-LD context broker binary.
-//!
-//! This crate is the apex that assembles the broker: it wires the HTTP API, the
-//! PostgreSQL persistence layer, the notification delivery transports, and the
-//! background workers around the specification crates under `crates/`, and it
-//! owns the runtime, the CLI and the configuration. It exposes no public API of
-//! its own — every module is private — so the whole crate is internal wiring.
+//! Lean command-line entry point for the Andromeda broker.
 
 #![deny(missing_docs)]
 
-mod api;
-mod blocking_executor;
 mod cli;
-mod config;
-mod enforcement;
-mod error;
-mod event;
-mod http;
-mod server;
-mod version;
 
-use crate::{
-    cli::{Cli, Command, ConfigCommand, OutputFormat},
-    config::{runtime::RuntimeConfig, server::ServerOverrides},
-    error::AndromedaError,
+use crate::cli::{Cli, Command, ConfigCommand, OutputFormat};
+use andromeda_broker_composition::config::runtime::{
+    BrokerRunOverrides,
+    ConfigurationLoadOutcome,
+    ConfigurationOutputFormat,
+    load_reported,
+    print_effective_reported,
+    validate_reported,
 };
 use clap::Parser;
 use mimalloc::MiMalloc;
-use tracing::info;
-use tracing_subscriber::fmt;
+use std::process::ExitCode;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 #[tokio::main]
-async fn main() -> Result<(), AndromedaError> {
-    let cli = Cli::parse();
-
-    match cli.command {
+async fn main() -> ExitCode {
+    let outcome = match Cli::parse().command {
         Command::Run(run_args) => {
-            let config = RuntimeConfig::load(
-                &run_args.common.config_file,
-                ServerOverrides {
-                    host: run_args.host,
-                    port: run_args.port,
-                },
-            )?;
-
-            let subscriber = fmt().compact().with_max_level(config.observability.log_level.as_tracing_level()).finish();
-            tracing::subscriber::set_global_default(subscriber)?;
-
-            // The deployment core-context pin (clause 4.3.6.8) now lives on each
-            // tenant's engine, set in `JsonLdConfig::build_engine`, not a process
-            // global read at startup.
-            info!(
-                host = %config.server.host,
-                port = config.server.port,
-                config_file = %run_args.common.config_file.display(),
-                cli_host_override = run_args.host.is_some(),
-                cli_port_override = run_args.port.is_some(),
-                tenancy_enabled = config.tenancy.enabled,
-                outbox_enabled = config.outbox.enabled,
-                log_level = %config.observability.log_level,
-                precedence = RuntimeConfig::precedence_summary(),
-                "Starting Andromeda"
-            );
-
-            server::run(config).await?;
+            let overrides = BrokerRunOverrides {
+                host: run_args.host,
+                port: run_args.port,
+            };
+            match load_reported(&run_args.common.config_file, overrides) {
+                ConfigurationLoadOutcome::Ready(config) => andromeda_broker_composition::run(*config).await,
+                ConfigurationLoadOutcome::Failed(outcome) => outcome,
+            }
         }
         Command::Config(config_args) => match config_args.command {
-            ConfigCommand::Validate => {
-                RuntimeConfig::load(&config_args.common.config_file, ServerOverrides::default())?;
-                println!("Configuration valid: {}", config_args.common.config_file.display());
-            }
+            ConfigCommand::Validate => validate_reported(&config_args.common.config_file),
             ConfigCommand::PrintEffective(print_args) => {
-                let config = RuntimeConfig::load(&config_args.common.config_file, ServerOverrides::default())?;
-                let rendered = match print_args.format {
-                    OutputFormat::Json => config.to_redacted_json()?,
-                    OutputFormat::Toml => config.to_redacted_toml()?,
+                let format = match print_args.format {
+                    OutputFormat::Json => ConfigurationOutputFormat::Json,
+                    OutputFormat::Toml => ConfigurationOutputFormat::Toml,
                 };
-                println!("{rendered}");
+                print_effective_reported(&config_args.common.config_file, format)
             }
         },
+    };
+    ExitCode::from(outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use andromeda_broker_composition::outcome::ProcessExitOutcome;
+    use std::{fs, process::ExitCode};
+
+    #[test]
+    fn owner_produced_success_maps_to_process_success() {
+        pretty_assertions::assert_eq!(ExitCode::from(ProcessExitOutcome::Success), ExitCode::SUCCESS);
     }
 
-    Ok(())
+    #[test]
+    fn every_owner_produced_failure_maps_to_process_failure() {
+        for outcome in [
+            ProcessExitOutcome::ConfigurationFailure,
+            ProcessExitOutcome::StartupFailure,
+            ProcessExitOutcome::RuntimeFailure,
+        ] {
+            pretty_assertions::assert_eq!(ExitCode::from(outcome), ExitCode::FAILURE);
+        }
+    }
+
+    #[test]
+    fn binary_source_directory_contains_only_cli_and_entry_point() -> Result<(), std::io::Error> {
+        let mut source_files = fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<Result<Vec<_>, _>>()?;
+        source_files.sort();
+        pretty_assertions::assert_eq!(source_files, ["cli.rs", "main.rs"]);
+        Ok(())
+    }
 }

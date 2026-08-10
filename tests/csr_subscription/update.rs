@@ -1,7 +1,6 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 use crate::{
     BAD_REQUEST_DATA_TYPE,
-    INVALID_REQUEST_TYPE,
     RESOURCE_NOT_FOUND_TYPE,
     assert_problem_detail_type,
     clean_database,
@@ -99,7 +98,7 @@ async fn csr_subscription_update_invalid_notification_fragment_returns_400_bad_r
 
 #[tokio::test]
 #[serial]
-async fn csr_subscription_update_malformed_json_returns_400_invalid_request() {
+async fn csr_subscription_update_malformed_json_returns_400_bad_request_data() {
     clean_database().await;
     let http_client = client();
     let subscription_id = unique_subscription_id("update-malformed-json");
@@ -121,5 +120,5 @@ async fn csr_subscription_update_malformed_json_returns_400_invalid_request() {
     let (status, body) = update_csource_subscription_raw(&http_client, &subscription_id, malformed_json).await;
 
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_problem_detail_type(&body, INVALID_REQUEST_TYPE);
+    assert_problem_detail_type(&body, BAD_REQUEST_DATA_TYPE);
 }

@@ -57,3 +57,61 @@ where
         resolve(parts, state, TenantCreationPolicy::CreateOnDemand).await.map(ProvisionableTenantState)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ExistingTenantState, TenantStateResolver};
+    use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode, Uri},
+        routing::get,
+    };
+    use futures::future::BoxFuture;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tower::ServiceExt;
+
+    /// Capability whose handler invocation is observable.
+    struct HandlerCapability;
+
+    /// Number of times the test handler has executed.
+    static HANDLER_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    /// Resolver that rejects before yielding its capability.
+    #[derive(Clone)]
+    struct RejectingResolver;
+
+    impl TenantStateResolver<HandlerCapability> for RejectingResolver {
+        fn resolve_tenant<'a>(
+            &'a self,
+            _tenant: &'a TenantRef,
+            _creation_policy: TenantCreationPolicy,
+            instance: &'a Uri,
+        ) -> BoxFuture<'a, Result<HandlerCapability, ProblemResponse>> {
+            Box::pin(
+                async move { Err(ClassifiedReport::public(NgsiLdErrorType::NonexistentTenant, "Tenant is not registered").with_instance(instance.clone())) },
+            )
+        }
+    }
+
+    /// Increment the observable handler count when tenant resolution succeeds.
+    async fn counted_handler(ExistingTenantState(_capability): ExistingTenantState<HandlerCapability>) -> StatusCode {
+        HANDLER_CALLS.fetch_add(1, Ordering::SeqCst);
+        StatusCode::OK
+    }
+
+    #[tokio::test]
+    async fn tenant_resolution_rejection_is_typed_and_prevents_handler_execution() -> Result<(), Box<dyn std::error::Error>> {
+        HANDLER_CALLS.store(0, Ordering::SeqCst);
+        let router = Router::new().route("/entities", get(counted_handler)).with_state(RejectingResolver);
+        let response = router
+            .oneshot(Request::builder().uri("/entities").header("NGSILD-Tenant", "missing").body(Body::empty())?)
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(HANDLER_CALLS.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+}

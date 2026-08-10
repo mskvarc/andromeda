@@ -155,7 +155,7 @@ async fn get_context(client: &Client, id: &str, query: &str) -> (StatusCode, Val
 ///
 /// `numberOfHits` is accumulated in memory and folded into the
 /// `jsonld_contexts` row by a background task every
-/// `performance.context_hit_flush_secs` seconds (default 5). NGSI-LD 5.13.3.5
+/// `database.context_hit_flush_secs` seconds (default 5). NGSI-LD 5.13.3.5
 /// requires the broker to maintain the counter, not to persist it
 /// synchronously per access, so a read taken immediately after a request that
 /// used the context legitimately still sees the old value. A hit landing just

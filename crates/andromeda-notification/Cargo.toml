@@ -27,6 +27,7 @@ andromeda-tenancy.workspace = true
 async-lock = "3.4.2"
 async-trait = "0.1.89"
 chrono = { version = "0.4.44", features = ["serde"] }
+confique = "0.4.0"
 derive_more = { version = "2.1.1", features = ["display", "from"] }
 futures = "0.3.32"
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }

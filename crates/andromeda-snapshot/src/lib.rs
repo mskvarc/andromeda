@@ -2,6 +2,9 @@
 
 #![deny(missing_docs)]
 
+/// Snapshot operation configuration.
+pub mod config;
+
 pub mod error;
 pub mod executor;
 pub mod expiry;
@@ -26,7 +29,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-temporal",
     ],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: [],
+    allow_production_dependencies: ["confique"],
 }
 
 #[cfg(test)]

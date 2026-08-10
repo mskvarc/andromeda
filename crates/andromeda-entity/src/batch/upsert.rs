@@ -10,8 +10,8 @@
 //! deletion writes a tombstone rather than dropping the row, so diffing against
 //! them would re-tombstone already-deleted attributes on every upsert.
 //!
-//! Update mode merges instead of replacing, so nothing is dropped and no
-//! tombstone is implied.
+//! Update mode merges instead of replacing, so only explicit null-sentinel
+//! removals imply tombstones.
 
 use crate::{
     EntityService,
@@ -20,16 +20,10 @@ use crate::{
     expanded_member::extract_attribute_keys,
     side_effect::BatchSideEffectMode,
 };
-use andromeda_context_commit::{
-    history_record::HistoryRecord,
-    precondition::{Precondition, WRITE_ATTEMPTS},
-};
+use andromeda_context_commit::precondition::{Precondition, WRITE_ATTEMPTS};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    expanded::{instance_key::removed_attribute_instances, mutation::entity::merge_entity},
-};
+use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{
@@ -180,6 +174,7 @@ impl EntityService {
 
             writes.push(ChunkWrite::update(
                 id,
+                existing,
                 Arc::new(merged),
                 Arc::new(entity.expanded),
                 entity.changed_attributes,
@@ -204,16 +199,12 @@ impl EntityService {
 /// replacement drops (NGSI-LD 5.6.8).
 fn replacement_write(id: Uri, payload: &Arc<Value>, previous: &Value, modified_at: DateTime<Utc>, changed_attributes: Vec<AttributeName>) -> ChunkWrite {
     // clone: `Arc` ref-count bumps; the same payload is stored and observed.
-    let mut write = ChunkWrite::update(
+    ChunkWrite::update(
         id,
+        previous,
         Arc::clone(payload),
         Arc::clone(payload),
         changed_attributes,
         Precondition::UnchangedSince(modified_at),
-    );
-    write.tombstones = removed_attribute_instances(previous, payload)
-        .into_iter()
-        .map(HistoryRecord::Tombstone)
-        .collect();
-    write
+    )
 }

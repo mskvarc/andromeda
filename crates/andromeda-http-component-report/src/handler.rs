@@ -1,0 +1,30 @@
+//! Active-component report operation.
+
+use crate::{
+    error::{ComponentReportError, classify},
+    report::{ComponentReportListType, ComponentReportResponse},
+    state::ComponentReportState,
+};
+use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use axum::{
+    Json,
+    extract::{OriginalUri, State},
+    response::{IntoResponse, Response},
+};
+use urn_rs::UrnBuilder;
+use uuid::Uuid;
+
+/// Return exactly the components selected by broker composition.
+pub async fn get(State(state): State<ComponentReportState>, OriginalUri(uri): OriginalUri) -> Result<Response, ProblemResponse> {
+    let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("ComponentReportList:{}", Uuid::new_v4()))
+        .build()
+        .map_err(ComponentReportError::from)
+        .map_err(|error| classify(&error).with_instance(uri))?;
+    Ok(Json(ComponentReportResponse {
+        id: Uri::Urn(id),
+        type_: ComponentReportListType,
+        components: state.components(),
+    })
+    .into_response())
+}

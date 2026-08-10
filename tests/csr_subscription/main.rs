@@ -16,7 +16,6 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 const BAD_REQUEST_DATA_TYPE: &iri_rs::Iri<&str> = error::BAD_REQUEST_DATA;
-const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
 const RESOURCE_NOT_FOUND_TYPE: &iri_rs::Iri<&str> = error::RESOURCE_NOT_FOUND;
 const ALREADY_EXISTS_TYPE: &iri_rs::Iri<&str> = error::ALREADY_EXISTS;
 

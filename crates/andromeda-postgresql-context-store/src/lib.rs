@@ -12,6 +12,10 @@
 pub mod attribute_current;
 /// Shared `attribute_names` dictionary cache.
 pub mod attribute_names;
+/// Active PostgreSQL-family component discovery.
+pub mod component_report;
+/// PostgreSQL connection and pool configuration.
+pub mod config;
 /// Persistence layer for context source registrations.
 pub mod csource_registration;
 /// Repository for NGSI-LD context source subscriptions.
@@ -47,6 +51,7 @@ pub mod tenant_registry;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-component-report",
         "andromeda-context-commit",
         "andromeda-context-registry",
         "andromeda-entity",
@@ -69,5 +74,5 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["sea-query", "sea-query-binder", "sonic-rs", "sqlx", "tokio"],
+    allow_production_dependencies: ["confique", "sea-query", "sea-query-binder", "sonic-rs", "sqlx", "tokio"],
 }
