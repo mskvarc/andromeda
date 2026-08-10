@@ -54,7 +54,10 @@ pub async fn create(
 
     let id = service.create(payload, &context, base_url.as_ref()).await.with_subscription_instance(&uri)?;
 
-    Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/subscriptions/{}", id))]).into_response())
+    Ok(andromeda_http_response::headers::with_location(
+        StatusCode::CREATED.into_response(),
+        format!("/ngsi-ld/v1/subscriptions/{}", id),
+    ))
 }
 
 /// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.

@@ -5,7 +5,7 @@ use crate::{
     state::SnapshotTenantState,
 };
 use andromeda_http_extraction::{json_body::classify_json_body, snapshot_purge::SnapshotPurgeQ, typed_path::TypedPath};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
@@ -13,7 +13,7 @@ use andromeda_snapshot::service::PurgeOutcome;
 use axum::{
     Json,
     extract::{OriginalUri, rejection::JsonRejection},
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 
@@ -28,11 +28,8 @@ pub async fn create(
     let snapshot = state.snapshots.create(input).await.with_snapshot_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
-    let mut headers = HeaderMap::new();
-    headers.insert("Location", HeaderValue::from_str(&location).map_err(|error| internal_problem(&error, &uri))?);
-
     let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, &uri))?;
-    Ok((StatusCode::CREATED, headers, Json(body)).into_response())
+    Ok(with_location((StatusCode::CREATED, Json(body)).into_response(), location))
 }
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
@@ -119,9 +116,6 @@ pub async fn clone(
     let cloned = state.snapshots.clone_snapshot(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", cloned.id);
-    let mut headers = HeaderMap::new();
-    headers.insert("Location", HeaderValue::from_str(&location).map_err(|error| internal_problem(&error, &uri))?);
-
     let body = serde_json::to_value(&cloned).map_err(|error| internal_problem(&error, &uri))?;
-    Ok((StatusCode::CREATED, headers, Json(body)).into_response())
+    Ok(with_location((StatusCode::CREATED, Json(body)).into_response(), location))
 }

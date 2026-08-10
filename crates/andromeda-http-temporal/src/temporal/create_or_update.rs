@@ -31,7 +31,10 @@ pub async fn create_or_update(
     let result = service.create_or_update(payload, &context).await.with_instance(&uri)?;
 
     match result {
-        CreateOrUpdateResult::Created(id) => Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/temporal/entities/{}", id))]).into_response()),
+        CreateOrUpdateResult::Created(id) => Ok(andromeda_http_response::headers::with_location(
+            StatusCode::CREATED.into_response(),
+            format!("/ngsi-ld/v1/temporal/entities/{}", id),
+        )),
         CreateOrUpdateResult::Updated => Ok(StatusCode::NO_CONTENT.into_response()),
     }
 }

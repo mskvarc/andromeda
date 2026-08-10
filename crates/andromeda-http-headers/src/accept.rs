@@ -40,6 +40,10 @@ fn extract_quality(media_type: &MediaType) -> Quality {
 pub struct Accept(Vec<QualityValue<ResponseMediaType>>);
 
 impl Accept {
+    /// Construct an `Accept` header requesting one response format.
+    pub fn single(format: ResponseMediaType) -> Accept {
+        Accept(vec![QualityValue::new(format, Quality::default())])
+    }
     /// Return the highest-quality supported format.
     ///
     /// Filters out GeoJSON when `geo_json` is [`GeoJsonSupport::Disallowed`].

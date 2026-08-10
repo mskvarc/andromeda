@@ -8,6 +8,7 @@ use andromeda_http_headers::{
     media_type::APPLICATION_LD_JSON,
 };
 use axum::{http::Uri, response::Response};
+use headers::HeaderMapExt;
 use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
 use url::form_urlencoded;
@@ -135,10 +136,8 @@ pub fn append_pagination_links(
                 .map(|target| LinkValue::with_params(target, Some(relation), mt.clone()))
         })
         .collect::<Vec<_>>();
-    if let Some(link) = Link::from_values(values)
-        && let Some(value) = link.to_header_value()
-    {
-        response.headers_mut().append("Link", value);
+    if let Some(link) = Link::from_values(values) {
+        response.headers_mut().typed_insert(link);
     }
 }
 

@@ -13,9 +13,10 @@ use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{HeaderMap, StatusCode, Uri, header::CONTENT_TYPE},
+    http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
+use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -62,7 +63,9 @@ fn classify_batch_content_type(raw: &str) -> Option<ContentKind> {
 
 /// Return whether the request headers select a supported batch content type.
 fn has_supported_json_content_type(headers: &HeaderMap) -> bool {
-    classify_batch_content_type(headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("")).is_some()
+    headers
+        .typed_get::<headers::ContentType>()
+        .is_some_and(|value| classify_batch_content_type(&value.to_string()).is_some())
 }
 
 /// Validated batch request body with associated headers.
@@ -109,9 +112,9 @@ pub fn parse_batch_entities(
     context: &ContextUrl,
     uri: &Uri,
 ) -> Result<(Vec<Entity>, ContextSpec, Vec<BatchEntityError>), ProblemResponse> {
-    let content_type_raw = headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let content_type_raw = headers.typed_get::<headers::ContentType>().map(|value| value.to_string()).unwrap_or_default();
 
-    let content_kind = classify_batch_content_type(content_type_raw)
+    let content_kind = classify_batch_content_type(&content_type_raw)
         .ok_or_else(|| public_error(NgsiLdErrorType::InvalidRequest, format!("Unsupported Media Type: {content_type_raw}"), uri))?;
 
     let is_ld_json = matches!(content_kind, ContentKind::LdJson);

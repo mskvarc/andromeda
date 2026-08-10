@@ -28,7 +28,9 @@ pub mod accept;
 pub mod geo_json_body;
 pub mod language;
 pub mod link;
+pub mod location;
 pub mod media_type;
+pub mod ngsild_content_range;
 pub mod ngsild_dataset_id;
 pub mod ngsild_entity_map;
 pub mod ngsild_join;
@@ -47,6 +49,8 @@ pub mod quality;
 pub mod received_protocol;
 pub mod version;
 pub mod via;
+pub mod warning;
+pub mod x_request_id;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

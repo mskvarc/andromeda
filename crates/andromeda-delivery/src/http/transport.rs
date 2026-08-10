@@ -12,11 +12,10 @@ use crate::{
     request::DeliveryRequest,
     transport::NotificationTransport,
 };
-use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
 use async_trait::async_trait;
-use headers::Header;
+use headers::HeaderMapExt;
 use moka::future::Cache;
-use reqwest::header::{CONTENT_TYPE, HeaderName, HeaderValue, LINK};
+use reqwest::header::{HeaderName, HeaderValue};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 use url::Url;
@@ -195,22 +194,20 @@ impl NotificationTransport for HttpTransport {
             "delivering HTTP notification"
         );
 
+        let mut header_map = reqwest::header::HeaderMap::new();
+        header_map.typed_insert(req.content_type);
+        if let Some(link) = req.context_link() {
+            header_map.typed_insert(link.clone());
+        }
+        if let Some(tenant) = req.tenant.as_ref() {
+            header_map.typed_insert(tenant.clone());
+        }
         let mut request = self
             .client
             // clone: `reqwest` takes the `Url` by value, and cloning a parsed URL is cheaper than reparsing the string
             .post(req.endpoint_uri.clone())
-            .header(CONTENT_TYPE, req.content_type.as_str())
+            .headers(header_map)
             .body(body); // the serialised notification, moved into the request
-
-        if let Some(link) = req.context_link()
-            && let Some(value) = link.to_header_value()
-        {
-            request = request.header(LINK, value);
-        }
-
-        if let Some(tenant) = req.tenant.as_ref() {
-            request = request.header(NgsiLdTenant::name(), tenant.as_str());
-        }
 
         for pair in &req.receiver_info {
             match (HeaderName::from_bytes(pair.key.as_bytes()), HeaderValue::from_str(&pair.value)) {

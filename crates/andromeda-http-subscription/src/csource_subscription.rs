@@ -50,7 +50,10 @@ pub async fn create(
 
     let id = service.create(payload, &context, None).await.with_subscription_instance(&uri)?;
 
-    Ok((StatusCode::CREATED, [("Location", id.to_string())]).into_response())
+    Ok(andromeda_http_response::headers::with_location(
+        StatusCode::CREATED.into_response(),
+        id.to_string(),
+    ))
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.

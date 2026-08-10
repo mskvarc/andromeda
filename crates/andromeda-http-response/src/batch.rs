@@ -8,7 +8,7 @@ use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, preference_applied::
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
-    http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
@@ -47,7 +47,7 @@ impl IntoResponse for NgsiLdBatchResponse {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.rendered.media_type.as_str()));
+        headers.typed_insert(self.rendered.media_type);
 
         if self.rendered.version_adaptation == VersionAdaptation::Applied {
             headers.typed_insert(PreferenceApplied::version_conformance());

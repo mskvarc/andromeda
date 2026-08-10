@@ -1,6 +1,7 @@
 //! Reconstruction of the broker origin from an incoming `Host` header.
 
-use axum::http::{HeaderMap, header::HOST};
+use axum::http::HeaderMap;
+use headers::HeaderMapExt;
 use thiserror::Error;
 use url::Url;
 
@@ -24,10 +25,7 @@ pub enum RequestOriginError {
 /// Parse the request's `Host` header into the origin used for broker-hosted resources.
 pub fn request_origin(headers: &HeaderMap) -> Result<Option<Url>, RequestOriginError> {
     headers
-        .get(HOST)
-        .map(|value| {
-            let host = value.to_str().map_err(|error| RequestOriginError::InvalidText { detail: error.to_string() })?;
-            Url::parse(&format!("http://{host}")).map_err(|error| RequestOriginError::InvalidOrigin { detail: error.to_string() })
-        })
+        .typed_get::<headers::Host>()
+        .map(|host| Url::parse(&format!("http://{host}")).map_err(|error| RequestOriginError::InvalidOrigin { detail: error.to_string() }))
         .transpose()
 }

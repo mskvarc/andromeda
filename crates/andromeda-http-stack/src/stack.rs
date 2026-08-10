@@ -4,7 +4,7 @@ use crate::{
     config::{CorsMode, HttpFeatureMode, HttpStackConfig},
     request_body_limit::RequestBodyLimit,
 };
-use andromeda_http_headers::ngsild_tenant::NgsiLdTenant;
+use andromeda_http_headers::{ngsild_tenant::NgsiLdTenant, x_request_id::XRequestId};
 use andromeda_http_tenancy::propagation::echo_tenant_header;
 use axum::{
     Router,
@@ -12,7 +12,7 @@ use axum::{
     http::{StatusCode, header},
     middleware,
 };
-use headers::Header;
+use headers::{Header, HeaderMapExt};
 use std::{sync::Arc, time::Duration};
 use tower::{Layer, ServiceBuilder};
 use tower_helmet::HelmetLayer;
@@ -64,7 +64,8 @@ impl HttpStack {
                     .extensions()
                     .get::<RequestId>()
                     .and_then(|id| id.header_value().to_str().ok())
-                    .or_else(|| request.headers().get("x-request-id").and_then(|id| id.to_str().ok()))
+                    .map(str::to_owned)
+                    .or_else(|| request.headers().typed_get::<XRequestId>().map(|id| id.as_str().to_owned()))
                     .unwrap_or_default();
                 let tenant = request
                     .headers()
@@ -84,12 +85,16 @@ impl HttpStack {
                     .extensions()
                     .get::<RequestId>()
                     .and_then(|id| id.header_value().to_str().ok())
-                    .or_else(|| request.headers().get("x-request-id").and_then(|id| id.to_str().ok()))
+                    .map(str::to_owned)
+                    .or_else(|| request.headers().typed_get::<XRequestId>().map(|id| id.as_str().to_owned()))
                     .unwrap_or_default();
                 tracing::info!(request_id = %request_id, method = %request.method(), uri = %request.uri(), "started request");
             })
             .on_response(|response: &axum::response::Response, latency: Duration, _span: &tracing::Span| {
-                let request_id = response.headers().get("x-request-id").and_then(|id| id.to_str().ok()).unwrap_or_default();
+                let request_id = response
+                    .headers()
+                    .typed_get::<XRequestId>()
+                    .map_or_else(String::new, |id| id.as_str().to_owned());
                 tracing::info!(request_id = %request_id, status = %response.status(), latency_us = latency.as_micros(), "finished request");
             });
         let core = ServiceBuilder::new()

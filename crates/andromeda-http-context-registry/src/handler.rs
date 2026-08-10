@@ -6,7 +6,7 @@ use crate::{
 };
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
 use andromeda_http_extraction::{origin::request_origin, query::ValidatedQuery, typed_path::TypedPath};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_request::jsonld_context::{DeleteParams, ListParams, ServeParams};
@@ -30,7 +30,10 @@ pub(crate) async fn create(
     })?;
     let base_url = request_origin(&headers).map_err(|error| origin_problem(&error, &uri))?;
     let identifier = state.contexts.create(payload, base_url.as_ref()).await.with_context_registry_instance(&uri)?;
-    Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/jsonldContexts/{identifier}"))]).into_response())
+    Ok(with_location(
+        StatusCode::CREATED.into_response(),
+        format!("/ngsi-ld/v1/jsonldContexts/{identifier}"),
+    ))
 }
 
 pub(crate) async fn query(

@@ -5,8 +5,11 @@
 //! independently: a `keyValues` entity can be answered as `application/json`,
 //! `application/ld+json` or, where the endpoint allows it, `application/geo+json`.
 
-use mediatype::{MediaType, Name, names};
+use http::{HeaderName, HeaderValue};
+use mediatype::{MediaType, MediaTypeBuf, Name, names};
 use std::fmt;
+
+static CONTENT_TYPE: HeaderName = HeaderName::from_static("content-type");
 
 /// `application/json`
 pub const APPLICATION_JSON: MediaType<'static> = MediaType::new(names::APPLICATION, names::JSON);
@@ -98,6 +101,28 @@ impl ResponseMediaType {
 impl fmt::Display for ResponseMediaType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl headers::Header for ResponseMediaType {
+    fn name() -> &'static HeaderName {
+        &CONTENT_TYPE
+    }
+    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
+    where
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(headers::Error::invalid)?;
+        let parsed = value
+            .to_str()
+            .map_err(|_| headers::Error::invalid())?
+            .parse::<MediaTypeBuf>()
+            .map_err(|_| headers::Error::invalid())?;
+        let parsed_ref: MediaType<'_> = (&parsed).into();
+        Self::from_media_type(&parsed_ref).ok_or_else(headers::Error::invalid)
+    }
+    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
+        values.extend(std::iter::once(HeaderValue::from_static(self.as_str())));
     }
 }
 

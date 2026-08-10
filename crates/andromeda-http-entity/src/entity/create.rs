@@ -41,7 +41,10 @@ pub(crate) async fn create(
 
     if is_local {
         let id = service.create(&entity, &context).await.with_entity_instance(&uri)?;
-        return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response());
+        return Ok(andromeda_http_response::headers::with_location(
+            StatusCode::CREATED.into_response(),
+            format!("/ngsi-ld/v1/entities/{}", id),
+        ));
     }
 
     // Check for matching CSRs for distributed forwarding
@@ -73,7 +76,10 @@ pub(crate) async fn create(
 
     if forwarded.is_empty() {
         let id = service.create(&entity, &context).await.with_entity_instance(&uri)?;
-        return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response());
+        return Ok(andromeda_http_response::headers::with_location(
+            StatusCode::CREATED.into_response(),
+            format!("/ngsi-ld/v1/entities/{}", id),
+        ));
     }
 
     let modes = ForwardingModes::from_results(&forwarded);
@@ -81,7 +87,10 @@ pub(crate) async fn create(
     if modes.has_exclusive || modes.has_redirect {
         let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 201)).unwrap_or(StatusCode::CREATED);
         if status == StatusCode::CREATED {
-            return Ok((status, [("Location", format!("/ngsi-ld/v1/entities/{}", entity_id))]).into_response());
+            return Ok(andromeda_http_response::headers::with_location(
+                (status).into_response(),
+                format!("/ngsi-ld/v1/entities/{}", entity_id),
+            ));
         }
         return Ok(status.into_response());
     }
@@ -92,7 +101,10 @@ pub(crate) async fn create(
         let local_error = local_result.err();
 
         if local_ok && !has_remote_errors(&forwarded) {
-            return Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", entity_id))]).into_response());
+            return Ok(andromeda_http_response::headers::with_location(
+                StatusCode::CREATED.into_response(),
+                format!("/ngsi-ld/v1/entities/{}", entity_id),
+            ));
         }
 
         let body = build_multi_status_body(&entity_id, local_ok, local_error.as_ref(), &forwarded);
@@ -100,5 +112,8 @@ pub(crate) async fn create(
     }
 
     let id = service.create(&entity, &context).await.with_entity_instance(&uri)?;
-    Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/entities/{}", id))]).into_response())
+    Ok(andromeda_http_response::headers::with_location(
+        StatusCode::CREATED.into_response(),
+        format!("/ngsi-ld/v1/entities/{}", id),
+    ))
 }

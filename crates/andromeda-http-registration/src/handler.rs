@@ -14,6 +14,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
+    headers::with_location,
     pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering,
@@ -44,7 +45,10 @@ pub(crate) async fn create(
         .create(payload, &context.merge(body_context))
         .await
         .with_registration_instance(&uri)?;
-    Ok((StatusCode::CREATED, [("Location", format!("/ngsi-ld/v1/csourceRegistrations/{identifier}"))]).into_response())
+    Ok(with_location(
+        StatusCode::CREATED.into_response(),
+        format!("/ngsi-ld/v1/csourceRegistrations/{identifier}"),
+    ))
 }
 
 pub(crate) async fn get(

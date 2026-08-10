@@ -11,15 +11,14 @@ use andromeda_ngsi_ld_render::version::VersionRenderer;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{
-        StatusCode,
-        header::{CONTENT_TYPE, LINK},
-    },
+    http::{StatusCode, header::LINK},
 };
+use headers::HeaderMapExt;
 use iri_rs::{Iri, iri};
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use std::{collections::HashSet, str::FromStr};
+
 
 /// Axum extractor for NGSI-LD JSON-LD request bodies.
 ///
@@ -164,9 +163,13 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let uri = req.uri().clone();
-        let content_type_raw = req.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
+        let content_type_raw = req
+            .headers()
+            .typed_get::<headers::ContentType>()
+            .map(|value| value.to_string())
+            .unwrap_or_default();
 
-        let content_kind = match classify_content_type(content_type_raw) {
+        let content_kind = match classify_content_type(&content_type_raw) {
             Some(kind) => kind,
             None => {
                 tracing::warn!("JsonLd extraction failed: unsupported media type '{}'", content_type_raw);
@@ -263,7 +266,7 @@ mod tests {
     async fn rejects_unsupported_media_type() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(CONTENT_TYPE, "application/xml")
+            .header(axum::http::header::CONTENT_TYPE, "application/xml")
             .body(axum::body::Body::from("{}"))
             .unwrap();
 
@@ -281,7 +284,7 @@ mod tests {
         // application/json-patch+json must NOT be accepted as application/json
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(CONTENT_TYPE, "application/json-patch+json")
+            .header(axum::http::header::CONTENT_TYPE, "application/json-patch+json")
             .body(axum::body::Body::from("{}"))
             .unwrap();
 
@@ -299,7 +302,7 @@ mod tests {
         let body = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T"});
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities/urn:ngsi-ld:T:1")
-            .header(CONTENT_TYPE, "application/merge-patch+json")
+            .header(axum::http::header::CONTENT_TYPE, "application/merge-patch+json")
             .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
@@ -311,7 +314,7 @@ mod tests {
     async fn rejects_empty_body_with_bad_request() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(CONTENT_TYPE, "application/json")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
             .body(axum::body::Body::empty())
             .unwrap();
 
@@ -328,7 +331,7 @@ mod tests {
         });
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(CONTENT_TYPE, "application/ld+json")
+            .header(axum::http::header::CONTENT_TYPE, "application/ld+json")
             .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
@@ -354,7 +357,7 @@ mod tests {
 
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entityOperations/create")
-            .header(CONTENT_TYPE, "application/ld+json")
+            .header(axum::http::header::CONTENT_TYPE, "application/ld+json")
             .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
@@ -370,7 +373,7 @@ mod tests {
         let body = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T"});
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(CONTENT_TYPE, "application/json; charset=utf-8")
+            .header(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")
             .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 

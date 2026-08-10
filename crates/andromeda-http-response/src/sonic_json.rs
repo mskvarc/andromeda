@@ -8,11 +8,13 @@
 //! Use this on hot response paths (batch operations, large collections)
 //! to skip `serde_json`'s scalar-only writer.
 
+use andromeda_http_headers::media_type::ResponseMediaType;
 use axum::{
     body::Body,
-    http::{HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
+use headers::HeaderMapExt;
 use serde::Serialize;
 
 /// Response wrapper that serialises with `sonic-rs` instead of `serde_json`.
@@ -29,7 +31,7 @@ where
         match sonic_rs::to_vec(&self.0) {
             Ok(buf) => {
                 let mut response = Response::new(Body::from(buf));
-                response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                response.headers_mut().typed_insert(ResponseMediaType::Json);
                 response
             }
             Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),

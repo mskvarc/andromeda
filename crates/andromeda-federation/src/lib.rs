@@ -95,11 +95,14 @@ impl FederationService {
     }
 
     /// Send a request and return the status and raw bytes.
-    pub(crate) async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, Option<String>, Vec<u8>), FederationError> {
+    pub(crate) async fn send_request(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<(reqwest::StatusCode, Option<andromeda_http_headers::warning::Warning>, Vec<u8>), FederationError> {
         let response = request.send().await?;
 
         let status = response.status();
-        let warning = response.headers().get("Warning").and_then(|v| v.to_str().ok()).map(String::from);
+        let warning = headers::HeaderMapExt::typed_get::<andromeda_http_headers::warning::Warning>(response.headers());
 
         let bytes = response.bytes().await?;
 

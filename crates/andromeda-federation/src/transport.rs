@@ -1,10 +1,18 @@
 //! HTTP execution and header construction for federated requests.
 
 use crate::{FederationService, error::FederationError, outcome::ForwardGetOutcome};
-use andromeda_http_headers::{link::header::Link, media_type::APPLICATION_JSON, ngsild_tenant::NgsiLdTenant, ngsild_warning::NgsiLdWarning, via::Via};
+use andromeda_http_headers::{
+    accept::Accept,
+    link::header::Link,
+    media_type::ResponseMediaType,
+    ngsild_tenant::NgsiLdTenant,
+    ngsild_warning::NgsiLdWarning,
+    via::Via,
+    warning::Warning,
+};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceAccess};
-use headers::Header;
+use headers::{Header, HeaderMapExt};
 use iri_rs::IriRefBuf;
 use reqwest::header::{HeaderName, HeaderValue};
 use std::str::FromStr;
@@ -47,10 +55,8 @@ impl FederationService {
 
         // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
         let mut warnings = Vec::new();
-        if let Some(ref warning_value) = warning_header
-            && warning_value.starts_with("110")
-        {
-            warnings.push(NgsiLdWarning::ResponseIsStale(warning_value.clone()));
+        if let Some(Warning { code: 110, text, .. }) = warning_header {
+            warnings.push(NgsiLdWarning::ResponseIsStale(text));
         }
 
         let text = String::from_utf8_lossy(&bytes);
@@ -73,7 +79,8 @@ impl FederationService {
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> Result<reqwest::RequestBuilder, FederationError> {
-        let mut request = self.http_client.request(method, url.clone()).header("Connection", "close");
+        let mut typed_headers = reqwest::header::HeaderMap::new();
+        typed_headers.typed_insert(headers::Connection::close());
 
         let pairs = access.context_source_info.as_deref().unwrap_or_default();
         let configured_context = pair_value(pairs, "jsonldContext").or_else(|| access.jsonld_context.as_ref().map(Url::as_str));
@@ -85,23 +92,32 @@ impl FederationService {
         if let Some(context_iri) = effective_context {
             let link = Link::jsonld_context(context_iri.clone()); // clone: the header owns the validated IRI reference.
             if let Some(value) = link.to_header_value() {
-                request = request.header("Link", value);
+                typed_headers.insert(Link::name().clone(), value);
             }
         }
 
-        let accept = pair_value(pairs, "accept")
+        let accept_value = pair_value(pairs, "accept")
             .map(str::to_owned)
-            .or_else(|| access.accept.as_ref().map(ToString::to_string))
-            .unwrap_or_else(|| APPLICATION_JSON.to_string());
-        request = request.header("Accept", accept);
+            .or_else(|| access.accept.as_ref().map(ToString::to_string));
+        let accept = accept_value
+            .as_deref()
+            .and_then(|raw| {
+                let value = reqwest::header::HeaderValue::from_str(raw).ok()?;
+                let mut values = std::iter::once(&value);
+                Accept::decode(&mut values).ok()
+            })
+            .unwrap_or_else(|| Accept::single(ResponseMediaType::Json));
+        typed_headers.typed_insert(accept);
         if let Some(content_type) = forwarded_content_type(access) {
-            request = request.header("Content-Type", content_type);
+            typed_headers.typed_insert(content_type);
         }
-        request = apply_custom_headers(request, pairs)?;
+        let mut request = apply_custom_headers(self.http_client.request(method, url.clone()).headers(typed_headers), pairs)?;
 
         if let Some(name) = tenant {
             let tenant_header = NgsiLdTenant::new(name.clone()); // clone: TenantName is borrowed, header needs ownership
-            request = request.header(NgsiLdTenant::name().as_str(), tenant_header.as_str());
+            let mut request_headers = reqwest::header::HeaderMap::new();
+            request_headers.typed_insert(tenant_header);
+            request = request.headers(request_headers);
         }
 
         // Clause 6.3.18 requires the existing chain to remain ordered and one
@@ -111,25 +127,29 @@ impl FederationService {
             Some(existing) => existing.clone().append(self.received_protocol.clone(), self.source_alias.clone()),
             None => Via::with_entry(self.received_protocol.clone(), self.source_alias.clone()),
         };
-        let mut via_values = Vec::new();
-        headers::Header::encode(&new_via, &mut via_values);
-        if let Some(value) = via_values.into_iter().next() {
-            request = request.header("via", value);
-        }
+        let mut via_headers = reqwest::header::HeaderMap::new();
+        via_headers.typed_insert(new_via);
+        request = request.headers(via_headers);
 
         Ok(request)
     }
 }
 
-pub(crate) fn forwarded_content_type(access: &ContextSourceAccess) -> Option<&str> {
+pub(crate) fn forwarded_content_type(access: &ContextSourceAccess) -> Option<ResponseMediaType> {
     let pairs = access.context_source_info.as_deref().unwrap_or_default();
-    pair_value(pairs, "contentType").or_else(|| {
-        if pair_value(pairs, "jsonldContext").is_some() || access.jsonld_context.is_some() {
-            Some("application/json")
-        } else {
-            None
-        }
-    })
+    pair_value(pairs, "contentType")
+        .and_then(|value| value.parse::<mediatype::MediaTypeBuf>().ok())
+        .and_then(|value| {
+            let parsed: mediatype::MediaType<'_> = (&value).into();
+            ResponseMediaType::from_media_type(&parsed)
+        })
+        .or_else(|| {
+            if pair_value(pairs, "jsonldContext").is_some() || access.jsonld_context.is_some() {
+                Some(ResponseMediaType::Json)
+            } else {
+                None
+            }
+        })
 }
 
 fn pair_value<'a>(pairs: &'a [KeyValuePair], key: &str) -> Option<&'a str> {

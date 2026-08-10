@@ -4,11 +4,11 @@ use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
     sonic_json::SonicJson,
 };
-use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
+use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
-    http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
@@ -35,7 +35,7 @@ pub struct NgsiLdResponse {
     /// Optional entity-map URI advertised by the response.
     entity_map_uri: Option<Uri>,
     /// Optional pagination range advertised by the response.
-    content_range: Option<String>,
+    content_range: Option<NgsiLdContentRange>,
     /// Optional snapshot URI advertised by the response.
     snapshot_uri: Option<Uri>,
     /// Distributed-operation warnings emitted as response headers.
@@ -86,7 +86,7 @@ impl NgsiLdResponse {
     }
 
     /// Set the Content-Range header value for temporal pagination.
-    pub fn with_content_range(mut self, content_range: String) -> Self {
+    pub fn with_content_range(mut self, content_range: NgsiLdContentRange) -> Self {
         self.content_range = Some(content_range);
         self
     }
@@ -102,7 +102,7 @@ impl IntoResponse for NgsiLdResponse {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.rendered.media_type.as_str()));
+        headers.typed_insert(self.rendered.media_type);
 
         if self.rendered.version_adaptation == VersionAdaptation::Applied {
             headers.typed_insert(PreferenceApplied::version_conformance());
@@ -120,10 +120,8 @@ impl IntoResponse for NgsiLdResponse {
             },
         );
 
-        if let Some(ref cr) = self.content_range
-            && let Ok(val) = HeaderValue::from_str(cr)
-        {
-            headers.insert("Content-Range", val);
+        if let Some(ref cr) = self.content_range {
+            headers.typed_insert(cr.clone());
         }
 
         (status, headers, SonicJson(self.rendered.value)).into_response()

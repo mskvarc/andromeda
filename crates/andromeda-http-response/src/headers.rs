@@ -2,13 +2,14 @@
 
 use andromeda_http_headers::{
     link::header::Link,
+    location::Location,
     ngsild_entity_map::NgsiLdEntityMap,
     ngsild_snapshot::NgsiLdSnapshot,
     ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::context::ContextLocation;
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::HeaderMap;
 use headers::HeaderMapExt;
 use iri_rs::IriRefBuf;
 
@@ -32,10 +33,8 @@ pub struct CommonHeadersOptions<'a> {
 /// only when the rendering put the `@context` in the headers rather than in
 /// the body, which is what `options.context_location` reports.
 pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf], options: CommonHeadersOptions<'_>) {
-    if let Some(loc) = options.location
-        && let Ok(val) = HeaderValue::from_str(loc)
-    {
-        headers.insert("Location", val);
+    if let Some(loc) = options.location.and_then(Location::new) {
+        headers.typed_insert(loc);
     }
 
     if let Some(id) = options.entity_map_uri {
@@ -53,4 +52,12 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf]
     if options.context_location == ContextLocation::LinkHeader {
         Link::insert_jsonld_contexts(headers, context_links.iter().cloned());
     }
+}
+
+/// Attach a validated `Location` header to an existing response.
+pub fn with_location(mut response: axum::response::Response, location: impl AsRef<str>) -> axum::response::Response {
+    if let Some(location) = Location::new(location) {
+        response.headers_mut().typed_insert(location);
+    }
+    response
 }

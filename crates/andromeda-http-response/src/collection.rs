@@ -4,11 +4,16 @@ use crate::{
     headers::{CommonHeadersOptions, apply_common_headers},
     sonic_json::SonicJson,
 };
-use andromeda_http_headers::{ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning, preference_applied::PreferenceApplied};
+use andromeda_http_headers::{
+    ngsild_content_range::NgsiLdContentRange,
+    ngsild_results_count::NgsiLdResultsCount,
+    ngsild_warning::NgsiLdWarning,
+    preference_applied::PreferenceApplied,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
-    http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use headers::HeaderMapExt;
@@ -33,7 +38,7 @@ pub struct NgsiLdCollectionResponse {
     /// Optional total collection count advertised by the response.
     total_count: Option<usize>,
     /// Optional pagination range advertised by the response.
-    content_range: Option<String>,
+    content_range: Option<NgsiLdContentRange>,
     /// Optional entity-map URI advertised by the response.
     entity_map_uri: Option<Uri>,
     /// Optional snapshot URI advertised by the response.
@@ -69,7 +74,7 @@ impl NgsiLdCollectionResponse {
     }
 
     /// Set the Content-Range header value for temporal pagination.
-    pub fn with_content_range(mut self, content_range: String) -> Self {
+    pub fn with_content_range(mut self, content_range: NgsiLdContentRange) -> Self {
         self.content_range = Some(content_range);
         self
     }
@@ -103,16 +108,14 @@ impl IntoResponse for NgsiLdCollectionResponse {
         };
 
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static(self.rendered.media_type.as_str()));
+        headers.typed_insert(self.rendered.media_type);
 
         if let Some(count) = self.total_count {
             headers.typed_insert(NgsiLdResultsCount::new(count));
         }
 
-        if let Some(ref cr) = self.content_range
-            && let Ok(val) = HeaderValue::from_str(cr)
-        {
-            headers.insert("Content-Range", val);
+        if let Some(ref cr) = self.content_range {
+            headers.typed_insert(cr.clone());
         }
 
         if self.rendered.version_adaptation == VersionAdaptation::Applied {

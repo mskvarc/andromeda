@@ -9,10 +9,11 @@ use crate::{
     request::{ForwardBatchProvisionRequest, ForwardProvisionRequest},
     transport::forwarded_content_type,
 };
-use andromeda_http_headers::{media_type::APPLICATION_LD_JSON, via::Via};
+use andromeda_http_headers::{media_type::ResponseMediaType, via::Via};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceAccess, ForwardingMode};
 use futures::{StreamExt, stream};
+use headers::HeaderMapExt;
 use iri_rs::IriRefBuf;
 use serde_json::Value;
 use tracing::{debug, warn};
@@ -279,7 +280,9 @@ impl FederationService {
 
         if let Some(body_bytes) = body {
             if forwarded_content_type(access).is_none() {
-                request = request.header("Content-Type", APPLICATION_LD_JSON.to_string());
+                let mut header_map = reqwest::header::HeaderMap::new();
+                header_map.typed_insert(ResponseMediaType::JsonLd);
+                request = request.headers(header_map);
             }
             request = request.body(body_bytes.to_vec());
         }

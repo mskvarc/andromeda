@@ -5,6 +5,7 @@
 //! alongside [`andromeda_http_response::pagination`] which builds `Link`
 //! headers from analogous pagination state.
 
+use andromeda_http_headers::ngsild_content_range::NgsiLdContentRange;
 use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
 use andromeda_ngsi_ld_query::temporal::{last_n::LastNOrigin, window::TimeInterval};
 use chrono::{DateTime, Utc};
@@ -19,7 +20,7 @@ pub fn build_content_range(
     time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     partition_total: Option<i64>,
     last_n_origin: LastNOrigin,
-) -> Option<String> {
+) -> Option<NgsiLdContentRange> {
     let (min_time, max_time) = time_range?;
     let lrt = whole_seconds(min_time);
     let mrt = whole_seconds(max_time);
@@ -37,5 +38,7 @@ pub fn build_content_range(
         (lower, mrt, "*".to_string())
     };
 
-    Some(format!("date-time {}-{}/{}", start, end, size))
+    let start = start.parse().ok()?;
+    let end = end.parse().ok()?;
+    NgsiLdContentRange::new(start, end, size.parse().ok())
 }

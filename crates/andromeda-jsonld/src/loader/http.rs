@@ -21,16 +21,14 @@ use crate::{
     hit_counter::{HitCounter, HitDelta},
     loader::error::{LoaderError, LoaderErrorKind},
 };
+use headers::HeaderMapExt;
+use http::{HeaderName, HeaderValue};
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
 use jsonld_syntax::Parse;
-use mediatype::{MediaType, MediaTypeBuf, Name, names};
+use mediatype::MediaTypeBuf;
 use moka::future::Cache;
-use reqwest::{
-    Client,
-    header::{CACHE_CONTROL, CONTENT_TYPE},
-    redirect::Policy,
-};
+use reqwest::{Client, redirect::Policy};
 use serde_json::Value;
 use std::{
     sync::{
@@ -41,10 +39,28 @@ use std::{
 };
 use tracing::{trace, warn};
 
-/// What a context fetch asks the server for.
-const APPLICATION_LD_JSON: MediaType<'static> = MediaType::from_parts(names::APPLICATION, Name::new_unchecked("ld"), Some(names::JSON), &[]);
-/// JSON media type accepted as the non-linked-data fallback representation.
-const APPLICATION_JSON: MediaType<'static> = MediaType::new(names::APPLICATION, names::JSON);
+static ACCEPT: HeaderName = HeaderName::from_static("accept");
+
+/// The fixed negotiation set used for remote JSON-LD contexts.
+struct JsonLdAccept;
+
+impl headers::Header for JsonLdAccept {
+    fn name() -> &'static HeaderName {
+        &ACCEPT
+    }
+    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
+    where
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let value = values.next().ok_or_else(headers::Error::invalid)?;
+        (value.as_bytes() == b"application/ld+json, application/json")
+            .then_some(Self)
+            .ok_or_else(headers::Error::invalid)
+    }
+    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
+        values.extend(std::iter::once(HeaderValue::from_static("application/ld+json, application/json")));
+    }
+}
 
 /// A loaded context together with the backing-store ownership of its hit count.
 ///
@@ -401,15 +417,12 @@ fn ld_json_media_type() -> MediaTypeBuf {
 /// Fetch a context over HTTP and parse it, refusing anything that is not
 /// JSON-shaped or is larger than the configured limit.
 async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<FetchedContext, LoaderError> {
-    let response = client
-        .get(url.as_str())
-        .header("Accept", format!("{APPLICATION_LD_JSON}, {APPLICATION_JSON}"))
-        .send()
-        .await
-        .map_err(|error| LoaderError {
-            url: url.clone(),
-            kind: LoaderErrorKind::Request(error.to_string()),
-        })?;
+    let mut request_headers = reqwest::header::HeaderMap::new();
+    request_headers.typed_insert(JsonLdAccept);
+    let response = client.get(url.as_str()).headers(request_headers).send().await.map_err(|error| LoaderError {
+        url: url.clone(),
+        kind: LoaderErrorKind::Request(error.to_string()),
+    })?;
 
     if !response.status().is_success() {
         return Err(LoaderError {
@@ -418,8 +431,8 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
         });
     }
 
-    if let Some(content_type) = response.headers().get(CONTENT_TYPE).and_then(|value| value.to_str().ok())
-        && !is_json_like(content_type)
+    if let Some(content_type) = response.headers().typed_get::<headers::ContentType>()
+        && !is_json_like(&content_type.to_string())
     {
         return Err(LoaderError {
             url: url.clone(),
@@ -438,10 +451,8 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
 
     let cacheable = response
         .headers()
-        .get_all(CACHE_CONTROL)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .all(cache_control_allows_storage);
+        .typed_get::<headers::CacheControl>()
+        .is_none_or(|value| !value.no_store() && !value.no_cache() && value.max_age() != Some(Duration::ZERO));
     let bytes = response.bytes().await.map_err(|error| LoaderError {
         url: url.clone(),
         kind: LoaderErrorKind::Request(error.to_string()),
@@ -474,6 +485,7 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
 }
 
 /// Whether one Cache-Control field permits retaining the remote context.
+#[cfg(test)]
 fn cache_control_allows_storage(value: &str) -> bool {
     !value.split(',').map(str::trim).any(|directive| {
         directive.eq_ignore_ascii_case("no-store")
