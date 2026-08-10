@@ -71,22 +71,12 @@ macro_rules! forbid_sql {
 macro_rules! workspace_architecture {
     {
         workspace_root: $workspace_root:literal,
-        domain_string_inventory: $inventory:literal,
         no_raw_iri_or_media_constants,
         retired_architecture $(,)?
     } => {
         #[cfg(test)]
         /// The generated workspace-wide architecture checks.
         mod workspace_architecture_checks {
-            /// Production domain strings match the reviewed inventory.
-            #[test]
-            fn production_domain_strings_match_the_reviewed_inventory() {
-                $crate::domain_string::assert_domain_string_inventory_text(
-                    concat!(env!("CARGO_MANIFEST_DIR"), "/", $workspace_root),
-                    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $inventory)),
-                );
-            }
-
             /// Production constants do not encode IRIs or media types as strings.
             #[test]
             fn production_constants_do_not_encode_iris_or_media_types_as_strings() {

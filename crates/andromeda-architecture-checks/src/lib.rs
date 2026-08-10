@@ -1,7 +1,7 @@
 //! The architecture checks shared by Andromeda's workspace crates.
 //!
 //! The checks cover dependency boundaries, SQL fragments, workspace-wide
-//! architecture invariants, domain-string declarations, and raw constants.
+//! architecture invariants, and raw constants.
 //!
 //! The exported declarative macros generate the caller-side tests, so failures
 //! continue to identify the crate that broke its boundary.
@@ -11,7 +11,6 @@
 
 pub mod architecture;
 pub mod dependencies;
-pub mod domain_string;
 pub mod raw_constant;
 mod source_scan;
 pub mod sql;

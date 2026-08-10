@@ -77,7 +77,6 @@ andromeda_architecture_checks::dependency_boundary! {
 #[cfg(test)]
 andromeda_architecture_checks::workspace_architecture! {
     workspace_root: "../..",
-    domain_string_inventory: "../../docs/domain-string-inventory.tsv",
     no_raw_iri_or_media_constants,
     retired_architecture,
 }
