@@ -14,7 +14,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_query::q_predicate::attribute_names::referenced_attribute_names;
+use andromeda_postgresql_query::projected_attribute_names::projected_attribute_names;
 use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
 use andromeda_temporal::{
     error::TemporalError,
@@ -42,9 +42,12 @@ impl TemporalHistoryReader for TemporalRepository {
     }
 
     async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        let attribute_names = if let Some(q_expr) = &compiled.entities.q_expr {
-            let mut names = Vec::new();
-            referenced_attribute_names(q_expr, &mut names);
+        // A temporal query orders by time rather than by distance, so it
+        // contributes no ordering terms.
+        let names = projected_attribute_names(compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
+        let attribute_names = if names.is_empty() {
+            Default::default()
+        } else {
             let resolved = self
                 .attribute_names
                 .lookup(&names)
@@ -56,8 +59,6 @@ impl TemporalHistoryReader for TemporalRepository {
                 barrier.wait_for_pending_writes().await;
             }
             resolved
-        } else {
-            Default::default()
         };
 
         let stage1 = build_stage1_entity_ids(compiled, &attribute_names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;

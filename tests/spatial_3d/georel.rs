@@ -268,12 +268,8 @@ async fn georel_near_ignores_altitude() {
 }
 
 /// NGSI-LD 4.10 lets `geoproperty` select which GeoProperty a georel evaluates
-/// against. The broker currently honours `geoproperty=location` only: any other
-/// GeoProperty yields an empty result set, and it does so identically for 2D
-/// and 3D values, so the defect is independent of altitude support. The
-/// geometry itself is stored correctly with its Z ordinate. Ignored until the
-/// geoproperty routing defect is fixed, at which point this must pass unchanged.
-#[ignore = "geoproperty routing honours only location; pre-existing and unrelated to 3D support"]
+/// against, and the selected one is matched on its 2D footprint like any other,
+/// so a stored Z ordinate does not affect the outcome.
 #[tokio::test]
 async fn georel_near_3d_custom_geoproperty() {
     let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
@@ -302,6 +298,116 @@ async fn georel_near_3d_custom_geoproperty() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(ids_of(&body).contains(&id), "a 3D custom GeoProperty must match on horizontal distance alone");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// NGSI-LD 4.10 names `observationSpace` among the GeoProperties a geo-query may
+/// target (clause 4.7.1), and its example 1 targets exactly that one. It has a
+/// dedicated storage column, so it is the case most likely to be routed to the
+/// wrong place.
+#[tokio::test]
+async fn georel_near_observation_space_matches() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:near_observation_space");
+
+    // The location is far away, so a match proves the query routed to
+    // observationSpace rather than falling back to the default.
+    let entity = json!({
+        "id": id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+        "observationSpace": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.52]}},
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create(client, &entity).await;
+
+    let coordinates = encode_json(&p0());
+    let (status, _, body) = query(
+        client,
+        &format!(
+            "type=Building&id={}&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationSpace",
+            urlencoding::encode(&id)
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(ids_of(&body).contains(&id), "observationSpace must be matched when it is the named GeoProperty");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A custom GeoProperty carrying a plain 2D geometry matches on the same terms:
+/// clause 4.10 draws no distinction between the GeoProperties it defines and
+/// ones a Context defines.
+#[tokio::test]
+async fn georel_near_2d_custom_geoproperty_matches() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:near_custom_2d");
+
+    let entity = json!({
+        "id": id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+        "observationPoint": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.52]}},
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create(client, &entity).await;
+
+    let coordinates = encode_json(&p0());
+    let (status, _, body) = query(
+        client,
+        &format!(
+            "type=Building&id={}&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationPoint",
+            urlencoding::encode(&id)
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(ids_of(&body).contains(&id), "a 2D custom GeoProperty must match on its own geometry");
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// NGSI-LD 4.10: "Entities which do not convey the target GeoProperty of the
+/// query shall be considered as non-matching." That is an empty result set and
+/// not an error, whether the named attribute is absent from the entity or
+/// present but not a GeoProperty.
+#[tokio::test]
+async fn georel_near_geoproperty_the_entity_does_not_convey_matches_nothing() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:no_such_geoproperty");
+
+    let entity = json!({
+        "id": id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.52]}},
+        "category": {"type": "Property", "value": "office"},
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create(client, &entity).await;
+
+    let coordinates = encode_json(&p0());
+    // `category` is an ordinary Property and `absentSpace` is not present at
+    // all; neither is a GeoProperty this entity conveys.
+    for geoproperty in ["category", "absentSpace"] {
+        let (status, _, body) = query(
+            client,
+            &format!(
+                "type=Building&id={}&georel=near;maxDistance==100000&geometry=Point&coordinates={coordinates}&geoproperty={geoproperty}",
+                urlencoding::encode(&id)
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "geoproperty={geoproperty} must not be an error");
+        assert!(
+            !ids_of(&body).contains(&id),
+            "geoproperty={geoproperty} names no GeoProperty the entity conveys, so it must not match"
+        );
+    }
 
     scope.finish().await.expect("cleanup failed");
 }

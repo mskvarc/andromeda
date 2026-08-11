@@ -28,6 +28,10 @@ pub enum Entities {
 #[iden = "e"]
 pub struct E;
 
+/// The text of the [`E`] alias, for the statement fragments that are written as
+/// raw SQL rather than built through sea-query and so cannot use the [`Iden`].
+pub const E_ALIAS: &str = "e";
+
 #[cfg(test)]
 mod tests {
     use super::*;

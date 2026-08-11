@@ -1,0 +1,156 @@
+//! Which attribute names a compiled query has to resolve against the
+//! `attribute_names` dictionary before its SQL can be rendered.
+//!
+//! Three parts of a query reach an attribute by dictionary key rather than
+//! through the JSONB payload, and so have to be collected here: a `q` filter's
+//! predicate targets, the GeoProperty a geo-query names (clause 4.10), and the
+//! GeoProperty a distance ordering measures to (clause 4.23). Everything else is
+//! navigated inside the payload and has no dictionary row to look up.
+
+use crate::q_predicate::attribute_names::referenced_attribute_names;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_query::{
+    filter::expression::Expr,
+    geo::query::GeoQuery,
+    ordering::term::{CompiledOrderTerm, OrderTarget},
+};
+
+/// Collect the names a query reads by dictionary key.
+///
+/// Each of the three axes is optional and contributes independently: a temporal
+/// query orders by time rather than by distance and so passes no ordering terms,
+/// while a query with neither filter nor geometry resolves nothing at all.
+pub fn projected_attribute_names(q_expr: Option<&Expr>, geo: Option<&GeoQuery>, order_terms: &[CompiledOrderTerm]) -> Vec<AttributeName> {
+    let mut names = Vec::new();
+    if let Some(q_expr) = q_expr {
+        referenced_attribute_names(q_expr, &mut names);
+    }
+    if let Some(geo) = geo {
+        push_iri(geo.geoproperty_iri.as_str(), &mut names);
+    }
+    for term in order_terms.iter().filter(|term| term.direction.is_distance()) {
+        match &term.target {
+            OrderTarget::Attribute(iri) => push_iri(iri.as_str(), &mut names),
+            // None of the clause 4.23 keywords names an attribute, so none of
+            // them has a dictionary row.
+            OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope => {}
+        }
+    }
+    names
+}
+
+/// Add an expanded IRI as a name to resolve.
+///
+/// An IRI that is not a well-formed attribute name is dropped rather than
+/// refused: it cannot key any stored attribute, so leaving it unresolved gives
+/// the predicate that reads it the same constant-`FALSE` rendering an unknown
+/// name gets, which is what clause 4.10 asks for.
+fn push_iri(iri: &str, out: &mut Vec<AttributeName>) {
+    if let Ok(name) = iri.parse::<AttributeName>() {
+        out.push(name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::projected_attribute_names::projected_attribute_names;
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_ngsi_ld_query::{
+        filter::parser,
+        geo::query::GeoQuery,
+        ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
+    };
+    use iri_rs::IriBuf;
+
+    fn iri(value: &str) -> IriBuf {
+        IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
+    fn geo_query(geoproperty: &str) -> GeoQuery {
+        GeoQuery {
+            georel: GeoRel::Within,
+            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
+            geoproperty_iri: iri(geoproperty),
+        }
+    }
+
+    fn order_term(target: OrderTarget, direction: OrderDirection) -> CompiledOrderTerm {
+        CompiledOrderTerm {
+            target,
+            direction,
+            collation: None,
+        }
+    }
+
+    fn collected(names: Vec<AttributeName>) -> Vec<String> {
+        names.iter().map(AttributeName::as_str).map(str::to_string).collect()
+    }
+
+    /// Clause 4.10: the geo-query's target GeoProperty is read by dictionary
+    /// key, so it has to be resolved even when the query carries no `q` filter.
+    #[test]
+    fn a_geo_query_contributes_its_target_geoproperty() {
+        let geo = geo_query("https://example.com/observationPoint");
+        assert_eq!(
+            collected(projected_attribute_names(None, Some(&geo), &[])),
+            vec!["https://example.com/observationPoint"]
+        );
+    }
+
+    /// Clause 4.23: a distance ordering reads the same projection the filter
+    /// does, so its target needs resolving too.
+    #[test]
+    fn a_distance_ordering_contributes_its_target_geoproperty() {
+        let terms = [order_term(
+            OrderTarget::Attribute(iri("https://example.com/observationPoint")),
+            OrderDirection::DistAsc,
+        )];
+        assert_eq!(
+            collected(projected_attribute_names(None, None, &terms)),
+            vec!["https://example.com/observationPoint"]
+        );
+    }
+
+    /// A value ordering navigates the payload, so it contributes nothing.
+    #[test]
+    fn a_value_ordering_contributes_no_name() {
+        let terms = [order_term(OrderTarget::Attribute(iri("https://example.com/temperature")), OrderDirection::Asc)];
+        assert!(projected_attribute_names(None, None, &terms).is_empty());
+    }
+
+    /// Clause 4.23's keywords name no attribute, whichever direction they sort.
+    #[test]
+    fn a_keyword_ordering_contributes_no_name() {
+        let terms = [
+            order_term(OrderTarget::Id, OrderDirection::DistAsc),
+            order_term(OrderTarget::Type, OrderDirection::DistDesc),
+            order_term(OrderTarget::Scope, OrderDirection::DistAsc),
+        ];
+        assert!(projected_attribute_names(None, None, &terms).is_empty());
+    }
+
+    /// The three axes accumulate rather than displacing one another.
+    #[test]
+    fn a_filter_a_geo_query_and_an_ordering_each_contribute_their_own_names() {
+        let expr = parser::parse("\"https://example.com/speed\">1").expect("parse q");
+        let geo = geo_query("https://example.com/observationPoint");
+        let terms = [order_term(
+            OrderTarget::Attribute(iri("https://example.com/operationSpace")),
+            OrderDirection::DistAsc,
+        )];
+        assert_eq!(
+            collected(projected_attribute_names(Some(&expr), Some(&geo), &terms)),
+            vec![
+                "https://example.com/speed",
+                "https://example.com/observationPoint",
+                "https://example.com/operationSpace"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_query_with_neither_filter_nor_geometry_resolves_nothing() {
+        assert!(projected_attribute_names(None, None, &[]).is_empty());
+    }
+}

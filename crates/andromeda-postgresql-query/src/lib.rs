@@ -36,6 +36,7 @@ pub mod literal;
 pub mod ltree;
 pub mod operator;
 pub mod postgis;
+pub mod projected_attribute_names;
 pub mod projection_barrier;
 pub mod q_predicate;
 pub mod schema;

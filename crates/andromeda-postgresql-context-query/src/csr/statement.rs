@@ -9,6 +9,7 @@ use andromeda_postgresql_query::{
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::{GeometrySource, NullGeometryPolicy},
+    q_predicate::attribute_names::ResolvedAttributeNames,
 };
 use sea_query::{Condition, Expr as SeaExpr, Iden, Order, PostgresQueryBuilder, Query};
 
@@ -205,7 +206,12 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // Geo filter: a registration that declares no location still matches
     // (clause 5.10.2).
     if let Some(geo) = &query.geo {
-        condition = condition.add(geo_sql::condition(geo, GeometrySource::Column { name: "location" }, NullGeometryPolicy::Match)?);
+        condition = condition.add(geo_sql::condition(
+            geo,
+            GeometrySource::Column { name: "location" },
+            NullGeometryPolicy::Match,
+            &ResolvedAttributeNames::default(),
+        )?);
     }
 
     // Temporal filter: CSRs without the relevant interval still match (per spec)

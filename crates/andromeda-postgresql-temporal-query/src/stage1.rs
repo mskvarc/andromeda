@@ -18,7 +18,7 @@ use andromeda_postgresql_query::{
     geo_predicate::{GeometrySource, NullGeometryPolicy},
     operator::regex_match,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
-    schema::{E, Entities},
+    schema::{E, E_ALIAS, Entities},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     type_predicate::{TypesColumn, condition as type_condition},
 };
@@ -122,8 +122,9 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
     if let Some(geo) = &compiled.entities.geo {
         condition = condition.add(geo_sql::condition(
             geo,
-            GeometrySource::EntityPayload { payload_column: "e.payload" },
+            GeometrySource::Entity { alias: Some(E_ALIAS) },
             NullGeometryPolicy::Exclude,
+            attribute_names,
         )?);
     }
 
@@ -397,20 +398,48 @@ mod tests {
         assert!(!result.sql.contains("scope_history"), "No scope_history reference without scopeQ");
     }
 
+    /// Clause 4.10 applies to a temporal query exactly as it does to a current-
+    /// state one: a named GeoProperty is read from its `attribute_current`
+    /// instance rows, correlated through the `e` alias stage 1 joins `entities`
+    /// under.
     #[test]
-    fn a_temporal_geoproperty_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
+    fn a_temporal_geo_query_on_a_named_geoproperty_reads_its_attribute_instance_rows() {
+        let mut compiled = minimal_compiled();
+        compiled.entities.geo = Some(GeoQuery {
+            georel: GeoRel::Within,
+            geometry: point(serde_json::json!([1.0, 2.0])),
+            geoproperty_iri: iri("https://example.com/customGeo"),
+        });
+        let names = ResolvedAttributeNames::from_pairs([(
+            "https://example.com/customGeo".parse().expect("valid attribute name"),
+            AttributeNameId::from(42_i16),
+        )]);
+        let result = build_stage1_entity_ids(&compiled, &names).unwrap();
+        assert!(result.sql.contains("EXISTS (SELECT 1 FROM \"attribute_current\""), "{}", result.sql);
+        assert!(result.sql.contains("\"attribute_name_id\" = 42"), "{}", result.sql);
+        assert!(
+            result.sql.contains("\"geo_instance\".\"entity_id\" = \"e\".\"id\""),
+            "correlated through the stage 1 alias: {}",
+            result.sql
+        );
+    }
+
+    /// The IRI is reached by dictionary key, so an apostrophe in one never
+    /// enters the statement text.
+    #[test]
+    fn a_temporal_geoproperty_iri_never_reaches_the_statement_text() {
         let mut compiled = minimal_compiled();
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty_iri: iri("https://example.com/o'brien"),
         });
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(
-            result.sql.contains("o''brien"),
-            "apostrophe must be doubled inside the jsonpath literal: {}",
-            result.sql
-        );
+        let names = ResolvedAttributeNames::from_pairs([(
+            "https://example.com/o'brien".parse().expect("valid attribute name"),
+            AttributeNameId::from(9_i16),
+        )]);
+        let result = build_stage1_entity_ids(&compiled, &names).unwrap();
+        assert!(!result.sql.contains("brien"), "{}", result.sql);
         // Every literal contributes a balanced pair of quotes, and a doubled
         // apostrophe contributes two, so the total is even unless a literal was
         // terminated early.

@@ -9,10 +9,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_context_query::entity as entity_sql;
-use andromeda_postgresql_query::{
-    bind::BindValue,
-    q_predicate::attribute_names::{ResolvedAttributeNames, referenced_attribute_names},
-};
+use andromeda_postgresql_query::{bind::BindValue, projected_attribute_names::projected_attribute_names, q_predicate::attribute_names::ResolvedAttributeNames};
 use serde_json::Value;
 use sqlx::Row;
 use std::collections::HashMap;
@@ -136,7 +133,7 @@ impl EntityRepository {
     /// those extensions changes.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, ContextStoreError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
-        let attribute_names = self.resolve_q_attributes(&planned.query).await?;
+        let attribute_names = self.resolve_projected_attributes(&planned.query).await?;
         let built = entity_sql::build_query(&planned.query, &attribute_names)?;
 
         tracing::debug!("Built SQL: {} with binds: {:?}", built.sql, built.bind_values);
@@ -158,7 +155,7 @@ impl EntityRepository {
     /// statement never counts, so the outcome carries no total either way.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
-        let attribute_names = self.resolve_q_attributes(&planned.query).await?;
+        let attribute_names = self.resolve_projected_attributes(&planned.query).await?;
         let built = entity_sql::build_ids_query(&planned.query, &attribute_names)?;
 
         tracing::debug!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
@@ -170,20 +167,21 @@ impl EntityRepository {
         Ok(planned.outcome(ids, None))
     }
 
-    /// Resolve the attribute IRIs a compiled `q` filter references to their
-    /// dictionary keys, and wait for the `attribute_current` projection to catch
-    /// up if any of them will be answered from it.
+    /// Resolve the attribute IRIs a compiled query reads by dictionary key, and
+    /// wait for the `attribute_current` projection to catch up if any of them
+    /// will be answered from it.
     ///
     /// A clause 4.9 linked-entity traversal contributes more than one name per
     /// predicate: the Relationship each hop descends through is probed by
     /// dictionary key just as the terminal attribute is, and both come back from
-    /// the same collection walk.
-    async fn resolve_q_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, ContextStoreError> {
-        let Some(q_expr) = &compiled.selection.q_expr else {
+    /// the same collection walk. A geo-query and a distance ordering each
+    /// contribute their target GeoProperty, which is read from the same
+    /// projection (clauses 4.10 and 4.23).
+    async fn resolve_projected_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, ContextStoreError> {
+        let names = projected_attribute_names(compiled.selection.q_expr.as_ref(), compiled.selection.geo.as_ref(), &compiled.ordering.terms);
+        if names.is_empty() {
             return Ok(ResolvedAttributeNames::default());
-        };
-        let mut names = Vec::new();
-        referenced_attribute_names(q_expr, &mut names);
+        }
         let resolved = self.attribute_names.lookup(&names).await?;
         if !resolved.is_empty() {
             self.attribute_current.wait_for_pending_writes().await;

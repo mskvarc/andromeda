@@ -1,6 +1,6 @@
 //! SQL generation for entity queries using sea-query.
 
-use crate::order_geography::geo_extract_geography;
+use crate::order_geography::geo_order_distance;
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::EntitySelector,
@@ -58,6 +58,7 @@ pub fn build_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttrib
         &query.ordering.terms,
         query.selection.geo.as_ref(),
         query.ordering.geometry.as_ref(),
+        attribute_names,
     )?;
 
     let (sql, values) = select.build(PostgresQueryBuilder);
@@ -102,6 +103,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAt
         &query.ordering.terms,
         query.selection.geo.as_ref(),
         query.ordering.geometry.as_ref(),
+        attribute_names,
     )?;
 
     select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
@@ -149,8 +151,9 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     if let Some(geo) = &query.selection.geo {
         condition = condition.add(geo_sql::condition(
             geo,
-            GeometrySource::EntityPayload { payload_column: "payload" },
+            GeometrySource::Entity { alias: None },
             NullGeometryPolicy::Exclude,
+            attribute_names,
         )?);
     }
 
@@ -213,6 +216,7 @@ fn add_order_clause(
     order_by: &[CompiledOrderTerm],
     geo: Option<&GeoQuery>,
     ordering_geometry: Option<&OrderingGeometry>,
+    attribute_names: &ResolvedAttributeNames,
 ) -> Result<(), RenderError> {
     for term in order_by {
         let order = match term.direction {
@@ -229,13 +233,7 @@ fn add_order_clause(
                     return Err(RenderError::Query(QueryError::DistanceOrderWithoutReference));
                 }
             };
-            let dist_expr: SimpleExpr = SeaExpr::cust_with_exprs(
-                format!(
-                    "ST_Distance({}, ST_MakeValid(ST_GeomFromEWKB($1))::geography)",
-                    geo_extract_geography(&term.target)
-                ),
-                [SeaExpr::val(ref_ewkb.to_vec()).into()],
-            );
+            let dist_expr: SimpleExpr = SeaExpr::cust_with_exprs(geo_order_distance(&term.target, attribute_names), [SeaExpr::val(ref_ewkb.to_vec()).into()]);
             select.order_by_expr(dist_expr, order);
         } else {
             select.order_by_expr(SeaExpr::cust(order_value_expr(&term.target, term.collation.as_ref())), order);
@@ -716,19 +714,40 @@ mod tests {
         }
     }
 
+    /// Clause 4.10: `geoproperty` selects any GeoProperty of the entity. A
+    /// named one is held in `attribute_current`, so the whole statement — not
+    /// just the fragment — has to reach it there.
     #[test]
-    fn custom_geoproperty_preserves_jsonb_geojson_extraction() {
-        // Custom GeoProperties are stored inside the JSONB payload; the
-        // column-side extraction is the documented exception.
+    fn a_named_geoproperty_filters_through_its_attribute_instance_rows() {
         let mut q = empty_query();
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty_iri: iri("https://example.com/customGeo"),
         });
-        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
-        assert!(built.sql.contains("ST_GeomFromGeoJSON"), "column-side JSONB extraction must remain");
+        let names = ResolvedAttributeNames::from_pairs([(
+            "https://example.com/customGeo".parse().expect("valid attribute name"),
+            AttributeNameId::from(42_i16),
+        )]);
+        let built = build_query(&q, &names).unwrap();
+        assert!(built.sql.contains("EXISTS (SELECT 1 FROM \"attribute_current\""), "{}", built.sql);
+        assert!(built.sql.contains("\"attribute_name_id\" = 42"), "{}", built.sql);
         assert!(built.sql.contains("ST_GeomFromEWKB"), "reference side must still bind EWKB");
+    }
+
+    /// Clause 4.10: an Entity that does not convey the target GeoProperty is
+    /// non-matching, so an unrecorded GeoProperty yields an empty result rather
+    /// than an error.
+    #[test]
+    fn an_unrecorded_geoproperty_filters_everything_out_without_failing() {
+        let mut q = empty_query();
+        q.selection.geo = Some(GeoQuery {
+            georel: GeoRel::Within,
+            geometry: point(serde_json::json!([1.0, 2.0])),
+            geoproperty_iri: iri("https://example.com/neverRecorded"),
+        });
+        let built = build_query(&q, &ResolvedAttributeNames::default()).expect("renders");
+        assert!(built.sql.contains("FALSE"), "{}", built.sql);
     }
 
     #[test]
@@ -751,37 +770,33 @@ mod tests {
         sql.matches('\'').count()
     }
 
+    /// A geo-query names its target GeoProperty by IRI, but the statement
+    /// reaches it by dictionary key, so no part of the IRI is interpolated and
+    /// an apostrophe in one cannot terminate a literal.
     #[test]
-    fn a_geoproperty_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
-        let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
-            georel: GeoRel::Within,
-            geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://example.com/o'brien"),
-        });
-        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
-        assert!(
-            built.sql.contains("o''brien"),
-            "apostrophe must be doubled inside the jsonpath literal: {}",
-            built.sql
-        );
-        assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
-    }
-
-    #[test]
-    fn a_near_geoproperty_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
-        let mut q = empty_query();
-        q.selection.geo = Some(GeoQuery {
-            georel: GeoRel::Near {
+    fn a_geoproperty_iri_containing_an_apostrophe_never_reaches_the_statement_text() {
+        let names = ResolvedAttributeNames::from_pairs([(
+            "https://example.com/o'brien".parse().expect("valid attribute name"),
+            AttributeNameId::from(9_i16),
+        )]);
+        let relations = [
+            GeoRel::Within,
+            GeoRel::Near {
                 max_distance: Some(500.0),
                 min_distance: None,
             },
-            geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://example.com/o'brien"),
-        });
-        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
-        assert!(built.sql.contains("o''brien"), "{}", built.sql);
-        assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
+        ];
+        for georel in relations {
+            let mut q = empty_query();
+            q.selection.geo = Some(GeoQuery {
+                georel: georel.clone(), // clone: the relation is named again in the assertion
+                geometry: point(serde_json::json!([1.0, 2.0])),
+                geoproperty_iri: iri("https://example.com/o'brien"),
+            });
+            let built = build_query(&q, &names).unwrap();
+            assert!(!built.sql.contains("brien"), "{georel:?}: {}", built.sql);
+            assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
+        }
     }
 
     #[test]
@@ -797,8 +812,11 @@ mod tests {
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 
+    /// A distance ordering reaches its GeoProperty by dictionary key too, so
+    /// the same IRI that is interpolated into a value ordering's jsonpath is
+    /// absent from a distance ordering's statement text.
     #[test]
-    fn a_distance_ordering_geoproperty_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
+    fn a_distance_ordering_geoproperty_iri_never_reaches_the_statement_text() {
         let mut q = empty_query();
         let geometry = Geometry::from_geojson_value(&serde_json::json!({
             "type": "Point",
@@ -811,8 +829,13 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
-        assert!(built.sql.contains("o''brien"), "{}", built.sql);
+        let names = ResolvedAttributeNames::from_pairs([(
+            "https://example.com/o'brien".parse().expect("valid attribute name"),
+            AttributeNameId::from(9_i16),
+        )]);
+        let built = build_query(&q, &names).unwrap();
+        assert!(!built.sql.contains("brien"), "{}", built.sql);
+        assert!(built.sql.contains("MIN(ST_Distance("), "the nearest instance decides: {}", built.sql);
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
 }
