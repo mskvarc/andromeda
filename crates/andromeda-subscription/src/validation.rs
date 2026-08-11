@@ -2,6 +2,7 @@
 
 use crate::error::SubscriptionError;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_query::{
     filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize},
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
@@ -124,6 +125,10 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         }
     }
 
+    if let Some(geo_q) = payload.get("geoQ") {
+        validate_geo_q_geometry(geo_q)?;
+    }
+
     if let Some(watched) = payload.get("watchedAttributes")
         && let Some(arr) = watched.as_array()
         && arr.is_empty()
@@ -132,6 +137,32 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
     }
 
     Ok(())
+}
+
+/// Reject a `geoQ` whose `geometry` and `coordinates` do not form a usable
+/// RFC 7946 geometry (clause 4.10, Table 5.2.13-1).
+///
+/// Checked here rather than left to compilation because a stored `geoQ` that
+/// will not decode is dropped silently when the subscription is compiled: the
+/// client would hold a live subscription that never notifies and never says
+/// why. A position with an ordinate count RFC 7946 section 3.1.1 gives no
+/// meaning to is a `BadRequestData` at the boundary instead.
+///
+/// A `geoQ` carrying neither member is left alone; the two are optional on the
+/// wire and their absence is a different failure from a geometry that will not
+/// decode.
+fn validate_geo_q_geometry(geo_q: &Value) -> Result<(), SubscriptionError> {
+    let (Some(geometry_type), Some(coordinates)) = (geo_q.get("geometry"), geo_q.get("coordinates")) else {
+        return Ok(());
+    };
+    let coordinates = match coordinates {
+        Value::String(raw) => serde_json::from_str::<Value>(raw).map_err(|error| SubscriptionError::validation(format!("geoQ coordinates: {error}")))?,
+        other => other.clone(), // clone: the GeoJSON decoder consumes the value it decodes
+    };
+    let value = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
+    Geometry::from_geojson_value(&value)
+        .map(|_geometry| ())
+        .map_err(|error| SubscriptionError::validation(format!("geoQ reference geometry: {error}")))
 }
 
 /// Validate the notification fragment in an update payload.
@@ -322,6 +353,23 @@ mod tests {
     fn a_filter_that_stays_within_one_entity_is_still_accepted() {
         let result = validate_common_fields(&serde_json::json!({"q": "speed>50;brandName==\"Mercedes\""}));
         assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[test]
+    fn a_geo_q_reference_geometry_is_validated_at_create_and_update() {
+        let result = validate_common_fields(&serde_json::json!({
+            "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}
+        }));
+        let error = result.expect_err("clause 4.10 cannot evaluate a geometry RFC 7946 gives no reading of");
+        assert!(error.to_string().contains("4 ordinates"), "got {error}");
+
+        let elevated = validate_common_fields(&serde_json::json!({
+            "geoQ": {"georel": "within", "geometry": "Point", "coordinates": [1.0, 2.0, 3.0]}
+        }));
+        assert!(elevated.is_ok(), "a three-ordinate reference geometry is valid: {elevated:?}");
+
+        let georel_only = validate_common_fields(&serde_json::json!({"geoQ": {"georel": "near;maxDistance==2000"}}));
+        assert!(georel_only.is_ok(), "an incomplete geoQ is a different failure: {georel_only:?}");
     }
 
     #[test]

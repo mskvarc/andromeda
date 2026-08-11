@@ -1,11 +1,24 @@
 //! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
 use crate::expanded::{dataset_id::instance_has_dataset_id, node::expanded_object_ref};
-use andromeda_ngsi_ld_geometry::geometry::{Geometry, GeometryType};
+use andromeda_ngsi_ld_geometry::{
+    form::{GeometryForm, PolygonRings},
+    geojson::GeometryError,
+    geometry::Geometry,
+    geometry_type::GeometryType,
+    position::{Position, PositionError},
+};
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
-use geo::{Coord, Geometry as GeoGeometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use serde_json::Value;
 use std::str::FromStr;
+
+/// The GeoJSON `type` token of a GeometryCollection.
+///
+/// [`GeometryType`] deliberately does not name it, because ETSI GS CIM 009
+/// v1.9.1 clause 4.7.1 allows a GeoProperty every RFC 7946 geometry except this
+/// one. The token survives only so the write path can recognise a collection in
+/// order to refuse it.
+const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
 
 /// Extract the entity's `location` GeoProperty decoded into a [`Geometry`].
 pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
@@ -81,40 +94,112 @@ fn literal_geojson_to_geometry(literal: &Value) -> Option<Geometry> {
 
 /// Walk an expanded JSON-LD GeoJSON node directly into a [`Geometry`].
 ///
-/// A single-pass walker that emits `geo::Geometry<f64>` directly: no
-/// intermediate `Value` cloning, no string serialisation, no second JSON
-/// parser pass. Returns `None` for unknown geometry types or malformed input so
-/// the caller can fall through to the slow path if needed.
+/// A single-pass walker that emits a [`GeometryForm`] directly: no intermediate
+/// `Value` cloning, no string serialisation, no second JSON parser pass. Each
+/// position keeps the altitude and the ordinate count it was written with, so
+/// what an entity was stored as is what it is read back as.
+///
+/// Returns `None` for unknown geometry types or malformed input so the caller
+/// can fall through to the slow path if needed.
 pub fn expanded_geo_node_to_geometry(node: &Value) -> Option<Geometry> {
-    walk_expanded_geo_node(node).map(Geometry::from)
+    walk_expanded_geo_node(node).map(Geometry::new)
 }
 
 /// Reads an expanded GeoJSON node, dispatching on its `@type` to the walker
 /// for that geometry kind.
-fn walk_expanded_geo_node(node: &Value) -> Option<GeoGeometry<f64>> {
+///
+/// A GeometryCollection yields `None`: clause 4.7.1 excludes it from GeoProperty
+/// geometries, so nothing the write path accepted can be one, and the lenient
+/// read simply has no geometry to offer for it.
+fn walk_expanded_geo_node(node: &Value) -> Option<GeometryForm> {
     let obj = node.as_object()?;
     let token = obj.get("@type")?.as_array()?.first()?.as_str()?.strip_prefix(prefix::GEOJSON.as_str())?;
-    let geom_type = GeometryType::from_str(token).ok()?;
 
-    let coords_outer = obj.get(properties::COORDINATES.as_str())?.as_array()?.first()?;
+    let coordinates = obj.get(properties::COORDINATES.as_str())?.as_array()?.first()?;
 
-    match geom_type {
-        GeometryType::Point => Some(GeoGeometry::Point(Point::from(walk_position(coords_outer)?))),
-        GeometryType::MultiPoint => {
-            let points: Vec<Point<f64>> = walk_position_list(coords_outer)?.into_iter().map(Point::from).collect();
-            Some(GeoGeometry::MultiPoint(MultiPoint::new(points)))
-        }
-        GeometryType::LineString => Some(GeoGeometry::LineString(LineString::from(walk_position_list(coords_outer)?))),
-        GeometryType::MultiLineString => {
-            let lines = walk_linestring_list(coords_outer)?;
-            Some(GeoGeometry::MultiLineString(MultiLineString::new(lines)))
-        }
-        GeometryType::Polygon => Some(GeoGeometry::Polygon(walk_polygon(coords_outer)?)),
-        GeometryType::MultiPolygon => {
-            let polys = walk_polygon_list(coords_outer)?;
-            Some(GeoGeometry::MultiPolygon(MultiPolygon::new(polys)))
-        }
+    match GeometryType::from_str(token).ok()? {
+        GeometryType::Point => Some(GeometryForm::Point(walk_position(coordinates)?)),
+        GeometryType::MultiPoint => Some(GeometryForm::MultiPoint(walk_positions(coordinates)?)),
+        GeometryType::LineString => Some(GeometryForm::LineString(walk_positions(coordinates)?)),
+        GeometryType::MultiLineString => Some(GeometryForm::MultiLineString(walk_position_lists(coordinates)?)),
+        GeometryType::Polygon => Some(GeometryForm::Polygon(walk_rings(coordinates)?)),
+        GeometryType::MultiPolygon => Some(GeometryForm::MultiPolygon(walk_ring_lists(coordinates)?)),
     }
+}
+
+/// Check that an expanded GeoJSON node is a geometry a GeoProperty may carry.
+///
+/// The strict counterpart of [`expanded_geo_node_to_geometry`], for the write
+/// path: where the reader skips a geometry it cannot use, this reports why, so
+/// a caller can turn it into the `BadRequestData` ETSI GS CIM 009 v1.9.1 clause
+/// 5.5.4 requires instead of accepting a GeoProperty the broker will later
+/// refuse to read back.
+///
+/// Two things are checked. A node typed GeometryCollection is refused outright,
+/// because clause 4.7.1 allows a GeoProperty value every geometry IETF RFC 7946
+/// defines except that one, and clause 4.6.3 excludes it from reference
+/// geometries as well. Otherwise the ordinate count of every position is
+/// checked, traversing nesting rather than geometry type: a position is the
+/// innermost list, whatever encloses it, so one walk covers Point through
+/// MultiPolygon. A node carrying no coordinates at all passes — deciding
+/// whether a value is a geometry in the first place is not this function's
+/// question.
+///
+/// # Errors
+///
+/// Returns [`GeometryError::GeometryCollectionUnsupported`] for a
+/// GeometryCollection, and [`GeometryError::Position`] for the first position
+/// whose ordinate count RFC 7946 section 3.1.1 gives no meaning to, or whose
+/// members are not all numbers as that section requires.
+pub fn validate_expanded_geo_node(node: &Value) -> Result<(), GeometryError> {
+    let Some(object) = node.as_object() else {
+        return Ok(());
+    };
+
+    if is_geometry_collection_node(object.get("@type")) {
+        return Err(GeometryError::GeometryCollectionUnsupported);
+    }
+
+    match object.get(properties::COORDINATES.as_str()) {
+        Some(coordinates) => Ok(validate_coordinate_arity(coordinates)?),
+        None => Ok(()),
+    }
+}
+
+/// Whether an expanded GeoJSON node's `@type` names a GeometryCollection.
+fn is_geometry_collection_node(types: Option<&Value>) -> bool {
+    types
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|iri| iri.strip_prefix(prefix::GEOJSON.as_str()))
+        .any(|token| token == GEOMETRY_COLLECTION_TOKEN)
+}
+
+/// Check the ordinate count of every position reachable through one expanded
+/// coordinate member, at whatever depth its geometry type nests them.
+fn validate_coordinate_arity(node: &Value) -> Result<(), PositionError> {
+    let Some(items) = list_items(node) else {
+        return Ok(());
+    };
+
+    // A list none of whose items is itself a list is a position, whatever its
+    // members turn out to be. Deciding this on "every item is a number" instead
+    // would let a non-numeric ordinate be mistaken for another level of
+    // nesting, and the position would escape the check entirely.
+    if !items.is_empty() && items.iter().all(|item| list_items(item).is_none()) {
+        if let Some((index, _member)) = items.iter().enumerate().find(|(_index, item)| scalar_number(item).is_none()) {
+            return Err(PositionError::NonNumericOrdinate { index });
+        }
+        return match items.len() {
+            2 | 3 => Ok(()),
+            ordinates if ordinates < 2 => Err(PositionError::TooFewOrdinates { ordinates }),
+            ordinates => Err(PositionError::TooManyOrdinates { ordinates }),
+        };
+    }
+
+    items.iter().try_for_each(validate_coordinate_arity)
 }
 
 /// Iterate the children of either a bare `Array` or an `{"@list": [...]}`
@@ -134,68 +219,50 @@ fn scalar_number(node: &Value) -> Option<f64> {
     node.as_object().and_then(|o| o.get("@value")).and_then(Value::as_f64)
 }
 
-/// Reads one expanded coordinate pair, discarding any third (altitude)
-/// ordinate, which the `geo` crate's 2D model cannot carry.
-fn walk_position(node: &Value) -> Option<Coord<f64>> {
-    let items = list_items(node)?;
-    if items.len() < 2 {
-        return None;
+/// Reads one expanded position, keeping the optional third ordinate RFC 7946
+/// section 3.1.1 defines as altitude.
+///
+/// A position with any other ordinate count has no meaning under that section
+/// and yields `None`. This is the lenient read path over documents the write
+/// path already validated, so an unusable position skips the whole geometry
+/// rather than reporting a failure.
+fn walk_position(node: &Value) -> Option<Position> {
+    match list_items(node)? {
+        [longitude, latitude] => Some(Position::new(scalar_number(longitude)?, scalar_number(latitude)?, None)),
+        [longitude, latitude, altitude] => Some(Position::new(
+            scalar_number(longitude)?,
+            scalar_number(latitude)?,
+            Some(scalar_number(altitude)?),
+        )),
+        _other => None,
     }
-    let x = scalar_number(&items[0])?;
-    let y = scalar_number(&items[1])?;
-    Some(Coord { x, y })
 }
 
-/// Reads an expanded list of coordinate pairs, failing on the first pair that
-/// does not parse.
-fn walk_position_list(node: &Value) -> Option<Vec<Coord<f64>>> {
-    let items = list_items(node)?;
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        out.push(walk_position(item)?);
-    }
-    Some(out)
+/// Reads an expanded list of positions, failing on the first that does not parse.
+fn walk_positions(node: &Value) -> Option<Vec<Position>> {
+    list_items(node)?.iter().map(walk_position).collect()
 }
 
-/// Reads an expanded list of coordinate-pair lists as line strings.
-fn walk_linestring_list(node: &Value) -> Option<Vec<LineString<f64>>> {
-    let items = list_items(node)?;
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        out.push(LineString::from(walk_position_list(item)?));
-    }
-    Some(out)
+/// Reads an expanded list of position lists, as a MultiLineString carries.
+fn walk_position_lists(node: &Value) -> Option<Vec<Vec<Position>>> {
+    list_items(node)?.iter().map(walk_positions).collect()
 }
 
 /// Reads an expanded ring list as a polygon: the first ring is the exterior,
-/// every subsequent ring an interior (RFC 7946 clause 3.1.6).
-fn walk_polygon(node: &Value) -> Option<Polygon<f64>> {
-    let rings = list_items(node)?;
-    if rings.is_empty() {
-        return None;
-    }
-    let exterior = LineString::from(walk_position_list(&rings[0])?);
-    let mut interiors = Vec::with_capacity(rings.len().saturating_sub(1));
-    for ring in &rings[1..] {
-        interiors.push(LineString::from(walk_position_list(ring)?));
-    }
-    Some(Polygon::new(exterior, interiors))
+/// every subsequent ring an interior (IETF RFC 7946 section 3.1.6).
+fn walk_rings(node: &Value) -> Option<PolygonRings> {
+    walk_position_lists(node).map(PolygonRings::new)
 }
 
-/// Reads an expanded list of ring lists as polygons.
-fn walk_polygon_list(node: &Value) -> Option<Vec<Polygon<f64>>> {
-    let items = list_items(node)?;
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        out.push(walk_polygon(item)?);
-    }
-    Some(out)
+/// Reads an expanded list of ring lists, as a MultiPolygon carries.
+fn walk_ring_lists(node: &Value) -> Option<Vec<PolygonRings>> {
+    list_items(node)?.iter().map(walk_rings).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_geo_property_geometry, extract_location_geometry};
-    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_geo_property_geometry, extract_location_geometry, validate_expanded_geo_node};
+    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, geometry::Geometry, position::PositionError};
     use serde_json::json;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
@@ -329,6 +396,202 @@ mod tests {
             expanded_geo_node_to_geometry(&multilinestring_expanded).expect("MultiLineString"),
             geometry_from_compact(&multilinestring_compact)
         );
+    }
+
+    #[test]
+    fn expanded_geo_node_walker_keeps_the_altitude_of_a_three_ordinate_position() {
+        // IETF RFC 7946 section 3.1.1 makes altitude the optional third
+        // ordinate, and clause 4.7 adopts RFC 7946 whole, so a stored height
+        // must survive the read the index and the matcher share.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [{"@value": 16.37_f64}, {"@value": 48.20_f64}, {"@value": 193.0_f64}]}
+            ]
+        });
+        let compact = json!({"type": "Point", "coordinates": [16.37_f64, 48.20_f64, 193.0_f64]});
+        let geometry = expanded_geo_node_to_geometry(&expanded).expect("walker decodes an elevated Point");
+        pretty_assertions::assert_eq!(geometry, geometry_from_compact(&compact));
+        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
+    }
+
+    #[test]
+    fn expanded_geo_node_walker_preserves_mixed_position_arity_within_one_geometry() {
+        // RFC 7946 does not require a uniform arity, so a LineString mixing
+        // two- and three-ordinate positions is valid and is kept verbatim.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#LineString"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [
+                    {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]},
+                    {"@list": [{"@value": 1.0_f64}, {"@value": 1.0_f64}, {"@value": 50.0_f64}]}
+                ]}
+            ]
+        });
+        let compact = json!({"type": "LineString", "coordinates": [[0.0, 0.0], [1.0, 1.0, 50.0]]});
+        let geometry = expanded_geo_node_to_geometry(&expanded).expect("walker decodes a mixed-arity LineString");
+        pretty_assertions::assert_eq!(geometry, geometry_from_compact(&compact));
+        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::TwoD);
+    }
+
+    #[test]
+    fn expanded_geo_node_walker_returns_none_for_a_geometry_collection() {
+        // ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes GeometryCollection from
+        // GeoProperty geometries, so nothing readable is ever stored as one and
+        // the lenient walker has no geometry to offer.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#GeometryCollection"],
+            "https://purl.org/geojson/vocab#geometries": [
+                {"@list": [
+                    {
+                        "@type": ["https://purl.org/geojson/vocab#Point"],
+                        "https://purl.org/geojson/vocab#coordinates": [
+                            {"@list": [{"@value": 100.0_f64}, {"@value": 0.0_f64}, {"@value": 7.0_f64}]}
+                        ]
+                    },
+                    {
+                        "@type": ["https://purl.org/geojson/vocab#LineString"],
+                        "https://purl.org/geojson/vocab#coordinates": [
+                            {"@list": [
+                                {"@list": [{"@value": 101.0_f64}, {"@value": 0.0_f64}]},
+                                {"@list": [{"@value": 102.0_f64}, {"@value": 1.0_f64}]}
+                            ]}
+                        ]
+                    }
+                ]}
+            ]
+        });
+        assert!(expanded_geo_node_to_geometry(&expanded).is_none());
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_an_expanded_geometry_collection_node() {
+        // Clause 4.7.1: every RFC 7946 geometry except GeometryCollection.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#GeometryCollection"],
+            "https://purl.org/geojson/vocab#geometries": [
+                {"@list": [
+                    {
+                        "@type": ["https://purl.org/geojson/vocab#Point"],
+                        "https://purl.org/geojson/vocab#coordinates": [
+                            {"@list": [{"@value": 100.0_f64}, {"@value": 0.0_f64}]}
+                        ]
+                    }
+                ]}
+            ]
+        });
+        let error = validate_expanded_geo_node(&expanded).expect_err("a collection is not an allowed GeoProperty geometry");
+        assert!(matches!(error, GeometryError::GeometryCollectionUnsupported), "got {error:?}");
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_a_non_numeric_ordinate() {
+        // RFC 7946 section 3.1.1 defines a position as an array of numbers, so
+        // a stringified ordinate is BadRequestData at the boundary (clause
+        // 5.5.4) rather than a payload admitted and found unreadable later.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [{"@value": "13.4"}, {"@value": 52.52_f64}]}
+            ]
+        });
+        let error = validate_expanded_geo_node(&expanded).expect_err("a string is not an ordinate");
+        assert!(
+            matches!(error, GeometryError::Position(PositionError::NonNumericOrdinate { index: 0 })),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_a_non_numeric_altitude() {
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [{"@value": 13.4_f64}, {"@value": 52.52_f64}, {"@value": "high"}]}
+            ]
+        });
+        let error = validate_expanded_geo_node(&expanded).expect_err("an altitude must be a number");
+        assert!(
+            matches!(error, GeometryError::Position(PositionError::NonNumericOrdinate { index: 2 })),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_refuses_a_non_numeric_ordinate_nested_in_a_polygon_ring() {
+        // The offending member sits several levels below the coordinate member,
+        // so the walk must reach it rather than stop at the first list.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Polygon"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [
+                    {"@list": [
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]},
+                        {"@list": [{"@value": 4.0_f64}, {"@value": "zero"}]},
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]}
+                    ]}
+                ]}
+            ]
+        });
+        let error = validate_expanded_geo_node(&expanded).expect_err("a ring vertex is still a position");
+        assert!(
+            matches!(error, GeometryError::Position(PositionError::NonNumericOrdinate { index: 1 })),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn the_strict_validator_accepts_an_expanded_point_node() {
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [{"@value": 16.37_f64}, {"@value": 48.20_f64}]}
+            ]
+        });
+        assert!(validate_expanded_geo_node(&expanded).is_ok());
+    }
+
+    #[test]
+    fn expanded_geo_node_walker_returns_none_for_a_position_with_four_ordinates() {
+        // RFC 7946 section 3.1.1 assigns no meaning past the third ordinate.
+        // This walker reads documents the write path already validated, so an
+        // unusable position skips the geometry instead of raising an error.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [{"@value": 1.0_f64}, {"@value": 2.0_f64}, {"@value": 3.0_f64}, {"@value": 4.0_f64}]}
+            ]
+        });
+        assert!(expanded_geo_node_to_geometry(&expanded).is_none());
+    }
+
+    #[test]
+    fn expanded_geo_node_walker_returns_none_for_a_position_with_one_ordinate() {
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Point"],
+            "https://purl.org/geojson/vocab#coordinates": [{"@list": [{"@value": 1.0_f64}]}]
+        });
+        assert!(expanded_geo_node_to_geometry(&expanded).is_none());
+    }
+
+    #[test]
+    fn a_nested_polygon_vertex_with_four_ordinates_skips_the_whole_geometry() {
+        // The walker recurses, so one unusable vertex in an interior ring is
+        // enough to refuse the polygon rather than to index a truncated one.
+        let expanded = json!({
+            "@type": ["https://purl.org/geojson/vocab#Polygon"],
+            "https://purl.org/geojson/vocab#coordinates": [
+                {"@list": [
+                    {"@list": [
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]},
+                        {"@list": [{"@value": 4.0_f64}, {"@value": 0.0_f64}]},
+                        {"@list": [{"@value": 4.0_f64}, {"@value": 4.0_f64}, {"@value": 1.0_f64}, {"@value": 9.0_f64}]},
+                        {"@list": [{"@value": 0.0_f64}, {"@value": 0.0_f64}]}
+                    ]}
+                ]}
+            ]
+        });
+        assert!(expanded_geo_node_to_geometry(&expanded).is_none());
     }
 
     #[test]

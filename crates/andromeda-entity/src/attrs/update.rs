@@ -6,6 +6,7 @@ use crate::{
     attrs::attribute_write::{UpdatedAttrs, payload_write},
     error::EntityError,
     expanded_member::{extract_attribute_keys, unwrap_expanded_ref},
+    geo_property_geometry::validate_geo_property_geometries,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -34,6 +35,7 @@ impl EntityService {
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
+        validate_geo_property_geometries(&expanded)?;
         let all_changed = extract_attribute_keys(&expanded);
 
         let UpdatedAttrs {

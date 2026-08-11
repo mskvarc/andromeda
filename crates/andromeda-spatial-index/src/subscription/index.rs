@@ -2,9 +2,8 @@
 //! change is a candidate for.
 
 use crate::{key::SpatialKey, partitioned_rtree::PartitionedRTree, subscription::entry::SubEntry};
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, relation::matches_geo};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use geo::algorithm::BoundingRect;
 use rstar::{AABB, Envelope, RTree};
 
 /// Thread-safe R-tree cache of subscription reference geometries.
@@ -34,7 +33,7 @@ impl SpatialSubscriptionIndex {
     /// Already exact: each candidate the tree admits is put through the clause
     /// 4.10 predicate before it is returned, so the caller needs no second
     /// pass.
-    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &geo::Geometry<f64>) -> Vec<Uri> {
+    pub fn candidates(&self, key: &SpatialKey, entity_geometry: &Geometry) -> Vec<Uri> {
         let Some(rect) = entity_geometry.bounding_rect() else {
             return Vec::new();
         };
@@ -63,10 +62,10 @@ impl SpatialSubscriptionIndex {
 
 /// Every subscription in one partition's tree whose geo filter the entity
 /// geometry satisfies.
-fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &geo::Geometry<f64>, envelope: &AABB<[f64; 2]>) -> Vec<Uri> {
+fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &AABB<[f64; 2]>) -> Vec<Uri> {
     let mut matched = Vec::new();
     for entry in tree.locate_in_envelope_intersecting(envelope) {
-        if matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry) {
+        if matches(&entry.georel, entity_geometry, &entry.ref_geometry) {
             matched.push(entry.subscription_id.clone()); // clone: the answer outlives the tree borrow
         }
     }
@@ -81,7 +80,7 @@ fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &geo::Geometry<f64>, e
     for entry in tree.iter() {
         if matches!(entry.georel, GeoRel::Disjoint | GeoRel::Near { .. })
             && !entry.envelope.intersects(envelope)
-            && matches_geo(&entry.georel, entity_geometry, &entry.ref_geometry)
+            && matches(&entry.georel, entity_geometry, &entry.ref_geometry)
         {
             matched.push(entry.subscription_id.clone()); // clone: same
         }
@@ -96,10 +95,14 @@ mod tests {
         key::SpatialKey,
         subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
     };
-    use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
+    use andromeda_ngsi_ld_geometry::{
+        form::{GeometryForm, PolygonRings},
+        geo_rel::GeoRel,
+        geometry::Geometry,
+        position::Position,
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use geo::{Coord, LineString, Point, Polygon};
     use iri_rs::{IriBuf, iri};
 
     fn uri(id: &str) -> Uri {
@@ -122,22 +125,21 @@ mod tests {
         )
     }
 
-    fn point(x: f64, y: f64) -> geo::Geometry<f64> {
-        geo::Geometry::Point(Point::new(x, y))
+    fn point(x: f64, y: f64) -> Geometry {
+        Geometry::new(GeometryForm::Point(Position::new(x, y, None)))
     }
 
-    fn square(cx: f64, cy: f64, half: f64) -> geo::Geometry<f64> {
-        let coords = vec![
-            Coord { x: cx - half, y: cy - half },
-            Coord { x: cx + half, y: cy - half },
-            Coord { x: cx + half, y: cy + half },
-            Coord { x: cx - half, y: cy + half },
-            Coord { x: cx - half, y: cy - half },
-        ];
-        geo::Geometry::Polygon(Polygon::new(LineString::from(coords), Vec::new()))
+    fn square(cx: f64, cy: f64, half: f64) -> Geometry {
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
+            Position::new(cx - half, cy - half, None),
+            Position::new(cx + half, cy - half, None),
+            Position::new(cx + half, cy + half, None),
+            Position::new(cx - half, cy + half, None),
+            Position::new(cx - half, cy - half, None),
+        ]])))
     }
 
-    fn entry(id: &str, reference: geo::Geometry<f64>, georel: GeoRel) -> SubEntry {
+    fn entry(id: &str, reference: Geometry, georel: GeoRel) -> SubEntry {
         SubEntry::new(uri(id), reference, georel).expect("the reference geometry has a bounding rectangle")
     }
 

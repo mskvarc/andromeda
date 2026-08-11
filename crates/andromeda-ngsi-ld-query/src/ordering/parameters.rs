@@ -1,7 +1,7 @@
 //! The complete ordering definition carried by a clause-5.2.23 `Query`.
 
 use crate::ordering::{collation::IcuCollation, geometry::OrderingGeometry, term::OrderTerm};
-use andromeda_ngsi_ld_geometry::geometry::GeometryType;
+use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use typed_builder::TypedBuilder;
@@ -105,7 +105,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::ordering::{parameters::OrderingParameters, term::OrderDirection};
-    use andromeda_ngsi_ld_geometry::geometry::GeometryType;
+    use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
 
     #[test]
     fn a_point_ordering_deserializes_to_typed_geometry() {

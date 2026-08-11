@@ -6,6 +6,15 @@
 //! matching — and one of the copies carried a comment asserting it "matches the
 //! semantics of" another. That assertion is now the compiler's.
 //!
+//! Every predicate is evaluated over the horizontal projection of both
+//! geometries. ETSI GS CIM 009 v1.9.1 clause 4.10 defines `georel` by reference
+//! to OGC 06-103r4, whose clause 6.1.2.5 states that spatial operations work in
+//! the "map geometry" of the data and reflect neither z nor m, and whose clause
+//! 6.1.15.1 defines the relational operators by projection onto the
+//! two-dimensional horizontal spatial reference plane. `near` inherits the same
+//! reading through `Buffer`, defined in clause 6.1.2.4. Altitude therefore never
+//! enters a verdict, however many ordinates the geometries carry.
+//!
 //! The SQL renderings are a separate reading of the same clause, because
 //! PostGIS evaluates the predicates rather than this crate. The pairs they
 //! render to are named in the doc comments below so the two stay comparable.
@@ -19,14 +28,11 @@ use geo::algorithm::{Contains, Intersects};
 /// is the one the query supplied. The asymmetry matters: `within` asks whether
 /// the subject is inside the reference, `contains` the opposite.
 pub fn matches(georel: &GeoRel, subject: &Geometry, reference: &Geometry) -> bool {
-    matches_geo(georel, subject.as_ref(), reference.as_ref())
+    matches_planar(georel, subject.planar(), reference.planar())
 }
 
-/// [`matches()`] over the underlying `geo` geometries.
-///
-/// Spatial indexes hold `geo::Geometry` directly, so requiring the newtype at
-/// that boundary would cost a wrap per candidate.
-pub fn matches_geo(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &geo::Geometry<f64>) -> bool {
+/// [`matches()`] over the horizontal projections the geometries carry.
+fn matches_planar(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &geo::Geometry<f64>) -> bool {
     match georel {
         // `ST_Within(subject, reference)`
         GeoRel::Within => reference.contains(subject),
@@ -45,7 +51,10 @@ pub fn matches_geo(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &ge
         // query polygon matched here and not in the PostGIS rendering of the
         // same clause.
         GeoRel::Overlaps => {
-            dimension(subject) == dimension(reference) && subject.intersects(reference) && !subject.contains(reference) && !reference.contains(subject)
+            topological_dimension(subject) == topological_dimension(reference)
+                && subject.intersects(reference)
+                && !subject.contains(reference)
+                && !reference.contains(subject)
         }
         // `ST_DWithin` / `ST_Distance` over `geography`; here a Haversine
         // distance between centroids, which is what the `geography` type
@@ -61,9 +70,11 @@ pub fn matches_geo(georel: &GeoRel, subject: &geo::Geometry<f64>, reference: &ge
 /// The topological dimension of a geometry, or `None` for a collection, whose
 /// members may differ.
 ///
-/// `ST_Overlaps` is defined only between geometries of equal dimension: a point
-/// and a polygon intersect but never overlap.
-const fn dimension(geometry: &geo::Geometry<f64>) -> Option<u8> {
+/// This is the point/line/area distinction of OGC 06-103r4, unrelated to
+/// whether the geometry's positions carry altitude. `ST_Overlaps` is defined
+/// only between geometries of equal dimension: a point and a polygon intersect
+/// but never overlap.
+const fn topological_dimension(geometry: &geo::Geometry<f64>) -> Option<u8> {
     match geometry {
         geo::Geometry::Point(_) | geo::Geometry::MultiPoint(_) => Some(0),
         geo::Geometry::Line(_) | geo::Geometry::LineString(_) | geo::Geometry::MultiLineString(_) => Some(1),
@@ -75,23 +86,58 @@ const fn dimension(geometry: &geo::Geometry<f64>) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::{Coord, Geometry as GeoGeometry, LineString, Point, Polygon};
+    use crate::{
+        form::{GeometryForm, PolygonRings},
+        position::Position,
+    };
 
-    fn point(x: f64, y: f64) -> geo::Geometry<f64> {
-        GeoGeometry::Point(Point::new(x, y))
+    fn point(longitude: f64, latitude: f64) -> Geometry {
+        Geometry::new(GeometryForm::Point(Position::new(longitude, latitude, None)))
     }
 
-    fn square(cx: f64, cy: f64, half: f64) -> geo::Geometry<f64> {
-        GeoGeometry::Polygon(Polygon::new(
-            LineString(vec![
-                Coord { x: cx - half, y: cy - half },
-                Coord { x: cx + half, y: cy - half },
-                Coord { x: cx + half, y: cy + half },
-                Coord { x: cx - half, y: cy + half },
-                Coord { x: cx - half, y: cy - half },
-            ]),
-            Vec::new(),
-        ))
+    fn square(centre_longitude: f64, centre_latitude: f64, half: f64) -> Geometry {
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
+            Position::new(centre_longitude - half, centre_latitude - half, None),
+            Position::new(centre_longitude + half, centre_latitude - half, None),
+            Position::new(centre_longitude + half, centre_latitude + half, None),
+            Position::new(centre_longitude - half, centre_latitude + half, None),
+            Position::new(centre_longitude - half, centre_latitude - half, None),
+        ]])))
+    }
+
+    /// Lift every position of a geometry to the given altitude, leaving its
+    /// horizontal footprint untouched.
+    fn lift(geometry: &Geometry, altitude: f64) -> Geometry {
+        Geometry::new(lift_form(geometry.form(), altitude))
+    }
+
+    /// Lift every position of a form.
+    fn lift_form(form: &GeometryForm, altitude: f64) -> GeometryForm {
+        match form {
+            GeometryForm::Point(position) => GeometryForm::Point(lift_position(position, altitude)),
+            GeometryForm::MultiPoint(positions) => GeometryForm::MultiPoint(lift_positions(positions, altitude)),
+            GeometryForm::LineString(positions) => GeometryForm::LineString(lift_positions(positions, altitude)),
+            GeometryForm::MultiLineString(line_strings) => {
+                GeometryForm::MultiLineString(line_strings.iter().map(|line_string| lift_positions(line_string, altitude)).collect())
+            }
+            GeometryForm::Polygon(rings) => GeometryForm::Polygon(lift_rings(rings, altitude)),
+            GeometryForm::MultiPolygon(polygons) => GeometryForm::MultiPolygon(polygons.iter().map(|polygon| lift_rings(polygon, altitude)).collect()),
+        }
+    }
+
+    /// Lift one position to the given altitude.
+    fn lift_position(position: &Position, altitude: f64) -> Position {
+        Position::new(position.longitude(), position.latitude(), Some(altitude))
+    }
+
+    /// Lift a run of positions to the given altitude.
+    fn lift_positions(positions: &[Position], altitude: f64) -> Vec<Position> {
+        positions.iter().map(|position| lift_position(position, altitude)).collect()
+    }
+
+    /// Lift the rings of a polygon to the given altitude.
+    fn lift_rings(rings: &PolygonRings, altitude: f64) -> PolygonRings {
+        PolygonRings::new(rings.rings().iter().map(|ring| lift_positions(ring, altitude)).collect())
     }
 
     /// One row of the conformance table: a relation, the two geometries it is
@@ -102,109 +148,99 @@ mod tests {
         /// The relation under test.
         georel: GeoRel,
         /// The geometry read off the entity.
-        subject: &'a geo::Geometry<f64>,
+        subject: &'a Geometry,
         /// The geometry the query supplied.
-        reference: &'a geo::Geometry<f64>,
+        reference: &'a Geometry,
         /// The verdict the evaluator must reach.
         expected: bool,
     }
 
-    /// One table over every clause 4.10 relation, driven through the single
-    /// evaluator. The fixtures are the ones the three deleted copies each
-    /// tested separately.
-    #[test]
-    fn every_georel_variant_evaluates_through_one_in_memory_matcher() {
-        let inside = point(0.0, 0.0);
-        let outside = point(50.0, 50.0);
-        let area = square(0.0, 0.0, 1.0);
-        let same_area = square(0.0, 0.0, 1.0);
-        let shifted_area = square(1.0, 0.0, 1.0);
-        let inner_area = square(0.0, 0.0, 0.25);
-        let far_area = square(50.0, 50.0, 1.0);
-
-        let cases = vec![
+    /// The conformance table over every clause 4.10 relation. The fixtures are
+    /// the ones the three deleted copies each tested separately.
+    fn conformance_table<'a>(fixtures: &'a Fixtures) -> Vec<Case<'a>> {
+        vec![
             Case {
                 description: "a point inside the reference area is within it",
                 georel: GeoRel::Within,
-                subject: &inside,
-                reference: &area,
+                subject: &fixtures.inside,
+                reference: &fixtures.area,
                 expected: true,
             },
             Case {
                 description: "a point outside the reference area is not within it",
                 georel: GeoRel::Within,
-                subject: &outside,
-                reference: &area,
+                subject: &fixtures.outside,
+                reference: &fixtures.area,
                 expected: false,
             },
             Case {
                 description: "an area containing the reference point contains it",
                 georel: GeoRel::Contains,
-                subject: &area,
-                reference: &inside,
+                subject: &fixtures.area,
+                reference: &fixtures.inside,
                 expected: true,
             },
             Case {
                 description: "an area not covering the reference point does not contain it",
                 georel: GeoRel::Contains,
-                subject: &area,
-                reference: &outside,
+                subject: &fixtures.area,
+                reference: &fixtures.outside,
                 expected: false,
             },
             Case {
                 description: "overlapping areas intersect",
                 georel: GeoRel::Intersects,
-                subject: &area,
-                reference: &same_area,
+                subject: &fixtures.area,
+                reference: &fixtures.same_area,
                 expected: true,
             },
             Case {
                 description: "separated areas do not intersect",
                 georel: GeoRel::Intersects,
-                subject: &area,
-                reference: &far_area,
+                subject: &fixtures.area,
+                reference: &fixtures.far_area,
                 expected: false,
             },
             Case {
                 description: "separated areas are disjoint",
                 georel: GeoRel::Disjoint,
-                subject: &area,
-                reference: &far_area,
+                subject: &fixtures.area,
+                reference: &fixtures.far_area,
                 expected: true,
             },
             Case {
                 description: "overlapping areas are not disjoint",
                 georel: GeoRel::Disjoint,
-                subject: &area,
-                reference: &same_area,
+                subject: &fixtures.area,
+                reference: &fixtures.same_area,
                 expected: false,
             },
             Case {
                 description: "identical areas are equal",
                 georel: GeoRel::Equals,
-                subject: &area,
-                reference: &same_area,
+                subject: &fixtures.area,
+                reference: &fixtures.same_area,
                 expected: true,
             },
             Case {
                 description: "different areas are not equal",
                 georel: GeoRel::Equals,
-                subject: &area,
-                reference: &far_area,
+                subject: &fixtures.area,
+                reference: &fixtures.far_area,
                 expected: false,
             },
             Case {
                 description: "partially overlapping areas overlap",
                 georel: GeoRel::Overlaps,
-                subject: &area,
-                reference: &shifted_area,
+                subject: &fixtures.area,
+                reference: &fixtures.shifted_area,
                 expected: true,
             },
             Case {
                 description: "separated areas do not overlap",
                 georel: GeoRel::Overlaps,
-                subject: &area,
-                reference: &far_area,
+                subject: &fixtures.area,
+                reference: &fixtures.far_area,
                 expected: false,
             },
             Case {
@@ -212,15 +248,15 @@ mod tests {
                 // another intersects it but does not overlap it.
                 description: "an area contained by the reference does not overlap it",
                 georel: GeoRel::Overlaps,
-                subject: &inner_area,
-                reference: &area,
+                subject: &fixtures.inner_area,
+                reference: &fixtures.area,
                 expected: false,
             },
             Case {
                 description: "identical areas do not overlap, they are equal",
                 georel: GeoRel::Overlaps,
-                subject: &area,
-                reference: &same_area,
+                subject: &fixtures.area,
+                reference: &fixtures.same_area,
                 expected: false,
             },
             Case {
@@ -228,8 +264,8 @@ mod tests {
                 // overlap.
                 description: "a point inside an area does not overlap it",
                 georel: GeoRel::Overlaps,
-                subject: &inside,
-                reference: &area,
+                subject: &fixtures.inside,
+                reference: &fixtures.area,
                 expected: false,
             },
             Case {
@@ -239,8 +275,8 @@ mod tests {
                     max_distance: Some(10_000_000.0),
                     min_distance: None,
                 },
-                subject: &inside,
-                reference: &outside,
+                subject: &fixtures.inside,
+                reference: &fixtures.outside,
                 expected: true,
             },
             Case {
@@ -249,8 +285,8 @@ mod tests {
                     max_distance: Some(1_000.0),
                     min_distance: None,
                 },
-                subject: &inside,
-                reference: &outside,
+                subject: &fixtures.inside,
+                reference: &fixtures.outside,
                 expected: false,
             },
             Case {
@@ -259,8 +295,8 @@ mod tests {
                     max_distance: None,
                     min_distance: Some(1_000.0),
                 },
-                subject: &inside,
-                reference: &outside,
+                subject: &fixtures.inside,
+                reference: &fixtures.outside,
                 expected: true,
             },
             Case {
@@ -269,8 +305,8 @@ mod tests {
                     max_distance: None,
                     min_distance: Some(10_000_000.0),
                 },
-                subject: &inside,
-                reference: &outside,
+                subject: &fixtures.inside,
+                reference: &fixtures.outside,
                 expected: false,
             },
             Case {
@@ -279,8 +315,8 @@ mod tests {
                     max_distance: Some(1_000.0),
                     min_distance: Some(100.0),
                 },
-                subject: &inside,
-                reference: &outside,
+                subject: &fixtures.inside,
+                reference: &fixtures.outside,
                 expected: false,
             },
             Case {
@@ -289,22 +325,89 @@ mod tests {
                     max_distance: None,
                     min_distance: None,
                 },
-                subject: &inside,
-                reference: &outside,
+                subject: &fixtures.inside,
+                reference: &fixtures.outside,
                 expected: true,
             },
-        ];
+        ]
+    }
 
-        for case in cases {
-            pretty_assertions::assert_eq!(matches_geo(&case.georel, case.subject, case.reference), case.expected, "{}", case.description);
+    /// The geometries the conformance table is written against.
+    struct Fixtures {
+        /// A point inside `area`.
+        inside: Geometry,
+        /// A point far outside `area`.
+        outside: Geometry,
+        /// The reference area.
+        area: Geometry,
+        /// An area with the same footprint as `area`.
+        same_area: Geometry,
+        /// An area partially covering `area`.
+        shifted_area: Geometry,
+        /// An area wholly inside `area`.
+        inner_area: Geometry,
+        /// An area far from `area`.
+        far_area: Geometry,
+    }
+
+    impl Fixtures {
+        /// The two-dimensional fixtures.
+        fn flat() -> Fixtures {
+            Fixtures {
+                inside: point(0.0, 0.0),
+                outside: point(50.0, 50.0),
+                area: square(0.0, 0.0, 1.0),
+                same_area: square(0.0, 0.0, 1.0),
+                shifted_area: square(1.0, 0.0, 1.0),
+                inner_area: square(0.0, 0.0, 0.25),
+                far_area: square(50.0, 50.0, 1.0),
+            }
+        }
+
+        /// The same footprints, every position lifted to a distinct altitude so
+        /// that no two fixtures share one.
+        fn elevated(flat: &Fixtures) -> Fixtures {
+            Fixtures {
+                inside: lift(&flat.inside, 10.0),
+                outside: lift(&flat.outside, 20.0),
+                area: lift(&flat.area, 30.0),
+                same_area: lift(&flat.same_area, 40.0),
+                shifted_area: lift(&flat.shifted_area, 50.0),
+                inner_area: lift(&flat.inner_area, 60.0),
+                far_area: lift(&flat.far_area, 70.0),
+            }
         }
     }
 
     #[test]
-    fn the_newtype_entry_point_agrees_with_the_geo_one() {
-        let subject = Geometry::from(point(0.0, 0.0));
-        let reference = Geometry::from(square(0.0, 0.0, 1.0));
-        assert!(matches(&GeoRel::Within, &subject, &reference));
-        assert!(matches_geo(&GeoRel::Within, subject.as_ref(), reference.as_ref()));
+    fn every_georel_variant_evaluates_through_one_in_memory_matcher() {
+        let fixtures = Fixtures::flat();
+        for case in conformance_table(&fixtures) {
+            pretty_assertions::assert_eq!(matches(&case.georel, case.subject, case.reference), case.expected, "{}", case.description);
+        }
+    }
+
+    #[test]
+    fn every_georel_verdict_ignores_altitude() {
+        // OGC 06-103r4 evaluates the clause 4.10 predicates on the horizontal
+        // plane, so lifting every fixture to a different altitude — which would
+        // separate them entirely in three dimensions — must change no verdict.
+        let flat = Fixtures::flat();
+        let elevated = Fixtures::elevated(&flat);
+        for case in conformance_table(&elevated) {
+            pretty_assertions::assert_eq!(
+                matches(&case.georel, case.subject, case.reference),
+                case.expected,
+                "{} (elevated)",
+                case.description
+            );
+        }
+    }
+
+    #[test]
+    fn the_projection_of_an_elevated_geometry_matches_its_flat_footprint() {
+        let flat = Fixtures::flat();
+        let elevated = Fixtures::elevated(&flat);
+        pretty_assertions::assert_eq!(elevated.area.planar(), flat.area.planar());
     }
 }

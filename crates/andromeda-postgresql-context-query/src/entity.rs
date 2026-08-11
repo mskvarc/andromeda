@@ -619,6 +619,46 @@ mod tests {
         assert!(built.bind_values.iter().any(|b| matches!(b, BindValue::Bytes(_))));
     }
 
+    /// Clause 4.11 orders on distance over the spheroid, and the `geography`
+    /// cast the ordering expression applies ignores any third ordinate. An
+    /// `orderGeometry` that carries an altitude must therefore render exactly
+    /// the statement a flat one renders; only the bound reference differs,
+    /// because the bind keeps the altitude it was given.
+    #[test]
+    fn a_three_dimensional_ordering_geometry_renders_the_same_distance_sql() {
+        let ordering_term = CompiledOrderTerm {
+            target: OrderTarget::Attribute(iri(LOCATION.as_str())),
+            direction: OrderDirection::DistAsc,
+            collation: None,
+        };
+
+        let mut flat_query = empty_query();
+        flat_query.ordering.geometry = Some(OrderingGeometry::new(point(serde_json::json!([13.3986, 52.5547]))));
+        flat_query.ordering.terms = vec![ordering_term.clone()]; // clone: the elevated query orders the same way
+        let flat = build_query(&flat_query, &ResolvedAttributeNames::default()).expect("flat query builds");
+
+        let mut elevated_query = empty_query();
+        elevated_query.ordering.geometry = Some(OrderingGeometry::new(point(serde_json::json!([13.3986, 52.5547, 34.5]))));
+        elevated_query.ordering.terms = vec![ordering_term];
+        let elevated = build_query(&elevated_query, &ResolvedAttributeNames::default()).expect("elevated query builds");
+
+        assert_eq!(elevated.sql, flat.sql, "distance ordering must not vary with the reference dimensionality");
+        assert!(elevated.sql.contains("ST_Distance"), "{}", elevated.sql);
+        assert!(elevated.sql.contains("::geography"), "{}", elevated.sql);
+
+        let bytes = |built: &BuiltQuery<'_>| -> Vec<Vec<u8>> {
+            built
+                .bind_values
+                .iter()
+                .filter_map(|value| match value {
+                    BindValue::Bytes(bytes) => Some(bytes.to_vec()), // the assertion outlives the borrow of the built query
+                    _non_geometry => None,
+                })
+                .collect()
+        };
+        assert_ne!(bytes(&elevated), bytes(&flat), "the reference must still bind the altitude it was given");
+    }
+
     #[test]
     fn geo_default_location_includes_expiration_guard() {
         let mut q = empty_query();

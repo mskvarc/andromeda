@@ -6,66 +6,57 @@
 //! PostGIS binary encoding is not a specification artefact and lives outside
 //! this crate, in `andromeda-postgresql-encoding`, reached only by the store
 //! and by the statement renderers that bind a reference geometry.
+//!
+//! A geometry is two values of one thing: the wire form it arrived as, kept
+//! verbatim down to the altitude and the arity of every position, and its
+//! projection onto the horizontal plane, which is what clause 4.10 predicates
+//! are evaluated over. The projection is computed once, at construction, so
+//! neither an entity write nor a subscription match pays for it repeatedly.
 
+use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, planar::project};
 use geo::algorithm::BoundingRect;
 use geojson::{Geometry as GeoJsonGeometry, GeometryValue};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
-use strum::{Display, EnumString};
-use thiserror::Error;
-
-/// The `type` member of a GeoJSON geometry object (IETF RFC 7946 section 1.4).
-///
-/// The variant names are the RFC's tokens verbatim, which is also the casing
-/// NGSI-LD carries them in (clause 4.7); no serde renaming applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString)]
-pub enum GeometryType {
-    /// A single position.
-    Point,
-    /// An array of positions.
-    MultiPoint,
-    /// An array of two or more positions.
-    LineString,
-    /// An array of LineString coordinate arrays.
-    MultiLineString,
-    /// An array of linear ring coordinate arrays.
-    Polygon,
-    /// An array of Polygon coordinate arrays.
-    MultiPolygon,
-}
-
-/// Errors produced by [`Geometry`] conversions.
-#[derive(Debug, Error)]
-pub enum GeometryError {
-    /// A syntactically valid GeoJSON geometry that `geo` cannot represent,
-    /// for example a coordinate list of the wrong arity for its type.
-    #[error(transparent)]
-    Geojson(#[from] geojson::Error),
-    /// The raw JSON value was not a GeoJSON geometry object at all.
-    #[error("invalid GeoJSON geometry value: {0}")]
-    GeojsonValue(#[from] serde_json::Error),
-}
 
 /// A geometry attached to an NGSI-LD GeoProperty (clause 5.2.7).
 ///
-/// Two-dimensional and in WGS84 / CRS84, as RFC 7946 mandates for GeoJSON
-/// without an explicit CRS member. Equality is structural over the
-/// coordinates; there is deliberately no `Eq`/`Hash`, because the coordinates
-/// are `f64` and no total order or hash over them would be meaningful.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// In WGS84 / CRS84, as RFC 7946 mandates for GeoJSON without an explicit CRS
+/// member, and up to three-dimensional: the optional third ordinate of RFC 7946
+/// section 3.1.1 is carried through unchanged. Equality is structural over the
+/// form, altitude included, so a change to a height alone is a change to the
+/// geometry. There is deliberately no `Eq`/`Hash`, because the coordinates are
+/// `f64` and no total order or hash over them would be meaningful.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(try_from = "GeoJsonGeometry")]
-pub struct Geometry(geo::Geometry<f64>);
+pub struct Geometry {
+    /// The geometry as received, and as it will be rendered back.
+    form: GeometryForm,
+    /// The horizontal projection, cached for predicate evaluation.
+    planar: geo::Geometry<f64>,
+}
 
 impl Geometry {
+    /// Build from a geometry form, projecting it onto the horizontal plane.
+    ///
+    /// Infallible: every form has a projection, including the degenerate ones
+    /// RFC 7946 permits.
+    pub fn new(form: GeometryForm) -> Geometry {
+        let planar = project(&form);
+        Geometry { form, planar }
+    }
+
     /// Build from a parsed GeoJSON geometry.
     ///
     /// # Errors
     ///
-    /// Returns [`GeometryError::Geojson`] if the geometry cannot be expressed
-    /// as a `geo::Geometry<f64>`.
+    /// Returns [`GeometryError::Position`] if any position of the geometry
+    /// carries fewer than two or more than three ordinates, and
+    /// [`GeometryError::GeometryCollectionUnsupported`] for a GeometryCollection,
+    /// which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes.
     pub fn from_geojson(geometry: &GeoJsonGeometry) -> Result<Geometry, GeometryError> {
-        Ok(Geometry(geometry.try_into()?))
+        Ok(Geometry::new(GeometryForm::from_geojson(&geometry.value)?))
     }
 
     /// Build from an arbitrary JSON value that is expected to encode a GeoJSON
@@ -74,41 +65,56 @@ impl Geometry {
     /// # Errors
     ///
     /// Returns [`GeometryError::GeojsonValue`] if `value` is not a GeoJSON
-    /// geometry object, or [`GeometryError::Geojson`] if it is one that `geo`
-    /// cannot represent.
+    /// geometry object, [`GeometryError::Position`] if one of its positions has
+    /// an ordinate count RFC 7946 gives no meaning to, or
+    /// [`GeometryError::GeometryCollectionUnsupported`] if it is a
+    /// GeometryCollection.
     pub fn from_geojson_value(value: &Value) -> Result<Geometry, GeometryError> {
         // clone: `serde_json::from_value` consumes the value it decodes
         let geometry: GeoJsonGeometry = serde_json::from_value(value.clone())?;
         Geometry::from_geojson(&geometry)
     }
 
+    /// The geometry as received: every position with the altitude and the
+    /// ordinate count it arrived with, every polygon ring exactly as written.
+    pub const fn form(&self) -> &GeometryForm {
+        &self.form
+    }
+
+    /// The horizontal projection the clause 4.10 predicates are evaluated over.
+    pub const fn planar(&self) -> &geo::Geometry<f64> {
+        &self.planar
+    }
+
+    /// Whether every position of this geometry carries an altitude.
+    pub fn dimension(&self) -> GeometryDimension {
+        self.form.dimension()
+    }
+
     /// Render as a GeoJSON geometry for the wire.
     ///
-    /// Infallible: every `geo::Geometry<f64>` has a GeoJSON form.
+    /// Infallible, and byte-faithful to what was received: a position that
+    /// arrived with two ordinates renders with two, one that arrived with three
+    /// renders with three, and an open polygon ring stays open.
     pub fn to_geojson(&self) -> GeoJsonGeometry {
-        GeoJsonGeometry::new(GeometryValue::from(&self.0))
+        GeoJsonGeometry::new(self.form.to_geojson())
     }
 
-    /// Axis-aligned bounding rectangle, or `None` for a geometry with no
-    /// coordinates (an empty collection).
+    /// Axis-aligned bounding rectangle of the horizontal projection, or `None`
+    /// for a geometry with no coordinates, such as a Polygon with no rings.
     pub fn bounding_rect(&self) -> Option<geo::Rect<f64>> {
-        self.0.bounding_rect()
+        self.planar.bounding_rect()
     }
 }
 
-// `derive_more` is deliberately absent from this crate's manifest: two trivial
-// conversions do not earn a proc-macro dependency in a leaf crate.
-impl From<geo::Geometry<f64>> for Geometry {
-    fn from(geometry: geo::Geometry<f64>) -> Geometry {
-        Geometry(geometry)
-    }
-}
-
-// Hand-written for the reason given above `From`: `derive_more::AsRef` would
-// do it, and is not worth a proc-macro dependency here.
-impl AsRef<geo::Geometry<f64>> for Geometry {
-    fn as_ref(&self) -> &geo::Geometry<f64> {
-        &self.0
+// Hand-written because the field to compare is chosen, not all of them:
+// `planar` is a pure projection of `form`, so comparing it as well would be
+// redundant work on the subscription matching path. The sanctioned derive for a
+// skipped field is `educe`, and a proc-macro dependency in this leaf crate is
+// not worth one skipped field.
+impl PartialEq for Geometry {
+    fn eq(&self, other: &Geometry) -> bool {
+        self.form == other.form
     }
 }
 
@@ -135,18 +141,22 @@ impl<V: JsonValue> ToJsonValue<V> for Geometry {
         // a `serde_json::to_value` round trip there is no `Result` to discard
         // inside this signature, which has no way to report a failure. The
         // second hop is `jsonld-expandable-core`'s own `serde_json` backend.
-        ToJsonValue::<V>::to_json_value(&Value::from(&GeometryValue::from(&self.0)))
+        let value: &GeometryValue = &self.form.to_geojson();
+        ToJsonValue::<V>::to_json_value(&Value::from(value))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use geo::{Geometry as GeoGeometry, Point};
-    use geojson::Position;
+    use crate::position::PositionError;
 
     fn point_json() -> Value {
         serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] })
+    }
+
+    fn elevated_point_json() -> Value {
+        serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52, 34.5] })
     }
 
     fn polygon_json() -> Value {
@@ -156,26 +166,67 @@ mod tests {
         })
     }
 
-    #[test]
-    fn a_geojson_point_round_trips_through_the_domain_type() {
-        let geometry = Geometry::from_geojson_value(&point_json()).expect("point parses");
-        let GeometryValue::Point { coordinates } = geometry.to_geojson().value else {
-            unreachable!("expected a Point");
-        };
-        pretty_assertions::assert_eq!(coordinates.as_slice(), [13.38, 52.52]);
+    fn open_elevated_polygon_json() -> Value {
+        serde_json::json!({
+            "type": "Polygon",
+            "coordinates": [[[1.0, 2.0, 10.0], [5.0, 2.0, 10.0], [5.0, 8.0, 10.0], [1.0, 8.0, 10.0]]]
+        })
+    }
+
+    fn collection_json() -> Value {
+        serde_json::json!({
+            "type": "GeometryCollection",
+            "geometries": [
+                { "type": "Point", "coordinates": [100.0, 0.0, 7.0] },
+                { "type": "LineString", "coordinates": [[101.0, 0.0], [102.0, 1.0]] }
+            ]
+        })
     }
 
     #[test]
-    fn a_geojson_polygon_round_trips_through_the_domain_type() {
-        let geometry = Geometry::from_geojson_value(&polygon_json()).expect("polygon parses");
-        let GeometryValue::Polygon { coordinates } = geometry.to_geojson().value else {
-            unreachable!("expected a Polygon");
+    fn a_geometry_collection_is_refused_as_a_geoproperty_geometry() {
+        // ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes GeometryCollection from
+        // the geometries a GeoProperty value may take.
+        let error = Geometry::from_geojson_value(&collection_json()).expect_err("a collection is not an allowed geometry");
+        assert!(matches!(error, GeometryError::GeometryCollectionUnsupported), "got {error:?}");
+    }
+
+    #[test]
+    fn deserialising_a_geometry_collection_fails_through_the_serde_path() {
+        // The rejection reaches serde as well, so no request body carrying a
+        // collection decodes into a `Geometry` anywhere in the broker.
+        let error = serde_json::from_value::<Geometry>(collection_json()).expect_err("serde refuses a collection");
+        assert!(
+            error.to_string().contains("GeometryCollection is not an allowed GeoProperty geometry"),
+            "got {error}"
+        );
+    }
+
+    #[test]
+    fn a_geojson_point_round_trips_through_the_domain_type() {
+        let geometry = Geometry::from_geojson_value(&point_json()).expect("point parses");
+        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), point_json());
+    }
+
+    #[test]
+    fn an_elevated_point_serialises_back_to_the_json_it_arrived_as() {
+        let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
+        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
+        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), elevated_point_json());
+    }
+
+    #[test]
+    fn an_open_elevated_polygon_ring_round_trips_without_a_fabricated_closing_position() {
+        let geometry = Geometry::from_geojson_value(&open_elevated_polygon_json()).expect("open polygon parses");
+        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), open_elevated_polygon_json());
+
+        // The projection closes its own copy, as `geo::Polygon` requires, which
+        // is what leaves the wire form free to stay open.
+        let geo::Geometry::Polygon(projected) = geometry.planar() else {
+            unreachable!("expected a Polygon projection");
         };
-        let ring = coordinates.first().expect("exterior ring");
-        pretty_assertions::assert_eq!(ring.len(), 5);
-        pretty_assertions::assert_eq!(ring.first().map(Position::as_slice), Some(&[1.0, 2.0][..]));
-        pretty_assertions::assert_eq!(ring.last().map(Position::as_slice), Some(&[1.0, 2.0][..]));
-        pretty_assertions::assert_eq!(ring.get(2).map(Position::as_slice), Some(&[5.0, 8.0][..]));
+        pretty_assertions::assert_eq!(projected.exterior().0.len(), 5);
+        pretty_assertions::assert_eq!(projected.exterior().0.first(), projected.exterior().0.last());
     }
 
     #[test]
@@ -185,9 +236,12 @@ mod tests {
     }
 
     #[test]
-    fn a_geometry_with_unrepresentable_coordinates_is_a_typed_error() {
-        let error = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [] })).expect_err("must reject");
-        assert!(matches!(error, GeometryError::GeojsonValue(_)), "got {error:?}");
+    fn a_point_with_four_ordinates_is_a_position_error() {
+        let error = Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0] })).expect_err("must reject");
+        assert!(
+            matches!(error, GeometryError::Position(PositionError::TooManyOrdinates { ordinates: 4 })),
+            "got {error:?}"
+        );
     }
 
     #[test]
@@ -199,14 +253,6 @@ mod tests {
     }
 
     #[test]
-    fn a_geometry_serialises_as_the_geojson_the_spec_requires() {
-        let geometry = Geometry::from_geojson_value(&point_json()).expect("point parses");
-        // RFC 7946 section 3.1, mandated for GeoProperty values by ETSI GS CIM
-        // 009 v1.9.1 clause 4.7.
-        pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), point_json());
-    }
-
-    #[test]
     fn geometry_serde_round_trips_without_loss() {
         let geometry = Geometry::from_geojson_value(&polygon_json()).expect("polygon parses");
         let encoded = serde_json::to_value(&geometry).expect("serialises");
@@ -215,10 +261,16 @@ mod tests {
     }
 
     #[test]
-    fn a_geo_geometry_converts_in_and_out_without_a_named_constructor() {
-        let source = GeoGeometry::Point(Point::new(1.5, 2.5));
-        // clone: the source geometry is compared against the converted one below
-        let geometry = Geometry::from(source.clone());
-        pretty_assertions::assert_eq!(AsRef::<geo::Geometry<f64>>::as_ref(&geometry), &source);
+    fn two_geometries_differing_only_in_altitude_are_not_equal() {
+        let flat = Geometry::from_geojson_value(&point_json()).expect("point parses");
+        let elevated = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
+        assert!(flat != elevated, "an altitude-only difference is a difference");
+    }
+
+    #[test]
+    fn a_geometry_renders_as_the_json_value_the_expanded_model_carries() {
+        let geometry = Geometry::from_geojson_value(&elevated_point_json()).expect("elevated point parses");
+        let rendered: Value = ToJsonValue::<Value>::to_json_value(&geometry);
+        pretty_assertions::assert_eq!(rendered, elevated_point_json());
     }
 }

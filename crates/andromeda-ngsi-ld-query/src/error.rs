@@ -22,7 +22,7 @@
 //! internal errors.
 
 use crate::ordering::collation::IcuCollationError;
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geometry::GeometryError};
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
@@ -187,7 +187,7 @@ pub enum QueryError {
     #[error("geo: coordinates is not valid JSON")]
     GeoCoordinatesInvalid(#[source] serde_json::Error),
     /// The `geometry`/`coordinates` pair did not form a GeoJSON geometry.
-    #[error("geo: invalid reference geometry")]
+    #[error("geo-query reference geometry: {0}")]
     ReferenceGeometry(#[from] GeometryError),
     /// `georel=near` carried neither `maxDistance` nor `minDistance`.
     #[error("geo: near georel requires maxDistance or minDistance")]

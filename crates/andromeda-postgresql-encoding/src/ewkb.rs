@@ -7,13 +7,31 @@
 //! on its binary protocol, so the encode and decode happen here and the store
 //! binds the buffer as `bytea`.
 //!
+//! The dialect is narrow and enforced: little-endian, XY or XYZ, never M, SRID
+//! 4326. Z is carried because RFC 7946 section 3.1.1 makes altitude an optional
+//! third ordinate of every position and PostGIS stores it natively; M has no
+//! meaning in GeoJSON at all, so a buffer carrying one is refused rather than
+//! silently flattened. Which of XY and XYZ a geometry encodes as is decided by
+//! [`GeometryWalk`], per geometry rather than per position, because a WKB type
+//! word describes the whole geometry.
+//!
+//! Polygon rings are closed on the way out, and only on the way out; the
+//! reasoning is in [`crate::ewkb_walk`]. An encode/decode round trip is
+//! therefore the identity on every geometry whose rings arrived closed, as RFC
+//! 7946 section 3.1.6 requires them to, and closes the rings of one whose did
+//! not.
+//!
 //! There are deliberately no `sqlx` impls on [`Ewkb`]. They would forward to
 //! `&[u8]` anyway, and keeping them out means this crate carries no persistence
 //! dependency at all.
 
+use crate::{
+    ewkb_build::{GeometryBuildError, GeometryBuilder},
+    ewkb_walk::GeometryWalk,
+};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use bytes::Bytes;
-use geozero::{CoordDimensions, ToGeo, ToWkb, error::GeozeroError, wkb::Ewkb as GeozeroEwkb};
+use geozero::{GeozeroGeometry, ToWkb, error::GeozeroError, wkb::Ewkb as GeozeroEwkb};
 use thiserror::Error;
 
 /// WGS84 / CRS84, the only spatial reference NGSI-LD geometries use.
@@ -24,8 +42,6 @@ const BYTE_ORDER_LITTLE_ENDIAN: u8 = 0x01;
 
 /// Bit set in the EWKB type word when a SRID follows it.
 const EWKB_SRID_FLAG: u32 = 0x2000_0000;
-/// Bit set in the EWKB type word when Z coordinates are present.
-const EWKB_Z_FLAG: u32 = 0x8000_0000;
 /// Bit set in the EWKB type word when M coordinates are present.
 const EWKB_M_FLAG: u32 = 0x4000_0000;
 
@@ -38,6 +54,9 @@ pub enum EwkbError {
     /// The geozero codec failed to encode or decode the buffer.
     #[error("EWKB codec error: {0}")]
     Codec(#[from] GeozeroError),
+    /// The decoded callbacks did not add up to a geometry.
+    #[error("EWKB buffer does not describe a geometry: {0}")]
+    Build(#[from] GeometryBuildError),
     /// The buffer is too short to be EWKB at all.
     #[error("EWKB buffer is {length} bytes, shorter than the {MIN_EWKB_LEN}-byte minimum")]
     TooShort {
@@ -80,7 +99,7 @@ pub fn encode(geometry: &Geometry) -> Result<Ewkb, EwkbError> {
     Ewkb::try_from(geometry)
 }
 
-/// A geometry in PostGIS EWKB: little-endian, XY, SRID 4326.
+/// A geometry in PostGIS EWKB: little-endian, XY or XYZ, never M, SRID 4326.
 ///
 /// Constructed only by encoding a [`Geometry`] or by validating bytes that came
 /// back from a `geometry` column, so the dialect is an enforced invariant
@@ -112,7 +131,8 @@ impl TryFrom<&Geometry> for Ewkb {
     type Error = EwkbError;
 
     fn try_from(geometry: &Geometry) -> Result<Ewkb, EwkbError> {
-        let bytes = AsRef::<geo::Geometry<f64>>::as_ref(geometry).to_ewkb(CoordDimensions::xy(), Some(SRID_WGS84))?;
+        let walk = GeometryWalk(geometry);
+        let bytes = walk.to_ewkb(walk.dims(), Some(SRID_WGS84))?;
         Ok(Ewkb(Bytes::from(bytes)))
     }
 }
@@ -121,7 +141,9 @@ impl TryFrom<&Ewkb> for Geometry {
     type Error = EwkbError;
 
     fn try_from(ewkb: &Ewkb) -> Result<Geometry, EwkbError> {
-        Ok(Geometry::from(GeozeroEwkb(ewkb.0.as_ref()).to_geo()?))
+        let mut builder = GeometryBuilder::new();
+        GeozeroEwkb(ewkb.0.as_ref()).process_geom(&mut builder)?;
+        Ok(Geometry::new(builder.finish()?))
     }
 }
 
@@ -144,9 +166,8 @@ impl TryFrom<&[u8]> for Ewkb {
         if type_word & EWKB_SRID_FLAG == 0 {
             return Err(EwkbError::MissingSrid);
         }
-        if type_word & EWKB_Z_FLAG != 0 {
-            return Err(EwkbError::UnsupportedDimension { dimension: "Z" });
-        }
+        // Z is accepted and carried; M is not, and a ZM buffer is refused for
+        // the M it carries rather than for the Z it also carries.
         if type_word & EWKB_M_FLAG != 0 {
             return Err(EwkbError::UnsupportedDimension { dimension: "M" });
         }
@@ -171,32 +192,61 @@ impl TryFrom<Bytes> for Ewkb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, form::GeometryForm, position::Position};
+    use serde_json::{Value, json};
+
+    /// Bit set in the EWKB type word when Z coordinates are present.
+    const EWKB_Z_FLAG: u32 = 0x8000_0000;
+
+    fn parse(value: &Value) -> Geometry {
+        Geometry::from_geojson_value(value).expect("valid GeoJSON")
+    }
 
     fn point() -> Geometry {
-        Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] })).expect("point parses")
+        parse(&json!({ "type": "Point", "coordinates": [13.38, 52.52] }))
+    }
+
+    fn elevated_point() -> Geometry {
+        parse(&json!({ "type": "Point", "coordinates": [13.38, 52.52, 34.5] }))
     }
 
     fn polygon() -> Geometry {
-        Geometry::from_geojson_value(&serde_json::json!({
+        parse(&json!({
             "type": "Polygon",
             "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]]
         }))
-        .expect("polygon parses")
     }
 
-    fn geometry_cases() -> Vec<Geometry> {
+    fn type_word(ewkb: &Ewkb) -> u32 {
+        let bytes = ewkb.as_bytes();
+        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]])
+    }
+
+    fn two_dimensional_cases() -> Vec<Geometry> {
         [
-            serde_json::json!({ "type": "Point", "coordinates": [13.38, 52.52] }),
-            serde_json::json!({ "type": "LineString", "coordinates": [[1.0, 2.0], [3.0, 4.0]] }),
-            serde_json::json!({ "type": "Polygon", "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]] }),
-            serde_json::json!({ "type": "MultiPoint", "coordinates": [[1.0, 2.0], [3.0, 4.0]] }),
-            serde_json::json!({ "type": "MultiLineString", "coordinates": [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]] }),
-            serde_json::json!({ "type": "MultiPolygon", "coordinates": [[[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]]] }),
-            serde_json::json!({ "type": "GeometryCollection", "geometries": [{ "type": "Point", "coordinates": [1.0, 2.0] }, { "type": "LineString", "coordinates": [[3.0, 4.0], [5.0, 6.0]] }] }),
-            serde_json::json!({ "type": "GeometryCollection", "geometries": [{ "type": "GeometryCollection", "geometries": [{ "type": "Point", "coordinates": [1.0, 2.0] }] }] }),
+            json!({ "type": "Point", "coordinates": [13.38, 52.52] }),
+            json!({ "type": "LineString", "coordinates": [[1.0, 2.0], [3.0, 4.0]] }),
+            json!({ "type": "Polygon", "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]] }),
+            json!({ "type": "MultiPoint", "coordinates": [[1.0, 2.0], [3.0, 4.0]] }),
+            json!({ "type": "MultiLineString", "coordinates": [[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]] }),
+            json!({ "type": "MultiPolygon", "coordinates": [[[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0], [1.0, 8.0], [1.0, 2.0]]]] }),
         ]
-        .into_iter()
-        .map(|value| Geometry::from_geojson_value(&value).expect("valid two-dimensional GeoJSON"))
+        .iter()
+        .map(parse)
+        .collect()
+    }
+
+    fn three_dimensional_cases() -> Vec<Geometry> {
+        [
+            json!({ "type": "Point", "coordinates": [13.38, 52.52, 34.5] }),
+            json!({ "type": "LineString", "coordinates": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]] }),
+            json!({ "type": "Polygon", "coordinates": [[[1.0, 2.0, 9.0], [5.0, 2.0, 9.0], [5.0, 8.0, 9.0], [1.0, 8.0, 9.0], [1.0, 2.0, 9.0]]] }),
+            json!({ "type": "MultiPoint", "coordinates": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]] }),
+            json!({ "type": "MultiLineString", "coordinates": [[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]]] }),
+            json!({ "type": "MultiPolygon", "coordinates": [[[[1.0, 2.0, 9.0], [5.0, 2.0, 9.0], [5.0, 8.0, 9.0], [1.0, 8.0, 9.0], [1.0, 2.0, 9.0]]]] }),
+        ]
+        .iter()
+        .map(parse)
         .collect()
     }
 
@@ -205,8 +255,7 @@ mod tests {
         let ewkb = Ewkb::try_from(&point()).expect("encodes");
         let bytes = ewkb.as_bytes();
         pretty_assertions::assert_eq!(bytes[0], BYTE_ORDER_LITTLE_ENDIAN);
-        let type_word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-        assert!(type_word & EWKB_SRID_FLAG != 0, "SRID flag must be set in {type_word:#010x}");
+        assert!(type_word(&ewkb) & EWKB_SRID_FLAG != 0, "SRID flag must be set in {:#010x}", type_word(&ewkb));
         pretty_assertions::assert_eq!(i32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]), SRID_WGS84);
     }
 
@@ -226,16 +275,114 @@ mod tests {
 
     #[test]
     fn every_supported_two_dimensional_geometry_round_trips_through_ewkb() {
-        for original in geometry_cases() {
+        for original in two_dimensional_cases() {
             let ewkb = Ewkb::try_from(&original).expect("encodes");
+            pretty_assertions::assert_eq!(type_word(&ewkb) & EWKB_Z_FLAG, 0, "a planar geometry sets no Z flag");
             pretty_assertions::assert_eq!(Geometry::try_from(&ewkb).expect("decodes"), original);
         }
+    }
+
+    #[test]
+    fn every_supported_three_dimensional_geometry_round_trips_through_ewkb() {
+        for original in three_dimensional_cases() {
+            pretty_assertions::assert_eq!(original.dimension(), GeometryDimension::ThreeD);
+            let ewkb = Ewkb::try_from(&original).expect("encodes");
+            let decoded = Geometry::try_from(&ewkb).expect("decodes");
+            pretty_assertions::assert_eq!(decoded, original);
+            pretty_assertions::assert_eq!(decoded.dimension(), GeometryDimension::ThreeD);
+        }
+    }
+
+    #[test]
+    fn a_geometry_collection_buffer_is_refused_rather_than_decoded() {
+        // ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes the GeometryCollection
+        // from GeoProperty geometries, so a column holding one is a row no write
+        // of this broker produced. A hand-built EWKB buffer stands in for it,
+        // because the encoder can no longer produce one: SRID-flagged type word
+        // 7, SRID 4326, one member Point at (1, 2).
+        let mut bytes = vec![BYTE_ORDER_LITTLE_ENDIAN];
+        bytes.extend_from_slice(&(7_u32 | EWKB_SRID_FLAG).to_le_bytes());
+        bytes.extend_from_slice(&SRID_WGS84.to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.push(BYTE_ORDER_LITTLE_ENDIAN);
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&1.0_f64.to_le_bytes());
+        bytes.extend_from_slice(&2.0_f64.to_le_bytes());
+        let bytes = bytes;
+
+        let ewkb = Ewkb::try_from(bytes.as_slice()).expect("the dialect header is canonical");
+        let error = Geometry::try_from(&ewkb).expect_err("a collection is not a geometry the broker stores");
+        assert!(
+            error
+                .to_string()
+                .contains("GeometryCollection, which ETSI GS CIM 009 v1.9.1 clause 4.7.1 excludes"),
+            "got {error}"
+        );
+    }
+
+    #[test]
+    fn a_three_dimensional_point_encodes_with_the_z_and_srid_flags_set() {
+        let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
+        let word = type_word(&ewkb);
+        assert!(word & EWKB_Z_FLAG != 0, "the Z flag must be set in {word:#010x}");
+        assert!(word & EWKB_SRID_FLAG != 0, "the SRID flag must be set in {word:#010x}");
+        assert!(word & EWKB_M_FLAG == 0, "no M flag may be set in {word:#010x}");
+    }
+
+    #[test]
+    fn a_three_dimensional_point_decodes_back_to_the_altitude_it_carried() {
+        let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
+        let decoded = Geometry::try_from(&ewkb).expect("decodes");
+        pretty_assertions::assert_eq!(decoded.form(), &GeometryForm::Point(Position::new(13.38, 52.52, Some(34.5))));
+    }
+
+    #[test]
+    fn a_two_dimensional_buffer_decodes_to_positions_without_an_altitude() {
+        let ewkb = Ewkb::try_from(&point()).expect("encodes");
+        let decoded = Geometry::try_from(&ewkb).expect("decodes");
+        pretty_assertions::assert_eq!(decoded.form(), &GeometryForm::Point(Position::new(13.38, 52.52, None)));
+        pretty_assertions::assert_eq!(decoded.dimension(), GeometryDimension::TwoD);
+    }
+
+    #[test]
+    fn a_geometry_of_mixed_position_arity_encodes_as_two_dimensional() {
+        let original = parse(&json!({ "type": "LineString", "coordinates": [[1.0, 2.0, 3.0], [4.0, 5.0]] }));
+        let ewkb = Ewkb::try_from(&original).expect("encodes");
+        pretty_assertions::assert_eq!(type_word(&ewkb) & EWKB_Z_FLAG, 0, "a partly elevated geometry sets no Z flag");
+        let decoded = Geometry::try_from(&ewkb).expect("decodes");
+        pretty_assertions::assert_eq!(
+            decoded.form(),
+            &GeometryForm::LineString(vec![Position::new(1.0, 2.0, None), Position::new(4.0, 5.0, None)])
+        );
+    }
+
+    #[test]
+    fn an_open_polygon_ring_is_closed_on_the_wire_without_touching_the_stored_form() {
+        let original = parse(&json!({ "type": "Polygon", "coordinates": [[[1.0, 2.0], [5.0, 2.0], [5.0, 8.0]]] }));
+        let ewkb = Ewkb::try_from(&original).expect("encodes");
+        let decoded = Geometry::try_from(&ewkb).expect("decodes");
+        let GeometryForm::Polygon(rings) = decoded.form() else {
+            unreachable!("a Polygon was encoded");
+        };
+        pretty_assertions::assert_eq!(rings.rings()[0].len(), 4, "the ring is closed on the wire");
+        pretty_assertions::assert_eq!(rings.rings()[0].first(), rings.rings()[0].last());
+
+        let GeometryForm::Polygon(stored) = original.form() else {
+            unreachable!("a Polygon was parsed");
+        };
+        pretty_assertions::assert_eq!(stored.rings()[0].len(), 3, "the stored form keeps the open ring");
     }
 
     #[test]
     fn encoded_bytes_pass_the_validating_constructor() {
         let ewkb = Ewkb::try_from(&point()).expect("encodes");
         pretty_assertions::assert_eq!(Ewkb::try_from(ewkb.as_bytes()).expect("revalidates"), ewkb);
+    }
+
+    #[test]
+    fn a_three_dimensional_buffer_passes_the_validating_constructor() {
+        let ewkb = Ewkb::try_from(&elevated_point()).expect("encodes");
+        pretty_assertions::assert_eq!(Ewkb::try_from(ewkb.as_bytes()).expect("Z is part of the dialect"), ewkb);
     }
 
     #[test]
@@ -255,8 +402,8 @@ mod tests {
     #[test]
     fn plain_wkb_without_a_srid_is_rejected() {
         let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
-        let type_word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) & !EWKB_SRID_FLAG;
-        bytes[1..5].copy_from_slice(&type_word.to_le_bytes());
+        let word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) & !EWKB_SRID_FLAG;
+        bytes[1..5].copy_from_slice(&word.to_le_bytes());
         let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
         assert!(matches!(error, EwkbError::MissingSrid), "got {error:?}");
     }
@@ -270,15 +417,15 @@ mod tests {
     }
 
     #[test]
-    fn z_and_m_ewkb_are_rejected_before_geozero_decoding() {
-        for (flag, dimension) in [(EWKB_Z_FLAG, "Z"), (EWKB_M_FLAG, "M"), (EWKB_Z_FLAG | EWKB_M_FLAG, "Z")] {
+    fn m_and_zm_ewkb_are_rejected_before_geozero_decoding() {
+        for flag in [EWKB_M_FLAG, EWKB_Z_FLAG | EWKB_M_FLAG] {
             let mut bytes = Ewkb::try_from(&point()).expect("encodes").to_vec();
-            let type_word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) | flag;
-            bytes[1..5].copy_from_slice(&type_word.to_le_bytes());
+            let word = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) | flag;
+            bytes[1..5].copy_from_slice(&word.to_le_bytes());
             let error = Ewkb::try_from(bytes.as_slice()).expect_err("must reject");
             assert!(
-                matches!(error, EwkbError::UnsupportedDimension { dimension: actual } if actual == dimension),
-                "got {error:?}"
+                matches!(error, EwkbError::UnsupportedDimension { dimension: "M" }),
+                "got {error:?} for flag {flag:#010x}"
             );
         }
     }

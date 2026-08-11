@@ -170,12 +170,14 @@ fn geojson_from_instance(instance: &Value) -> Option<Value> {
         return Some(value.clone());
     }
     // Simplified/keyValues: the instance is the GeoJSON geometry directly.
-    if instance.get("type").and_then(Value::as_str).is_some_and(|kind| {
-        matches!(
-            kind,
-            "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon" | "GeometryCollection"
-        )
-    }) {
+    // GeometryCollection is absent by design: ETSI GS CIM 009 v1.9.1 clause
+    // 4.7.1 excludes it from GeoProperty geometries, so no stored GeoProperty
+    // can be one.
+    if instance
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| matches!(kind, "Point" | "MultiPoint" | "LineString" | "MultiLineString" | "Polygon" | "MultiPolygon"))
+    {
         return Some(instance.clone());
     }
     None

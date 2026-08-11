@@ -17,13 +17,28 @@
 //! and GeoProperty is a broker decision about which entities are worth
 //! comparing; what a comparison means is the part that belongs to geometry, and
 //! that is [`relation::matches`].
+//!
+//! Coordinates are up to three-dimensional, because RFC 7946 section 3.1.1
+//! makes altitude an optional third ordinate of every position and NGSI-LD
+//! inherits it. The model that carries them — [`position::Position`],
+//! [`form::GeometryForm`] — is this crate's own, and `geo` is used as the
+//! planar computation engine underneath it: no maintained Rust crate offers
+//! geographic predicates over three-dimensional coordinates, and none is
+//! needed, because clause 4.10 evaluates its predicates on the horizontal
+//! plane regardless. [`planar`] holds that projection and the reasoning.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod dimension;
 pub mod distance;
+pub mod form;
 pub mod geo_rel;
+pub mod geojson;
 pub mod geometry;
+pub mod geometry_type;
+pub mod planar;
+pub mod position;
 pub mod relation;
 
 #[cfg(test)]

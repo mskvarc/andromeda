@@ -57,7 +57,7 @@ impl EntityQueryService {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         };
         let geoproperty_iri = &geo_query.geoproperty_iri;
-        let reference: &geo::Geometry<f64> = geo_query.geometry.as_ref();
+        let reference = &geo_query.geometry;
 
         let mut any_warm = false;
         let mut union: HashSet<Urn> = HashSet::new();

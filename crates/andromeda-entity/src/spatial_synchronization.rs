@@ -120,5 +120,16 @@ fn geometry(object: &serde_json::Map<String, Value>, iri: &str) -> Option<Geomet
         Value::Object(_) => encoded.clone(), // clone: geometry parsing consumes a value borrowed from the event payload.
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => return None,
     };
-    Geometry::from_geojson_value(&value).ok()
+    // Lenient by design: this reads a payload the write path already validated
+    // against clause 5.5.4, so a geometry that will not decode is a broker-side
+    // surprise to be recorded and skipped, not a request to refuse. Skipping it
+    // leaves the entity out of the spatial prefilter, which costs a store
+    // round trip and never a wrong answer.
+    match Geometry::from_geojson_value(&value) {
+        Ok(geometry) => Some(geometry),
+        Err(error) => {
+            debug!(geoproperty = iri, %error, "Spatial synchronization skipped an undecodable stored geometry");
+            None
+        }
+    }
 }

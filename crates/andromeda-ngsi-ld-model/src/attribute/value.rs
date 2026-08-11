@@ -1,7 +1,7 @@
 //! The NGSI-LD value family (ETSI GS CIM 009 clause 4.6.3).
 
 use crate::attribute::expansion::serde_json_value_to_json_value;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::{
     date_time::{NgsiLdDate, NgsiLdTime},
     rfc3339::whole_seconds,
@@ -63,7 +63,7 @@ impl Serialize for NgsiLdValue {
 impl<'de> Deserialize<'de> for NgsiLdValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<NgsiLdValue, D::Error> {
         let value = Value::deserialize(deserializer)?;
-        if let Some(geometry) = try_geometry(&value) {
+        if let Some(geometry) = try_geometry(&value).map_err(serde::de::Error::custom)? {
             return Ok(NgsiLdValue::Geometry(geometry));
         }
         if let Some(string) = value.as_str() {
@@ -99,23 +99,82 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
 
 /// Decode a JSON value that carries both `type` and `coordinates` as a geometry.
 ///
-/// Anything else is left to the caller so it can fall through to the plain-JSON
-/// variant rather than failing outright.
-fn try_geometry(value: &Value) -> Option<Geometry> {
-    let object = value.as_object()?;
-    object.get("type").zip(object.get("coordinates"))?;
-    Geometry::from_geojson_value(value).ok()
+/// `Ok(None)` says the value is not GeoJSON-shaped at all, which leaves the
+/// caller free to fall through to the plain-JSON variant. A value that *is*
+/// GeoJSON-shaped and still fails to decode is an error rather than a
+/// fall-through: silently demoting, say, a Point whose position carries four
+/// ordinates to an ordinary Property would store an unusable geometry under a
+/// GeoProperty and hide a clause 5.5.4 `BadRequestData` from the client.
+///
+/// # Errors
+///
+/// Returns [`GeometryError::Position`] when a position carries an ordinate
+/// count IETF RFC 7946 section 3.1.1 gives no meaning to, and
+/// [`GeometryError::GeojsonValue`] when the `type`/`coordinates` pair is not a
+/// GeoJSON geometry object.
+fn try_geometry(value: &Value) -> Result<Option<Geometry>, GeometryError> {
+    let Some(object) = value.as_object() else {
+        return Ok(None);
+    };
+    if object.get("type").zip(object.get("coordinates")).is_none() {
+        return Ok(None);
+    }
+    Geometry::from_geojson_value(value).map(Some)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute::value::NgsiLdValue;
+    use crate::attribute::value::{NgsiLdValue, try_geometry};
+    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, position::PositionError};
     use chrono::{TimeZone, Utc};
+    use serde_json::json;
 
     #[test]
     fn ngsi_ld_value_serializes_typed_variants() {
-        let value = NgsiLdValue::DateTime(Utc.with_ymd_and_hms(2026, 4, 12, 12, 0, 0).unwrap());
+        let value = NgsiLdValue::DateTime(Utc.with_ymd_and_hms(2026, 4, 12, 12, 0, 0).single().expect("a valid instant"));
         let json = serde_json::to_value(&value).expect("serialize");
-        pretty_assertions::assert_eq!(json, serde_json::json!("2026-04-12T12:00:00Z"));
+        pretty_assertions::assert_eq!(json, json!("2026-04-12T12:00:00Z"));
+    }
+
+    #[test]
+    fn a_two_dimensional_geojson_object_decodes_as_a_geometry() {
+        let geometry = try_geometry(&json!({"type": "Point", "coordinates": [13.38, 52.52]}))
+            .expect("a well-formed Point decodes")
+            .expect("a GeoJSON-shaped value yields a geometry");
+        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::TwoD);
+    }
+
+    #[test]
+    fn a_three_dimensional_geojson_object_decodes_with_its_altitude() {
+        // Clause 4.7 adopts IETF RFC 7946 whole, altitude included.
+        let geometry = try_geometry(&json!({"type": "Point", "coordinates": [13.38, 52.52, 34.5]}))
+            .expect("an elevated Point decodes")
+            .expect("a GeoJSON-shaped value yields a geometry");
+        pretty_assertions::assert_eq!(geometry.dimension(), GeometryDimension::ThreeD);
+    }
+
+    #[test]
+    fn a_geojson_object_whose_position_carries_four_ordinates_is_an_error() {
+        // Refusing here is what stops a clause 5.5.4 BadRequestData from being
+        // silently demoted to an ordinary Property carrying raw JSON.
+        let error = try_geometry(&json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]})).expect_err("four ordinates have no meaning");
+        assert!(
+            matches!(error, GeometryError::Position(PositionError::TooManyOrdinates { ordinates: 4 })),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_value_that_is_not_geojson_shaped_is_left_to_the_plain_json_variant() {
+        pretty_assertions::assert_eq!(try_geometry(&json!({"type": "Point"})).expect("no coordinates member").is_none(), true);
+        pretty_assertions::assert_eq!(try_geometry(&json!("a string")).expect("not an object").is_none(), true);
+        pretty_assertions::assert_eq!(try_geometry(&json!({"speed": 42})).expect("an ordinary object").is_none(), true);
+    }
+
+    #[test]
+    fn deserializing_a_four_ordinate_geometry_fails_rather_than_demoting_to_json() {
+        let error = serde_json::from_value::<NgsiLdValue>(json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}))
+            .expect_err("the value family must refuse an unusable geometry");
+        assert!(error.to_string().contains("4 ordinates"), "got {error}");
     }
 }

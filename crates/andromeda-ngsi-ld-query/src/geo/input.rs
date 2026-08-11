@@ -1,6 +1,10 @@
 //! Decoded NGSI-LD geo-query input before JSON-LD context expansion.
 
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+use andromeda_ngsi_ld_geometry::{
+    geo_rel::{GeoRel, GeoRelParseError},
+    geojson::GeometryError,
+    geometry::Geometry,
+};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use serde::{
     Deserialize,
@@ -105,11 +109,16 @@ impl Serialize for GeoQueryInput {
 pub enum GeoQueryInputError {
     /// The relation is not defined by clause 4.10.
     #[error("invalid georel: {0}")]
-    GeoRel(andromeda_ngsi_ld_geometry::geo_rel::GeoRelParseError),
+    GeoRel(GeoRelParseError),
     /// The URL coordinate member was not JSON.
     #[error("invalid geo-query coordinates: {0}")]
     Coordinates(serde_json::Error),
     /// The reference geometry is invalid.
-    #[error("invalid geo-query geometry: {0}")]
-    Geometry(andromeda_ngsi_ld_geometry::geometry::GeometryError),
+    ///
+    /// Carries the geometry diagnostic verbatim so that a position with an
+    /// ordinate count RFC 7946 section 3.1.1 gives no meaning to reaches the
+    /// client as a `BadRequestData` detail naming that count, rather than as a
+    /// bare "invalid geometry".
+    #[error("geo-query reference geometry: {0}")]
+    Geometry(GeometryError),
 }

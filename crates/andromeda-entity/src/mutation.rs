@@ -3,7 +3,13 @@
 //!
 //! Attribute-level mutations live in `attrs.rs`; batch forms live in `batch/`.
 
-use crate::{EntityService, attribute_envelope::validate_attribute_envelopes, error::EntityError, expanded_member::extract_attribute_keys};
+use crate::{
+    EntityService,
+    attribute_envelope::validate_attribute_envelopes,
+    error::EntityError,
+    expanded_member::extract_attribute_keys,
+    geo_property_geometry::validate_geo_property_geometries,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -53,6 +59,7 @@ impl EntityService {
         normalize_entity_attributes(&mut entity_json);
         let expanded = self.engine.expand(entity_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
+        validate_geo_property_geometries(&expanded)?;
 
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
@@ -101,6 +108,7 @@ impl EntityService {
         normalize_merge_fragment(&mut patch_json);
         let patch_expanded = Arc::new(self.engine.expand(patch_json, context).await?);
         validate_attribute_envelopes(&patch_expanded)?;
+        validate_geo_property_geometries(&patch_expanded)?;
 
         let MergedEntity {
             merged,
@@ -206,6 +214,7 @@ impl EntityService {
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
+        validate_geo_property_geometries(&expanded)?;
 
         let payload = Arc::new(expanded);
         let changed_attrs = extract_attribute_keys(&payload);

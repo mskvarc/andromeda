@@ -265,9 +265,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{entity::entry::SpatialEntry, key::SpatialKey, partitioned_rtree::PartitionedRTree};
-    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use geo::Point;
     use iri_rs::{IriBuf, iri};
     use urn_rs::Urn;
 
@@ -276,7 +275,7 @@ mod tests {
     }
 
     fn entry(id: &str, x: f64, y: f64) -> SpatialEntry {
-        let geometry = Geometry::from(geo::Geometry::Point(Point::new(x, y)));
+        let geometry = Geometry::new(GeometryForm::Point(Position::new(x, y, None)));
         SpatialEntry::new(urn(id), geometry).expect("a point has a bounding rectangle")
     }
 

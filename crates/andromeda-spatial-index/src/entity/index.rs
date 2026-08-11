@@ -1,8 +1,7 @@
 //! The entity half of the spatial index: which entities a `georel` matches.
 
 use crate::{entity::entry::SpatialEntry, key::SpatialKey, partitioned_rtree::PartitionedRTree};
-use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
-use geo::algorithm::BoundingRect;
+use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
 use rstar::{AABB, RTree};
 use std::collections::HashSet;
 use urn_rs::Urn;
@@ -37,7 +36,7 @@ impl SpatialEntityIndex {
     /// `None` means the partition is cold, which is not the same answer as an
     /// empty set: the caller falls through to the store rather than reporting
     /// that nothing matched.
-    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &geo::Geometry<f64>) -> Option<HashSet<Urn>> {
+    pub fn query(&self, key: &SpatialKey, georel: &GeoRel, reference: &Geometry) -> Option<HashSet<Urn>> {
         self.tree.read_partition(key, |tree| evaluate(tree, georel, reference))
     }
 
@@ -87,7 +86,7 @@ const fn candidates_for(georel: &GeoRel) -> Candidates {
 
 /// Run the exact clause 4.10 predicate over whichever candidates the relation
 /// admits.
-fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &geo::Geometry<f64>) -> HashSet<Urn> {
+fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Urn> {
     let candidates: Vec<&SpatialEntry> = match candidates_for(georel) {
         Candidates::WholePartition => tree.iter().collect(),
         Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(&geometry_envelope(reference)).collect(),
@@ -95,7 +94,7 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &geo::Geomet
 
     candidates
         .into_iter()
-        .filter(|entry| matches_geo(georel, entry.geometry.as_ref(), reference))
+        .filter(|entry| matches(georel, &entry.geometry, reference))
         // clone: the returned set owns its identifiers, which outlive the tree borrow
         .map(|entry| entry.entity_id.clone())
         .collect()
@@ -104,7 +103,7 @@ fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &geo::Geomet
 /// The envelope of a reference geometry, or one covering the plane when it has
 /// none — which turns the prefilter into a full scan rather than into an empty
 /// answer.
-fn geometry_envelope(geometry: &geo::Geometry<f64>) -> AABB<[f64; 2]> {
+fn geometry_envelope(geometry: &Geometry) -> AABB<[f64; 2]> {
     match geometry.bounding_rect() {
         Some(rect) => AABB::from_corners([rect.min().x, rect.min().y], [rect.max().x, rect.max().y]),
         None => AABB::from_corners([f64::NEG_INFINITY, f64::NEG_INFINITY], [f64::INFINITY, f64::INFINITY]),
@@ -117,9 +116,13 @@ mod tests {
         entity::{entry::SpatialEntry, index::SpatialEntityIndex},
         key::SpatialKey,
     };
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_geometry::{
+        form::{GeometryForm, PolygonRings},
+        geo_rel::GeoRel,
+        geometry::Geometry,
+        position::Position,
+    };
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use geo::{Coord, LineString, Point, Polygon};
     use iri_rs::{IriBuf, iri};
     use std::collections::HashSet;
     use urn_rs::Urn;
@@ -136,41 +139,32 @@ mod tests {
         raw.parse().expect("a well-formed URN")
     }
 
-    fn point(x: f64, y: f64) -> geo::Geometry<f64> {
-        geo::Geometry::Point(Point::new(x, y))
+    fn point(x: f64, y: f64) -> Geometry {
+        Geometry::new(GeometryForm::Point(Position::new(x, y, None)))
     }
 
-    fn square(cx: f64, cy: f64, half: f64) -> geo::Geometry<f64> {
-        let coords = vec![
-            Coord { x: cx - half, y: cy - half },
-            Coord { x: cx + half, y: cy - half },
-            Coord { x: cx + half, y: cy + half },
-            Coord { x: cx - half, y: cy + half },
-            Coord { x: cx - half, y: cy - half },
-        ];
-        geo::Geometry::Polygon(Polygon::new(LineString::from(coords), Vec::new()))
-    }
-
-    fn geometry_point(x: f64, y: f64) -> Geometry {
-        Geometry::from(point(x, y))
-    }
-
-    fn geometry_square(cx: f64, cy: f64, half: f64) -> Geometry {
-        Geometry::from(square(cx, cy, half))
+    fn square(cx: f64, cy: f64, half: f64) -> Geometry {
+        Geometry::new(GeometryForm::Polygon(PolygonRings::new(vec![vec![
+            Position::new(cx - half, cy - half, None),
+            Position::new(cx + half, cy - half, None),
+            Position::new(cx + half, cy + half, None),
+            Position::new(cx - half, cy + half, None),
+            Position::new(cx - half, cy - half, None),
+        ]])))
     }
 
     #[test]
     fn an_entity_inside_the_reference_matches_within() {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        index.insert(key(), id.clone(), geometry_point(0.0, 0.0));
+        index.insert(key(), id.clone(), point(0.0, 0.0));
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Within, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
     }
 
     #[test]
     fn an_entity_overlapping_the_reference_does_not_match_disjoint() {
         let index = SpatialEntityIndex::new();
-        index.insert(key(), urn("urn:ngsi-ld:Vehicle:A"), geometry_square(0.0, 0.0, 2.0));
+        index.insert(key(), urn("urn:ngsi-ld:Vehicle:A"), square(0.0, 0.0, 2.0));
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Disjoint, &square(0.0, 0.0, 1.0)), Some(HashSet::new()));
     }
 
@@ -179,7 +173,7 @@ mod tests {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
         // 2 km east at the equator is ~0.01797 degrees of longitude.
-        index.insert(key(), id.clone(), geometry_point(0.01797, 0.0));
+        index.insert(key(), id.clone(), point(0.01797, 0.0));
 
         let tight = GeoRel::Near {
             max_distance: Some(1_000.0),
@@ -199,9 +193,9 @@ mod tests {
         let index = SpatialEntityIndex::new();
         let inside = urn("urn:ngsi-ld:Vehicle:500m");
         // ~0.001 degrees is ~111 m at the equator.
-        index.insert(key(), urn("urn:ngsi-ld:Vehicle:100m"), geometry_point(0.0009, 0.0));
-        index.insert(key(), inside.clone(), geometry_point(0.0045, 0.0));
-        index.insert(key(), urn("urn:ngsi-ld:Vehicle:2000m"), geometry_point(0.018, 0.0));
+        index.insert(key(), urn("urn:ngsi-ld:Vehicle:100m"), point(0.0009, 0.0));
+        index.insert(key(), inside.clone(), point(0.0045, 0.0));
+        index.insert(key(), urn("urn:ngsi-ld:Vehicle:2000m"), point(0.018, 0.0));
 
         let georel = GeoRel::Near {
             max_distance: Some(1_000.0),
@@ -214,7 +208,7 @@ mod tests {
     fn a_removed_entity_stops_matching() {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        index.insert(key(), id.clone(), geometry_point(0.0, 0.0));
+        index.insert(key(), id.clone(), point(0.0, 0.0));
         index.remove(&id);
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Intersects, &square(-10.0, -10.0, 20.0)), Some(HashSet::new()));
     }
@@ -232,7 +226,7 @@ mod tests {
         let mut entries = Vec::new();
         for step in 0..50 {
             let id = urn(&format!("urn:ngsi-ld:V:{step}"));
-            let geometry = geometry_point(f64::from(step) * 0.001, 0.0);
+            let geometry = point(f64::from(step) * 0.001, 0.0);
             inserted.insert(key(), id.clone(), geometry.clone());
             if let Some(entry) = SpatialEntry::new(id, geometry) {
                 entries.push(entry);
@@ -255,7 +249,7 @@ mod tests {
         let index = SpatialEntityIndex::new();
         let snapshot = index.current_generation();
         let id = urn("urn:ngsi-ld:Vehicle:new");
-        index.insert(key(), id.clone(), geometry_point(0.0, 0.0));
+        index.insert(key(), id.clone(), point(0.0, 0.0));
 
         index.bulk_load(key(), Vec::new(), snapshot);
 
@@ -270,10 +264,10 @@ mod tests {
         // When no newer write intervenes, the bulk-load applies normally: the
         // snapshot is at or ahead of the partition's generation.
         let index = SpatialEntityIndex::new();
-        index.insert(key(), urn("urn:ngsi-ld:Vehicle:old"), geometry_point(0.0, 0.0));
+        index.insert(key(), urn("urn:ngsi-ld:Vehicle:old"), point(0.0, 0.0));
         let snapshot = index.current_generation();
         let fresh = urn("urn:ngsi-ld:Vehicle:fresh");
-        let entry = SpatialEntry::new(fresh.clone(), geometry_point(5.0, 5.0)).expect("an entry");
+        let entry = SpatialEntry::new(fresh.clone(), point(5.0, 5.0)).expect("an entry");
 
         index.bulk_load(key(), vec![entry], snapshot);
 
@@ -291,10 +285,10 @@ mod tests {
         // later removal cannot find it.
         let index = SpatialEntityIndex::new();
         let gone = urn("urn:ngsi-ld:Vehicle:gone");
-        index.insert(key(), gone.clone(), geometry_point(0.0, 0.0));
+        index.insert(key(), gone.clone(), point(0.0, 0.0));
         let snapshot = index.current_generation();
         let kept = urn("urn:ngsi-ld:Vehicle:kept");
-        let entry = SpatialEntry::new(kept.clone(), geometry_point(5.0, 5.0)).expect("an entry");
+        let entry = SpatialEntry::new(kept.clone(), point(5.0, 5.0)).expect("an entry");
 
         index.bulk_load(key(), vec![entry], snapshot);
 
@@ -311,7 +305,7 @@ mod tests {
     fn a_polygon_entity_contains_a_point_reference() {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Building:Hall");
-        index.insert(key(), id.clone(), geometry_square(0.0, 0.0, 1.0));
+        index.insert(key(), id.clone(), square(0.0, 0.0, 1.0));
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Contains, &point(0.5, 0.5)), Some(HashSet::from([id])));
     }
 
@@ -319,7 +313,7 @@ mod tests {
     fn equals_holds_only_for_the_same_geometry() {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Region:A");
-        index.insert(key(), id.clone(), geometry_square(0.0, 0.0, 1.0));
+        index.insert(key(), id.clone(), square(0.0, 0.0, 1.0));
 
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 1.0)), Some(HashSet::from([id])));
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Equals, &square(0.0, 0.0, 2.0)), Some(HashSet::new()));
@@ -329,7 +323,7 @@ mod tests {
     fn overlaps_matches_a_partial_intersection() {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Region:A");
-        index.insert(key(), id.clone(), geometry_square(0.0, 0.0, 1.0));
+        index.insert(key(), id.clone(), square(0.0, 0.0, 1.0));
         pretty_assertions::assert_eq!(index.query(&key(), &GeoRel::Overlaps, &square(0.5, 0.5, 1.0)), Some(HashSet::from([id])));
     }
 
@@ -337,8 +331,8 @@ mod tests {
     fn inserting_an_entity_twice_leaves_only_its_latest_geometry() {
         let index = SpatialEntityIndex::new();
         let id = urn("urn:ngsi-ld:Vehicle:A");
-        index.insert(key(), id.clone(), geometry_point(0.0, 0.0));
-        index.insert(key(), id.clone(), geometry_point(10.0, 10.0));
+        index.insert(key(), id.clone(), point(0.0, 0.0));
+        index.insert(key(), id.clone(), point(10.0, 10.0));
 
         assert!(index.query(&key(), &GeoRel::Intersects, &square(0.0, 0.0, 0.5)).unwrap_or_default().is_empty());
         pretty_assertions::assert_eq!(

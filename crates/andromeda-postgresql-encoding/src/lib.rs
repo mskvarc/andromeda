@@ -17,6 +17,8 @@
 pub mod copy;
 pub mod ewkb;
 pub mod ewkb_binding;
+pub mod ewkb_build;
+pub mod ewkb_walk;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

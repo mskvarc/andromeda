@@ -434,7 +434,7 @@ impl NotificationProcessor {
                     continue;
                 };
                 let key = SpatialKey::new(tenant.clone(), type_iri, geoproperty_iri.clone());
-                let candidates = spatial.candidates(&key, entity_geometry.as_ref());
+                let candidates = spatial.candidates(&key, entity_geometry);
                 if candidates.iter().any(|candidate| candidate == &sub.id) {
                     matched_any = true;
                     break;
@@ -446,7 +446,7 @@ impl NotificationProcessor {
             // dropped (clause 4.10 still applies to it).
             if !matched_any {
                 let key = SpatialKey::any_type(tenant.clone(), geoproperty_iri.clone());
-                if spatial.candidates(&key, entity_geometry.as_ref()).iter().any(|candidate| candidate == &sub.id) {
+                if spatial.candidates(&key, entity_geometry).iter().any(|candidate| candidate == &sub.id) {
                     matched_any = true;
                 }
             }

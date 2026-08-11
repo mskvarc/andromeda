@@ -27,7 +27,7 @@ mod tests {
         storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
     };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
-    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches_geo};
+    use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::{
         expanded::{
@@ -63,8 +63,7 @@ mod tests {
     fn reference_matches(selection: &EntitySelection, entity: &Value) -> bool {
         let q_holds = selection.q_expr.as_ref().is_none_or(|expr| eval::evaluate(expr, entity));
         let geo_holds = selection.geo.as_ref().is_none_or(|geo| {
-            extract_geo_property_geometry(entity, geo.geoproperty_iri.as_str())
-                .is_some_and(|subject| matches_geo(&geo.georel, subject.as_ref(), geo.geometry.as_ref()))
+            extract_geo_property_geometry(entity, geo.geoproperty_iri.as_str()).is_some_and(|subject| matches(&geo.georel, &subject, &geo.geometry))
         });
         let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(&extract_scopes(entity)));
         // Clause 5.2.11 union of selectors: an unconstrained union admits every

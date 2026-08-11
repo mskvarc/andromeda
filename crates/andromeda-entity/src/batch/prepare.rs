@@ -12,6 +12,7 @@ use crate::{
     batch::execution::{BatchExecution, decide_batch_execution},
     error::EntityError,
     expanded_member::extract_attribute_keys,
+    geo_property_geometry::validate_geo_property_geometries,
     port::blocking_executor::BlockingTask,
 };
 use andromeda_jsonld::{
@@ -167,7 +168,10 @@ impl EntityService {
     }
 
     fn build_prepared_entity(id: Uri, expanded: Value) -> PreparedSlot {
+        // Both checks attribute their failure to this one entity, so clause
+        // 5.6.7's multi-status answer reports it without failing its siblings.
         validate_attribute_envelopes(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
+        validate_geo_property_geometries(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
         let changed_attributes = extract_attribute_keys(&expanded);
         let types = extract_types(&expanded);
         let scopes = extract_scopes(&expanded);

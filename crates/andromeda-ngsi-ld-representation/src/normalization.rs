@@ -166,6 +166,12 @@ fn distinguishing_member_type(instance: &Map<String, Value>) -> Option<Attribute
 /// Kept as a local token set rather than pulling in the geometry crate: this
 /// crate is a low-layer leaf, and inference needs only to recognise the shape,
 /// not decode it.
+///
+/// `GeometryCollection` is listed even though ETSI GS CIM 009 v1.9.1 clause
+/// 4.7.1 excludes it from GeoProperty geometries. Recognising it is what routes
+/// a concise collection value to the GeoProperty write-side validator, which
+/// refuses it as `BadRequestData`; dropping it here would instead let a
+/// collection pass silently as an ordinary Property value.
 const GEOJSON_GEOMETRY_TYPES: &[&str] = &[
     "Point",
     "MultiPoint",

@@ -236,9 +236,9 @@ fn quote_col_ref(col_ref: &str) -> String {
 mod tests {
     use super::*;
     use crate::schema::Entities;
-    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geometry::Geometry};
     use iri_rs::IriBuf;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{PostgresQueryBuilder, Query, Value, Values};
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
@@ -262,8 +262,41 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
+    /// The same query with the reference point carrying an altitude.
+    fn point_query_3d(georel: GeoRel, geoproperty_iri: &str) -> GeoQuery {
+        GeoQuery {
+            georel,
+            geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0, 3.0] }))
+                .expect("point with altitude parses"),
+            geoproperty_iri: iri(geoproperty_iri),
+        }
+    }
+
     fn entity_source() -> GeometrySource<'static> {
         GeometrySource::EntityPayload { payload_column: "payload" }
+    }
+
+    /// Render with the reference geometry left as a placeholder, so two
+    /// statements can be compared on their shape rather than on the bytes they
+    /// bind.
+    fn render_parameterised(condition: Condition) -> (String, Values) {
+        Query::select()
+            .column(Entities::Id)
+            .from(Entities::Table)
+            .cond_where(condition)
+            .build(PostgresQueryBuilder)
+    }
+
+    /// The byte buffers a statement binds, in order.
+    fn bound_bytes(values: &Values) -> Vec<Vec<u8>> {
+        values
+            .0
+            .iter()
+            .filter_map(|value| match value {
+                Value::Bytes(Some(bytes)) => Some(bytes.as_ref().clone()), // clone: the assertion outlives the borrow of the statement
+                _non_geometry => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -398,6 +431,65 @@ mod tests {
                 .replace("\"location_geo\"", "\"e\".\"location_geo\"")
                 .replace("\"payload\"", "\"e\".\"payload\""),
             temporal_sql
+        );
+    }
+
+    // -- a third ordinate does not reach the predicate (clause 4.10) ----------
+
+    /// Clause 4.10 defines every `georel` on the horizontal plane, so a
+    /// reference geometry that carries an altitude must render the same
+    /// statement as the same geometry without one: `ST_Within` and friends and
+    /// the `geography` casts behind `near` all ignore Z. Only the bound bytes
+    /// may differ.
+    #[test]
+    fn a_three_dimensional_reference_renders_the_same_sql_as_a_two_dimensional_one() {
+        let relations = [
+            GeoRel::Within,
+            GeoRel::Contains,
+            GeoRel::Intersects,
+            GeoRel::Disjoint,
+            GeoRel::Equals,
+            GeoRel::Overlaps,
+            GeoRel::Near {
+                max_distance: Some(500.0),
+                min_distance: Some(10.0),
+            },
+        ];
+        for georel in relations {
+            for source in [entity_source(), GeometrySource::Column { name: "location" }] {
+                let flat = point_query(georel.clone(), LOCATION); // clone: the relation is reused for the elevated query
+                let elevated = point_query_3d(georel.clone(), LOCATION); // clone: and again on the next source
+                let (flat_sql, flat_values) = render_parameterised(condition(&flat, source, NullGeometryPolicy::Exclude).expect("flat renders"));
+                let (elevated_sql, elevated_values) =
+                    render_parameterised(condition(&elevated, source, NullGeometryPolicy::Exclude).expect("elevated renders"));
+
+                assert_eq!(
+                    elevated_sql, flat_sql,
+                    "{georel:?} on {source:?} must not vary with the reference dimensionality"
+                );
+                assert_ne!(
+                    bound_bytes(&elevated_values),
+                    bound_bytes(&flat_values),
+                    "{georel:?} on {source:?} must still bind the altitude it was given"
+                );
+            }
+        }
+    }
+
+    /// The altitude survives as far as the bind: what the statement sends is
+    /// XYZ EWKB, even though the predicate around it is the two-dimensional
+    /// one clause 4.10 mandates.
+    #[test]
+    fn a_three_dimensional_reference_binds_as_three_dimensional_ewkb() {
+        let geo = point_query_3d(GeoRel::Within, LOCATION);
+        let ewkb = encode(&geo.geometry).expect("elevated point encodes");
+        let decoded = Geometry::try_from(&ewkb).expect("the bound bytes decode");
+        assert_eq!(decoded.dimension(), GeometryDimension::ThreeD);
+
+        let (_, values) = render_parameterised(condition(&geo, entity_source(), NullGeometryPolicy::Exclude).expect("renders"));
+        assert!(
+            bound_bytes(&values).contains(&ewkb.to_vec()),
+            "the statement binds exactly the encoded reference"
         );
     }
 }

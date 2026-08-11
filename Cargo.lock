@@ -1165,7 +1165,6 @@ dependencies = [
  "andromeda-ngsi-ld-geometry",
  "bytes",
  "chrono",
- "geo",
  "geozero",
  "pretty_assertions",
  "serde_json",
@@ -2922,7 +2921,6 @@ version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db5eda63aa99ac06160fd53328ed75c34f14e3196d3f56a3649e247ed796e54b"
 dependencies = [
- "geo-types",
  "log",
  "scroll",
  "serde_json",

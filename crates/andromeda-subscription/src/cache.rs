@@ -211,7 +211,7 @@ impl SubscriptionCache {
         let geoproperty_iri = geo_q.geoproperty_iri.clone();
 
         // clone: the entry owns its identifier, geometry and relation, all borrowed here
-        let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.geometry.as_ref().clone(), geo_q.georel.clone()) else {
+        let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.geometry.clone(), geo_q.georel.clone()) else {
             debug!("Subscription {} spatial index skipped: geometry has no bounding rect", compiled.id);
             return;
         };

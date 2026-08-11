@@ -28,6 +28,8 @@ pub mod error;
 pub mod expanded_member;
 /// Applying entity-level and attribute-instance expiry policy.
 pub mod expiry;
+
+pub mod geo_property_geometry;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).

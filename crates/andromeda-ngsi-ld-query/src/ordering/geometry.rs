@@ -1,6 +1,6 @@
 //! The reference geometry a distance ordering measures from (clause 4.23, clause 5.2.43).
 
-use andromeda_ngsi_ld_geometry::geometry::{Geometry, GeometryType};
+use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_type::GeometryType};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
@@ -49,8 +49,11 @@ const fn default_geometry_type() -> GeometryType {
 #[derive(Debug, Error)]
 pub enum OrderingGeometryError {
     /// The geometry type and coordinates do not form a valid RFC 7946 geometry.
-    #[error("invalid ordering geometry: {0}")]
-    Geometry(#[from] andromeda_ngsi_ld_geometry::geometry::GeometryError),
+    ///
+    /// The geometry diagnostic is carried verbatim, so an `orderFrom` position
+    /// with an unusable ordinate count reaches the client naming that count.
+    #[error("orderFrom reference geometry: {0}")]
+    Geometry(#[from] GeometryError),
 }
 
 impl OrderingGeometry {
@@ -74,7 +77,7 @@ impl<'de> Deserialize<'de> for OrderingGeometry {
         });
         Geometry::from_geojson_value(&value)
             .map(OrderingGeometry::new)
-            .map_err(serde::de::Error::custom)
+            .map_err(|error| serde::de::Error::custom(OrderingGeometryError::Geometry(error)))
     }
 }
 
