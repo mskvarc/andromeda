@@ -2,7 +2,11 @@
 
 use andromeda_ngsi_ld_query::ordering::term::OrderTarget;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, q_predicate::attribute_names::ResolvedAttributeNames};
+use andromeda_postgresql_query::{
+    attribute_instance_correlation::{CorrelatedEntityRow, geometry_instances_of, instance_geometry_column},
+    attribute_name_id::AttributeNameId,
+    q_predicate::attribute_names::ResolvedAttributeNames,
+};
 
 /// SQL expression measuring an entity's distance to the reference geometry a
 /// distance ordering sorts by (clause 4.23).
@@ -18,29 +22,30 @@ use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, q_predicate
 /// which is the reading that agrees with clause 4.10 counting an entity as
 /// matching when any one instance does.
 ///
+/// `outer` names the `entities` row the ordering sorts, because both renderings
+/// are read against it: the dedicated column belongs to that row, and the
+/// instance subquery correlates back to its identifier.
+///
 /// Clause 4.23's `id` and `type` keywords carry no geometry at all, and neither
 /// does a GeoProperty the broker has never recorded, so a distance ordering on
 /// either measures from nothing and yields NULL, which sorts every row equally
 /// and leaves the `id` tiebreaker to decide.
-pub fn geo_order_distance(target: &OrderTarget, attribute_names: &ResolvedAttributeNames) -> String {
-    let subject = order_subject(target, attribute_names);
-    match subject {
+pub fn geo_order_distance(target: &OrderTarget, attribute_names: &ResolvedAttributeNames, outer: CorrelatedEntityRow<'_>) -> String {
+    match order_subject(target, attribute_names) {
         OrderSubject::None => "ST_Distance(NULL::geography, ST_MakeValid(ST_GeomFromEWKB($1))::geography)".to_string(),
-        OrderSubject::LocationColumn => "ST_Distance(\"location_geo\", ST_MakeValid(ST_GeomFromEWKB($1))::geography)".to_string(),
-        // The dictionary key is a broker-minted SMALLINT rather than request
-        // text, so interpolating it cannot carry an injection.
+        OrderSubject::LocationColumn => format!("ST_Distance({}, ST_MakeValid(ST_GeomFromEWKB($1))::geography)", outer.column("location_geo")),
         OrderSubject::Instances(attribute_id) => format!(
-            "(SELECT MIN(ST_Distance(\"{ORDER_ALIAS}\".\"value_geo\"::geography, ST_MakeValid(ST_GeomFromEWKB($1))::geography)) \
-             FROM \"attribute_current\" AS \"{ORDER_ALIAS}\" \
-             WHERE \"{ORDER_ALIAS}\".\"entity_id\" = \"id\" \
-               AND \"{ORDER_ALIAS}\".\"attribute_name_id\" = {} \
-               AND \"{ORDER_ALIAS}\".\"value_geo\" IS NOT NULL)",
-            attribute_id.get()
+            "(SELECT MIN(ST_Distance({}::geography, ST_MakeValid(ST_GeomFromEWKB($1))::geography)) {})",
+            instance_geometry_column(ORDER_ALIAS),
+            geometry_instances_of(outer, ORDER_ALIAS, attribute_id),
         ),
     }
 }
 
 /// Alias the correlated ordering subquery reads `attribute_current` under.
+///
+/// Deliberately not the alias the geo predicate uses: a query that both filters
+/// and orders on GeoProperties nests the two subqueries in one statement.
 const ORDER_ALIAS: &str = "geo_order";
 
 /// Where a distance ordering reads the entity's geometry from.
@@ -55,13 +60,13 @@ enum OrderSubject {
 
 /// Classify an ordering term by where its geometry is stored.
 fn order_subject(target: &OrderTarget, attribute_names: &ResolvedAttributeNames) -> OrderSubject {
-    let OrderTarget::Attribute(geoproperty_iri) = target else {
+    let OrderTarget::Attribute(geoproperty) = target else {
         return OrderSubject::None;
     };
-    if geoproperty_iri.as_str() == LOCATION.as_str() {
+    if geoproperty.as_str() == LOCATION.as_str() {
         return OrderSubject::LocationColumn;
     }
-    match attribute_names.get(geoproperty_iri.as_str()) {
+    match attribute_names.get(geoproperty) {
         Some(attribute_id) => OrderSubject::Instances(attribute_id),
         None => OrderSubject::None,
     }
@@ -70,28 +75,38 @@ fn order_subject(target: &OrderTarget, attribute_names: &ResolvedAttributeNames)
 #[cfg(test)]
 mod tests {
     use crate::order_geography::geo_order_distance;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::ordering::term::OrderTarget;
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, q_predicate::attribute_names::ResolvedAttributeNames};
-    use iri_rs::IriBuf;
+    use andromeda_postgresql_query::{
+        attribute_instance_correlation::CorrelatedEntityRow,
+        attribute_name_id::AttributeNameId,
+        q_predicate::attribute_names::ResolvedAttributeNames,
+    };
 
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";
     const CUSTOM_GEOPROPERTY_ID: i16 = 42;
 
-    fn attribute(iri: &str) -> OrderTarget {
-        OrderTarget::Attribute(IriBuf::new(iri.to_string()).expect("valid IRI"))
+    fn name(value: &str) -> AttributeName {
+        value.parse().expect("valid attribute name")
+    }
+
+    fn attribute(value: &str) -> OrderTarget {
+        OrderTarget::Attribute(name(value))
     }
 
     fn resolved_custom() -> ResolvedAttributeNames {
-        ResolvedAttributeNames::from_pairs([(
-            CUSTOM_GEOPROPERTY.parse().expect("valid attribute name"),
-            AttributeNameId::from(CUSTOM_GEOPROPERTY_ID),
-        )])
+        ResolvedAttributeNames::from_pairs([(name(CUSTOM_GEOPROPERTY), AttributeNameId::from(CUSTOM_GEOPROPERTY_ID))])
+    }
+
+    /// The entity statement selects from `entities` unaliased.
+    fn outer() -> CorrelatedEntityRow<'static> {
+        CorrelatedEntityRow::unaliased()
     }
 
     #[test]
     fn the_default_geoproperty_measures_from_its_dedicated_geography_column() {
-        let sql = geo_order_distance(&attribute(LOCATION.as_str()), &ResolvedAttributeNames::default());
+        let sql = geo_order_distance(&attribute(LOCATION.as_str()), &ResolvedAttributeNames::default(), outer());
         assert!(sql.contains("ST_Distance(\"location_geo\""), "{sql}");
         assert!(!sql.contains("attribute_current"), "the default GeoProperty needs no instance lookup: {sql}");
     }
@@ -101,7 +116,7 @@ mod tests {
     /// instance rows and takes the smallest distance among them.
     #[test]
     fn a_custom_geoproperty_measures_from_its_nearest_attribute_instance() {
-        let sql = geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom());
+        let sql = geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom(), outer());
         assert!(sql.contains("FROM \"attribute_current\""), "{sql}");
         assert!(sql.contains("MIN(ST_Distance("), "the nearest instance decides: {sql}");
         assert!(sql.contains(&format!("\"attribute_name_id\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
@@ -109,14 +124,28 @@ mod tests {
         assert!(!sql.contains("ST_GeomFromGeoJSON"), "the geometry is stored decoded: {sql}");
     }
 
+    /// The correlation binds the outer relation it was handed rather than
+    /// whichever `id` column the enclosing statement happens to expose.
+    #[test]
+    fn the_ordering_subquery_correlates_through_the_outer_row_it_is_given() {
+        let sql = geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom(), CorrelatedEntityRow::aliased("e"));
+        assert!(sql.contains("\"geo_order\".\"entity_id\" = \"e\".\"id\""), "{sql}");
+        let default_sql = geo_order_distance(
+            &attribute(LOCATION.as_str()),
+            &ResolvedAttributeNames::default(),
+            CorrelatedEntityRow::aliased("e"),
+        );
+        assert!(default_sql.contains("ST_Distance(\"e\".\"location_geo\""), "{default_sql}");
+    }
+
     /// Every branch leaves exactly one placeholder for the reference geometry
     /// the caller binds, so no branch can bind the wrong number of values.
     #[test]
     fn every_branch_carries_exactly_one_reference_placeholder() {
         let cases = [
-            geo_order_distance(&attribute(LOCATION.as_str()), &ResolvedAttributeNames::default()),
-            geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom()),
-            geo_order_distance(&OrderTarget::Id, &ResolvedAttributeNames::default()),
+            geo_order_distance(&attribute(LOCATION.as_str()), &ResolvedAttributeNames::default(), outer()),
+            geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom(), outer()),
+            geo_order_distance(&OrderTarget::Id, &ResolvedAttributeNames::default(), outer()),
         ];
         for sql in cases {
             pretty_assertions::assert_eq!(sql.matches("$1").count(), 1, "{sql}");
@@ -127,7 +156,7 @@ mod tests {
     /// it measures from nothing rather than failing.
     #[test]
     fn an_unknown_geoproperty_carries_no_geometry() {
-        let sql = geo_order_distance(&attribute("https://example.com/neverRecorded"), &ResolvedAttributeNames::default());
+        let sql = geo_order_distance(&attribute("https://example.com/neverRecorded"), &ResolvedAttributeNames::default(), outer());
         assert!(sql.contains("NULL::geography"), "{sql}");
     }
 
@@ -135,11 +164,8 @@ mod tests {
     /// and no apostrophe in one can terminate a literal.
     #[test]
     fn no_geoproperty_iri_reaches_the_statement_text() {
-        let names = ResolvedAttributeNames::from_pairs([(
-            "https://example.com/o'brien".parse().expect("valid attribute name"),
-            AttributeNameId::from(9_i16),
-        )]);
-        let sql = geo_order_distance(&attribute("https://example.com/o'brien"), &names);
+        let names = ResolvedAttributeNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameId::from(9_i16))]);
+        let sql = geo_order_distance(&attribute("https://example.com/o'brien"), &names, outer());
         assert!(!sql.contains("brien"), "{sql}");
         pretty_assertions::assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
     }
@@ -149,7 +175,7 @@ mod tests {
     #[test]
     fn a_keyword_order_target_carries_no_geometry() {
         for target in [OrderTarget::Id, OrderTarget::Type, OrderTarget::Scope] {
-            let sql = geo_order_distance(&target, &ResolvedAttributeNames::default());
+            let sql = geo_order_distance(&target, &ResolvedAttributeNames::default(), outer());
             assert!(sql.contains("NULL::geography"), "{target:?}: {sql}");
         }
     }

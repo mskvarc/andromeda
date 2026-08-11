@@ -170,3 +170,52 @@ async fn subscription_notification_keyvalues_format_keeps_altitude() {
     receiver.shutdown().await;
     environment.finish().await.expect("cleanup failed");
 }
+
+/// NGSI-LD 4.10 read with 5.8.6: a subscription `geoQ` is evaluated with the
+/// same multi-instance rule a query is, so a GeoProperty whose only matching
+/// geometry sits on a `datasetId`-tagged instance still notifies.
+///
+/// The default instance is placed far from the reference, so a matcher reading
+/// only the default one would silently deliver nothing — the exact way a query
+/// and its equivalent subscription could disagree.
+#[serial_test::serial]
+#[tokio::test]
+async fn subscription_geoq_matches_a_non_default_dataset_instance() {
+    let environment = SerializedEnvironment::from_environment_reset().await.expect("serialized test environment");
+    let client = environment.client();
+    let receiver = NotificationReceiver::start().await;
+
+    let subscription_id = "urn:ngsi-ld:Subscription:spatial3d-multi-dataset";
+    let geo_q = json!({
+        "georel": "near;maxDistance==100",
+        "geometry": "Point",
+        "coordinates": [13.4, 52.52, 0.0],
+        "geoproperty": "observationPoint"
+    });
+    create_subscription(client, &geo_subscription(subscription_id, &receiver.endpoint_url(), geo_q, None)).await;
+    receiver.clear_notifications().await;
+
+    let entity_id = "urn:ngsi-ld:Building:spatial3d-multi-dataset";
+    let entity = json!({
+        "id": entity_id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+        "observationPoint": [
+            {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+            {
+                "type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [13.4, 52.52, 800.0]},
+                "datasetId": "urn:ngsi-ld:Dataset:sensor-a"
+            }
+        ],
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create_entity(client, &entity).await;
+
+    let notification = receiver.wait_for_subscription_notification(subscription_id, NOTIFICATION_TIMEOUT).await;
+    assert_eq!(notification.body["subscriptionId"], json!(subscription_id));
+    assert_eq!(first_notified_entity(&notification.body)["id"], json!(entity_id));
+
+    receiver.shutdown().await;
+    environment.finish().await.expect("cleanup failed");
+}

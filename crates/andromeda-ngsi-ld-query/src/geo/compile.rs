@@ -2,6 +2,7 @@
 
 use crate::{
     error::QueryError,
+    filter::path::expanded_attribute_name,
     geo::{input::GeoQueryInput, query::GeoQuery},
     term_expander::TermExpander,
 };
@@ -22,7 +23,7 @@ pub async fn compile_geo_query(input: Option<&GeoQueryInput>, expander: &impl Te
     Ok(Some(GeoQuery {
         georel: input.georel.clone(),
         geometry: input.geometry.clone(),
-        geoproperty_iri: expander.expand_term(geoproperty).await?,
+        geoproperty: expanded_attribute_name(&expander.expand_term(geoproperty).await?)?,
     }))
 }
 
@@ -50,7 +51,7 @@ mod tests {
             .await
             .expect("expansion succeeds")
             .expect("geo query present");
-        assert_eq!(compiled.geoproperty_iri.as_str(), "https://example.com/location");
+        assert_eq!(compiled.geoproperty.as_str(), "https://example.com/location");
     }
 
     #[test]

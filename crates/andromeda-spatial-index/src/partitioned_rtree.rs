@@ -131,26 +131,38 @@ where
         self.clock.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    /// Insert or overwrite the entry for one object under one partition.
+    /// Replace one object's entries under one partition.
     ///
-    /// Only this partition's copy is replaced, not every partition the object
-    /// appears in: an object indexed under several keys keeps its other
+    /// An object may occupy a partition several times — ETSI GS CIM 009 v1.9.1
+    /// clause 4.5.16.1 lets a GeoProperty carry one instance per `datasetId`,
+    /// and clause 4.10 counts an entity as matching when any one of them meets
+    /// the restriction, so every instance has to be reachable. Passing all of
+    /// them at once is what makes the replacement atomic with respect to the
+    /// back-index: a caller looping over a single-entry insert would have each
+    /// call drop the entries the previous one added.
+    ///
+    /// Only this partition's entries are replaced, not every partition the
+    /// object appears in: an object indexed under several keys keeps its other
     /// entries, which is the invariant R2-13 restored.
-    pub fn insert(&self, key: SpatialKey, entry: E) {
-        let id = entry.id().clone(); // clone: the placement record owns the identifier
+    pub fn insert_all(&self, key: SpatialKey, id: <E as Indexed>::Id, entries: Vec<E>) {
         self.remove_from_key(&id, &key);
+        if entries.is_empty() {
+            return;
+        }
 
         let generation = self.next_generation();
         {
             let bucket = self.buckets.entry(key.clone()).or_default(); // clone: bucket key and placement key are separate
             let mut partition = bucket.value().write();
-            partition.tree.insert(entry.clone()); // clone: the tree and the placement each own a copy
+            for entry in &entries {
+                partition.tree.insert(entry.clone()); // clone: the tree and the placement each own a copy
+            }
             partition.generation = generation;
         }
 
         let mut placements = self.placements.entry(id).or_default();
-        if !placements.iter().any(|placement| placement.key == key) {
-            placements.value_mut().push(Placement { key, entry });
+        for entry in entries {
+            placements.value_mut().push(Placement { key: key.clone(), entry }); // clone: one key per placement
         }
     }
 
@@ -264,7 +276,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{entity::entry::SpatialEntry, key::SpatialKey, partitioned_rtree::PartitionedRTree};
+    use crate::{
+        entity::entry::SpatialEntry,
+        key::SpatialKey,
+        partitioned_rtree::{Indexed, PartitionedRTree},
+    };
     use andromeda_ngsi_ld_geometry::{form::GeometryForm, geometry::Geometry, position::Position};
     use andromeda_tenancy::tenant_ref::TenantRef;
     use iri_rs::{IriBuf, iri};
@@ -283,7 +299,7 @@ mod tests {
         SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::from(iri!("https://example.org/A")),
-            IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location")),
+            "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         )
     }
 
@@ -291,7 +307,7 @@ mod tests {
         SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::from(iri!("https://example.org/B")),
-            IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location")),
+            "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         )
     }
 
@@ -304,8 +320,16 @@ mod tests {
         // The R2-13 invariant, now enforced once: a per-key insert replaces only
         // the partition it targets, so a two-key object survives under both.
         let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new();
-        index.insert(key_a(), entry("urn:ngsi-ld:X:1", 0.0, 0.0));
-        index.insert(key_b(), entry("urn:ngsi-ld:X:1", 1.0, 1.0));
+        index.insert_all(
+            key_a(),
+            entry("urn:ngsi-ld:X:1", 0.0, 0.0).id().clone(),
+            vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)],
+        );
+        index.insert_all(
+            key_b(),
+            entry("urn:ngsi-ld:X:1", 1.0, 1.0).id().clone(),
+            vec![entry("urn:ngsi-ld:X:1", 1.0, 1.0)],
+        );
         pretty_assertions::assert_eq!(count(&index, &key_a()), 1);
         pretty_assertions::assert_eq!(count(&index, &key_b()), 1);
     }
@@ -314,8 +338,16 @@ mod tests {
     fn removing_one_object_from_a_partition_leaves_the_rest() {
         // Direct removal touches only the removed entry, not the whole partition.
         let index: PartitionedRTree<SpatialEntry> = PartitionedRTree::new();
-        index.insert(key_a(), entry("urn:ngsi-ld:X:1", 0.0, 0.0));
-        index.insert(key_a(), entry("urn:ngsi-ld:X:2", 5.0, 5.0));
+        index.insert_all(
+            key_a(),
+            entry("urn:ngsi-ld:X:1", 0.0, 0.0).id().clone(),
+            vec![entry("urn:ngsi-ld:X:1", 0.0, 0.0)],
+        );
+        index.insert_all(
+            key_a(),
+            entry("urn:ngsi-ld:X:2", 5.0, 5.0).id().clone(),
+            vec![entry("urn:ngsi-ld:X:2", 5.0, 5.0)],
+        );
         index.remove(&urn("urn:ngsi-ld:X:1"));
         pretty_assertions::assert_eq!(count(&index, &key_a()), 1);
     }

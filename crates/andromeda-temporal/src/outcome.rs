@@ -147,7 +147,7 @@ mod tests {
                     min_distance: None,
                 },
                 geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid point"),
-                geoproperty_iri: LOCATION.parse().expect("valid location IRI"),
+                geoproperty: LOCATION.parse().expect("valid location attribute name"),
             }))
             .scope_q(Some(ScopeQuery::parse("/A/#").expect("valid scope query")))
             .build()

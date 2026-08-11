@@ -8,7 +8,7 @@ use andromeda_postgresql_query::{
     built::BuiltQuery,
     error::RenderError,
     geo_predicate as geo_sql,
-    geo_predicate::{GeometrySource, NullGeometryPolicy},
+    geo_predicate::GeometrySource,
     q_predicate::attribute_names::ResolvedAttributeNames,
 };
 use sea_query::{Condition, Expr as SeaExpr, Iden, Order, PostgresQueryBuilder, Query};
@@ -208,8 +208,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     if let Some(geo) = &query.geo {
         condition = condition.add(geo_sql::condition(
             geo,
-            GeometrySource::Column { name: "location" },
-            NullGeometryPolicy::Match,
+            GeometrySource::Registration { column: "location" },
             &ResolvedAttributeNames::default(),
         )?);
     }
@@ -374,7 +373,7 @@ mod tests {
         q.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://uri.etsi.org/ngsi-ld/location"),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let built = build_csr_query(&q).unwrap();
         // Clause 5.10.2: a registration with no location still matches.
@@ -477,7 +476,7 @@ mod tests {
         q.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: Geometry::from_geojson_value(&ring).expect("polygon parses"),
-            geoproperty_iri: iri("https://uri.etsi.org/ngsi-ld/location"),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("ST_Within"), "{}", built.sql);

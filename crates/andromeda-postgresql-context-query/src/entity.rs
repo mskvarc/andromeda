@@ -16,11 +16,12 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_vocabulary::expanded::properties::VALUE;
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
+    attribute_instance_correlation::CorrelatedEntityRow,
     bind::sea_values_to_bind_values,
     built::BuiltQuery,
     error::RenderError,
     geo_predicate as geo_sql,
-    geo_predicate::{GeometrySource, NullGeometryPolicy},
+    geo_predicate::GeometrySource,
     jsonb::{attribute_value_jsonpath, escape_jsonpath, jsonb_key_exists},
     operator::regex_match,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
@@ -29,6 +30,12 @@ use andromeda_postgresql_query::{
     type_predicate::{TypesColumn, condition as type_condition},
 };
 use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, Func, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+
+/// The `entities` row an entity statement filters and orders.
+///
+/// The entity path selects from `entities` without an alias, so every
+/// correlated subquery this module renders binds back to the bare table.
+const ENTITY_ROW: CorrelatedEntityRow<'static> = CorrelatedEntityRow::unaliased();
 
 /// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
 ///
@@ -149,12 +156,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     }
 
     if let Some(geo) = &query.selection.geo {
-        condition = condition.add(geo_sql::condition(
-            geo,
-            GeometrySource::Entity { alias: None },
-            NullGeometryPolicy::Exclude,
-            attribute_names,
-        )?);
+        condition = condition.add(geo_sql::condition(geo, GeometrySource::Entity { row: ENTITY_ROW }, attribute_names)?);
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
@@ -198,8 +200,8 @@ fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> S
         OrderTarget::Id => format!("\"id\"{collate}"),
         OrderTarget::Type => format!("\"types\"{collate}"),
         OrderTarget::Scope => "\"scope_paths\"".to_owned(),
-        OrderTarget::Attribute(iri) => {
-            let json_path = attribute_value_jsonpath(iri.as_str(), &[], &[], VALUE.as_str());
+        OrderTarget::Attribute(name) => {
+            let json_path = attribute_value_jsonpath(name.as_str(), &[], &[], VALUE.as_str());
             format!("jsonb_path_query_first(\"payload\", '{}'){collate}", escape_jsonpath(&json_path))
         }
     }
@@ -233,7 +235,10 @@ fn add_order_clause(
                     return Err(RenderError::Query(QueryError::DistanceOrderWithoutReference));
                 }
             };
-            let dist_expr: SimpleExpr = SeaExpr::cust_with_exprs(geo_order_distance(&term.target, attribute_names), [SeaExpr::val(ref_ewkb.to_vec()).into()]);
+            let dist_expr: SimpleExpr = SeaExpr::cust_with_exprs(
+                geo_order_distance(&term.target, attribute_names, ENTITY_ROW),
+                [SeaExpr::val(ref_ewkb.to_vec()).into()],
+            );
             select.order_by_expr(dist_expr, order);
         } else {
             select.order_by_expr(SeaExpr::cust(order_value_expr(&term.target, term.collation.as_ref())), order);
@@ -506,7 +511,7 @@ mod tests {
     fn build_with_order_by_asc() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri("https://example.com/name")),
+            target: OrderTarget::Attribute("https://example.com/name".parse().expect("valid attribute name")),
             direction: OrderDirection::Asc,
             collation: None,
         }];
@@ -520,7 +525,7 @@ mod tests {
     fn build_with_order_by_collation() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri("https://example.com/name")),
+            target: OrderTarget::Attribute("https://example.com/name".parse().expect("valid attribute name")),
             direction: OrderDirection::Asc,
             collation: Some(IcuCollation::parse("und-u-ks-identic").expect("valid collation")),
         }];
@@ -538,10 +543,10 @@ mod tests {
                 min_distance: None,
             },
             geometry: point(serde_json::json!([13.4, 52.5])),
-            geoproperty_iri: iri(LOCATION.as_str()),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri(LOCATION.as_str())),
+            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -554,7 +559,7 @@ mod tests {
     fn build_with_order_by_dist_without_geo_returns_error() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri(LOCATION.as_str())),
+            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -572,7 +577,7 @@ mod tests {
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri(LOCATION.as_str())),
+            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -595,7 +600,7 @@ mod tests {
                 min_distance: None,
             },
             geometry: point(serde_json::json!([2.3522, 48.8566])),
-            geoproperty_iri: iri(LOCATION.as_str()),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let geometry = Geometry::from_geojson_value(&serde_json::json!({
             "type": "Point",
@@ -604,7 +609,7 @@ mod tests {
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri(LOCATION.as_str())),
+            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
@@ -625,7 +630,7 @@ mod tests {
     #[test]
     fn a_three_dimensional_ordering_geometry_renders_the_same_distance_sql() {
         let ordering_term = CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri(LOCATION.as_str())),
+            target: OrderTarget::Attribute(LOCATION.as_str().parse().expect("valid attribute name")),
             direction: OrderDirection::DistAsc,
             collation: None,
         };
@@ -666,7 +671,7 @@ mod tests {
                 min_distance: None,
             },
             geometry: point(serde_json::json!([13.4, 52.5])),
-            geoproperty_iri: iri(LOCATION.as_str()),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
         assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
@@ -697,7 +702,7 @@ mod tests {
             q.selection.geo = Some(GeoQuery {
                 georel: georel.clone(), // clone: the relation names the failing case in every assertion below
                 geometry: point(serde_json::json!([1.0, 2.0])),
-                geoproperty_iri: iri(LOCATION.as_str()),
+                geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
             });
             let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
             assert!(built.sql.contains("ST_GeomFromEWKB"), "{georel:?} SQL missing ST_GeomFromEWKB");
@@ -723,7 +728,7 @@ mod tests {
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://example.com/customGeo"),
+            geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
         let names = ResolvedAttributeNames::from_pairs([(
             "https://example.com/customGeo".parse().expect("valid attribute name"),
@@ -744,7 +749,7 @@ mod tests {
         q.selection.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://example.com/neverRecorded"),
+            geoproperty: "https://example.com/neverRecorded".parse().expect("valid attribute name"),
         });
         let built = build_query(&q, &ResolvedAttributeNames::default()).expect("renders");
         assert!(built.sql.contains("FALSE"), "{}", built.sql);
@@ -791,7 +796,7 @@ mod tests {
             q.selection.geo = Some(GeoQuery {
                 georel: georel.clone(), // clone: the relation is named again in the assertion
                 geometry: point(serde_json::json!([1.0, 2.0])),
-                geoproperty_iri: iri("https://example.com/o'brien"),
+                geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
             });
             let built = build_query(&q, &names).unwrap();
             assert!(!built.sql.contains("brien"), "{georel:?}: {}", built.sql);
@@ -803,7 +808,7 @@ mod tests {
     fn an_order_by_attribute_iri_containing_an_apostrophe_does_not_terminate_the_sql_literal() {
         let mut q = empty_query();
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri("https://example.com/o'brien")),
+            target: OrderTarget::Attribute("https://example.com/o'brien".parse().expect("valid attribute name")),
             direction: OrderDirection::Asc,
             collation: None,
         }];
@@ -825,7 +830,7 @@ mod tests {
         .unwrap();
         q.ordering.geometry = Some(OrderingGeometry::new(geometry));
         q.ordering.terms = vec![CompiledOrderTerm {
-            target: OrderTarget::Attribute(iri("https://example.com/o'brien")),
+            target: OrderTarget::Attribute("https://example.com/o'brien".parse().expect("valid attribute name")),
             direction: OrderDirection::DistAsc,
             collation: None,
         }];

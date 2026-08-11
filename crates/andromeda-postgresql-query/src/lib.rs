@@ -22,6 +22,7 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod attribute_instance_correlation;
 pub mod attribute_name_id;
 pub mod attribute_name_lookup;
 pub mod bind;

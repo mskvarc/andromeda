@@ -1,5 +1,6 @@
 //! How both indexes are partitioned.
 
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::{IriBuf, iri};
@@ -16,18 +17,15 @@ pub struct SpatialKey {
     pub tenant: TenantRef,
     /// Expanded entity type IRI.
     pub type_iri: IriBuf,
-    /// Expanded geoproperty IRI, such as `https://uri.etsi.org/ngsi-ld/location`.
-    pub geoproperty_iri: IriBuf,
+    /// The GeoProperty the partition indexes, named by its expanded IRI — for
+    /// instance `https://uri.etsi.org/ngsi-ld/location`.
+    pub geoproperty: AttributeName,
 }
 
 impl SpatialKey {
     /// The partition an entity of this type, in this tenant, is indexed under.
-    pub const fn new(tenant: TenantRef, type_iri: IriBuf, geoproperty_iri: IriBuf) -> SpatialKey {
-        SpatialKey {
-            tenant,
-            type_iri,
-            geoproperty_iri,
-        }
+    pub const fn new(tenant: TenantRef, type_iri: IriBuf, geoproperty: AttributeName) -> SpatialKey {
+        SpatialKey { tenant, type_iri, geoproperty }
     }
 
     /// The wildcard partition for a geo subscription that names no concrete
@@ -39,8 +37,8 @@ impl SpatialKey {
     /// boolean-typed geo subscription is still reached for any entity change;
     /// the residual filter then re-checks the real selector. Both sides mint the
     /// key through this one constructor so the synthetic type IRI cannot drift.
-    pub fn any_type(tenant: TenantRef, geoproperty_iri: IriBuf) -> SpatialKey {
-        SpatialKey::new(tenant, IriBuf::from(iri!("urn:andromeda:spatial:any-type")), geoproperty_iri)
+    pub fn any_type(tenant: TenantRef, geoproperty: AttributeName) -> SpatialKey {
+        SpatialKey::new(tenant, IriBuf::from(iri!("urn:andromeda:spatial:any-type")), geoproperty)
     }
 }
 
@@ -69,9 +67,10 @@ pub fn flatten_or_type_iris(expr: &TypeExpr) -> Option<Vec<IriBuf>> {
 #[cfg(test)]
 mod tests {
     use crate::key::{SpatialKey, flatten_or_type_iris};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
     use andromeda_tenancy::tenant_ref::TenantRef;
-    use iri_rs::{IriBuf, iri};
+    use iri_rs::IriBuf;
 
     fn type_expr(raw: &str) -> TypeExpr {
         TypeExpr::Type(IriBuf::new(raw.to_owned()).expect("a well-formed IRI"))
@@ -81,7 +80,8 @@ mod tests {
     fn the_wildcard_partition_key_is_the_same_for_writer_and_reader() {
         // The cache writes under this key and the worker reads it; minting it
         // through one constructor is what guarantees they cannot drift.
-        let geoproperty = IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location"));
+        let geoproperty: AttributeName = "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name");
+        // clone: both keys own their own copy, which is what the equality asserts
         let written = SpatialKey::any_type(TenantRef::UnnamedDefault, geoproperty.clone());
         let read = SpatialKey::any_type(TenantRef::UnnamedDefault, geoproperty);
         pretty_assertions::assert_eq!(written, read);

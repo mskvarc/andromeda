@@ -14,6 +14,7 @@ use andromeda_ngsi_ld_query::{
     geo::query::GeoQuery,
     ordering::term::{CompiledOrderTerm, OrderTarget},
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 
 /// Collect the names a query reads by dictionary key.
 ///
@@ -26,11 +27,11 @@ pub fn projected_attribute_names(q_expr: Option<&Expr>, geo: Option<&GeoQuery>, 
         referenced_attribute_names(q_expr, &mut names);
     }
     if let Some(geo) = geo {
-        push_iri(geo.geoproperty_iri.as_str(), &mut names);
+        push_geoproperty(&geo.geoproperty, &mut names);
     }
     for term in order_terms.iter().filter(|term| term.direction.is_distance()) {
         match &term.target {
-            OrderTarget::Attribute(iri) => push_iri(iri.as_str(), &mut names),
+            OrderTarget::Attribute(name) => push_geoproperty(name, &mut names),
             // None of the clause 4.23 keywords names an attribute, so none of
             // them has a dictionary row.
             OrderTarget::Id | OrderTarget::Type | OrderTarget::Scope => {}
@@ -39,16 +40,24 @@ pub fn projected_attribute_names(q_expr: Option<&Expr>, geo: Option<&GeoQuery>, 
     names
 }
 
-/// Add an expanded IRI as a name to resolve.
+/// Add the GeoProperty a geo-query or a distance ordering targets, unless it is
+/// the one that needs no dictionary row.
 ///
-/// An IRI that is not a well-formed attribute name is dropped rather than
-/// refused: it cannot key any stored attribute, so leaving it unresolved gives
-/// the predicate that reads it the same constant-`FALSE` rendering an unknown
-/// name gets, which is what clause 4.10 asks for.
-fn push_iri(iri: &str, out: &mut Vec<AttributeName>) {
-    if let Ok(name) = iri.parse::<AttributeName>() {
-        out.push(name);
+/// Clause 4.10 defaults `geoproperty` to `location`, and the default is the one
+/// GeoProperty the broker stores in dedicated `entities` columns rather than in
+/// the `attribute_current` projection. Both the filter and the ordering read
+/// those columns directly, so resolving `location` would key a projection
+/// neither of them touches — and, worse, would make a plain `georel=near`
+/// query wait on the projection's read-your-writes barrier for writes its SQL
+/// cannot observe. Every other GeoProperty, the clause 4.7 `observationSpace`
+/// and `operationSpace` included, does go through the projection and is
+/// collected.
+fn push_geoproperty(name: &AttributeName, out: &mut Vec<AttributeName>) {
+    if name.as_str() == LOCATION.as_str() {
+        return;
     }
+    // clone: the caller owns the resolved list, which outlives the query
+    out.push(name.clone());
 }
 
 #[cfg(test)]
@@ -61,17 +70,17 @@ mod tests {
         geo::query::GeoQuery,
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
     };
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
 
-    fn iri(value: &str) -> IriBuf {
-        IriBuf::new(value.to_string()).expect("valid IRI")
+    fn name(value: &str) -> AttributeName {
+        value.parse().expect("valid attribute name")
     }
 
     fn geo_query(geoproperty: &str) -> GeoQuery {
         GeoQuery {
             georel: GeoRel::Within,
             geometry: Geometry::from_geojson_value(&serde_json::json!({ "type": "Point", "coordinates": [1.0, 2.0] })).expect("point parses"),
-            geoproperty_iri: iri(geoproperty),
+            geoproperty: name(geoproperty),
         }
     }
 
@@ -98,12 +107,31 @@ mod tests {
         );
     }
 
+    /// Clause 4.10's default GeoProperty is read from the dedicated `entities`
+    /// columns, so it keys no dictionary row and must not put a query that
+    /// touches nothing else through the projection barrier.
+    #[test]
+    fn a_geo_query_on_the_default_geoproperty_resolves_nothing() {
+        let geo = geo_query(LOCATION.as_str());
+        assert!(projected_attribute_names(None, Some(&geo), &[]).is_empty());
+    }
+
+    /// The clause 4.7 GeoProperties are stored in the projection like any other
+    /// named one, so unlike `location` they do have to be resolved.
+    #[test]
+    fn a_geo_query_on_a_spec_defined_geoproperty_still_resolves_it() {
+        for iri in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"] {
+            let geo = geo_query(iri);
+            assert_eq!(collected(projected_attribute_names(None, Some(&geo), &[])), vec![iri.to_string()]);
+        }
+    }
+
     /// Clause 4.23: a distance ordering reads the same projection the filter
     /// does, so its target needs resolving too.
     #[test]
     fn a_distance_ordering_contributes_its_target_geoproperty() {
         let terms = [order_term(
-            OrderTarget::Attribute(iri("https://example.com/observationPoint")),
+            OrderTarget::Attribute(name("https://example.com/observationPoint")),
             OrderDirection::DistAsc,
         )];
         assert_eq!(
@@ -112,10 +140,18 @@ mod tests {
         );
     }
 
+    /// A distance ordering on the default GeoProperty measures from the
+    /// dedicated geography column, so it resolves nothing either.
+    #[test]
+    fn a_distance_ordering_on_the_default_geoproperty_resolves_nothing() {
+        let terms = [order_term(OrderTarget::Attribute(name(LOCATION.as_str())), OrderDirection::DistAsc)];
+        assert!(projected_attribute_names(None, None, &terms).is_empty());
+    }
+
     /// A value ordering navigates the payload, so it contributes nothing.
     #[test]
     fn a_value_ordering_contributes_no_name() {
-        let terms = [order_term(OrderTarget::Attribute(iri("https://example.com/temperature")), OrderDirection::Asc)];
+        let terms = [order_term(OrderTarget::Attribute(name("https://example.com/temperature")), OrderDirection::Asc)];
         assert!(projected_attribute_names(None, None, &terms).is_empty());
     }
 
@@ -136,7 +172,7 @@ mod tests {
         let expr = parser::parse("\"https://example.com/speed\">1").expect("parse q");
         let geo = geo_query("https://example.com/observationPoint");
         let terms = [order_term(
-            OrderTarget::Attribute(iri("https://example.com/operationSpace")),
+            OrderTarget::Attribute(name("https://example.com/operationSpace")),
             OrderDirection::DistAsc,
         )];
         assert_eq!(

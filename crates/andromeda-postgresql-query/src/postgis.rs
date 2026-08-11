@@ -54,24 +54,6 @@ fn st_make_valid(geom: SimpleExpr) -> SimpleExpr {
     Expr::cust_with_exprs("ST_MakeValid($1)", [geom])
 }
 
-/// WGS84 / CRS84, the only spatial reference NGSI-LD geometries use.
-const SRID_WGS84: i32 = 4326;
-
-/// PostGIS: a validated geometry decoded from a GeoJSON text expression, in
-/// SRID 4326.
-///
-/// Returns SQL text rather than an expression because the caller has to test
-/// the same operand for `IS NULL` and cast it to `geography`, neither of which
-/// sea-query can do to an already-built expression.
-///
-/// Retained for the JSONB column-side extraction case (a non-default
-/// GeoProperty stored inside `entities.payload`); every other path binds EWKB
-/// through [`validated_geom_from_ewkb`], because GeoJSON in a statement is text
-/// PostGIS has to re-parse.
-pub fn validated_geom_from_geojson_sql(geojson_sql: &str) -> String {
-    format!("ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON({geojson_sql}), {SRID_WGS84}))")
-}
-
 /// PostGIS: Builds a validated geometry from EWKB (SRID 4326 already embedded).
 ///
 /// Equivalent to: `ST_MakeValid(ST_GeomFromEWKB($1))`.
@@ -104,15 +86,6 @@ mod tests {
         // The request-supplied distance must be a bound parameter, never text in
         // the statement, so it cannot appear inline.
         assert!(!sql.contains("1000"), "distance was interpolated, not bound: {sql}");
-    }
-
-    #[test]
-    fn validated_geom_from_geojson_nests_functions() {
-        let sql = validated_geom_from_geojson_sql("\"payload\"::text");
-        assert!(sql.contains("ST_MakeValid"), "{sql}");
-        assert!(sql.contains("ST_SetSRID"), "{sql}");
-        assert!(sql.contains("ST_GeomFromGeoJSON"), "{sql}");
-        assert!(sql.contains("4326"), "{sql}");
     }
 
     #[test]

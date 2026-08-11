@@ -173,7 +173,7 @@ mod tests {
                 min_distance: None,
             },
             geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid geometry"),
-            geoproperty_iri: LOCATION.parse().expect("valid IRI"),
+            geoproperty: LOCATION.parse().expect("valid attribute name"),
         }
     }
 

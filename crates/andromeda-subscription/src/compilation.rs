@@ -9,7 +9,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use iri_rs::IriBuf;
 use std::{collections::HashSet, num::NonZeroU32};
 use strum::IntoEnumIterator;
 use tracing::debug;
@@ -89,15 +88,16 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery
         serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok()?,
         other => other.clone(), // clone: compiled state owns its reference geometry.
     };
-    let geoproperty_iri = match geo_obj.get("geoproperty").and_then(serde_json::Value::as_str) {
-        Some(raw) => match IriBuf::new(raw.to_owned()) {
-            Ok(iri) => iri,
-            Err(error) => {
-                debug!(subscription = sub_id, %error, "Invalid subscription geoQ geoproperty");
-                return None;
-            }
-        },
-        None => expanded_properties::LOCATION.to_owned().into(),
+    let raw_geoproperty = geo_obj
+        .get("geoproperty")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or(expanded_properties::LOCATION.as_str());
+    let geoproperty = match raw_geoproperty.parse() {
+        Ok(geoproperty) => geoproperty,
+        Err(error) => {
+            debug!(subscription = sub_id, %error, "Invalid subscription geoQ geoproperty");
+            return None;
+        }
     };
     let geojson = serde_json::json!({"type": geometry_str, "coordinates": coordinates});
     let geometry = match Geometry::from_geojson_value(&geojson) {
@@ -110,7 +110,7 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery
     Some(GeoQuery {
         georel: georel_str.parse().ok()?,
         geometry,
-        geoproperty_iri,
+        geoproperty,
     })
 }
 
@@ -131,7 +131,7 @@ mod tests {
             "urn:ngsi-ld:Subscription:test",
         );
         assert_eq!(
-            compiled.as_ref().map(|query| query.geoproperty_iri.as_str()),
+            compiled.as_ref().map(|query| query.geoproperty.as_str()),
             Some(expanded_properties::LOCATION.as_str())
         );
     }

@@ -1,7 +1,7 @@
 //! The compiled form of an NGSI-LD geo query (clause 4.10).
 
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
-use iri_rs::IriBuf;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// A compiled geo-spatial query, per NGSI-LD 4.10.
 ///
@@ -16,6 +16,12 @@ pub struct GeoQuery {
     pub georel: GeoRel,
     /// The reference geometry the relation is evaluated against.
     pub geometry: Geometry,
-    /// The fully expanded IRI of the GeoProperty to query against.
-    pub geoproperty_iri: IriBuf,
+    /// The GeoProperty to query against, named by its fully expanded IRI.
+    ///
+    /// Clause 4.10 lets `geoproperty` name any GeoProperty of the entity, and a
+    /// GeoProperty is an attribute, so the target is the attribute name that
+    /// keys it (clause 5.2.4) rather than a bare IRI. Holding it as such is
+    /// what lets the target be looked up in the attribute-name dictionary
+    /// without re-parsing it at every use.
+    pub geoproperty: AttributeName,
 }

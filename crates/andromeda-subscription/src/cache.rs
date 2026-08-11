@@ -207,8 +207,8 @@ impl SubscriptionCache {
         let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
             return;
         };
-        // clone: the key owns its IRI, which the compiled subscription keeps
-        let geoproperty_iri = geo_q.geoproperty_iri.clone();
+        // clone: the key owns its name, which the compiled subscription keeps
+        let geoproperty = geo_q.geoproperty.clone();
 
         // clone: the entry owns its identifier, geometry and relation, all borrowed here
         let Some(entry) = SubEntry::new(compiled.id.clone(), geo_q.geometry.clone(), geo_q.georel.clone()) else {
@@ -232,7 +232,7 @@ impl SubscriptionCache {
             };
             match IriBuf::new(type_name.as_str().to_owned()) {
                 Ok(type_iri) => {
-                    let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
+                    let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone());
                     self.spatial.insert(key, entry.clone());
                 }
                 Err(_) => {
@@ -245,7 +245,7 @@ impl SubscriptionCache {
             }
         }
         if needs_wildcard {
-            let key = SpatialKey::any_type(self.tenant.clone(), geoproperty_iri);
+            let key = SpatialKey::any_type(self.tenant.clone(), geoproperty);
             self.spatial.insert(key, entry);
         }
     }

@@ -97,7 +97,7 @@ mod tests {
                 min_distance: None,
             },
             geometry: Geometry::from_geojson_value(&json!({"type": "Point", "coordinates": [13.4, 52.5]})).expect("valid geometry"),
-            geoproperty_iri: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid IRI"),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         }
     }
 

@@ -1,8 +1,7 @@
 //! Ordering terms, before and after context expansion (clause 4.23).
 
 use crate::ordering::collation::IcuCollation;
-use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
-use iri_rs::IriBuf;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLdReference};
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 use strum::{Display, EnumString};
@@ -34,8 +33,8 @@ pub enum OrderTarget {
     Type,
     /// The entity scopes.
     Scope,
-    /// One attribute's value, named by its expanded IRI.
-    Attribute(IriBuf),
+    /// One attribute's value, named by its expanded IRI (clause 5.2.4).
+    Attribute(AttributeName),
 }
 
 /// A raw `orderBy` name, classified but not yet expanded.

@@ -1,7 +1,11 @@
 //! The subscription half of the spatial index: which subscriptions an entity
 //! change is a candidate for.
 
-use crate::{key::SpatialKey, partitioned_rtree::PartitionedRTree, subscription::entry::SubEntry};
+use crate::{
+    key::SpatialKey,
+    partitioned_rtree::{Indexed, PartitionedRTree},
+    subscription::entry::SubEntry,
+};
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use rstar::{AABB, Envelope, RTree};
@@ -51,7 +55,10 @@ impl SpatialSubscriptionIndex {
     /// selectors is indexed once per selector, so a global removal here would
     /// leave only the last selector's partition standing.
     pub fn insert(&self, key: SpatialKey, entry: SubEntry) {
-        self.tree.insert(key, entry);
+        // A subscription carries exactly one reference geometry, so it occupies
+        // a partition once (clause 5.8.1 admits a single `geoQ`).
+        let id = entry.id().clone(); // clone: the back-index owns the identifier
+        self.tree.insert_all(key, id, vec![entry]);
     }
 
     /// Remove every entry belonging to a subscription, across every partition.
@@ -113,7 +120,7 @@ mod tests {
         SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::from(iri!("https://example.org/Vehicle")),
-            IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/location")),
+            "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         )
     }
 
@@ -121,7 +128,7 @@ mod tests {
         SpatialKey::new(
             TenantRef::UnnamedDefault,
             IriBuf::from(iri!("https://example.org/Vehicle")),
-            IriBuf::from(iri!("https://uri.etsi.org/ngsi-ld/observationSpace")),
+            "https://uri.etsi.org/ngsi-ld/observationSpace".parse().expect("valid attribute name"),
         )
     }
 

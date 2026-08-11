@@ -171,7 +171,7 @@ impl EntityQueryService {
                 RawOrderTarget::Id => OrderTarget::Id,
                 RawOrderTarget::Type => OrderTarget::Type,
                 RawOrderTarget::Scope => OrderTarget::Scope,
-                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(self.engine().expand_term(name.as_str(), context).await?),
+                RawOrderTarget::Attribute(name) => OrderTarget::Attribute(expanded_attribute_name(&self.engine().expand_term(name.as_str(), context).await?)?),
             };
             compiled.push(CompiledOrderTerm {
                 target,

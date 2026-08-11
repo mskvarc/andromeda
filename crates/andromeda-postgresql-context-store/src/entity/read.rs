@@ -182,11 +182,14 @@ impl EntityRepository {
         if names.is_empty() {
             return Ok(ResolvedAttributeNames::default());
         }
-        let resolved = self.attribute_names.lookup(&names).await?;
-        if !resolved.is_empty() {
-            self.attribute_current.wait_for_pending_writes().await;
-        }
-        Ok(resolved)
+        // The barrier is crossed before the dictionary is read, not after it
+        // resolved something: `attribute_names` rows are minted by the same
+        // projection worker, so a name looked up first would read as unknown
+        // for an attribute written moments ago and compile to constant `FALSE`
+        // (clause 4.10) or to a distance that measures from nothing (clause
+        // 4.23) — a read-your-writes violation rather than an empty answer.
+        self.attribute_current.wait_for_pending_writes().await;
+        Ok(self.attribute_names.lookup(&names).await?)
     }
 
     /// Run a dynamic query and extract payloads, optionally reading the total count from the first row.

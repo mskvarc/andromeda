@@ -35,44 +35,68 @@ pub fn extract_operation_space_geometry(expanded: &Value) -> Option<Geometry> {
     extract_geo_property_geometry(expanded, properties::OPERATION_SPACE.as_str())
 }
 
-/// Decode the GeoProperty named by `iri` into a [`Geometry`], accepting both
-/// the GeoJSON literal form and the fully expanded node form.
+/// Decode the default instance of the GeoProperty named by `iri` into a
+/// [`Geometry`], accepting both the GeoJSON literal form and the fully expanded
+/// node form.
 ///
-/// This is the single reader every geo path shares — the write/index side and
-/// the read/match side — so an entity is indexed against exactly the geometry
-/// it is later matched against. Which instance of a multi-instance GeoProperty
-/// it reads is fixed by [`geo_node_for_property`], not by array order.
+/// One geometry per entity, chosen by [`default_instance`] rather than by array
+/// order. This is what the spatial index is built from: an R-tree partition
+/// holds one bounding rectangle per entity, so a multi-instance GeoProperty has
+/// to be reduced to a single geometry before it can be indexed, and clause
+/// 4.5.16.1's default instance is the only defensible choice of which.
+///
+/// Matching is a different question and does not use this reader: clause 4.10
+/// counts an entity as matching when *any* instance meets the restriction, for
+/// which [`geo_property_instance_geometries`] yields all of them. The index
+/// therefore over- and under-approximates a multi-instance GeoProperty, and
+/// every consumer of it re-checks the exact relation afterwards — the spatial
+/// prefilter falls back to the store, and the notification path re-evaluates
+/// through the residual filter.
 pub fn extract_geo_property_geometry(expanded: &Value, iri: &str) -> Option<Geometry> {
-    let geo_node = geo_node_for_property(expanded, iri)?;
+    let instances = geo_property_instances(expanded, iri)?;
+    geometry_of_instance(default_instance(instances)?)
+}
+
+/// Decode every instance of the GeoProperty named by `iri`, in payload order.
+///
+/// Clause 4.10: where a GeoProperty has several `datasetId` instances, one of
+/// them meeting a geo restriction is enough, so a matcher reads all of them
+/// rather than the default one. Instances that carry no decodable geometry are
+/// skipped, exactly as the SQL rendering skips `attribute_current` rows whose
+/// `value_geo` is null.
+pub fn geo_property_instance_geometries<'a>(expanded: &'a Value, iri: &str) -> impl Iterator<Item = Geometry> + 'a {
+    geo_property_instances(expanded, iri)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(geometry_of_instance)
+}
+
+/// The instance array of one expanded attribute, if the entity conveys it.
+fn geo_property_instances<'a>(expanded: &'a Value, iri: &str) -> Option<&'a [Value]> {
+    expanded_object_ref(expanded)?.get(iri)?.as_array().map(Vec::as_slice)
+}
+
+/// Decode one attribute instance's value into a [`Geometry`].
+///
+/// Reads the "{@type, ...coordinates}" object that lives at
+/// `<instance>.hasValue[0]`, ignoring whether the value was inlined as a
+/// literal `@value` or expanded as a nested JSON-LD GeoJSON node.
+fn geometry_of_instance(instance: &Value) -> Option<Geometry> {
+    let geo_node = instance
+        .get(properties::VALUE.as_str())
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())?;
     if let Some(literal) = geo_node.get("@value") {
         return literal_geojson_to_geometry(literal);
     }
     expanded_geo_node_to_geometry(geo_node)
 }
 
-/// Look up the inner GeoJSON node for an expanded GeoProperty attribute.
-///
-/// Returns the "{@type, ...coordinates}" object that lives at
-/// `expanded[iri][<default instance>].hasValue[0]`, ignoring whether the value
-/// was inlined as a literal `@value` or expanded as a nested JSON-LD GeoJSON
-/// node — callers branch on the presence of `@value` to pick the decoding path.
-///
-/// The instance is chosen by clause 4.5.16.1: the default instance is the one
-/// carrying no `datasetId`. When several instances exist, the default is taken;
-/// when every instance is tagged, the spec defines no precedence, so the first
-/// is used. Selection is deliberate rather than an accident of `first()` versus
-/// `last()`, so the index and the matcher can never disagree.
-fn geo_node_for_property<'a>(expanded: &'a Value, iri: &str) -> Option<&'a Value> {
-    let obj = expanded_object_ref(expanded)?;
-    let instances = obj.get(iri)?.as_array()?;
-    default_instance(instances)?
-        .get(properties::VALUE.as_str())
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
-}
-
 /// Select the default instance of a multi-attribute (clause 4.5.16.1): the one
 /// carrying no `datasetId`, falling back to the first when all are tagged.
+///
+/// Selection is deliberate rather than an accident of `first()` versus
+/// `last()`, so two readers of the same payload cannot disagree.
 fn default_instance(instances: &[Value]) -> Option<&Value> {
     instances
         .iter()
@@ -261,7 +285,13 @@ fn walk_ring_lists(node: &Value) -> Option<Vec<PolygonRings>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::geo_property::{expanded_geo_node_to_geometry, extract_geo_property_geometry, extract_location_geometry, validate_expanded_geo_node};
+    use crate::expanded::geo_property::{
+        expanded_geo_node_to_geometry,
+        extract_geo_property_geometry,
+        extract_location_geometry,
+        geo_property_instance_geometries,
+        validate_expanded_geo_node,
+    };
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, geometry::Geometry, position::PositionError};
     use serde_json::json;
 
@@ -640,6 +670,58 @@ mod tests {
     fn an_entity_that_carries_no_such_geoproperty_yields_no_geometry() {
         let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
         assert!(extract_geo_property_geometry(&entity, LOCATION).is_none());
+    }
+
+    /// Clause 4.10: a geo restriction is met when *any* instance of the target
+    /// GeoProperty meets it, so the matching reader yields every instance —
+    /// including the tagged ones the default-instance reader deliberately
+    /// ignores — in payload order.
+    #[test]
+    fn every_instance_of_a_multi_dataset_geoproperty_is_yielded_for_matching() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [0.0, 0.0]} }],
+                    "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": "urn:ngsi-ld:Dataset:tagged"}]
+                },
+                {
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [13.4, 52.5]} }]
+                }
+            ]
+        }]);
+        let instances: Vec<Geometry> = geo_property_instance_geometries(&entity, LOCATION).collect();
+        pretty_assertions::assert_eq!(instances.len(), 2);
+        pretty_assertions::assert_eq!(instances[0], geometry_from_compact(&json!({"type": "Point", "coordinates": [0.0, 0.0]})));
+        pretty_assertions::assert_eq!(instances[1], geometry_from_compact(&json!({"type": "Point", "coordinates": [13.4, 52.5]})));
+
+        // The index-side reader still reduces the same payload to the one
+        // instance clause 4.5.16.1 calls the default.
+        pretty_assertions::assert_eq!(
+            extract_location_geometry(&entity).expect("default instance geometry"),
+            geometry_from_compact(&json!({"type": "Point", "coordinates": [13.4, 52.5]}))
+        );
+    }
+
+    /// An instance whose value is not a geometry is skipped rather than
+    /// stopping the walk, exactly as the SQL rendering skips an
+    /// `attribute_current` row with a null `value_geo`.
+    #[test]
+    fn an_instance_carrying_no_geometry_does_not_hide_the_instances_after_it() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            LOCATION: [
+                { "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": "not geojson" }] },
+                { "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [13.4, 52.5]} }] }
+            ]
+        }]);
+        pretty_assertions::assert_eq!(geo_property_instance_geometries(&entity, LOCATION).count(), 1);
+    }
+
+    #[test]
+    fn an_entity_carrying_no_such_geoproperty_yields_no_instances_for_matching() {
+        let entity = json!([{"@id": "urn:ngsi-ld:Building:001"}]);
+        pretty_assertions::assert_eq!(geo_property_instance_geometries(&entity, LOCATION).count(), 0);
     }
 
     #[test]

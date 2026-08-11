@@ -56,14 +56,14 @@ impl EntityQueryService {
         let Some(type_iris) = flatten_or_type_iris(type_expr) else {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         };
-        let geoproperty_iri = &geo_query.geoproperty_iri;
+        let geoproperty = &geo_query.geoproperty;
         let reference = &geo_query.geometry;
 
         let mut any_warm = false;
         let mut union: HashSet<Urn> = HashSet::new();
         for type_iri in type_iris {
             // clone: the spatial key owns its IRIs and outlives the borrowed query
-            let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty_iri.clone());
+            let key = SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone());
             let Some(candidates) = self.spatial.query(&key, &geo_query.georel, reference) else {
                 // A cold partition for any one type would otherwise contribute
                 // an empty candidate set, which is indistinguishable from that

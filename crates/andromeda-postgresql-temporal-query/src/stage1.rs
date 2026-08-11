@@ -11,11 +11,12 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
+    attribute_instance_correlation::CorrelatedEntityRow,
     bind::sea_values_to_bind_values,
     built::BuiltQuery,
     error::RenderError,
     geo_predicate as geo_sql,
-    geo_predicate::{GeometrySource, NullGeometryPolicy},
+    geo_predicate::GeometrySource,
     operator::regex_match,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
     schema::{E, E_ALIAS, Entities},
@@ -122,8 +123,9 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
     if let Some(geo) = &compiled.entities.geo {
         condition = condition.add(geo_sql::condition(
             geo,
-            GeometrySource::Entity { alias: Some(E_ALIAS) },
-            NullGeometryPolicy::Exclude,
+            GeometrySource::Entity {
+                row: CorrelatedEntityRow::aliased(E_ALIAS),
+            },
             attribute_names,
         )?);
     }
@@ -408,7 +410,7 @@ mod tests {
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://example.com/customGeo"),
+            geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
         let names = ResolvedAttributeNames::from_pairs([(
             "https://example.com/customGeo".parse().expect("valid attribute name"),
@@ -432,7 +434,7 @@ mod tests {
         compiled.entities.geo = Some(GeoQuery {
             georel: GeoRel::Within,
             geometry: point(serde_json::json!([1.0, 2.0])),
-            geoproperty_iri: iri("https://example.com/o'brien"),
+            geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
         });
         let names = ResolvedAttributeNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),

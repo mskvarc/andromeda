@@ -5,6 +5,7 @@
 //! and an altitude never reorders a result set.
 
 use crate::fixtures::{building_point_3d, create, encode_json, id_filter, ids_of, p_2d, query};
+use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
@@ -71,4 +72,113 @@ async fn ordering_dist_2d_orderfrom_with_3d_entities() {
     assert_pillar_first_then_offset(&ids_of(&body), [&ground, &mid, &top], &offset);
 
     scope.finish().await.expect("cleanup failed");
+}
+
+/// NGSI-LD 4.23 read with 4.10: `orderBy` may name any GeoProperty, not only
+/// the default `location`. A named one is measured from its `attribute_current`
+/// instance rows, so the ordering has to reach the same geometry the filter
+/// does.
+///
+/// Every entity's `location` is deliberately placed in the opposite order to
+/// its `observationPoint`, so an ordering that silently fell back to the
+/// default GeoProperty would produce exactly the reverse result.
+#[tokio::test]
+async fn ordering_dist_asc_on_a_custom_geoproperty_sorts_by_that_geoproperty() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let near = scope.id("Building:order_geoprop_near");
+    let middle = scope.id("Building:order_geoprop_middle");
+    let far = scope.id("Building:order_geoprop_far");
+
+    // Distance from the reference by observationPoint: near < middle < far.
+    // By location the order is exactly the reverse, so an ordering that fell
+    // back to the default GeoProperty would invert the result.
+    create(client, &building_with_observation_point(&near, [13.9, 52.52], [13.4, 52.52])).await;
+    create(client, &building_with_observation_point(&middle, [13.6, 52.52], [13.5, 52.52])).await;
+    create(client, &building_with_observation_point(&far, [13.4, 52.52], [13.9, 52.52])).await;
+
+    let filter = id_filter(&[&near, &middle, &far]);
+    let order_from = encode_json(&json!([13.4, 52.52]));
+    let (status, _, body) = query(
+        client,
+        &format!("type=Building&id={filter}&orderBy=observationPoint;dist-asc&orderFrom={order_from}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        ids_of(&body),
+        vec![near.clone(), middle.clone(), far.clone()],
+        "a distance ordering must measure to the named GeoProperty, not to location"
+    );
+
+    // The descending direction reverses the same measurement rather than
+    // producing an unrelated order.
+    let (status, _, body) = query(
+        client,
+        &format!("type=Building&id={filter}&orderBy=observationPoint;dist-desc&orderFrom={order_from}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ids_of(&body), vec![far, middle, near]);
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// NGSI-LD 4.23 read with 4.10: an entity whose named GeoProperty has several
+/// `datasetId` instances is ordered by its nearest instance, which is the
+/// reading that agrees with the filter counting an entity as matching when any
+/// one instance does.
+#[tokio::test]
+async fn ordering_dist_asc_on_a_custom_geoproperty_measures_the_nearest_instance() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let multi = scope.id("Building:order_geoprop_multi");
+    let single = scope.id("Building:order_geoprop_single");
+
+    // `multi`'s default instance is the farther of the two; its tagged instance
+    // is nearer the reference than `single` is.
+    let multi_entity = json!({
+        "id": multi,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.52]}},
+        "observationPoint": [
+            {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.9, 52.52]}},
+            {
+                "type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [13.41, 52.52]},
+                "datasetId": "urn:ngsi-ld:Dataset:sensor-a"
+            }
+        ],
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create(client, &multi_entity).await;
+    create(client, &building_with_observation_point(&single, [13.4, 52.52], [13.5, 52.52])).await;
+
+    let filter = id_filter(&[&multi, &single]);
+    let order_from = encode_json(&json!([13.4, 52.52]));
+    let (status, _, body) = query(
+        client,
+        &format!("type=Building&id={filter}&orderBy=observationPoint;dist-asc&orderFrom={order_from}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        ids_of(&body),
+        vec![multi, single],
+        "the nearest instance decides, so the multi-instance entity sorts first"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A `Building` whose `location` and `observationPoint` are deliberately
+/// distinct points, so an ordering can tell which of the two it measured.
+fn building_with_observation_point(id: &str, location: [f64; 2], observation_point: [f64; 2]) -> serde_json::Value {
+    json!({
+        "id": id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": location}},
+        "observationPoint": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": observation_point}},
+        "@context": [TEST_SUITE_CONTEXT]
+    })
 }

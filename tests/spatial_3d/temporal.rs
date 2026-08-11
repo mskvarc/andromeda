@@ -169,3 +169,60 @@ async fn temporal_query_georel_2d_reference_matches_3d_history() {
 
     scope.finish().await.expect("cleanup failed");
 }
+
+/// NGSI-LD 4.10 applies to a temporal query exactly as it does to a
+/// current-state one: `geoproperty` may name any GeoProperty, and one that is
+/// not the default is read from its `attribute_current` instance rows,
+/// correlated through the alias stage 1 joins `entities` under.
+#[tokio::test]
+async fn temporal_query_georel_on_a_custom_geoproperty_matches() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let near = scope.id("Building:temporal_geoprop_near");
+    let far = scope.id("Building:temporal_geoprop_far");
+
+    // Both `location` values are swapped relative to `observationPoint`, so a
+    // query that fell back to the default GeoProperty would return the wrong
+    // one of the two entities rather than none.
+    create_temporal(client, &temporal_building_with_observation_point(&near, [30.0, 10.0], [13.4, 52.52, 800.0])).await;
+    create_temporal(client, &temporal_building_with_observation_point(&far, [13.4, 52.52], [30.0, 10.0, 0.0])).await;
+
+    let coordinates = encode_json(&p0());
+    let query_string = format!(
+        "type=Building&timerel=after&timeAt=2020-01-01T00:00:00Z&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationPoint"
+    );
+    let response = client
+        .query_temporal_entities(&query_string, Some(TEST_SUITE_CONTEXT))
+        .await
+        .expect("temporal query failed");
+    assert_eq!(response.status, StatusCode::OK);
+
+    let matched = temporal_ids(&response.json_value().expect("temporal query body must be valid JSON"));
+    assert!(matched.contains(&near), "the entity whose observationPoint is near the reference must match");
+    assert!(
+        !matched.contains(&far),
+        "an entity whose observationPoint is distant must not be admitted by its location"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A temporal `Building` carrying both a `location` and an `observationPoint`,
+/// each with one observed instance.
+fn temporal_building_with_observation_point(id: &str, location: [f64; 2], observation_point: [f64; 3]) -> Value {
+    json!({
+        "id": id,
+        "type": "Building",
+        "location": [{
+            "type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": location},
+            "observedAt": "2020-08-01T12:03:00Z"
+        }],
+        "observationPoint": [{
+            "type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": observation_point},
+            "observedAt": "2020-08-01T12:03:00Z"
+        }],
+        "@context": [TEST_SUITE_CONTEXT]
+    })
+}

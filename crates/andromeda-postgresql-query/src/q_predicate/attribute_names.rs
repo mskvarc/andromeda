@@ -63,11 +63,7 @@ impl ResolvedAttributeNames {
     }
 
     /// Dictionary id for an expanded attribute name, if the broker knows it.
-    ///
-    /// Keyed by the expanded IRI as text, because the callers that need it hold
-    /// the name in different shapes: a `q` filter carries an [`AttributeName`],
-    /// while a geo-query carries its target GeoProperty as an `IriBuf`.
-    pub fn get(&self, attr: &str) -> Option<AttributeNameId> {
+    pub fn get(&self, attr: &AttributeName) -> Option<AttributeNameId> {
         self.ids.get(attr).copied()
     }
 

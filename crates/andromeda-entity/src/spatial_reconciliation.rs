@@ -1,7 +1,7 @@
 //! Rebuilding the in-memory entity spatial index from typed store snapshots.
 
 use crate::{error::EntityError, port::spatial_snapshot::EntitySpatialSnapshotSource};
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{
     entity::{entry::SpatialEntry, index::SpatialEntityIndex},
@@ -31,8 +31,10 @@ pub async fn reconcile_location(
     // A live write landing after the snapshot starts has a later generation and must survive the replacement.
     let snapshot_generation = index.current_generation();
     let snapshots = source.location_snapshots().await?;
-    let location_iri = IriBuf::new(expanded_properties::LOCATION.as_str().to_owned())
-        .map_err(|error| EntityError::internal(format!("invalid default location IRI: {error}")))?;
+    let location: AttributeName = expanded_properties::LOCATION
+        .as_str()
+        .parse()
+        .map_err(|error| EntityError::internal(format!("invalid default location attribute name: {error}")))?;
     let mut per_type: HashMap<IriBuf, Vec<SpatialEntry>> = HashMap::new();
 
     for snapshot in snapshots {
@@ -66,7 +68,7 @@ pub async fn reconcile_location(
             SpatialKey::new(
                 tenant.clone(), // clone: each partition key owns its tenant identifier.
                 type_iri,
-                location_iri.clone(), // clone: each partition key owns the default geoproperty IRI.
+                location.clone(), // clone: each partition key owns the default geoproperty name.
             ),
             entries,
             snapshot_generation,

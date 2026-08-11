@@ -3,13 +3,12 @@
 use crate::port::reader::EntityReader;
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::{expanded::geo_property::geo_property_instance_geometries, notification::NotificationTrigger};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_spatial_index::{entity::index::SpatialEntityIndex, key::SpatialKey};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::debug;
 use urn_rs::Urn;
@@ -67,69 +66,33 @@ impl SpatialSynchronizer {
                 }
             }
         };
-        let Some(object) = expanded_object(&payload) else {
-            return;
-        };
         self.index.remove(urn);
-        let mut candidates = event
-            .changed_attributes
-            .iter()
-            .filter_map(|name| IriBuf::new(name.as_str().to_owned()).ok())
-            .collect::<Vec<_>>();
-        let location: IriBuf = expanded_properties::LOCATION.to_owned().into();
-        if !candidates.contains(&location) {
-            candidates.push(location);
+        // clone: the loop below hands each partition key its own copy
+        let mut candidates: Vec<AttributeName> = event.changed_attributes.to_vec();
+        match expanded_properties::LOCATION.as_str().parse::<AttributeName>() {
+            Ok(location) if !candidates.contains(&location) => candidates.push(location),
+            Ok(_already_present) => {}
+            Err(error) => debug!(%error, "spatial synchronization could not name the default location geoproperty"),
         }
         for geoproperty in candidates {
-            let Some(geometry) = geometry(object, geoproperty.as_str()) else {
+            // Clause 4.10: any instance of the GeoProperty meeting a restriction
+            // matches, so every `datasetId` instance is indexed. Reading them
+            // through the model's one reader is what keeps the index and the
+            // residual filter agreeing on what an entity's geometries are.
+            let geometries: Vec<Geometry> = geo_property_instance_geometries(&payload, geoproperty.as_str()).collect();
+            if geometries.is_empty() {
                 continue;
-            };
+            }
             for entity_type in &event.entity_types {
                 let Ok(type_iri) = IriBuf::new(entity_type.as_str().to_owned()) else {
                     continue;
                 };
-                self.index.insert(
+                self.index.insert_all(
                     SpatialKey::new(self.tenant.clone(), type_iri, geoproperty.clone()), // clone: each partition key independently owns its tenant and geoproperty.
                     urn.clone(),                                                         // clone: each type partition owns the entity identifier.
-                    geometry.clone(),                                                    // clone: each type partition owns its geometry.
+                    geometries.to_vec(),                                                 // clone: each type partition owns its geometries.
                 );
             }
-        }
-    }
-}
-
-fn expanded_object(value: &Value) -> Option<&serde_json::Map<String, Value>> {
-    match value {
-        Value::Array(values) => values.first().and_then(Value::as_object),
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }
-}
-
-fn geometry(object: &serde_json::Map<String, Value>, iri: &str) -> Option<Geometry> {
-    let encoded = object
-        .get(iri)?
-        .as_array()?
-        .first()?
-        .get(expanded_properties::VALUE.as_str())?
-        .as_array()?
-        .first()?
-        .get("@value")?;
-    let value = match encoded {
-        Value::String(encoded) => serde_json::from_str(encoded).ok()?,
-        Value::Object(_) => encoded.clone(), // clone: geometry parsing consumes a value borrowed from the event payload.
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => return None,
-    };
-    // Lenient by design: this reads a payload the write path already validated
-    // against clause 5.5.4, so a geometry that will not decode is a broker-side
-    // surprise to be recorded and skipped, not a request to refuse. Skipping it
-    // leaves the entity out of the spatial prefilter, which costs a store
-    // round trip and never a wrong answer.
-    match Geometry::from_geojson_value(&value) {
-        Ok(geometry) => Some(geometry),
-        Err(error) => {
-            debug!(geoproperty = iri, %error, "Spatial synchronization skipped an undecodable stored geometry");
-            None
         }
     }
 }

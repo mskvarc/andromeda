@@ -411,3 +411,91 @@ async fn georel_near_geoproperty_the_entity_does_not_convey_matches_nothing() {
 
     scope.finish().await.expect("cleanup failed");
 }
+
+/// NGSI-LD 4.10: where a GeoProperty has several `datasetId` instances, it is
+/// enough that one of them meets the restriction.
+///
+/// The default instance is placed far from the reference and only a tagged one
+/// is near it, so a match proves the filter is an existential over the instance
+/// rows rather than a test of the default instance alone.
+#[tokio::test]
+async fn georel_near_custom_geoproperty_matches_on_a_non_default_dataset_instance() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:near_multi_dataset");
+
+    let entity = json!({
+        "id": id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+        "observationPoint": [
+            {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+            {
+                "type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [13.4, 52.52, 800.0]},
+                "datasetId": "urn:ngsi-ld:Dataset:sensor-a"
+            }
+        ],
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create(client, &entity).await;
+
+    let coordinates = encode_json(&p0());
+    let (status, _, body) = query(
+        client,
+        &format!(
+            "type=Building&id={}&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationPoint",
+            urlencoding::encode(&id)
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        ids_of(&body).contains(&id),
+        "one instance meeting the restriction is enough, whichever datasetId carries it"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// The converse of the previous test: an entity none of whose instances meets
+/// the restriction must not match, so the existential is not vacuously true.
+#[tokio::test]
+async fn georel_near_custom_geoproperty_matches_no_entity_whose_every_instance_is_distant() {
+    let scope = TestEnvironment::from_suite("spatial_3d").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:near_multi_dataset_miss");
+
+    let entity = json!({
+        "id": id,
+        "type": "Building",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.52]}},
+        "observationPoint": [
+            {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [30.0, 10.0]}},
+            {
+                "type": "GeoProperty",
+                "value": {"type": "Point", "coordinates": [31.0, 11.0]},
+                "datasetId": "urn:ngsi-ld:Dataset:sensor-a"
+            }
+        ],
+        "@context": [TEST_SUITE_CONTEXT]
+    });
+    create(client, &entity).await;
+
+    let coordinates = encode_json(&p0());
+    let (status, _, body) = query(
+        client,
+        &format!(
+            "type=Building&id={}&georel=near;maxDistance==100&geometry=Point&coordinates={coordinates}&geoproperty=observationPoint",
+            urlencoding::encode(&id)
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !ids_of(&body).contains(&id),
+        "no instance of the named GeoProperty is near the reference, and the default location must not stand in for it"
+    );
+
+    scope.finish().await.expect("cleanup failed");
+}

@@ -1,0 +1,55 @@
+-- ============================================================================
+-- 0033: Index the geometry instances of one attribute of one entity.
+-- ============================================================================
+-- ETSI GS CIM 009 v1.9.1 clause 4.10 lets `geoproperty` name any GeoProperty of
+-- an entity, and clause 4.23 lets a distance ordering measure to one. Only the
+-- default `location` has dedicated columns on `entities`; every other
+-- GeoProperty is read from `attribute_current.value_geo`, correlated back to the
+-- entity by `(entity_id, attribute_name_id)`:
+--
+--     ... FROM attribute_current AS a
+--         WHERE a.entity_id = e.id
+--           AND a.attribute_name_id = $k
+--           AND a.value_geo IS NOT NULL
+--
+-- No index on the table led on `entity_id`. `idx_ac_attr_geo` is a GIST index on
+-- `(attribute_name_id, value_geo)`, which answers "which rows of this attribute
+-- lie near this geometry" but carries no `entity_id`, so it cannot answer "which
+-- rows of this attribute belong to this entity". The filter survived that: the
+-- planner drives the `EXISTS` from the attribute side through the GIST index and
+-- joins back to `entities` by primary key. The distance ordering did not — its
+-- scalar subquery is evaluated once per candidate row and had to scan every
+-- geometry instance of the attribute each time.
+--
+-- Measured on 50 000 entities with 55 000 geometry instances of one attribute
+-- (2 % of them carrying a second `datasetId` instance):
+--
+--   ORDER BY distance, no supporting index      cancelled at 25 s
+--   ORDER BY distance, this index               146 ms
+--   EXISTS geo filter, GIST index               0.4 ms   (unchanged)
+--
+-- Column order. Both `(attribute_name_id, entity_id)` and
+-- `(entity_id, attribute_name_id)` reduce the ordering subquery to a point
+-- lookup and measured the same there (146 ms against 140 ms). The dictionary key
+-- leads because it is the only ordering that also bounds the *other* access
+-- path: when the GIST index cannot cut the search down — `georel=near` with a
+-- `minDistance`, or `disjoint`, neither of which admits a bounding-box cutoff —
+-- the planner drives the semi-join from the attribute side, and only an
+-- `attribute_name_id`-leading index turns that into a bounded range scan rather
+-- than a full index scan. It is also the shape every other index on this table
+-- already has.
+--
+-- Relation to 0025. Migration 0025 dropped `idx_ac_entity_attr (entity_id,
+-- attribute_name_id)` because it had grown to 1.96 GB with zero recorded scans:
+-- it indexed all 25 M rows, whatever their value type, for a direction nothing
+-- queried. This index is not that index returning. It is partial on
+-- `value_geo IS NOT NULL`, so it holds one entry per geometry-valued attribute
+-- instance and nothing else — a small minority of the table, since a broker's
+-- attributes are overwhelmingly numbers, strings and objects — and it has a
+-- named consumer in the geo filter and the distance ordering. If a deployment
+-- stores no GeoProperty beyond the default `location`, the index is empty.
+-- ============================================================================
+
+CREATE INDEX IF NOT EXISTS idx_ac_attr_entity_geo
+    ON attribute_current(attribute_name_id, entity_id)
+    WHERE value_geo IS NOT NULL;
