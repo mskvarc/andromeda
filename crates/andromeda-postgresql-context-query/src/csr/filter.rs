@@ -5,7 +5,7 @@
 
 use andromeda_ngsi_ld_query::filter::{
     expression::Expr,
-    path::AttrPath,
+    path::{AttrPath, QueryPath},
     predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
     scalar::{CompareValue, Scalar},
 };
@@ -28,13 +28,30 @@ pub fn csr_expr_to_condition(expr: &Expr) -> Result<Condition, RenderError> {
 
 /// Compile one leaf predicate against `additional_properties`.
 fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
+    let QueryPath::Local(path) = pred.path() else {
+        return Ok(no_registration_matches());
+    };
     match pred {
-        Predicate::Exists(path) => Ok(Condition::all().add(SeaExpr::cust_with_values("\"additional_properties\" ? $1", [path.attr.as_str().to_string()]))),
-        Predicate::Equality { path, membership, rhs } => Ok(csr_equality_condition(path, *membership, rhs)),
-        Predicate::Ordering { path, op, rhs } => Ok(csr_ordering_condition(path, *op, rhs)),
-        Predicate::MatchPattern { path, pattern } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match)),
-        Predicate::NotMatchPattern { path, pattern } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::NotMatch)),
+        Predicate::Exists(_) => Ok(Condition::all().add(SeaExpr::cust_with_values("\"additional_properties\" ? $1", [path.attr.as_str().to_string()]))),
+        Predicate::Equality { membership, rhs, .. } => Ok(csr_equality_condition(path, *membership, rhs)),
+        Predicate::Ordering { op, rhs, .. } => Ok(csr_ordering_condition(path, *op, rhs)),
+        Predicate::MatchPattern { pattern, .. } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match)),
+        Predicate::NotMatchPattern { pattern, .. } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::NotMatch)),
     }
+}
+
+/// A predicate no registration can satisfy.
+///
+/// The clause 4.9 `{}` axis descends a Relationship into the entity it names.
+/// A registration is not an Entity and its `additional_properties` hold
+/// Properties only (clause 5.2.9 `ContextSourceRegistration`), so there is no
+/// Relationship to descend and no linked entity to reach: the traversal has no
+/// target here, and a predicate with no target does not hold. Rejecting the
+/// whole filter instead would be wrong — the traversal is valid `q` syntax, and
+/// clause 4.9 only requires the entity to "contain the target element" for a
+/// predicate to hold.
+fn no_registration_matches() -> Condition {
+    Condition::all().add(SeaExpr::cust("FALSE"))
 }
 
 /// Compile a pattern predicate against `additional_properties`.
@@ -62,8 +79,7 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 /// scalar subquery. Inlining the `CASE` directly embedded the prior expression
 /// three times per level, so the SQL grew as `~3^depth` — a handful of
 /// sub-attributes produced a statement megabytes wide. The subquery makes the
-/// growth linear in the sub-attribute depth (which [`parse_attr_path`] also
-/// bounds).
+/// growth linear in the sub-attribute depth (which the `q` parser also bounds).
 fn csr_value_extract(path: &AttrPath) -> String {
     let mut json_path = unwrap_property(&format!("\"additional_properties\"->'{}'", escape_single_quoted(path.attr.as_str())));
 

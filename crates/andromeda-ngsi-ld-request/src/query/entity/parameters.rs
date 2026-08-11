@@ -13,6 +13,7 @@ use crate::{
             deserialize_optional_filter_expr,
             deserialize_optional_iso8601_duration,
             deserialize_optional_pattern,
+            deserialize_optional_projection_terms,
             deserialize_optional_uri_csv,
         },
         entity_selector::EntitySelectorParams,
@@ -26,6 +27,7 @@ use andromeda_ngsi_ld_query::{
     filter::expression::Expr,
     ordering::parameters::OrderingParameters,
     pattern::Pattern,
+    projection::grammar::RawProjectionTerm,
     scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
 };
@@ -85,11 +87,11 @@ pub struct EntityQueryParameters {
     #[serde(rename = "local")]
     pub local: Option<bool>,
     /// Members the response is narrowed to (clause 6.3.15 `pick`).
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub pick: Option<Vec<AttributeName>>,
+    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
+    pub pick: Option<Vec<RawProjectionTerm>>,
     /// Members the response drops (clause 6.3.15 `omit`).
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub omit: Option<Vec<AttributeName>>,
+    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
+    pub omit: Option<Vec<RawProjectionTerm>>,
     /// Typed ordering semantics shared by GET and POST query bindings.
     #[serde(flatten)]
     pub ordering: OrderingParameters,
@@ -321,13 +323,89 @@ mod tests {
     fn parse_pick_omit() {
         let p = params_from_query("pick=id,type,speed&omit=scope");
         pretty_assertions::assert_eq!(
-            p.pick.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-            Some(vec!["id", "type", "speed"])
+            p.pick.as_deref().map(|terms| terms.iter().map(ToString::to_string).collect::<Vec<_>>()),
+            Some(vec!["id".to_string(), "type".to_string(), "speed".to_string()])
         );
         pretty_assertions::assert_eq!(
-            p.omit.as_deref().map(|names| names.iter().map(AttributeName::as_str).collect::<Vec<_>>()),
-            Some(vec!["scope"])
+            p.omit.as_deref().map(|terms| terms.iter().map(ToString::to_string).collect::<Vec<_>>()),
+            Some(vec!["scope".to_string()])
         );
+    }
+
+    /// Clause 4.21: `observation{temperature,humidity}` is one raw term naming
+    /// the `observation` relationship with two linked-entity sub-terms.
+    #[test]
+    fn pick_with_a_linked_entity_group_parses_to_one_term_with_two_children() {
+        let p = params_from_query("pick=observation%7Btemperature%2Chumidity%7D");
+        let terms = p.pick.as_deref().expect("pick present");
+        pretty_assertions::assert_eq!(terms.len(), 1);
+        pretty_assertions::assert_eq!(terms[0].name.as_str(), "observation");
+        pretty_assertions::assert_eq!(
+            terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(),
+            vec!["temperature", "humidity"]
+        );
+        assert!(p.omit.is_none());
+    }
+
+    #[test]
+    fn pick_and_omit_together_rejected() {
+        let p = params_from_query("pick=speed&omit=scope");
+        let err = p.validate().expect_err("expected mutual exclusivity error");
+        assert!(matches!(err, ParameterError::PickOmitExclusive));
+        assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    /// Clause 5.7.2.4: a query whose `pick` nests into a Linked Entity without
+    /// asking for a join names members the response cannot carry.
+    #[test]
+    fn validate_rejects_a_nested_pick_without_a_join() {
+        let p = params_from_query("type=Building&pick=linkedTo%7Bcategory%7D");
+        let err = p.validate().expect_err("expected a projection/join consistency error");
+        assert!(matches!(err, ParameterError::ProjectionLinkedTermsWithoutJoin), "got {err:?}");
+    }
+
+    /// Clause 5.7.2.4: the nesting may not reach past the traversal, and it
+    /// becomes valid as soon as `joinLevel` covers it.
+    #[test]
+    fn validate_measures_the_nesting_against_the_join_level() {
+        let too_deep = params_from_query("type=Building&join=flat&joinLevel=1&pick=a%7Bb%7Bc%7D%7D");
+        let err = too_deep.validate().expect_err("expected a projection/join consistency error");
+        assert!(
+            matches!(err, ParameterError::ProjectionDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
+            "got {err:?}"
+        );
+
+        let deep_enough = params_from_query("type=Building&join=flat&joinLevel=2&pick=a%7Bb%7Bc%7D%7D");
+        assert!(deep_enough.validate().is_ok());
+    }
+
+    /// Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and a query where
+    /// "use of Linked Entity retrieval is not specified" asked for no such
+    /// walk. Clause 4.5.23 makes `@none` the parameter's default, so stating it
+    /// is the same request as omitting it.
+    #[test]
+    fn validate_rejects_a_traversing_filter_without_a_retrieving_join() {
+        for query in ["type=Car&q=isParkedIn%7Bcategory%7D", "type=Car&join=%40none&q=isParkedIn%7Bcategory%7D"] {
+            let err = params_from_query(query).validate().expect_err("expected a filter/join consistency error");
+            assert!(matches!(err, ParameterError::FilterTraversalWithoutJoin), "got {err:?} for {query}");
+        }
+    }
+
+    /// Clause 5.7.2.4 "too deep query": the hop chain may not reach past the
+    /// requested traversal, and becomes valid as soon as `joinLevel` covers it.
+    /// `inline` is the mode a filter-only client wants — clause 4.5.23.2 has
+    /// its response "only consist of Linking Entities".
+    #[test]
+    fn validate_measures_the_filter_hops_against_the_join_level() {
+        let too_deep = params_from_query("type=Car&join=inline&joinLevel=1&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");
+        let err = too_deep.validate().expect_err("expected a filter/join consistency error");
+        assert!(
+            matches!(err, ParameterError::FilterDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
+            "got {err:?}"
+        );
+
+        let deep_enough = params_from_query("type=Car&join=inline&joinLevel=2&q=isParkedIn%7BinDistrict%7Bzone%7D%7D");
+        assert!(deep_enough.validate().is_ok());
     }
 
     #[test]

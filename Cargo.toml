@@ -102,6 +102,7 @@ tokio = { version = "1.52.1", features = ["full"] }
 shadow-rs = "2.0.0"
 
 [dev-dependencies]
+andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-test-client.workspace = true
 andromeda-test-fixtures.workspace = true
 andromeda-test-harness.workspace = true

@@ -2,7 +2,7 @@
 
 use crate::filter::{
     expression::Expr,
-    path::AttrPath,
+    path::{AttrPath, QueryPath},
     predicate::Predicate,
     scalar::{CompareValue, Scalar},
 };
@@ -66,28 +66,62 @@ const fn needs_parentheses(term: &Expr, separator: char) -> bool {
 }
 
 /// Write one leaf predicate.
+///
+/// A linked-entity hop encloses the operator and the operand as well as the
+/// inner path — clause 4.9 writes `rel{attr=="x"}`, not `rel{attr}=="x"` — so
+/// the hops are opened first, the comparison is written at the innermost level,
+/// and the braces are closed afterwards.
 fn write_predicate(buf: &mut String, pred: &Predicate) {
+    let open_hops = write_query_path(buf, pred.path());
     match pred {
-        Predicate::Exists(path) => write_attr_path(buf, path),
-        Predicate::Equality { path, membership, rhs } => {
-            write_attr_path(buf, path);
+        Predicate::Exists(_) => {}
+        Predicate::Equality { membership, rhs, .. } => {
             buf.push_str(membership.ngsi_token());
             write_compare_value(buf, rhs);
         }
-        Predicate::Ordering { path, op, rhs } => {
-            write_attr_path(buf, path);
+        Predicate::Ordering { op, rhs, .. } => {
             buf.push_str(op.ngsi_token());
             write_scalar(buf, rhs);
         }
-        Predicate::MatchPattern { path, pattern } => {
-            write_attr_path(buf, path);
+        Predicate::MatchPattern { pattern, .. } => {
             buf.push_str("~=");
             write_quoted(buf, pattern.as_str());
         }
-        Predicate::NotMatchPattern { path, pattern } => {
-            write_attr_path(buf, path);
+        Predicate::NotMatchPattern { pattern, .. } => {
             buf.push_str("!~=");
             write_quoted(buf, pattern.as_str());
+        }
+    }
+    for _ in 0..open_hops {
+        buf.push('}');
+    }
+}
+
+/// Write an attribute axis up to and including its terminal local path,
+/// returning how many hop braces the caller has left to close.
+fn write_query_path(buf: &mut String, path: &QueryPath) -> usize {
+    match path {
+        QueryPath::Local(local) => {
+            write_attr_path(buf, local);
+            0
+        }
+        QueryPath::Linked {
+            relationship,
+            guard_types,
+            inner,
+        } => {
+            write_ident(buf, relationship.as_str());
+            buf.push('{');
+            for (index, guard_type) in guard_types.iter().enumerate() {
+                if index > 0 {
+                    buf.push(',');
+                }
+                write_guard_type(buf, guard_type.as_str());
+            }
+            if !guard_types.is_empty() {
+                buf.push(':');
+            }
+            1 + write_query_path(buf, inner)
         }
     }
 }
@@ -108,6 +142,22 @@ fn write_attr_path(buf: &mut String, path: &AttrPath) {
             write_ident(buf, vp);
         }
         buf.push(']');
+    }
+}
+
+/// Write one entity type of a hop's guard, quoting it whenever it carries a
+/// colon.
+///
+/// A guard type needs quoting the ordinary identifier rule does not ask for: the
+/// guard's terminating colon is written straight after the last type, so a bare
+/// type that contains one of its own leaves the parser two colons and no way to
+/// tell which ends the guard — the parser rejects exactly that. Quoting closes
+/// the type before the terminator and the filter reads back unchanged.
+fn write_guard_type(buf: &mut String, s: &str) {
+    if s.contains(':') {
+        write_quoted(buf, s);
+    } else {
+        write_ident(buf, s);
     }
 }
 
@@ -261,6 +311,41 @@ mod tests {
         }
     }
 
+    /// A clause 4.9 linked-entity traversal has to come back the way it went in,
+    /// braces, type guard and all: a subscription's `q` is serialised when it is
+    /// stored and re-parsed when it is loaded, so a traversal that did not
+    /// round-trip would be a subscription that silently changed meaning.
+    ///
+    /// The expanded shapes matter as much as the compact ones. Expansion turns
+    /// every name into an IRI, which carries dots and is therefore re-quoted,
+    /// and the guard's terminating colon then stands alone between two quoted
+    /// strings rather than glued to an identifier.
+    #[test]
+    fn a_linked_entity_traversal_round_trips_with_and_without_its_guard() {
+        let shapes = [
+            "isParkedIn{category==\"commercial\"}",
+            "isParkedIn{Building,Store:category==\"x\"}",
+            "a{b{c==5}}",
+            "a{b}",
+            "a{prefix:name==\"v\"}",
+            "speed>50;isParkedIn{category==\"x\"}",
+            "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",\"https://example.com/Store\":\"https://example.com/category\"==\"x\"}",
+            "\"https://example.com/rel\"{Building,Store:\"https://example.com/category\"==\"x\"}",
+            "rel{Building,Store:\"https://example.com/category\"==\"x\"}",
+            // A prefixed guard type is quoted so its own colon cannot be read as
+            // the one that ends the guard.
+            "rel{Building,\"ex:Store\":category==\"x\"}",
+            "rel{\"ex:A\",\"ex:B\":category==\"x\"}",
+        ];
+        for shape in shapes {
+            let parsed = parse(shape).unwrap_or_else(|error| unreachable!("{shape} must parse: {error}"));
+            let rendered = serialize(&parsed);
+            pretty_assertions::assert_eq!(rendered, shape, "serialisation of {shape}");
+            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, parsed, "round trip of {shape}");
+        }
+    }
+
     /// A percent sequence inside a quoted operand is neither decoded on parse
     /// nor re-encoded on serialise, so a stored filter round-trips byte for
     /// byte. A quoted operand is a JSON String (clause 4.9), not percent-encoded
@@ -279,7 +364,7 @@ mod tests {
     fn serialize_expanded_iri() {
         // After expansion, attrs become full IRIs with dots
         let expr = Expr::Pred(Predicate::Ordering {
-            path: AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name")),
+            path: QueryPath::Local(AttrPath::simple("https://example.com/speed".parse().expect("valid attribute name"))),
             op: OrderingOp::Greater,
             rhs: Scalar::Number(50.into()),
         });
@@ -290,7 +375,7 @@ mod tests {
         let parsed = parse(&s).unwrap();
         match parsed {
             Expr::Pred(Predicate::Ordering { path, .. }) => {
-                pretty_assertions::assert_eq!(path.attr.as_str(), "https://example.com/speed");
+                pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "https://example.com/speed");
             }
             other => unreachable!("expected Ordering, got {other:?}"),
         }

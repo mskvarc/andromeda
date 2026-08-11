@@ -9,6 +9,7 @@ use http::{HeaderName, HeaderValue};
 use mediatype::{MediaType, MediaTypeBuf, Name, names};
 use std::fmt;
 
+/// The lowercase `Content-Type` field name this header is transmitted under.
 static CONTENT_TYPE: HeaderName = HeaderName::from_static("content-type");
 
 /// `application/json`

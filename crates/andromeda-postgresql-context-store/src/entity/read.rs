@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_context_query::entity as entity_sql;
 use andromeda_postgresql_query::{
     bind::BindValue,
-    q_predicate::{attribute_names::ResolvedAttributeNames, projection::referenced_attribute_names},
+    q_predicate::attribute_names::{ResolvedAttributeNames, referenced_attribute_names},
 };
 use serde_json::Value;
 use sqlx::Row;
@@ -173,6 +173,11 @@ impl EntityRepository {
     /// Resolve the attribute IRIs a compiled `q` filter references to their
     /// dictionary keys, and wait for the `attribute_current` projection to catch
     /// up if any of them will be answered from it.
+    ///
+    /// A clause 4.9 linked-entity traversal contributes more than one name per
+    /// predicate: the Relationship each hop descends through is probed by
+    /// dictionary key just as the terminal attribute is, and both come back from
+    /// the same collection walk.
     async fn resolve_q_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, ContextStoreError> {
         let Some(q_expr) = &compiled.selection.q_expr else {
             return Ok(ResolvedAttributeNames::default());

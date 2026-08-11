@@ -136,7 +136,7 @@ mod tests {
         q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile},
         schema::Entities,
     };
-    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, predicate::Predicate, scalar::Scalar};
+    use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar};
     use sea_query::{PostgresQueryBuilder, Query};
 
     const SPEED: &str = "https://example.com/speed";
@@ -214,7 +214,7 @@ mod tests {
             match_all_languages: false,
         };
         let expr = Expr::Pred(Predicate::Equality {
-            path,
+            path: QueryPath::Local(path),
             membership: SetMembership::Within,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });

@@ -3,6 +3,7 @@
 use crate::{
     entity_selection::EntitySelection,
     pagination::Pagination,
+    projection::compiled::Projection,
     temporal::{instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
 };
 use typed_builder::TypedBuilder;
@@ -31,4 +32,8 @@ pub struct CompiledTemporalQuery {
     /// Result window: limit, offset, and the total-count policy.
     #[builder(default = Pagination::DEFAULT)]
     pub pagination: Pagination,
+    /// Which members of a matching entity's temporal representation reach the
+    /// response (clause 6.3.15 `pick` / `omit`).
+    #[builder(default)]
+    pub projection: Projection,
 }

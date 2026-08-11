@@ -5,18 +5,20 @@ use crate::{
     case_insensitive_bool::deserialize_option_bool_case_insensitive,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
+    linked_retrieval_consistency::validate_projection_join_depth,
     options::{EntityRepresentationOptions, OverwritePolicy, deserialize_entity_representation_options, deserialize_overwrite_policy},
     query::deserialization::{
         deserialize_optional_attribute_names,
         deserialize_optional_dataset_selector,
         deserialize_optional_dataset_selectors,
+        deserialize_optional_projection_terms,
         deserialize_optional_uri_csv,
     },
     representation_params::deserialize_option_response_format,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use serde::Deserialize;
 use std::num::NonZeroU32;
@@ -66,12 +68,14 @@ pub struct GetEntityParams {
     /// The representation the response uses (clause 4.5.1 `format`).
     #[serde(default, deserialize_with = "deserialize_option_response_format")]
     pub format: Option<ResponseFormat>,
-    /// Members the response is narrowed to (clause 6.3.15 `pick`).
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub pick: Option<Vec<AttributeName>>,
-    /// Members the response drops (clause 6.3.15 `omit`).
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub omit: Option<Vec<AttributeName>>,
+    /// Members the response is narrowed to (clause 6.3.15 `pick`), each term
+    /// carrying whatever clause 4.21 sub-projection it was written with.
+    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
+    pub pick: Option<Vec<RawProjectionTerm>>,
+    /// Members the response drops (clause 6.3.15 `omit`), each term carrying
+    /// whatever clause 4.21 sub-projection it was written with.
+    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
+    pub omit: Option<Vec<RawProjectionTerm>>,
     /// Clause-4.15 natural-language selection preferences.
     #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
     pub lang: Option<LanguageFilter>,
@@ -112,7 +116,18 @@ impl GetEntityParams {
     /// query, so an unknown `format` (`?format=bananas`) is a client error here
     /// too and must return 400 rather than being silently ignored.
     pub fn validate(&self) -> Result<(), ParameterError> {
-        validate_attrs(self.attrs.as_deref())
+        validate_attrs(self.attrs.as_deref())?;
+        // Clause 6.3.15: pick and omit select opposite ends of the same
+        // projection, so a request naming both is contradictory rather than
+        // a request the broker can merge. The rule is the query's rule; the
+        // retrieval carries the same two parameters and so the same rule.
+        if self.pick.is_some() && self.omit.is_some() {
+            return Err(ParameterError::PickOmitExclusive);
+        }
+        // Clause 5.7.2.4: a nested sub-projection describes a Linked Entity,
+        // so it is only meaningful as far as the requested join reaches.
+        validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
+        Ok(())
     }
 }
 
@@ -198,6 +213,53 @@ mod tests {
     #[test]
     fn validate_rejects_unknown_options_token() {
         assert!(serde_urlencoded::from_str::<GetEntityParams>("options=keyValues%2Cbogus").is_err());
+    }
+
+    /// Clause 4.21: a single-entity GET parses `pick` through the projection
+    /// grammar, so `linkedTo{category}` is one term with one nested term --
+    /// not the attribute name `linkedTo{category}`.
+    #[test]
+    fn get_pick_parses_through_the_projection_grammar() {
+        let params: GetEntityParams = serde_urlencoded::from_str("pick=linkedTo%7Bcategory%7D,id").expect("valid pick");
+        let terms = params.pick.as_deref().expect("pick present");
+        pretty_assertions::assert_eq!(terms.len(), 2);
+        pretty_assertions::assert_eq!(terms[0].name.as_str(), "linkedTo");
+        pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["category"]);
+        pretty_assertions::assert_eq!(terms[1].name.as_str(), "id");
+        assert!(terms[1].linked.is_empty());
+    }
+
+    /// Clause 6.3.15 declares `pick` and `omit` mutually exclusive on every
+    /// binding that accepts them, the single-entity retrieval included.
+    #[test]
+    fn get_validate_rejects_pick_and_omit_together() {
+        let params: GetEntityParams = serde_urlencoded::from_str("pick=speed&omit=scope").expect("valid projection terms");
+        let error = params.validate().expect_err("expected mutual exclusivity error");
+        assert!(matches!(error, ParameterError::PickOmitExclusive));
+    }
+
+    /// Clause 5.7.2.4: a retrieval whose `pick` nests into a Linked Entity
+    /// without asking for a join names members the response cannot carry.
+    #[test]
+    fn get_validate_rejects_a_nested_pick_without_a_join() {
+        let params: GetEntityParams = serde_urlencoded::from_str("pick=linkedTo%7Bcategory%7D").expect("valid projection terms");
+        let error = params.validate().expect_err("expected a projection/join consistency error");
+        assert!(matches!(error, ParameterError::ProjectionLinkedTermsWithoutJoin), "got {error:?}");
+    }
+
+    /// Clause 5.7.2.4: the nesting may not reach past the traversal, and it
+    /// becomes valid as soon as `joinLevel` covers it.
+    #[test]
+    fn get_validate_measures_the_nesting_against_the_join_level() {
+        let too_deep: GetEntityParams = serde_urlencoded::from_str("join=flat&joinLevel=1&pick=a%7Bb%7Bc%7D%7D").expect("valid projection terms");
+        let error = too_deep.validate().expect_err("expected a projection/join consistency error");
+        assert!(
+            matches!(error, ParameterError::ProjectionDepthExceedsJoinLevel { depth: 2, join_level: 1 }),
+            "got {error:?}"
+        );
+
+        let deep_enough: GetEntityParams = serde_urlencoded::from_str("join=flat&joinLevel=2&pick=a%7Bb%7Bc%7D%7D").expect("valid projection terms");
+        assert!(deep_enough.validate().is_ok());
     }
 
     #[test]

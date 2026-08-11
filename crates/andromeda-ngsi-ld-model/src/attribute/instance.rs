@@ -19,7 +19,10 @@ use jsonld::Expandable;
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::iter::once;
+use std::{
+    iter::once,
+    slice::{Iter, from_ref},
+};
 
 /// One instance of any NGSI-LD attribute family, discriminated by its `type` member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +128,22 @@ pub enum AttributeValue {
     Multiple(Vec<Attribute>),
     /// A member that is not an attribute instance, preserved verbatim.
     Raw(Value),
+}
+
+impl AttributeValue {
+    /// Iterate the attribute instances this member holds, uniformly across the
+    /// single, multi-instance and verbatim shapes.
+    ///
+    /// A [`AttributeValue::Raw`] member is not an attribute instance at all
+    /// (clause 4.5.5 keeps unrecognised members verbatim), so it yields
+    /// nothing rather than being reported as an untyped instance.
+    pub fn instances(&self) -> Iter<'_, Attribute> {
+        match self {
+            AttributeValue::Single(attr) => from_ref(attr.as_ref()).iter(),
+            AttributeValue::Multiple(attrs) => attrs.iter(),
+            AttributeValue::Raw(_) => Iter::default(),
+        }
+    }
 }
 
 impl Expandable for Attribute {

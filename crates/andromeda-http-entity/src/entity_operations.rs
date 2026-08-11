@@ -1,6 +1,8 @@
 use crate::{
     error::{EntityResultExt, internal_error, public_error},
+    join::{JoinRequest, ResolvedJoin},
     provision_forwarding::ForwardingModes,
+    request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
 use andromeda_entity::{
@@ -29,16 +31,20 @@ use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,
     collection::NgsiLdCollectionResponse,
+    linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
     render::start_rendering,
     sonic_json::SonicJson,
 };
 use andromeda_ngsi_ld_model::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy, query::body::Query};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
-use andromeda_ngsi_ld_render::{entity::EntityRenderer, response::ResponsePayload};
-use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+use andromeda_ngsi_ld_render::{
+    entity::{EntityRenderer, render_flat_join},
+    response::ResponsePayload,
+};
 use andromeda_ngsi_ld_request::{
     entity_operations::{PostQueryParams, UpdateParams, UpsertParams},
+    join_traversal::RetrievingJoin,
     options::{OverwritePolicy as RequestOverwritePolicy, UpsertMode},
     query::entity::parameters::EntityQueryParameters,
 };
@@ -50,7 +56,6 @@ use axum::{
 };
 use headers::HeaderMapExt;
 use serde_json::Value;
-use std::{collections::HashSet, num::NonZeroU32};
 
 fn apply_preference_applied(mut response: Response, mode: BatchSideEffectMode) -> Response {
     if matches!(mode, BatchSideEffectMode::Enqueue) {

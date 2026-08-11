@@ -2,13 +2,14 @@
 
 use crate::filter::{
     expression::Expr,
-    path::AttrPath,
+    path::{AttrPath, QueryPath},
     predicate::{CmpOp, Predicate, SetMembership},
     scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
 };
-use andromeda_ngsi_ld_vocabulary::expanded::properties::{JSON, LANGUAGE_MAP, OBJECT, OBJECT_LIST, VALUE, VALUE_LIST, VOCAB};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_vocabulary::expanded::properties::{ENTITY, JSON, LANGUAGE_MAP, OBJECT, OBJECT_LIST, VALUE, VALUE_LIST, VOCAB};
 use serde_json::{Map, Value};
-use std::cmp::Ordering;
+use std::{cmp::Ordering, slice::from_ref};
 
 /// Evaluate a parsed `q` expression against an expanded JSON-LD entity.
 ///
@@ -50,9 +51,9 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
     match pred {
         // Clause 4.9: existence holds when the entity contains the target
         // element, whatever attribute family it belongs to.
-        Predicate::Exists(path) => !resolve_values(obj, path).is_empty(),
-        Predicate::Equality { path, membership, rhs } => resolve_values(obj, path).iter().any(|target| eval_equality(&target.value, *membership, rhs)),
-        Predicate::Ordering { path, op, rhs } => resolve_values(obj, path).iter().any(|target| {
+        Predicate::Exists(path) => !resolve_targets(obj, path).is_empty(),
+        Predicate::Equality { path, membership, rhs } => resolve_targets(obj, path).iter().any(|target| eval_equality(&target.value, *membership, rhs)),
+        Predicate::Ordering { path, op, rhs } => resolve_targets(obj, path).iter().any(|target| {
             // Clause 4.9: an ordering comparison against a Relationship shall
             // not match — a URI has no `<`/`>` order the query can mean.
             if target.is_relationship {
@@ -63,14 +64,14 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
         // Clause 4.9: a pattern operator applies only to a String target; a
         // non-String value is considered as not matching, so a number or
         // boolean is never stringified into a match.
-        Predicate::MatchPattern { path, pattern } => resolve_values(obj, path)
+        Predicate::MatchPattern { path, pattern } => resolve_targets(obj, path)
             .iter()
             .filter_map(|target| target.value.as_str())
             .any(|value| pattern.is_match(value)),
         // `notPatternOp` also requires the entity to *contain* the target
         // element (clause 4.9); an entity that lacks the attribute, or carries
         // only non-String values, does not match.
-        Predicate::NotMatchPattern { path, pattern } => resolve_values(obj, path)
+        Predicate::NotMatchPattern { path, pattern } => resolve_targets(obj, path)
             .iter()
             .filter_map(|target| target.value.as_str())
             .any(|value| !pattern.is_match(value)),
@@ -94,6 +95,70 @@ fn value_members() -> [(&'static str, &'static str, bool); 7] {
         (VALUE_LIST.as_str(), "@value", false),
         (OBJECT_LIST.as_str(), "@id", true),
     ]
+}
+
+/// Resolve every value an attribute axis addresses, descending each
+/// linked-entity hop into the entity it names.
+///
+/// A hop can only be followed when the document already carries the linked
+/// entity: clause 4.5.23.2 `join=inline` nests it under the Relationship
+/// instance's `entity` member, and that embedded copy is the only linked data
+/// an in-memory evaluation has. Without it the hop resolves no target and the
+/// predicate does not hold. That is not a weaker reading of clause 4.9 — for a
+/// stored entity the SQL compilation is what answers a traversal filter, and it
+/// reads the linked entity from the store. This evaluator only ever sees the one
+/// document it is handed, whether that is a notification payload being matched
+/// against a subscription or a residual filter finishing what a store declined.
+fn resolve_targets(obj: &Map<String, Value>, path: &QueryPath) -> Vec<ResolvedTarget> {
+    match path {
+        QueryPath::Local(local) => resolve_values(obj, local),
+        QueryPath::Linked {
+            relationship,
+            guard_types,
+            inner,
+        } => resolve_across_hop(obj, relationship, guard_types, inner),
+    }
+}
+
+/// Resolve the inner axis against every entity embedded under a Relationship's
+/// instances, keeping only those the hop's type guard admits.
+fn resolve_across_hop(obj: &Map<String, Value>, relationship: &AttributeName, guard_types: &[AttributeName], inner: &QueryPath) -> Vec<ResolvedTarget> {
+    let Some(attribute) = obj.get(relationship.as_str()) else {
+        return Vec::new();
+    };
+    instances_of(attribute)
+        .iter()
+        .flat_map(|instance| instance.get(ENTITY.as_str()).into_iter().flat_map(|embedded| instances_of(embedded).iter()))
+        .filter_map(Value::as_object)
+        .filter(|linked| admitted_by_guard(linked, guard_types))
+        .flat_map(|linked| resolve_targets(linked, inner))
+        .collect()
+}
+
+/// The instances a member holds: an expanded JSON-LD member is an array, while a
+/// canonical-keyed Context Source property is the bare node.
+fn instances_of(member: &Value) -> &[Value] {
+    match member.as_array() {
+        Some(instances) => instances.as_slice(),
+        None => from_ref(member),
+    }
+}
+
+/// Whether a linked entity satisfies a hop's entity-type guard.
+///
+/// An empty guard admits every linked entity; otherwise clause 4.9's
+/// `1*(EntityType)` list is a disjunction, so one shared type is enough.
+fn admitted_by_guard(linked: &Map<String, Value>, guard_types: &[AttributeName]) -> bool {
+    if guard_types.is_empty() {
+        return true;
+    }
+    let Some(declared) = linked.get("@type") else {
+        return false;
+    };
+    instances_of(declared)
+        .iter()
+        .filter_map(Value::as_str)
+        .any(|declared| guard_types.iter().any(|guard| guard.as_str() == declared))
 }
 
 /// Resolve every value an attribute path addresses in an expanded JSON-LD
@@ -649,6 +714,120 @@ mod tests {
         // "Outside" is the exact complement of "within", so `!=` a numeric range
         // holds for a string target that cannot be inside it.
         assert!(evaluate(&parse("\"https://example.com/brandName\"!=70..90").unwrap(), &vehicle_entity()));
+    }
+
+    // -- linked-entity traversal (clause 4.9) --------------------------------
+
+    /// A vehicle whose `isParkedIn` Relationship carries the linked entity
+    /// inline, the shape clause 4.5.23.2 `join=inline` produces, expanded.
+    fn vehicle_with_inline_parking(category: &str, linked_type: &str) -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A1",
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/isParkedIn": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:OffStreetParking:Downtown1"}],
+                "https://uri.etsi.org/ngsi-ld/entity": [{
+                    "@id": "urn:ngsi-ld:OffStreetParking:Downtown1",
+                    "@type": [linked_type],
+                    "https://example.com/category": [{
+                        "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": category}]
+                    }]
+                }]
+            }]
+        }])
+    }
+
+    fn linked_predicate(inner_value: &str) -> Expr {
+        parse(&format!(
+            "\"https://example.com/isParkedIn\"{{\"https://example.com/category\"==\"{inner_value}\"}}"
+        ))
+        .expect("parses")
+    }
+
+    #[test]
+    fn the_embedded_entity_member_is_the_one_the_inline_join_renderer_writes() {
+        // The renderer inserts the linked entity under the compacted `entity`
+        // key; the core context expands that term to this IRI, which is what an
+        // expanded document the evaluator sees carries.
+        pretty_assertions::assert_eq!(ENTITY.as_str(), "https://uri.etsi.org/ngsi-ld/entity");
+    }
+
+    #[test]
+    fn a_hop_matches_on_the_value_of_the_embedded_linked_entity() {
+        let entity = vehicle_with_inline_parking("commercial", "https://example.com/Building");
+        assert!(evaluate(&linked_predicate("commercial"), &entity));
+    }
+
+    #[test]
+    fn a_hop_rejects_when_the_embedded_linked_entity_holds_another_value() {
+        let entity = vehicle_with_inline_parking("residential", "https://example.com/Building");
+        assert!(!evaluate(&linked_predicate("commercial"), &entity));
+    }
+
+    #[test]
+    fn a_type_guard_admits_only_a_linked_entity_of_a_listed_type() {
+        // Clause 4.9's `*1(EntityType 1*("," EntityType) ":")` constrains which
+        // linked entities the hop descends into.
+        let guarded = parse(concat!(
+            "\"https://example.com/isParkedIn\"{\"https://example.com/Building\",",
+            "\"https://example.com/Store\":\"https://example.com/category\"==\"commercial\"}"
+        ))
+        .expect("parses");
+        assert!(evaluate(&guarded, &vehicle_with_inline_parking("commercial", "https://example.com/Building")));
+        assert!(!evaluate(&guarded, &vehicle_with_inline_parking("commercial", "https://example.com/Warehouse")));
+    }
+
+    #[test]
+    fn a_hop_without_embedded_linked_data_resolves_no_target() {
+        // The evaluator only ever sees the document it is handed. A Relationship
+        // that names its target by URI alone carries nothing to descend into, so
+        // the predicate does not hold; for a stored entity the SQL compilation
+        // answers the traversal instead.
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Vehicle:A1",
+            "@type": ["https://example.com/Vehicle"],
+            "https://example.com/isParkedIn": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:OffStreetParking:Downtown1"}]
+            }]
+        }]);
+        assert!(!evaluate(&linked_predicate("commercial"), &entity));
+        assert!(!evaluate(
+            &parse("\"https://example.com/isParkedIn\"{\"https://example.com/category\"}").expect("parses"),
+            &entity
+        ));
+    }
+
+    #[test]
+    fn two_hops_descend_through_two_embedded_levels() {
+        let entity = serde_json::json!([{
+            "@id": "urn:a",
+            "@type": ["https://example.com/A"],
+            "https://example.com/outer": [{
+                "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:b"}],
+                "https://uri.etsi.org/ngsi-ld/entity": [{
+                    "@id": "urn:b",
+                    "@type": ["https://example.com/B"],
+                    "https://example.com/inner": [{
+                        "https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:c"}],
+                        "https://uri.etsi.org/ngsi-ld/entity": [{
+                            "@id": "urn:c",
+                            "@type": ["https://example.com/C"],
+                            "https://example.com/zone": [{
+                                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "north"}]
+                            }]
+                        }]
+                    }]
+                }]
+            }]
+        }]);
+        let two_hops = |zone: &str| {
+            parse(&format!(
+                "\"https://example.com/outer\"{{\"https://example.com/inner\"{{\"https://example.com/zone\"==\"{zone}\"}}}}"
+            ))
+            .expect("parses")
+        };
+        assert!(evaluate(&two_hops("north"), &entity));
+        assert!(!evaluate(&two_hops("south"), &entity));
     }
 
     #[test]

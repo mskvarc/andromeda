@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_query::{
     filter::{expression::Expr, parser},
     geo::input::GeoQueryInput,
     pattern::Pattern,
+    projection::grammar::{RawProjectionTerm, parse_projection_list},
 };
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer};
@@ -143,6 +144,27 @@ where
             .collect()
     })
     .transpose()
+}
+
+/// Deserialize an optional `pick` / `omit` raw projection list (clause 6.3.15,
+/// grammar in clause 4.21).
+///
+/// The whole wire value is handed to [`parse_projection_list`] rather than
+/// split on `,` here first: a linked-entity term such as
+/// `observation{temperature,humidity}` uses `,` inside its `{...}` group too,
+/// so splitting before parsing would tear the group apart. Comma (and `|`)
+/// splitting is entirely the grammar's own job.
+///
+/// # Errors
+///
+/// Returns a deserialization error when the value does not satisfy the
+/// clause 4.21 projection-list grammar.
+pub fn deserialize_optional_projection_terms<'de, D>(deserializer: D) -> Result<Option<Vec<RawProjectionTerm>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    raw.map(|value| parse_projection_list(&value).map_err(serde::de::Error::custom)).transpose()
 }
 
 /// Deserialize an optional comma-separated list of dataset selectors.

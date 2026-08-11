@@ -11,11 +11,15 @@ pub mod error;
 /// Bounded delivery of deferred temporal append intents.
 pub mod intent_drain;
 mod intent_preparation;
+/// Clause 4.5.23 join over the temporal evolution of Linked Entities.
+pub mod linked;
 pub mod outcome;
 /// Read overlay combining stored history with committed pending intents.
 pub mod pending_overlay;
 pub mod port;
 mod read;
+/// The non-local half of Linked Entity resolution for the temporal API.
+pub mod remote_linked;
 pub mod service;
 mod write;
 

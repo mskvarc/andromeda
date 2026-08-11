@@ -1,7 +1,12 @@
 //! Expansion of attribute selection lists through the request's `@context`.
 
-use crate::{error::QueryError, projection::term::ProjectionTerm, term_expander::TermExpander};
+use crate::{
+    error::QueryError,
+    projection::{grammar::RawProjectionTerm, term::ProjectionTerm},
+    term_expander::TermExpander,
+};
 use iri_rs::IriBuf;
+use std::{future::Future, pin::Pin};
 
 /// Expand a list of short attribute names to their full IRIs.
 ///
@@ -16,24 +21,63 @@ pub async fn expand_attrs<S: AsRef<str>>(raw: &[S], expander: &impl TermExpander
     Ok(expanded)
 }
 
-/// Expand a `pick` / `omit` term list, keeping the clause 6.3.15 keywords
-/// `id`, `type` and `scope` as written.
-pub async fn expand_projection_terms<S: AsRef<str>>(raw: &[S], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
-    let mut expanded = Vec::with_capacity(raw.len());
-    for term in raw {
-        expanded.push(match term.as_ref() {
-            // Clause 6.3.15: these name structural members of the
-            // representation, not attributes, so they have no IRI to expand to.
-            ProjectionTerm::ID_KEYWORD => ProjectionTerm::Id,
-            ProjectionTerm::TYPE_KEYWORD => ProjectionTerm::Type,
-            ProjectionTerm::SCOPE_KEYWORD => ProjectionTerm::Scope,
-            // `&str` is unbounded, so a catch-all is the only way to close this
-            // match; anything that is not one of the three keywords is an
-            // attribute term.
-            _ => ProjectionTerm::Attribute(expander.expand_term(term.as_ref()).await?),
-        });
+/// Expand a `pick` / `omit` term list (clause 6.3.15), keeping the keywords
+/// `id`, `type` and `scope` as written and recursing into each term's clause
+/// 4.21 linked-entity sub-projection.
+pub async fn expand_projection_terms(raw: &[RawProjectionTerm], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
+    expand_projection_terms_inner(raw, expander).await
+}
+
+/// The boxed future the recursive walk over `RawProjectionTerm::linked` returns.
+///
+/// Async fns cannot recurse directly (their future type would be infinitely
+/// sized), so the recursive step is boxed — the same pattern
+/// `EntityQueryService::resolve_linked_inner` uses for the clause 4.5.20 join
+/// walk.
+fn expand_projection_terms_inner<'a, E: TermExpander>(
+    raw: &'a [RawProjectionTerm],
+    expander: &'a E,
+) -> Pin<Box<dyn Future<Output = Result<Vec<ProjectionTerm>, QueryError>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut expanded = Vec::with_capacity(raw.len());
+        for term in raw {
+            expanded.push(expand_one_term(term, expander).await?);
+        }
+        Ok(expanded)
+    })
+}
+
+/// Expand one raw term, recursing into its linked-entity sub-projection when
+/// it is an attribute term.
+async fn expand_one_term<E: TermExpander>(term: &RawProjectionTerm, expander: &E) -> Result<ProjectionTerm, QueryError> {
+    match term.name.as_str() {
+        // Clause 6.3.15: these name structural members of the representation,
+        // not attributes, so they have no IRI to expand to and no linked
+        // entity to project — `LinkedEntityTerm` only ever follows `AttrName`.
+        ProjectionTerm::ID_KEYWORD => keyword_term(term, ProjectionTerm::Id),
+        ProjectionTerm::TYPE_KEYWORD => keyword_term(term, ProjectionTerm::Type),
+        ProjectionTerm::SCOPE_KEYWORD => keyword_term(term, ProjectionTerm::Scope),
+        // `&str` is unbounded, so a catch-all is the only way to close this
+        // match; anything that is not one of the three keywords is an
+        // attribute term.
+        _ => {
+            let iri = expander.expand_term(term.name.as_str()).await?;
+            let linked = expand_projection_terms_inner(&term.linked, expander).await?;
+            Ok(ProjectionTerm::Attribute { iri, linked })
+        }
     }
-    Ok(expanded)
+}
+
+/// Build the expanded keyword term, rejecting a linked-entity sub-projection
+/// attached to it.
+fn keyword_term(term: &RawProjectionTerm, expanded: ProjectionTerm) -> Result<ProjectionTerm, QueryError> {
+    if term.linked.is_empty() {
+        Ok(expanded)
+    } else {
+        Err(QueryError::ProjectionKeywordWithLinkedTerm {
+            keyword: term.name.as_str().to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -61,11 +105,22 @@ mod tests {
         assert_eq!(rendered, vec!["https://example.com/speed", "https://example.com/colour"]);
     }
 
+    fn leaf(name: &str) -> RawProjectionTerm {
+        RawProjectionTerm {
+            name: name.parse().expect("valid attribute name"),
+            linked: Vec::new(),
+        }
+    }
+
+    fn iri(value: &str) -> IriBuf {
+        IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
     #[tokio::test]
     async fn a_projection_term_of_id_type_or_scope_is_not_expanded() {
         // Clause 6.3.15: `id`, `type` and `scope` name structural members of the
         // representation, not attributes, so they have no IRI to expand to.
-        let raw = ["id".to_string(), "type".to_string(), "scope".to_string(), "speed".to_string()];
+        let raw = [leaf("id"), leaf("type"), leaf("scope"), leaf("speed")];
         let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
         assert_eq!(
             expanded,
@@ -73,8 +128,66 @@ mod tests {
                 ProjectionTerm::Id,
                 ProjectionTerm::Type,
                 ProjectionTerm::Scope,
-                ProjectionTerm::Attribute(IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI")),
+                ProjectionTerm::Attribute {
+                    iri: iri("https://example.com/speed"),
+                    linked: Vec::new()
+                },
             ]
+        );
+    }
+
+    /// Clause 4.21: `observation{temperature}` selects the `observation`
+    /// relationship together with the `temperature` attribute of the entity
+    /// it links to.
+    #[tokio::test]
+    async fn a_linked_entity_term_expands_recursively() {
+        let raw = [RawProjectionTerm {
+            name: "observation".parse().expect("valid attribute name"),
+            linked: vec![leaf("temperature")],
+        }];
+        let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
+        assert_eq!(
+            expanded,
+            vec![ProjectionTerm::Attribute {
+                iri: iri("https://example.com/observation"),
+                linked: vec![ProjectionTerm::Attribute {
+                    iri: iri("https://example.com/temperature"),
+                    linked: Vec::new()
+                }],
+            }]
+        );
+    }
+
+    /// Nested keyword terms (e.g. `observation{id,type}`) expand to the
+    /// clause 6.3.15 keyword variants, not to attribute terms.
+    #[tokio::test]
+    async fn nested_keywords_expand_to_the_keyword_variants() {
+        let raw = [RawProjectionTerm {
+            name: "observation".parse().expect("valid attribute name"),
+            linked: vec![leaf("id"), leaf("type"), leaf("scope")],
+        }];
+        let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
+        assert_eq!(
+            expanded,
+            vec![ProjectionTerm::Attribute {
+                iri: iri("https://example.com/observation"),
+                linked: vec![ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope],
+            }]
+        );
+    }
+
+    /// Clause 4.21: `LinkedEntityTerm` only ever follows `AttrName`, so a
+    /// keyword carrying `{...}` (e.g. `id{a}`) is rejected.
+    #[tokio::test]
+    async fn a_keyword_carrying_a_linked_term_is_rejected() {
+        let raw = [RawProjectionTerm {
+            name: "id".parse().expect("valid attribute name"),
+            linked: vec![leaf("a")],
+        }];
+        let error = expand_projection_terms(&raw, &PrefixExpander).await.expect_err("must reject");
+        assert!(
+            matches!(&error, QueryError::ProjectionKeywordWithLinkedTerm { keyword } if keyword == "id"),
+            "got {error:?}"
         );
     }
 }

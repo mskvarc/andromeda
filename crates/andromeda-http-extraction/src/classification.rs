@@ -39,6 +39,13 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::OrderGeometryCollection
         | ParameterError::OrderFromInvalid { .. }
         | ParameterError::DropKeepExclusive
+        | ParameterError::PickOmitExclusive
+        | ParameterError::ProjectionLinkedTermsWithoutJoin
+        | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
+        | ParameterError::FilterTraversalWithoutJoin
+        | ParameterError::FilterDepthExceedsJoinLevel { .. }
+        | ParameterError::PurgeNamesLinkedEntities(_)
+        | ParameterError::InlineJoinWithoutInstances(_)
         | ParameterError::AttrsReservedMember(_)
         | ParameterError::TimerelInvalid(_)
         | ParameterError::TimePropertyInvalid(_)
@@ -68,7 +75,9 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::TypeExprUnexpected { .. }
         | QueryError::TypeExprEmptyName(_)
         | QueryError::TypeExprInvalidName { .. }
-        | QueryError::GeoIncomplete => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        | QueryError::GeoIncomplete
+        | QueryError::ProjectionUnbalancedBrace { .. }
+        | QueryError::ProjectionEmptyTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         QueryError::QInvalidNumber(_)
         | QueryError::QInvalidDateTime { .. }
         | QueryError::QInvalidDate { .. }
@@ -87,7 +96,8 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::ParamTimerelTimeatPair
         | QueryError::ParamAggrPeriodDurationInvalid(_)
         | QueryError::ParamDatasetIdInvalid(_)
-        | QueryError::ParamEndTimeAtRequired => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | QueryError::ParamEndTimeAtRequired
+        | QueryError::ProjectionKeywordWithLinkedTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
         QueryError::TermExpansion { .. } | QueryError::AttributeNameInvalid { .. } | QueryError::TermNotAnIri { .. } => ClassifiedReport::internal(error),
     }
 }

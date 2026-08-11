@@ -18,8 +18,16 @@ pub enum ProjectionTerm {
     Type,
     /// The entity scope.
     Scope,
-    /// One attribute, named by its expanded IRI.
-    Attribute(IriBuf),
+    /// One attribute, named by its expanded IRI, together with the
+    /// clause 4.21 linked-entity sub-projection carried inside `{...}` — empty
+    /// when this term selects no linked entity.
+    Attribute {
+        /// The expanded IRI naming this attribute.
+        iri: IriBuf,
+        /// The sub-projection to apply to the entity this attribute (a
+        /// relationship) links to.
+        linked: Vec<ProjectionTerm>,
+    },
 }
 
 impl ProjectionTerm {
@@ -38,8 +46,19 @@ impl ProjectionTerm {
     /// representation sits on. A keyword term never names an attribute.
     pub fn matches_attribute(&self, key: &str, expanded: &IriBuf) -> bool {
         match self {
-            ProjectionTerm::Attribute(iri) => iri == expanded || iri.as_str() == key,
+            ProjectionTerm::Attribute { iri, .. } => iri == expanded || iri.as_str() == key,
             ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => false,
+        }
+    }
+
+    /// The clause 4.21 linked-entity sub-projection carried by this term.
+    ///
+    /// Empty for the clause 6.3.15 keywords and for an attribute term that
+    /// selects no linked entity.
+    pub fn linked_terms(&self) -> &[ProjectionTerm] {
+        match self {
+            ProjectionTerm::Attribute { linked, .. } => linked,
+            ProjectionTerm::Id | ProjectionTerm::Type | ProjectionTerm::Scope => &[],
         }
     }
 }
@@ -63,9 +82,41 @@ mod tests {
 
     #[test]
     fn an_attribute_term_matches_either_the_compact_key_or_its_expansion() {
-        let term = ProjectionTerm::Attribute(iri("https://example.com/speed"));
+        let term = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        };
         assert!(term.matches_attribute("speed", &iri("https://example.com/speed")));
         assert!(term.matches_attribute("https://example.com/speed", &iri("urn:unrelated")));
         assert!(!term.matches_attribute("colour", &iri("https://example.com/colour")));
+    }
+
+    #[test]
+    fn a_keyword_term_carries_no_linked_terms() {
+        for term in [ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope] {
+            assert!(term.linked_terms().is_empty(), "{term:?}");
+        }
+    }
+
+    #[test]
+    fn a_leaf_attribute_term_carries_no_linked_terms() {
+        let term = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/speed"),
+            linked: Vec::new(),
+        };
+        assert!(term.linked_terms().is_empty());
+    }
+
+    #[test]
+    fn an_attribute_term_exposes_its_linked_sub_projection() {
+        let child = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/temperature"),
+            linked: Vec::new(),
+        };
+        let term = ProjectionTerm::Attribute {
+            iri: iri("https://example.com/observation"),
+            linked: vec![child.clone()],
+        };
+        assert_eq!(term.linked_terms(), &[child]);
     }
 }

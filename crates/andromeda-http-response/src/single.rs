@@ -86,7 +86,7 @@ impl NgsiLdResponse {
     }
 
     /// Set the Content-Range header value for temporal pagination.
-    pub fn with_content_range(mut self, content_range: NgsiLdContentRange) -> Self {
+    pub const fn with_content_range(mut self, content_range: NgsiLdContentRange) -> Self {
         self.content_range = Some(content_range);
         self
     }

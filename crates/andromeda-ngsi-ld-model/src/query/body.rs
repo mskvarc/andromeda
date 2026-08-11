@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_query::{
     filter::expression::Expr,
     geo::input::GeoQueryInput,
     ordering::parameters::OrderingParameters,
+    projection::grammar::RawProjectionTerm,
     scope::query::ScopeQuery,
 };
 use andromeda_ngsi_ld_representation::join_mode::JoinMode;
@@ -46,11 +47,21 @@ pub struct Query {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attrs: Option<Vec<AttributeName>>,
     /// Members removed from each result entity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub omit: Option<Vec<AttributeName>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "projection_term_list::deserialize",
+        serialize_with = "projection_term_list::serialize"
+    )]
+    pub omit: Option<Vec<RawProjectionTerm>>,
     /// Members retained in each result entity.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pick: Option<Vec<AttributeName>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "projection_term_list::deserialize",
+        serialize_with = "projection_term_list::serialize"
+    )]
+    pub pick: Option<Vec<RawProjectionTerm>>,
     /// Temporal aggregation parameters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aggr_params: Option<AggregationParameters>,
@@ -134,6 +145,47 @@ mod attribute_name_csv {
     {
         match value {
             Some(names) => serializer.serialize_str(&names.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",")),
+            None => serializer.serialize_none(),
+        }
+    }
+}
+
+/// Serde support for the `pick` / `omit` clause 6.3.15 member.
+///
+/// Clause 5.2.23 defines `pick` and `omit` as `String[]`, each member a
+/// clause 4.21 projection-language string that may itself carry a `,`
+/// separated linked-entity group. Splitting the array first and parsing each
+/// member is therefore not the same as splitting on `,` across the whole
+/// member: a member's grammar owns its own comma/pipe splitting, and the
+/// terms every member yields are concatenated into one flat list.
+mod projection_term_list {
+    use andromeda_ngsi_ld_query::projection::grammar::{RawProjectionTerm, parse_projection_list};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    /// Deserialize the array of projection-language strings into the terms
+    /// they parse to, concatenated in array order.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<RawProjectionTerm>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<Vec<String>>::deserialize(deserializer)?
+            .map(|members| {
+                members
+                    .iter()
+                    .map(|member| parse_projection_list(member).map_err(serde::de::Error::custom))
+                    .collect::<Result<Vec<Vec<RawProjectionTerm>>, D::Error>>()
+                    .map(|groups| groups.into_iter().flatten().collect())
+            })
+            .transpose()
+    }
+
+    /// Serialize each term as its own clause 4.21 array member.
+    pub fn serialize<S>(value: &Option<Vec<RawProjectionTerm>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(terms) => serializer.collect_seq(terms.iter().map(ToString::to_string)),
             None => serializer.serialize_none(),
         }
     }

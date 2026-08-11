@@ -2,6 +2,7 @@
 
 use http::{HeaderName, HeaderValue};
 
+/// The lowercase `Location` field name this header is transmitted under.
 static LOCATION: HeaderName = HeaderName::from_static("location");
 
 /// A validated URI-reference used by a `Location` header.
@@ -15,7 +16,7 @@ impl Location {
         (!value.is_empty()).then(|| HeaderValue::from_str(value).ok()).flatten().map(Self)
     }
     /// Borrow the encoded URI-reference.
-    pub fn as_header_value(&self) -> &HeaderValue {
+    pub const fn as_header_value(&self) -> &HeaderValue {
         &self.0
     }
 }

@@ -197,7 +197,7 @@ impl NotificationTransport for HttpTransport {
         let mut header_map = reqwest::header::HeaderMap::new();
         header_map.typed_insert(req.content_type);
         if let Some(link) = req.context_link() {
-            header_map.typed_insert(link.clone());
+            header_map.typed_insert(link);
         }
         if let Some(tenant) = req.tenant.as_ref() {
             header_map.typed_insert(tenant.clone());

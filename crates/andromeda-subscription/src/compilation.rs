@@ -10,7 +10,7 @@ use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use iri_rs::IriBuf;
-use std::collections::HashSet;
+use std::{collections::HashSet, num::NonZeroU32};
 use strum::IntoEnumIterator;
 use tracing::debug;
 
@@ -50,7 +50,10 @@ pub fn compile_subscription(sub: &Subscription) -> CompiledSubscription {
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.
         dataset_id: sub.filters.dataset_id.clone(),    // clone: compiled state owns dataset identifiers.
         notification_join: sub.notification.join,
-        notification_join_level: sub.notification.join_level.unwrap_or(1).min(5),
+        // Clause 4.5.23: `joinLevel` defaults to one hop and is otherwise
+        // honoured exactly. Zero never reaches here -- the model rejects it at
+        // deserialization.
+        notification_join_level: sub.notification.join_level.unwrap_or(NonZeroU32::MIN),
         compiled_csf: sub.filters.csf.clone(), // clone: compiled state owns its filter AST.
         local_only: sub.delivery.local_only.unwrap_or(false),
     }

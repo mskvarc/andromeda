@@ -14,7 +14,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_query::q_predicate::projection::referenced_attribute_names;
+use andromeda_postgresql_query::q_predicate::attribute_names::referenced_attribute_names;
 use andromeda_postgresql_temporal_query::{history::build_temporal_history_query, stage1::build_stage1_entity_ids};
 use andromeda_temporal::{
     error::TemporalError,

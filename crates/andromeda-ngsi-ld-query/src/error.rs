@@ -136,6 +136,35 @@ pub enum QueryError {
     },
 
     // -----------------------------------------------------------------------
+    // Raw projection grammar (clause 4.21 `pick`/`omit` linked-entity syntax)
+    // -----------------------------------------------------------------------
+    /// A `{` opened without a matching `}`, a `}` closed without a matching
+    /// `{`, or content followed a complete term outside the grammar.
+    #[error("projection: unbalanced brace at position {position}")]
+    ProjectionUnbalancedBrace {
+        /// Zero-based byte offset of the offending brace or trailing content.
+        position: usize,
+    },
+    /// A term position (list start, after a separator, or inside `{}`)
+    /// produced no attribute name.
+    #[error("projection: empty term at position {position}")]
+    ProjectionEmptyTerm {
+        /// Zero-based byte offset where a name was expected.
+        position: usize,
+    },
+    /// A clause 6.3.15 keyword (`id`, `type`, `scope`) carried a clause 4.21
+    /// `{...}` linked-entity sub-projection.
+    ///
+    /// `LinkedEntityTerm` only ever follows `AttrName` in the grammar; the
+    /// keywords name structural members of the representation, not
+    /// relationships, so they have no linked entity to project.
+    #[error("projection: keyword '{keyword}' cannot carry a linked-entity term")]
+    ProjectionKeywordWithLinkedTerm {
+        /// The offending keyword.
+        keyword: String,
+    },
+
+    // -----------------------------------------------------------------------
     // Regular expressions (clause 4.9 `q` patterns, clause 5.7.2 `idPattern`)
     // -----------------------------------------------------------------------
     /// A pattern operand was not a valid regular expression.

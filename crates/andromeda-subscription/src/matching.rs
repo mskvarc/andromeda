@@ -222,7 +222,7 @@ mod tests {
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use futures::executor::block_on;
     use iri_rs::IriBuf;
-    use std::{fmt::Display, str::FromStr};
+    use std::{fmt::Display, num::NonZeroU32, str::FromStr};
     use url::Url;
 
     fn parse_fixture<T>(value: &str, description: &str) -> Result<T, SubscriptionError>
@@ -259,7 +259,7 @@ mod tests {
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
-            notification_join_level: 1,
+            notification_join_level: NonZeroU32::MIN,
             compiled_csf: None,
             local_only: false,
         })

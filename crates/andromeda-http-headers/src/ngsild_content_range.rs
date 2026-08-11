@@ -9,13 +9,17 @@ use chrono::{DateTime, Utc};
 use http::{HeaderName, HeaderValue};
 use std::{fmt, str::FromStr};
 
+/// The lowercase `Content-Range` field name this header is transmitted under.
 static CONTENT_RANGE: HeaderName = HeaderName::from_static("content-range");
 
 /// A temporal NGSI-LD content range.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NgsiLdContentRange {
+    /// First instant the answered range covers.
     start: DateTime<Utc>,
+    /// Last instant the answered range covers.
     end: DateTime<Utc>,
+    /// Total number of instances the full range holds, when it is known.
     total: Option<u64>,
 }
 

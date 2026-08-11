@@ -29,6 +29,7 @@
 
 pub mod entity_members;
 pub mod join_mode;
+pub mod linked_resolution_failure;
 pub mod normalization;
 pub mod response_format;
 pub mod sys_attrs;

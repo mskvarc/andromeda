@@ -6,6 +6,7 @@ mod notification;
 
 use crate::{
     event::registration_change_sink::BroadcastRegistrationChangeSink,
+    linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
         error::TenantAssemblyError,
         tasks::{
@@ -40,12 +41,13 @@ use andromeda_entity::{
         reader::EntityReader,
         spatial_snapshot::EntitySpatialSnapshotSource,
     },
-    query::EntityQueryService,
+    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
     side_effect_drain::{EntitySideEffectDrain, EntitySideEffectDrainConfig},
     side_effect_queue::SideEffectLeaseOwner,
     spatial_config::SpatialConfig,
     spatial_synchronization::SpatialSynchronizer,
 };
+use andromeda_federation::FederationService;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
@@ -131,6 +133,7 @@ pub(super) struct TaskSupervisionInputs<'a> {
     pub(super) entity_expiry_source: Arc<dyn EntityExpirySource>,
     pub(super) entity_spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
+    pub(super) forwarding: Arc<FederationService>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
@@ -176,6 +179,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         entity_expiry_source,
         entity_spatial_snapshots,
         registration_store,
+        forwarding,
         snapshot_store,
         snapshot_preparation,
         subscription_cache,
@@ -231,6 +235,9 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         engine.clone(),
         Arc::clone(&spatial_index),
         tenant.clone(), // clone: the query service owns its tenant partition.
+        // A notification's join resolves Linked Entities exactly as a request's
+        // does, including the ones clause 4.5.23.1 places outside this broker.
+        Some(Arc::new(ForwardedLinkedEntitySource::new(forwarding)) as Arc<dyn RemoteLinkedEntitySource>),
     ));
     let entity_subscription_store = Arc::new(SubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
     let csource_subscription_store = Arc::new(CsourceSubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;

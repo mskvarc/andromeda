@@ -262,6 +262,7 @@ async fn build_tenant_state(
     let entity_policy = Arc::clone(&state.entities); // clone: request handling and expiry scheduling share entity policy.
     let subscription_policy = Arc::clone(&state.subscriptions); // clone: request handling and scheduled expiry share policy.
     let csource_subscription_policy = Arc::clone(&state.csr_subscriptions); // clone: same ownership boundary for CSR subscriptions.
+    let forwarding = Arc::clone(&state.forwarding); // clone: request handling and the notification workers share one forwarding service.
     let transport = transports.dispatcher;
     let supervision = supervise_tasks(
         TaskSupervisionInputs::builder()
@@ -284,6 +285,7 @@ async fn build_tenant_state(
             .entity_expiry_source(entity_ports.expiry)
             .entity_spatial_snapshots(entity_ports.spatial_snapshots)
             .registration_store(registration_store)
+            .forwarding(forwarding)
             .snapshot_store(snapshot_store)
             .subscription_cache(subscription_cache)
             .writes(writes)

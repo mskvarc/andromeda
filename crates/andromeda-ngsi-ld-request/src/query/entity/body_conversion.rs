@@ -105,6 +105,26 @@ mod tests {
         assert!(parameters.lang.is_some());
     }
 
+    /// Clause 5.2.23: `pick`/`omit` are `String[]`, each member its own
+    /// clause 4.21 projection-language string. Every array member is parsed
+    /// on its own and the resulting terms concatenate in array order.
+    #[test]
+    fn each_pick_array_member_parses_through_the_projection_grammar_and_concatenates() {
+        let query: Query = serde_json::from_value(serde_json::json!({
+            "type": "Query",
+            "pick": ["observation{temperature}", "name"]
+        }))
+        .expect("valid Query");
+
+        let parameters = EntityQueryParameters::try_from(query).expect("entity-applicable query");
+        let terms = parameters.pick.expect("pick present");
+        pretty_assertions::assert_eq!(terms.len(), 2);
+        pretty_assertions::assert_eq!(terms[0].name.as_str(), "observation");
+        pretty_assertions::assert_eq!(terms[0].linked.iter().map(|term| term.name.as_str()).collect::<Vec<_>>(), vec!["temperature"]);
+        pretty_assertions::assert_eq!(terms[1].name.as_str(), "name");
+        assert!(terms[1].linked.is_empty());
+    }
+
     #[test]
     fn temporal_members_are_rejected_for_an_entity_query() {
         let query: Query = serde_json::from_value(serde_json::json!({

@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::expression::Expr,
     pattern::Pattern,
+    projection::grammar::RawProjectionTerm,
     temporal::window::TimeInterval,
     type_selection::grammar::TypeExprRaw,
 };

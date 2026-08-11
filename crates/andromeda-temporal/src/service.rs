@@ -1,6 +1,10 @@
 //! Temporal lifecycle and query policy service.
 
-use crate::port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator};
+use crate::{
+    linked::candidates::TemporalLinkedCandidate,
+    port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator},
+    remote_linked::RemoteTemporalLinkedSource,
+};
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_entity::port::reader::EntityReader;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -92,6 +96,10 @@ pub struct TemporalService {
     pub(crate) engine: JsonLdEngine,
     /// Broker safety cap applied when the client omits `lastN`.
     pub(crate) default_last_n: u32,
+    /// Resolution of `objectType`-annotated Linked Entities whose history this
+    /// broker does not hold (clause 4.5.23.1). Absent in a composition without
+    /// federation, which resolves joins purely against its own history.
+    pub(crate) remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
 }
 
 /// Result of create_or_update operation.
@@ -109,6 +117,11 @@ pub struct TemporalReadResult {
     pub value: Value,
     /// Range metadata present when system truncation occurred.
     pub range: Option<TemporalRange>,
+    /// The Linked Entities the representation names, read off it before any
+    /// format projection narrowed it (clause 4.5.23). A caller that joins
+    /// hands these back as the traversal's first level; one that does not
+    /// simply drops them.
+    pub linked_candidates: Vec<TemporalLinkedCandidate>,
 }
 
 /// Neutral metadata needed by the HTTP binding to construct temporal `Content-Range`.
@@ -145,12 +158,20 @@ pub struct TemporalQueryResult {
     pub range: Option<TemporalRange>,
     /// Non-fatal warnings encountered during per-entity processing.
     pub warnings: Vec<TemporalQueryWarning>,
+    /// The Linked Entities the results name, in first-encounter order, read
+    /// off each representation before any format projection narrowed it
+    /// (clause 4.5.23).
+    pub linked_candidates: Vec<TemporalLinkedCandidate>,
 }
 
 impl TemporalService {
     /// Create a new temporal service.
     ///
     /// The reader and mutator ports decouple policy from concrete storage. The write coordinator owns atomic append composition, while the entity reader provides base entity lookups.
+    ///
+    /// `remote_temporal_linked` is the clause 4.5.23.1 half of a join that this
+    /// broker's own history cannot answer. `None` confines every join to local
+    /// history.
     pub fn new(
         entity_reader: Arc<dyn EntityReader>,
         reader: Arc<dyn TemporalHistoryReader>,
@@ -159,6 +180,7 @@ impl TemporalService {
         writes: Arc<dyn ContextCommitter>,
         engine: JsonLdEngine,
         default_last_n: u32,
+        remote_temporal_linked: Option<Arc<dyn RemoteTemporalLinkedSource>>,
     ) -> TemporalService {
         TemporalService {
             reader,
@@ -168,6 +190,7 @@ impl TemporalService {
             entity_reader,
             engine,
             default_last_n,
+            remote_temporal_linked,
         }
     }
 

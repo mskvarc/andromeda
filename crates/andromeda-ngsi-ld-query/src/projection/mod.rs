@@ -2,7 +2,10 @@
 //! parameters (clause 6.3.15), and the `drop` / `keep` purge modes of the
 //! delete-by-query operation (clause 5.6.21).
 
+pub mod attribute_iri_index;
 pub mod compiled;
 pub mod expansion;
+pub mod grammar;
+pub mod matching;
 pub mod purge;
 pub mod term;

@@ -258,7 +258,7 @@ mod tests {
         filter::{
             expression::Expr,
             parser,
-            path::AttrPath,
+            path::{AttrPath, QueryPath},
             predicate::{OrderingOp, Predicate},
             scalar::Scalar,
         },
@@ -445,7 +445,7 @@ mod tests {
     fn build_with_q_comparison() {
         let mut cq = empty_query();
         cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
-            path: AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name")),
+            path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
             op: OrderingOp::Greater,
             rhs: Scalar::Number(50.into()),
         }));
@@ -467,7 +467,7 @@ mod tests {
         let mut cq = empty_query();
         cq.pagination.count = CountPolicy::Emit;
         cq.selection.q_expr = Some(Expr::Pred(Predicate::Ordering {
-            path: AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name")),
+            path: QueryPath::Local(AttrPath::simple("https://example.com/temperature".parse().expect("valid attribute name"))),
             op: OrderingOp::Greater,
             rhs: Scalar::Number(50.into()),
         }));

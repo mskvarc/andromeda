@@ -20,6 +20,7 @@ use crate::entity::{
     StatusCode,
     batch_operation_result,
     internal_error,
+    reject_linked_retrieval,
 };
 
 pub(crate) async fn delete_by_query(
@@ -29,6 +30,12 @@ pub(crate) async fn delete_by_query(
     IncomingVia(incoming_via): IncomingVia,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
+    // Clause 5.6.21.4 gives this operation no `join`: it renders nothing and
+    // retrieves nothing, so a Linked Entity reference in `q` or in `pick`/`omit`
+    // can never be satisfied and is rejected outright rather than measured
+    // against a traversal that does not exist here.
+    reject_linked_retrieval(query.pick.as_deref(), query.omit.as_deref(), query.q.as_ref()).with_entity_instance(&uri)?;
+
     let is_local = query.local.unwrap_or(false);
     let context: ContextSpec = context.into_inner();
 

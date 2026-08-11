@@ -4,12 +4,12 @@ use crate::{
     case_insensitive_bool::deserialize_option_bool_case_insensitive,
     language_filter::deserialize_optional_language_filter,
     options::{EntityRepresentationOptions, OverwritePolicy, UpsertMode, deserialize_entity_representation_options, deserialize_overwrite_policy},
-    query::deserialization::{deserialize_optional_attribute_names, deserialize_optional_dataset_selectors},
+    query::deserialization::{deserialize_optional_dataset_selectors, deserialize_optional_projection_terms},
     representation_params::deserialize_option_response_format,
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_query::dataset::DatasetSelector;
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use serde::Deserialize;
 use std::num::NonZeroU32;
@@ -60,11 +60,11 @@ pub struct PostQueryParams {
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
     pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Members the response is narrowed to (clause 6.3.15 `pick`).
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub pick: Option<Vec<AttributeName>>,
+    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
+    pub pick: Option<Vec<RawProjectionTerm>>,
     /// Members the response drops (clause 6.3.15 `omit`).
-    #[serde(default, deserialize_with = "deserialize_optional_attribute_names")]
-    pub omit: Option<Vec<AttributeName>>,
+    #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
+    pub omit: Option<Vec<RawProjectionTerm>>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,

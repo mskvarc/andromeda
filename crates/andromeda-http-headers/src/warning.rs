@@ -8,6 +8,7 @@
 use http::{HeaderName, HeaderValue};
 use std::{fmt, str::FromStr};
 
+/// The lowercase `Warning` field name this header is transmitted under.
 static WARNING: HeaderName = HeaderName::from_static("warning");
 
 /// One RFC 9110 warning value.

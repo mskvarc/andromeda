@@ -4,6 +4,7 @@
 //! - Entity retrieval with different registration modes (inclusive, exclusive, auxiliary, redirect)
 //! - Entity queries with merging, entityMap, and splitEntities
 //! - Entity provisioning (create, delete, merge, replace)
+//! - Linked Entity resolution through registered context sources
 //! - Via header loop detection
 //! - NGSILD-Warning headers for context source errors
 //!
@@ -17,6 +18,7 @@
 pub mod context_source_adapter;
 
 mod helpers;
+mod linked_retrieval;
 mod provision;
 mod query;
 mod retrieve;

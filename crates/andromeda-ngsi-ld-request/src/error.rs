@@ -10,7 +10,8 @@
 //! a parameter is parsed by the language wherever the language defines its
 //! grammar, and there is one error chain either way.
 
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use crate::linked_retrieval_term::LinkedRetrievalTerm;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::error::QueryError;
 use thiserror::Error;
 
@@ -51,6 +52,43 @@ pub enum ParameterError {
     /// `drop` and `keep` were both provided on an entity purge.
     #[error("drop and keep parameters are mutually exclusive")]
     DropKeepExclusive,
+    /// `pick` and `omit` were both provided on a query.
+    #[error("pick and omit are mutually exclusive (clause 6.3.15)")]
+    PickOmitExclusive,
+    /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
+    /// request asked for no join to retrieve the entity it describes.
+    #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them (clause 5.7.2.4)")]
+    ProjectionLinkedTermsWithoutJoin,
+    /// A `pick`/`omit` term nested deeper than the requested traversal walks.
+    #[error("pick/omit select Linked Entity members {depth} relationship(s) deep, beyond joinLevel={join_level} (clause 5.7.2.4)")]
+    ProjectionDepthExceedsJoinLevel {
+        /// How many Relationship hops the deepest nested term crosses.
+        depth: u32,
+        /// How many hops the requested traversal walks.
+        join_level: u32,
+    },
+    /// A `q` filter crossed a Relationship while the request asked for no
+    /// Linked Entity retrieval to reach it.
+    #[error("q traverses a Linked Entity but the request asks for no join to retrieve them (clause 5.7.2.4)")]
+    FilterTraversalWithoutJoin,
+    /// A `q` filter chained more Relationship hops than the traversal walks.
+    #[error("too deep query: q traverses {depth} Relationship(s), beyond joinLevel={join_level} (clause 5.7.2.4)")]
+    FilterDepthExceedsJoinLevel {
+        /// How many Relationship hops the deepest chain in the filter crosses.
+        depth: u32,
+        /// How many hops the requested traversal walks.
+        join_level: u32,
+    },
+    /// A delete-by-query named a Linked Entity, which the operation cannot
+    /// reach at all (clause 5.6.21.4 defines no `join` for it).
+    #[error("delete by query must not name Linked Entities: {0} (clause 5.6.21.4)")]
+    PurgeNamesLinkedEntities(LinkedRetrievalTerm),
+    /// `join=inline` was combined with a temporal representation that has no
+    /// per-instance nesting site.
+    #[error(
+        "join=inline is not applicable to the {0} representation, which has no attribute instance to nest a linked entity under (clauses 4.5.5, 4.5.19, 4.5.23)"
+    )]
+    InlineJoinWithoutInstances(TemporalFormat),
     /// The deprecated `attrs` parameter named a structural Entity member.
     #[error("'{0}' is an Entity member and is not allowed in attrs")]
     AttrsReservedMember(AttributeName),

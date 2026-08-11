@@ -22,6 +22,7 @@ andromeda-http-component-report.workspace = true
 andromeda-http-context-registry.workspace = true
 andromeda-http-entity.workspace = true
 andromeda-http-entity-map.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-http-health.workspace = true
 andromeda-http-registration.workspace = true
 andromeda-http-server.workspace = true
@@ -60,7 +61,7 @@ chrono = { version = "0.4.44", features = ["serde"] }
 compact_str = { version = "0.9.0", features = ["serde"] }
 confique = { version = "0.4.0", features = ["toml"] }
 dashmap = { version = "6.1.0", features = ["inline"] }
-derive_more = { version = "2.1.1", features = ["as_ref", "deref", "display", "from", "into", "is_variant"] }
+derive_more = { version = "2.1.1", features = ["as_ref", "debug", "deref", "display", "from", "into", "is_variant"] }
 futures = "0.3.32"
 geo = "0.33.1"
 geojson = "1.0.0"

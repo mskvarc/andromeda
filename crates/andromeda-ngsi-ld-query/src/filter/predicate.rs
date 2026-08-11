@@ -2,12 +2,13 @@
 
 use crate::{
     filter::{
-        path::AttrPath,
+        path::QueryPath,
         scalar::{CompareValue, Scalar},
         token,
     },
     pattern::Pattern,
 };
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 
 /// A single filter predicate within a `q` expression.
 ///
@@ -18,12 +19,12 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Predicate {
     /// Attribute existence check (e.g. `temperature`).
-    Exists(AttrPath),
+    Exists(QueryPath),
     /// Equality comparison (`==`/`!=`) of an attribute value against a scalar,
     /// a range, or a value list.
     Equality {
         /// The attribute path to compare.
-        path: AttrPath,
+        path: QueryPath,
         /// Whether the value must lie inside (`==`) or outside (`!=`) the operand.
         membership: SetMembership,
         /// The right-hand side value(s).
@@ -33,7 +34,7 @@ pub enum Predicate {
     /// single scalar.
     Ordering {
         /// The attribute path to compare.
-        path: AttrPath,
+        path: QueryPath,
         /// The ordering operator.
         op: OrderingOp,
         /// The single scalar operand; clause 4.9 admits no compound operand here.
@@ -42,18 +43,62 @@ pub enum Predicate {
     /// Regex match: attribute value must match the pattern (e.g. `name~="A.*"`).
     MatchPattern {
         /// The attribute path to match against.
-        path: AttrPath,
+        path: QueryPath,
         /// The regex pattern, validated when the filter was parsed.
         pattern: Pattern,
     },
     /// Negated regex match: attribute value must not match the pattern (e.g. `name!~="A.*"`).
     NotMatchPattern {
         /// The attribute path to match against.
-        path: AttrPath,
+        path: QueryPath,
         /// The regex pattern that must not match, validated when the filter
         /// was parsed.
         pattern: Pattern,
     },
+}
+
+impl Predicate {
+    /// The attribute axis this predicate compares along.
+    ///
+    /// Every variant carries one, so a consumer that only has to walk the axis —
+    /// a SQL compiler descending the linked-entity hops, for instance — reads it
+    /// here rather than re-matching all five variants.
+    pub const fn path(&self) -> &QueryPath {
+        match self {
+            Predicate::Exists(path)
+            | Predicate::Equality { path, .. }
+            | Predicate::Ordering { path, .. }
+            | Predicate::MatchPattern { path, .. }
+            | Predicate::NotMatchPattern { path, .. } => path,
+        }
+    }
+
+    /// Move this predicate one linked-entity hop down (clause 4.9
+    /// `LinkedEntityRelation`): the predicate keeps its operator and operand and
+    /// its axis becomes `relationship{guard_types: previous axis}`.
+    ///
+    /// The parser needs this because the two halves of a hop sit on opposite
+    /// sides of the operator in the query text — `rel{attr=="x"}` states the
+    /// relationship before the inner predicate and closes after its operand — so
+    /// the inner predicate is complete before the hop that wraps it is known.
+    pub fn nest_under_hop(self, relationship: AttributeName, guard_types: Vec<AttributeName>) -> Predicate {
+        let hop = |inner: QueryPath| QueryPath::Linked {
+            relationship,
+            guard_types,
+            inner: Box::new(inner),
+        };
+        match self {
+            Predicate::Exists(path) => Predicate::Exists(hop(path)),
+            Predicate::Equality { path, membership, rhs } => Predicate::Equality {
+                path: hop(path),
+                membership,
+                rhs,
+            },
+            Predicate::Ordering { path, op, rhs } => Predicate::Ordering { path: hop(path), op, rhs },
+            Predicate::MatchPattern { path, pattern } => Predicate::MatchPattern { path: hop(path), pattern },
+            Predicate::NotMatchPattern { path, pattern } => Predicate::NotMatchPattern { path: hop(path), pattern },
+        }
+    }
 }
 
 /// The internal comparison primitive: any of the six clause 4.9 comparison

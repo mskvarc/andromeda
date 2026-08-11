@@ -21,6 +21,7 @@ use andromeda_ngsi_ld_query::{
         geometry::OrderingGeometry,
         term::{OrderDirection, OrderTerm},
     },
+    projection::grammar::RawProjectionTerm,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
@@ -86,8 +87,8 @@ impl CompiledQueryKey {
         });
         push_uri_list(&mut parameters, params.id.as_deref());
         push_attribute_list(&mut parameters, params.attrs.as_deref());
-        push_attribute_list(&mut parameters, params.pick.as_deref());
-        push_attribute_list(&mut parameters, params.omit.as_deref());
+        push_projection_term_list(&mut parameters, params.pick.as_deref());
+        push_projection_term_list(&mut parameters, params.omit.as_deref());
         push_attribute_list(&mut parameters, params.expand_values.as_deref());
         push_attribute_list(&mut parameters, params.json_keys.as_deref());
         push_dataset_list(&mut parameters, params.dataset_id.as_deref());
@@ -136,6 +137,19 @@ fn push_attribute_list(buffer: &mut String, value: Option<&[AttributeName]>) {
     match value {
         Some(values) => {
             let rendered = values.iter().map(AttributeName::as_str).collect::<Vec<_>>().join(",");
+            push_field(buffer, Some(&rendered));
+        }
+        None => push_field(buffer, None),
+    }
+}
+
+/// Append an ordered `pick` / `omit` raw projection-term list in its
+/// canonical clause 4.21 text rendering, including any linked-entity
+/// sub-projection each term carries.
+fn push_projection_term_list(buffer: &mut String, value: Option<&[RawProjectionTerm]>) {
+    match value {
+        Some(terms) => {
+            let rendered = terms.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
             push_field(buffer, Some(&rendered));
         }
         None => push_field(buffer, None),

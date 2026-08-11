@@ -256,6 +256,7 @@ mod tests {
     use super::*;
     use crate::error::SubscriptionError;
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
+    use std::num::NonZeroU32;
     use url::Url;
 
     fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {
@@ -298,7 +299,7 @@ mod tests {
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
-            notification_join_level: 1,
+            notification_join_level: NonZeroU32::MIN,
             compiled_csf: None,
             local_only: false,
         })

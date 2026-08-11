@@ -162,6 +162,36 @@ async fn entity_delete_by_query_by_q_filter_success() {
 }
 
 // ---------------------------------------------------------------------------
+// Linked Entity references are refused outright
+// ---------------------------------------------------------------------------
+
+/// Clause 5.6.21.4 defines no `join` for delete by query: the operation renders
+/// nothing and retrieves nothing, so a `q` hop into a Linked Entity and a nested
+/// `pick` term both name something the operation can never reach, whatever else
+/// the request carries.
+#[tokio::test]
+#[serial]
+async fn entity_delete_by_query_rejects_linked_entity_references() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let traversing_q = urlencoding::encode("isParkedIn{category==\"commercial\"}");
+    let nested_pick = urlencoding::encode("isParkedIn{category}");
+    // Both requests carry `join=flat`, which is exactly what would make them
+    // legal on a query. The rejection is the operation's own, not the clause
+    // 5.7.2.4 consistency rule firing for a missing join.
+    let queries = [
+        format!("type=Building&q={traversing_q}&join=flat&local=true"),
+        format!("type=Building&pick={nested_pick}&join=flat&local=true"),
+    ];
+
+    for query in queries {
+        let (status, _) = delete_entities_by_query(&c, &query, Some(TEST_SUITE_CONTEXT)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "a Linked Entity reference must be refused: {query}");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Empty result returns 204
 // ---------------------------------------------------------------------------
 

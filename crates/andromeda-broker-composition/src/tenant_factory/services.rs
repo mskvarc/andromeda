@@ -9,6 +9,8 @@ use crate::{
         subscription_change_sink::BroadcastSubscriptionChangeSink,
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
+    linked_entity_forwarding::ForwardedLinkedEntitySource,
+    temporal_linked_forwarding::ForwardedTemporalLinkedSource,
     tenant_factory::{error::TenantAssemblyError, tasks::TenantSignals, transport::TenantTransports},
     tenant_state::AndromedaState,
 };
@@ -23,7 +25,7 @@ use andromeda_entity::{
     config::EntityConfig,
     discovery::EntityDiscoveryService,
     port::{attribute_history::AttributeDatasetHistory, discovery::EntityDiscoveryStore, query::EntityQueryStore, reader::EntityReader},
-    query::EntityQueryService,
+    query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
 use andromeda_entity_map::{memory_store::InMemoryEntityMapStore, service::EntityMapService};
 use andromeda_federation::{FederationService, config::FederationConfig};
@@ -56,6 +58,7 @@ use andromeda_subscription::{
 use andromeda_temporal::{
     config::TemporalConfig,
     port::{history_reader::TemporalHistoryReader, mutation_barrier::TemporalMutationBarrier, mutator::TemporalMutator},
+    remote_linked::RemoteTemporalLinkedSource,
     service::TemporalService,
 };
 use andromeda_tenancy::{config::TenancyConfig, tenant_ref::TenantRef};
@@ -157,22 +160,9 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
             subscription_cache: Arc::clone(subscription_cache),
         }),
     ));
-    let temporal = Arc::new(TemporalService::new(
-        Arc::clone(entity_reader),
-        Arc::clone(temporal_reader),
-        Arc::clone(temporal_mutation_barrier),
-        Arc::clone(temporal_repo) as Arc<dyn TemporalMutator>,
-        Arc::clone(writes),
-        engine.clone(),
-        temporal_config.default_last_n,
-    ));
-    let entity_query = Arc::new(EntityQueryService::new(
-        Arc::clone(entity_reader),
-        Arc::clone(entity_query_store),
-        engine.clone(),
-        Arc::clone(spatial_index),
-        tenant.clone(), // clone: the query service owns its tenant partition.
-    ));
+    // Forwarding is constructed ahead of the services that join through it:
+    // both the entity and the temporal join resolve an `objectType`-annotated
+    // Linked Entity this broker does not hold through the same registrations.
     let forwarding = Arc::new(
         FederationService::new(
             Arc::clone(registration_store),
@@ -182,6 +172,29 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         )
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
     );
+    let temporal = Arc::new(TemporalService::new(
+        Arc::clone(entity_reader),
+        Arc::clone(temporal_reader),
+        Arc::clone(temporal_mutation_barrier),
+        Arc::clone(temporal_repo) as Arc<dyn TemporalMutator>,
+        Arc::clone(writes),
+        engine.clone(),
+        temporal_config.default_last_n,
+        // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
+        // Entity whose history this broker does not record is fetched from the
+        // context sources registered for it.
+        Some(Arc::new(ForwardedTemporalLinkedSource::new(Arc::clone(&forwarding))) as Arc<dyn RemoteTemporalLinkedSource>), // clone: request handling and linked resolution share one forwarding service.
+    ));
+    let entity_query = Arc::new(EntityQueryService::new(
+        Arc::clone(entity_reader),
+        Arc::clone(entity_query_store),
+        engine.clone(),
+        Arc::clone(spatial_index),
+        tenant.clone(), // clone: the query service owns its tenant partition.
+        // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
+        // does not store is fetched from the context sources registered for it.
+        Some(Arc::new(ForwardedLinkedEntitySource::new(Arc::clone(&forwarding))) as Arc<dyn RemoteLinkedEntitySource>), // clone: request handling and linked resolution share one forwarding service.
+    ));
     let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
     let snapshot_notifications: Arc<dyn SnapshotNotificationSink> = Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transports.dispatcher)));

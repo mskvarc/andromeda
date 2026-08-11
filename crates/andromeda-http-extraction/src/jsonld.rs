@@ -19,7 +19,6 @@ use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use std::{collections::HashSet, str::FromStr};
 
-
 /// Axum extractor for NGSI-LD JSON-LD request bodies.
 ///
 /// Validates the `Content-Type` header against the supported NGSI-LD media types

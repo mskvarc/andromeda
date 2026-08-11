@@ -49,12 +49,54 @@ pub enum Token {
     LBracket,
     /// `]`, closing a compound value path.
     RBracket,
+    /// `{`, opening a linked-entity traversal.
+    LBrace,
+    /// `}`, closing a linked-entity traversal.
+    RBrace,
     /// `*`, the language-suppression marker inside `[*]`.
     Star,
     /// `.`, the sub-attribute separator.
     Dot,
     /// `,`, the value-list separator.
     Comma,
+}
+
+impl Token {
+    /// How the clause 4.9 grammar spells this token.
+    ///
+    /// A parse failure quotes this rather than the Rust variant name, so the
+    /// `BadRequestData` detail a client receives names the character the grammar
+    /// expected. The three token kinds that carry text describe their kind
+    /// instead, because their spelling is whatever the client wrote.
+    pub const fn spelling(&self) -> &'static str {
+        match self {
+            Token::Ident(_) => "identifier",
+            Token::QuotedStr(_) => "quoted string",
+            Token::NumberLit(_) => "number",
+            Token::True => "true",
+            Token::False => "false",
+            Token::Eq => "==",
+            Token::Neq => "!=",
+            Token::Gt => ">",
+            Token::Ge => ">=",
+            Token::Lt => "<",
+            Token::Le => "<=",
+            Token::Match => "~=",
+            Token::NotMatch => "!~=",
+            Token::Dots => "..",
+            Token::Semi => ";",
+            Token::Pipe => "|",
+            Token::LParen => "(",
+            Token::RParen => ")",
+            Token::LBracket => "[",
+            Token::RBracket => "]",
+            Token::LBrace => "{",
+            Token::RBrace => "}",
+            Token::Star => "*",
+            Token::Dot => ".",
+            Token::Comma => ",",
+        }
+    }
 }
 
 /// Split a `q` expression into tokens.
@@ -91,6 +133,14 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, QueryError> {
             }
             ']' => {
                 tokens.push(Token::RBracket);
+                i += 1;
+            }
+            '{' => {
+                tokens.push(Token::LBrace);
+                i += 1;
+            }
+            '}' => {
+                tokens.push(Token::RBrace);
                 i += 1;
             }
             '*' => {
@@ -293,7 +343,7 @@ mod tests {
     #[test]
     fn every_structural_character_lexes_to_its_own_token() {
         assert_eq!(
-            lex(";|()[],"),
+            lex(";|()[]{},"),
             vec![
                 Token::Semi,
                 Token::Pipe,
@@ -301,7 +351,30 @@ mod tests {
                 Token::RParen,
                 Token::LBracket,
                 Token::RBracket,
+                Token::LBrace,
+                Token::RBrace,
                 Token::Comma
+            ]
+        );
+    }
+
+    /// Clause 4.9 `LinkedEntityRelation = AttrName %x7B LinkedEntityPath %x7D`.
+    /// The braces are structure; the colon that terminates a type guard is not,
+    /// because `:` is a legal identifier character (a prefixed name carries
+    /// one), so it stays glued to the identifier the parser splits it from.
+    #[test]
+    fn a_linked_entity_traversal_lexes_into_its_braces() {
+        assert_eq!(
+            lex("isParkedIn{Building,Store:category==\"x\"}"),
+            vec![
+                ident("isParkedIn"),
+                Token::LBrace,
+                ident("Building"),
+                Token::Comma,
+                ident("Store:category"),
+                Token::Eq,
+                Token::QuotedStr("x".to_string()),
+                Token::RBrace,
             ]
         );
     }

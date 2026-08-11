@@ -12,6 +12,7 @@ pub mod collection;
 pub mod content_range;
 pub mod extraction_rejection;
 pub mod headers;
+pub mod linked_resolution_warning;
 pub mod pagination;
 pub mod problem_response;
 pub mod render;
@@ -28,6 +29,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
+        "andromeda-ngsi-ld-representation",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-vocabulary",

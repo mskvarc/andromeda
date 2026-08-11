@@ -1,6 +1,6 @@
 //! POST query handler for the NGSI-LD Temporal API.
 
-use crate::{error::TemporalResultExt, state::TemporalTenantState};
+use crate::{error::TemporalResultExt, join::apply_temporal_join, state::TemporalTenantState};
 use andromeda_federation::{
     entity_result::collect_temporal_warnings,
     operation::ForwardingOperation,
@@ -16,7 +16,7 @@ use andromeda_http_response::{
 };
 use andromeda_ngsi_ld_model::query::body::Query;
 use andromeda_ngsi_ld_render::response::ResponsePayload;
-use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
+use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::temporal::TemporalQueryParameters};
 use andromeda_temporal::service::TemporalQueryResult;
 use axum::{
     extract::OriginalUri,
@@ -72,9 +72,10 @@ pub async fn query(
         any_truncated,
         range,
         warnings: _,
+        linked_candidates,
     } = result;
 
-    let (entities, forwarding_warnings) = if is_local {
+    let (mut entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
         let context_url = context.link_contexts().first();
@@ -102,6 +103,19 @@ pub async fn query(
 
         let merged = merge_temporal_query_results(local_entities, forwarded);
         (merged, warnings)
+    };
+
+    // Join mode (clause 4.5.23) arrives in the POST body exactly as it arrives
+    // in a query string. `@none` and an absent `join` retrieve no linked entity
+    // at all, so neither reaches the traversal.
+    let forwarding_warnings = match RetrievingJoin::from_mode(params.join) {
+        Some(join) => {
+            apply_temporal_join(service, join, &mut entities, &linked_candidates, &params, &context, forwarding_warnings)
+                .await
+                .with_instance(&uri)?
+                .warnings
+        }
+        None => forwarding_warnings,
     };
 
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())

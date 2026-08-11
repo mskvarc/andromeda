@@ -9,6 +9,7 @@ use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::num::NonZeroU32;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
 use typed_builder::TypedBuilder;
 use url::Url;
@@ -111,9 +112,14 @@ pub struct NotificationParams {
     /// Join mode for linked entity retrieval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub join: Option<JoinMode>,
-    /// Maximum depth for linked entity joins.
+    /// Maximum depth for linked entity joins (clause 4.5.23 `joinLevel`).
+    ///
+    /// Typed as a positive integer so `"joinLevel": 0` is rejected at
+    /// deserialization with a 400, exactly as it is on the query endpoints —
+    /// a zero depth names no traversal and must not be silently read as the
+    /// default of one.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub join_level: Option<u32>,
+    pub join_level: Option<NonZeroU32>,
     /// Timestamp of the last notification sent.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub last_notification: Option<DateTime<Utc>>,
@@ -276,6 +282,28 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use std::str::FromStr;
+
+    /// Clause 4.5.23: `joinLevel` is a positive integer. Zero names no
+    /// traversal, so a subscription carrying it is rejected rather than
+    /// silently read as the default of one hop.
+    #[test]
+    fn a_notification_join_level_of_zero_is_rejected() {
+        let raw = serde_json::json!({"endpoint": {"uri": "https://example.com/notify"}, "join": "flat", "joinLevel": 0});
+
+        let parsed = serde_json::from_value::<NotificationParams>(raw);
+
+        assert!(parsed.is_err());
+    }
+
+    /// A positive `joinLevel` parses to exactly the depth it names.
+    #[test]
+    fn a_positive_notification_join_level_parses_to_that_depth() {
+        let raw = serde_json::json!({"endpoint": {"uri": "https://example.com/notify"}, "join": "flat", "joinLevel": 7});
+
+        let parsed = serde_json::from_value::<NotificationParams>(raw).expect("parses");
+
+        assert_eq!(parsed.join_level.map(NonZeroU32::get), Some(7));
+    }
 
     #[test]
     fn an_unknown_subscription_status_label_is_a_parse_error_not_a_panic() {

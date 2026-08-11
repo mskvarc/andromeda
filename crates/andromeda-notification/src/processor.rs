@@ -519,6 +519,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
     use andromeda_subscription::matching::matches_subscription;
+    use std::num::NonZeroU32;
     use url::Url;
 
     fn make_event(entity_id: &str, types: Vec<&str>, trigger: NotificationTrigger, attrs: Vec<&str>) -> ChangeEvent {
@@ -561,7 +562,7 @@ mod tests {
             compiled_scope_q: None,
             dataset_id: None,
             notification_join: None,
-            notification_join_level: 1,
+            notification_join_level: NonZeroU32::MIN,
             compiled_csf: None,
             local_only: false,
         }

@@ -14,16 +14,17 @@ use crate::entity::{
     EntityTenantState,
     ForwardQueryRequest,
     ForwardingOperation,
-    HashSet,
     IntoResponse,
-    JoinMode,
+    JoinRequest,
     NgsiLdCollectionResponse,
     NgsiLdProtocolHeaders,
-    NonZeroU32,
     OriginalUri,
     ProblemResponse,
+    RequestProjection,
+    ResolvedJoin,
     Response,
     ResponsePayload,
+    RetrievingJoin,
     SnapshotRenderer,
     StatusCode,
     Uri,
@@ -36,7 +37,9 @@ use crate::entity::{
     matches_scope_query,
     render_flat_join,
     start_rendering,
+    with_linked_resolution_warnings,
 };
+use std::iter::empty;
 
 pub(crate) async fn query(
     andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -240,12 +243,49 @@ pub(crate) async fn query(
             entities = filtered;
         }
 
+        // Join mode (clause 4.5.23) is parsed at the query boundary. `@none`
+        // and an absent `join` retrieve no linked entity at all, so neither
+        // reaches the traversal. The join resolves before EntityMap creation
+        // so a requested map can include the linked ids (spec 5.5.14, 5.7.2.4).
+        // Clause 6.3.15: the request's `pick`/`omit` govern both the matching
+        // entities' structural members and, through their clause 4.21 nested
+        // terms, the entities the traversal reaches. Both read it off the
+        // compilation the query already ran, which has to outlive the join
+        // that borrows its terms.
+        let request_projection = RequestProjection::of(service, &query, &context).await.with_entity_instance(&uri)?;
+        let projection = request_projection.projection();
+
+        let join = RetrievingJoin::from_mode(query.join);
+        let resolved = match join {
+            Some(join) => {
+                let request = JoinRequest {
+                    join,
+                    join_level: query.join_level,
+                    contained_by: query.contained_by.as_deref(),
+                    sys_attrs: opts.sys_attrs,
+                    projection,
+                };
+                Some(ResolvedJoin::prepare(service, &entities, &context, &request).await.with_entity_instance(&uri)?)
+            }
+            None => None,
+        };
+        // Clause 6.3.17: a Linked Entity the join could not reach leaves the
+        // body incomplete, and the warning header is what says so.
+        let warnings = match &resolved {
+            Some(resolved) => with_linked_resolution_warnings(warnings, &resolved.failures),
+            None => warnings,
+        };
+
         // §5.7.2: If entityMap=true, create an EntityMap and set header
         let entity_map_uri = if entity_map_requested {
             let compiled = service.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;
             let mut all_ids = service.query_ids(&compiled).await.with_entity_instance(&uri)?;
             // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
             all_ids.extend(remote_ids);
+            // Include linked entity IDs the join resolved (spec 5.5.14, 5.7.2.4)
+            if let Some(resolved) = &resolved {
+                all_ids.extend(resolved.linked.keys().cloned());
+            }
             all_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
             all_ids.dedup();
             let lifetime = query.entity_map_lifetime.as_ref();
@@ -260,69 +300,55 @@ pub(crate) async fn query(
 
         let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
 
-        // Join mode (clause 4.5.23) is parsed at the query boundary.
-        let join_mode = query.join;
-        let join_level = query.join_level.map_or(1, NonZeroU32::get);
-        let contained_by: HashSet<Uri> = query.contained_by.as_deref().map(|ids| ids.iter().cloned().collect()).unwrap_or_default();
-
-        if let Some(join) = join_mode {
-            let linked = service
-                .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &contained_by)
-                .await
-                .with_entity_instance(&uri)?;
-
-            match join {
-                JoinMode::Flat => {
-                    // Flat: the root entities and their linked entities side by
-                    // side, the roots ahead of the linked (clause 4.5.23).
-                    let all_values =
-                        render_flat_join(entities.iter().chain(linked.values()), language_filter.as_ref(), opts.render_mode).with_entity_instance(&uri)?;
-                    let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
-                        .with_geometry_property(query.geometry_property.as_ref())
-                        .with_payload(ResponsePayload::Collection(all_values))
-                        .render()
-                        .with_entity_instance(&uri)?;
-                    let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-                    if let Some(count) = total_count {
-                        response = response.with_total_count(count as usize);
-                    }
-                    if let Some(ref map_uri) = entity_map_uri {
-                        response = response.with_entity_map_uri(map_uri.clone());
-                    }
-                    return Ok(response.into_response());
-                }
-                JoinMode::Inline => {
-                    // Inline: the renderer nests the linked entities into each root.
-                    let mut entity_values: Vec<Value> = Vec::new();
+        if let (Some(join), Some(resolved)) = (join, resolved) {
+            let payload = match join {
+                // Flat: the root entities and their linked entities side by
+                // side, the roots ahead of the linked (clause 4.5.23).
+                RetrievingJoin::Flat => render_flat_join(
+                    entities.iter(),
+                    resolved.linked.values(),
+                    language_filter.as_ref(),
+                    opts.render_mode,
+                    projection,
+                )
+                .with_entity_instance(&uri)?,
+                // Inline: the renderer nests the linked entities into each
+                // root, narrowing each nested copy by the sub-projection its
+                // own Relationship carried (clause 4.21).
+                RetrievingJoin::Inline => {
+                    let mut entity_values: Vec<Value> = Vec::with_capacity(entities.len());
                     for entity in &entities {
                         entity_values.push(
                             EntityRenderer::new(entity)
                                 .with_optional_language_filter(language_filter.as_ref())
-                                .with_inline_linked_entities(&linked)
+                                .with_inline_linked_entities(&resolved.linked)
+                                .with_optional_linked_projection(resolved.linked_projection())
+                                .with_optional_structural_projection(projection)
                                 .with_mode(opts.render_mode)
                                 .render()
                                 .with_entity_instance(&uri)?,
                         );
                     }
-                    let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
-                        .with_geometry_property(query.geometry_property.as_ref())
-                        .with_payload(ResponsePayload::Collection(entity_values))
-                        .render()
-                        .with_entity_instance(&uri)?;
-                    let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
-                    if let Some(count) = total_count {
-                        response = response.with_total_count(count as usize);
-                    }
-                    if let Some(ref map_uri) = entity_map_uri {
-                        response = response.with_entity_map_uri(map_uri.clone());
-                    }
-                    return Ok(response.into_response());
+                    entity_values
                 }
-                JoinMode::None => {}
+            };
+
+            let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
+                .with_geometry_property(query.geometry_property.as_ref())
+                .with_payload(ResponsePayload::Collection(payload))
+                .render()
+                .with_entity_instance(&uri)?;
+            let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(warnings);
+            if let Some(count) = total_count {
+                response = response.with_total_count(count as usize);
             }
+            if let Some(ref map_uri) = entity_map_uri {
+                response = response.with_entity_map_uri(map_uri.clone());
+            }
+            return Ok(response.into_response());
         }
 
-        let rendered = render_flat_join(entities.iter(), language_filter.as_ref(), opts.render_mode).with_entity_instance(&uri)?;
+        let rendered = render_flat_join(entities.iter(), empty(), language_filter.as_ref(), opts.render_mode, projection).with_entity_instance(&uri)?;
         let rendered_output = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
             .with_geometry_property(query.geometry_property.as_ref())
             .with_payload(ResponsePayload::Collection(rendered))

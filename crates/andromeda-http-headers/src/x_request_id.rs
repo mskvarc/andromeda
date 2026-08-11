@@ -3,6 +3,7 @@
 use http::{HeaderName, HeaderValue};
 use std::str::FromStr;
 
+/// The lowercase `X-Request-ID` field name this header is transmitted under.
 static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 /// A non-empty, single-token request correlation identifier.

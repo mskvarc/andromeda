@@ -248,6 +248,7 @@ mod tests {
             JsonLdEngine::builder().allow_remote(false).build().expect("build engine"),
             Arc::new(SpatialEntityIndex::new()),
             TenantRef::UnnamedDefault,
+            None,
         )
     }
 

@@ -10,18 +10,19 @@ use crate::entity::{
     EntityTenantState,
     ForwardingOperation,
     GetEntityParams,
-    HashSet,
     IntoResponse,
-    JoinMode,
+    JoinRequest,
     NgsiLdCollectionResponse,
     NgsiLdErrorType,
     NgsiLdProtocolHeaders,
     NgsiLdResponse,
-    NonZeroU32,
     OriginalUri,
     ProblemResponse,
+    ResolvedJoin,
     Response,
     ResponsePayload,
+    RetrievalNarrowing,
+    RetrievingJoin,
     SnapshotRenderer,
     TypedPath,
     Uri,
@@ -31,7 +32,9 @@ use crate::entity::{
     public_error,
     render_flat_join,
     start_rendering,
+    with_linked_resolution_warnings,
 };
+use std::{iter::once, slice::from_ref};
 
 pub(crate) async fn get(
     andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -81,11 +84,22 @@ pub(crate) async fn get(
         return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
     }
 
-    let attrs = params.attrs.as_deref().unwrap_or_default();
-
     let sys_attrs = params.options.unwrap_or_default().sys_attrs;
-    let dataset_ids = params.dataset_id.as_deref().unwrap_or_default();
-    let local_result = service.get_inner(&id, attrs, sys_attrs, dataset_ids, &context).await;
+    // Clause 6.3.15 governs the single-entity retrieval exactly as it governs
+    // a query: the compiled projection narrows the retrieved entity and, when
+    // its terms carry clause 4.21 sub-projections, the entities the join
+    // reaches from it.
+    let projection = service
+        .compile_projection(params.pick.as_deref(), params.omit.as_deref(), &context)
+        .await
+        .with_entity_instance(&uri)?;
+    let narrowing = RetrievalNarrowing {
+        attrs: params.attrs.as_deref().unwrap_or_default(),
+        sys_attrs,
+        dataset_ids: params.dataset_id.as_deref().unwrap_or_default(),
+        projection: projection.as_ref(),
+    };
+    let local_result = service.get_inner(&id, &narrowing, &context).await;
 
     let is_local = params.local.unwrap_or(false);
 
@@ -151,34 +165,45 @@ pub(crate) async fn get(
 
     let mode = params.resolve_render_mode();
 
-    // Join mode (clause 4.5.23) is parsed at the query boundary.
-    let join_mode = params.join;
-    let join_level = params.join_level.map_or(1, NonZeroU32::get);
-
-    let contained_by: HashSet<Uri> = params.contained_by.as_deref().map(|ids| ids.iter().cloned().collect()).unwrap_or_default();
-
-    if let Some(join) = join_mode {
-        let linked = service
-            .resolve_linked_entities(std::slice::from_ref(&entity), join_level, sys_attrs, &context, &contained_by)
+    // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
+    // absent `join` retrieve no linked entity at all, so neither reaches the
+    // traversal.
+    if let Some(join) = RetrievingJoin::from_mode(params.join) {
+        let request = JoinRequest {
+            join,
+            join_level: params.join_level,
+            contained_by: params.contained_by.as_deref(),
+            sys_attrs,
+            projection: projection.as_ref(),
+        };
+        let resolved = ResolvedJoin::prepare(service, from_ref(&entity), &context, &request)
             .await
             .with_entity_instance(&uri)?;
+        // Clause 6.3.17: a Linked Entity the join could not reach leaves the
+        // body incomplete, and the warning header is what says so.
+        let warnings = with_linked_resolution_warnings(warnings, &resolved.failures);
 
         match join {
-            JoinMode::Flat => {
+            RetrievingJoin::Flat => {
                 // Flat: the root and its linked entities side by side (clause 4.5.23).
-                let all_entities =
-                    render_flat_join(std::iter::once(&entity).chain(linked.values()), language_filter.as_ref(), mode).with_entity_instance(&uri)?;
+                let all_entities = render_flat_join(once(&entity), resolved.linked.values(), language_filter.as_ref(), mode, projection.as_ref())
+                    .with_entity_instance(&uri)?;
                 let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
+                    .with_geometry_property(params.geometry_property.as_ref())
                     .with_payload(ResponsePayload::Collection(all_entities))
                     .render()
                     .with_entity_instance(&uri)?;
                 return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
             }
-            JoinMode::Inline => {
-                // Inline: the renderer nests the linked entities into the root.
+            RetrievingJoin::Inline => {
+                // Inline: the renderer nests the linked entities into the
+                // root, narrowing each nested copy by the sub-projection its
+                // own Relationship carried (clause 4.21).
                 let entity_value = EntityRenderer::new(&entity)
                     .with_optional_language_filter(language_filter.as_ref())
-                    .with_inline_linked_entities(&linked)
+                    .with_inline_linked_entities(&resolved.linked)
+                    .with_optional_linked_projection(resolved.linked_projection())
+                    .with_optional_structural_projection(projection.as_ref())
                     .with_mode(mode)
                     .render()
                     .with_entity_instance(&uri)?;
@@ -189,12 +214,12 @@ pub(crate) async fn get(
                     .with_entity_instance(&uri)?;
                 return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
             }
-            JoinMode::None => {}
         }
     }
 
     let entity_value = EntityRenderer::new(&entity)
         .with_optional_language_filter(language_filter.as_ref())
+        .with_optional_structural_projection(projection.as_ref())
         .with_mode(mode)
         .render()
         .with_entity_instance(&uri)?;

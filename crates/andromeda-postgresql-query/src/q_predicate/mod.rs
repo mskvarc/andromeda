@@ -32,6 +32,24 @@
 //! cannot answer. It is still unindexed; it is now the exception rather than
 //! the rule.
 //!
+//! # Linked-entity traversal
+//!
+//! The clause 4.9 `{}` axis (`rel{attr=="x"}`) compiles to one correlated
+//! `EXISTS` per hop. Each probe reads the Relationship's instances from
+//! `attribute_current`, joins `attribute_current.value_uri` to `entities.id` to
+//! reach the entity each instance names, and compiles the rest of the predicate
+//! against that entity — recursively, so a chain of hops nests a chain of
+//! probes. Aliases are suffixed by depth (`ac_ln1`/`le1`, `ac_ln2`/`le2`, …) so
+//! a nested probe cannot shadow its enclosing one.
+//!
+//! Two things fall out of reading the object from the projection rather than
+//! the payload: the probe stays on the `(attribute_name_id, value_uri)` index,
+//! and a deletion tombstone (`value_uri = 'urn:ngsi-ld:null'`) is excluded
+//! before the join rather than left to fail it. A hop's optional entity-type
+//! guard becomes a disjunction of membership tests against the linked entity's
+//! `types` column, and a Relationship name absent from `attribute_names`
+//! compiles to constant `FALSE` exactly as any other unknown name does.
+//!
 //! # Multi-instance semantics
 //!
 //! `EXISTS` matches when *any* row for the attribute satisfies the predicate.
@@ -43,3 +61,4 @@ pub mod attribute_names;
 pub mod fallback;
 pub mod projection;
 pub mod target;
+pub mod traversal;

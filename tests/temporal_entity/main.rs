@@ -15,6 +15,8 @@
 
 mod create;
 mod delete;
+mod join;
+mod projection;
 mod query;
 mod retrieve;
 mod update;

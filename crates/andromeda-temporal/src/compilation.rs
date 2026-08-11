@@ -13,7 +13,10 @@ use andromeda_ngsi_ld_query::{
     },
     geo::{compile as geo_compile, query::GeoQuery},
     pagination::{CountPolicy, Pagination},
-    projection::expansion::expand_attrs,
+    projection::{
+        compiled::Projection,
+        expansion::{expand_attrs, expand_projection_terms},
+    },
     temporal::{
         compiled::CompiledTemporalQuery,
         instance_selection::InstanceSelection,
@@ -21,6 +24,7 @@ use andromeda_ngsi_ld_query::{
         representation::Representation,
         window::{TemporalWindow, TimeInterval},
     },
+    term_expander::TermExpander,
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, temporal::TemporalQueryParameters};
@@ -46,6 +50,7 @@ impl TemporalService {
         .await?;
 
         let attr_filter = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
+        let projection = compile_projection(params, &expander).await?;
 
         let dataset_id_filter = params
             .dataset_id
@@ -157,6 +162,7 @@ impl TemporalService {
                     Some(false) | None => CountPolicy::Omit,
                 },
             })
+            .projection(projection)
             .build())
     }
 
@@ -171,4 +177,17 @@ impl TemporalService {
 /// Convert explicitly selected attribute IRIs into validated attribute names.
 fn opted_in_attribute_names(iris: &[IriBuf]) -> Result<HashSet<AttributeName>, QueryError> {
     iris.iter().map(expanded_attribute_name).collect()
+}
+
+/// Expand `pick` / `omit` into a compiled clause 6.3.15 [`Projection`].
+///
+/// Kept apart from the rest of [`TemporalService::compile_temporal_query`] so
+/// the clause 4.5.23 join traversal (`crate::linked`) can expand the *root*
+/// request's projection on its own, against its own freshly prepared
+/// expander, without compiling the unrelated selection, window and
+/// representation the traversal never reads.
+pub(crate) async fn compile_projection(params: &TemporalQueryParameters, expander: &impl TermExpander) -> Result<Projection, TemporalError> {
+    let pick = expand_projection_terms(params.pick.as_deref().unwrap_or_default(), expander).await?;
+    let omit = expand_projection_terms(params.omit.as_deref().unwrap_or_default(), expander).await?;
+    Ok(Projection { pick, omit })
 }

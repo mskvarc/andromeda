@@ -10,13 +10,13 @@ use crate::{
         attribute_names::ResolvedAttributeNames,
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
         target::QFilterTarget,
+        traversal::LinkedHop,
     },
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
     filter::{
         expression::Expr,
-        path::AttrPath,
+        path::{AttrPath, QueryPath},
         predicate::{CmpOp, OrderingOp, PatternPolarity, Predicate, SetMembership},
         scalar::{CompareValue, Scalar},
     },
@@ -37,37 +37,48 @@ pub fn compile(expr: &Expr, target: &QFilterTarget, names: &ResolvedAttributeNam
     }
 }
 
-/// Attribute names a `q` expression references at the top level.
+/// Compile one leaf predicate, descending any linked-entity hops its axis
+/// carries before compiling the comparison against the entity it lands on.
+fn compile_predicate(pred: &Predicate, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+    compile_along_path(pred, pred.path(), target, names, 0)
+}
+
+/// Compile a predicate against the entity reached by the remaining axis.
 ///
-/// Only these need dictionary resolution: sub-attribute and value-path
-/// segments are navigated inside the JSONB payload, never through
-/// `attribute_names`.
-pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
-    match expr {
-        Expr::And(terms) | Expr::Or(terms) => {
-            for term in terms {
-                referenced_attribute_names(term, out);
-            }
-        }
-        Expr::Pred(pred) => {
-            let path = match pred {
-                Predicate::Exists(path)
-                | Predicate::Equality { path, .. }
-                | Predicate::Ordering { path, .. }
-                | Predicate::MatchPattern { path, .. }
-                | Predicate::NotMatchPattern { path, .. } => path,
+/// `depth` is the number of hops already descended; it suffixes the aliases so
+/// a nested traversal's probes cannot shadow an enclosing one's.
+fn compile_along_path(
+    pred: &Predicate,
+    path: &QueryPath,
+    target: &QFilterTarget,
+    names: &ResolvedAttributeNames,
+    depth: usize,
+) -> Result<Condition, RenderError> {
+    match path {
+        QueryPath::Local(local) => compile_local_predicate(pred, local, target, names),
+        QueryPath::Linked {
+            relationship,
+            guard_types,
+            inner,
+        } => {
+            let Some(relationship_id) = names.get(relationship) else {
+                // No `attribute_names` row means no instance of the
+                // Relationship was ever written, so no entity can be reached
+                // through it.
+                return Ok(unsatisfiable());
             };
-            // clone: the caller owns the resolved list, which outlives the expression
-            out.push(path.attr.clone());
+            let hop = LinkedHop::at_depth(depth + 1);
+            let inner_condition = compile_along_path(pred, inner, &hop.inner_target(), names, depth + 1)?;
+            Ok(hop.probe(relationship_id, guard_types, target, inner_condition))
         }
     }
 }
 
-/// Compile one leaf predicate, routing it to the projection or the fallback.
-fn compile_predicate(pred: &Predicate, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+/// Compile the comparison itself, routing it to the projection or the fallback.
+fn compile_local_predicate(pred: &Predicate, path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     match pred {
-        Predicate::Exists(path) => Ok(compile_exists(path, target, names)),
-        Predicate::Equality { path, membership, rhs } => {
+        Predicate::Exists(_) => Ok(compile_exists(path, target, names)),
+        Predicate::Equality { membership, rhs, .. } => {
             if is_projection_eligible(path) && !compare_value_exceeds_precision(rhs) {
                 match names.get(&path.attr) {
                     Some(id) => Ok(compile_equality_on_projection(id, *membership, rhs, target)),
@@ -77,7 +88,7 @@ fn compile_predicate(pred: &Predicate, target: &QFilterTarget, names: &ResolvedA
                 Ok(fallback_equality(path, *membership, rhs, target))
             }
         }
-        Predicate::Ordering { path, op, rhs } => {
+        Predicate::Ordering { op, rhs, .. } => {
             if is_projection_eligible(path) && !scalar_exceeds_precision(rhs) {
                 match names.get(&path.attr) {
                     Some(id) => Ok(compile_ordering_on_projection(id, *op, rhs, target)),
@@ -87,8 +98,8 @@ fn compile_predicate(pred: &Predicate, target: &QFilterTarget, names: &ResolvedA
                 Ok(fallback_ordering(path, *op, rhs, target))
             }
         }
-        Predicate::MatchPattern { path, pattern } => Ok(compile_pattern(path, pattern, PatternPolarity::Match, target, names)),
-        Predicate::NotMatchPattern { path, pattern } => Ok(compile_pattern(path, pattern, PatternPolarity::NotMatch, target, names)),
+        Predicate::MatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::Match, target, names)),
+        Predicate::NotMatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::NotMatch, target, names)),
     }
 }
 
@@ -377,6 +388,14 @@ mod tests {
             ("https://example.com/a".parse().expect("valid attribute name"), AttributeNameId::from(16)),
             ("https://example.com/b".parse().expect("valid attribute name"), AttributeNameId::from(17)),
             ("https://example.com/c".parse().expect("valid attribute name"), AttributeNameId::from(18)),
+            (
+                "https://example.com/isParkedIn".parse().expect("valid attribute name"),
+                AttributeNameId::from(19),
+            ),
+            ("https://example.com/category".parse().expect("valid attribute name"), AttributeNameId::from(20)),
+            ("https://example.com/outer".parse().expect("valid attribute name"), AttributeNameId::from(21)),
+            ("https://example.com/inner".parse().expect("valid attribute name"), AttributeNameId::from(22)),
+            ("https://example.com/zone".parse().expect("valid attribute name"), AttributeNameId::from(23)),
         ])
     }
 
@@ -581,30 +600,119 @@ mod tests {
 
     // -- attribute collection ------------------------------------------------
 
+    // -- linked-entity traversal (clause 4.9) --------------------------------
+
+    const IS_PARKED_IN: &str = "https://example.com/isParkedIn";
+    const CATEGORY: &str = "https://example.com/category";
+
     #[test]
-    fn referenced_names_collect_every_predicate_target() {
-        let expr = parser::parse(&format!(
-            "{}>1;\"https://example.com/b\"<2|\"https://example.com/c\"==\"x\"",
-            quoted("https://example.com/a")
-        ))
-        .expect("parse");
-        let mut names = Vec::new();
-        referenced_attribute_names(&expr, &mut names);
-        names.sort();
-        assert_eq!(
-            names.iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
-            vec!["https://example.com/a", "https://example.com/b", "https://example.com/c"]
+    fn a_single_hop_probes_the_relationship_and_joins_the_entity_it_names() {
+        let (sql, binds) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
+        assert!(sql.contains("\"attribute_current\" AS \"ac_ln1\""), "{sql}");
+        assert!(
+            sql.contains("JOIN \"entities\" AS \"le1\" ON \"le1\".\"id\" = \"ac_ln1\".\"value_uri\""),
+            "the hop resolves the object through the projection, not the payload: {sql}"
+        );
+        assert!(sql.contains("\"ac_ln1\".\"entity_id\" = \"entities\".\"id\""), "{sql}");
+        assert!(
+            sql.contains("\"ac_ln1\".\"value_uri\" IS DISTINCT FROM 'urn:ngsi-ld:null'"),
+            "a tombstoned relationship names no entity: {sql}"
+        );
+        // The inner comparison is correlated against the linked entity.
+        assert!(sql.contains("\"ac\".\"entity_id\" = \"le1\".\"id\""), "{sql}");
+        assert!(sql.contains("\"ac\".\"value_string\" ="), "{sql}");
+        assert!(
+            matches!(binds[0], BindValue::I16(19)),
+            "the relationship's dictionary key binds first: {binds:?}"
+        );
+        assert!(matches!(binds[1], BindValue::I16(20)), "then the inner attribute's: {binds:?}");
+    }
+
+    #[test]
+    fn a_hop_guard_tests_the_linked_entitys_types_for_any_of_its_alternatives() {
+        // Clause 4.9 lists the guard's types as alternatives, so one membership
+        // test against `entities.types` per type, disjoined.
+        let (sql, binds) = render(&format!(
+            "{}{{{},{}:{}==\"x\"}}",
+            quoted(IS_PARKED_IN),
+            quoted("https://example.com/Building"),
+            quoted("https://example.com/Store"),
+            quoted(CATEGORY)
+        ));
+        // The whole statement is pinned, not a substring: the guard renders as a
+        // bare `a OR b`, and without parentheses around it the second disjunct
+        // escapes the correlation, the attribute-name test and the tombstone
+        // guard — the probe would then match whenever any entity in the tenant
+        // carried the second type. A `contains` assertion cannot see that.
+        pretty_assertions::assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT "id" FROM "entities" WHERE EXISTS (SELECT 1 FROM "attribute_current" AS "ac_ln1" "#,
+                r#"JOIN "entities" AS "le1" ON "le1"."id" = "ac_ln1"."value_uri" "#,
+                r#"WHERE "ac_ln1"."entity_id" = "entities"."id" "#,
+                r#"AND "ac_ln1"."attribute_name_id" = $1 "#,
+                r#"AND "ac_ln1"."value_uri" IS DISTINCT FROM 'urn:ngsi-ld:null' "#,
+                r#"AND (($2 = ANY("le1"."types")) OR ($3 = ANY("le1"."types"))) "#,
+                r#"AND (EXISTS (SELECT 1 FROM "attribute_current" AS "ac" "#,
+                r#"WHERE "ac"."attribute_name_id" = $4 AND (("ac"."value_string" = $5 OR "ac"."value_uri" = $6)) "#,
+                r#"AND "ac"."value_string" IS DISTINCT FROM 'urn:ngsi-ld:null' "#,
+                r#"AND "ac"."entity_id" = "le1"."id")))"#,
+            )
+        );
+        assert!(
+            binds
+                .iter()
+                .any(|bind| matches!(bind, BindValue::String(text) if text == "https://example.com/Building")),
+            "{binds:?}"
+        );
+        assert!(
+            binds
+                .iter()
+                .any(|bind| matches!(bind, BindValue::String(text) if text == "https://example.com/Store")),
+            "{binds:?}"
         );
     }
 
     #[test]
-    fn referenced_names_ignore_sub_attribute_segments() {
-        let expr = parser::parse("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">=\"2024-01-01T00:00:00Z\"").expect("parse");
-        let mut names = Vec::new();
-        referenced_attribute_names(&expr, &mut names);
-        assert_eq!(
-            names.iter().map(AttributeName::as_str).collect::<Vec<&str>>(),
-            vec!["https://example.com/temperature"]
+    fn an_unguarded_hop_emits_no_type_test() {
+        let (sql, _) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
+        assert!(!sql.contains("\"types\""), "no guard was written: {sql}");
+    }
+
+    #[test]
+    fn nested_hops_number_their_aliases_by_depth() {
+        let (sql, _) = render(&format!(
+            "{}{{{}{{{}==\"north\"}}}}",
+            quoted("https://example.com/outer"),
+            quoted("https://example.com/inner"),
+            quoted("https://example.com/zone")
+        ));
+        for alias in ["ac_ln1", "le1", "ac_ln2", "le2"] {
+            assert!(sql.contains(&format!("AS \"{alias}\"")), "{alias} missing from {sql}");
+        }
+        assert!(
+            sql.contains("\"ac_ln2\".\"entity_id\" = \"le1\".\"id\""),
+            "the second hop starts at the first's target: {sql}"
         );
+        assert!(sql.contains("\"ac\".\"entity_id\" = \"le2\".\"id\""), "{sql}");
+    }
+
+    #[test]
+    fn a_bare_existence_through_a_hop_probes_the_catalogue_of_the_linked_entity() {
+        let (sql, _) = render(&format!("{}{{{}}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
+        assert!(sql.contains("\"attribute_current\" AS \"ac_ln1\""), "{sql}");
+        assert!(
+            sql.contains("\"tea_q\".\"entity_id\" = \"le1\".\"id\""),
+            "existence resolves through the catalogue of the entity the hop landed on: {sql}"
+        );
+    }
+
+    #[test]
+    fn an_unresolved_relationship_name_makes_the_traversal_unsatisfiable() {
+        // No `attribute_names` row means no instance of the Relationship was
+        // ever written, so no entity is reachable through it.
+        let (sql, _) = render(&format!("{}{{{}==\"x\"}}", quoted("https://example.com/never-written"), quoted(CATEGORY)));
+        assert!(sql.contains("FALSE"), "{sql}");
+        assert!(!sql.contains("ac_ln1"), "no probe is emitted when no row can exist: {sql}");
     }
 }

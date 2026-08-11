@@ -14,14 +14,10 @@
 ; recogniser does not express. This file is the reference that parser is checked
 ; against; keep the two in step when the specification changes.
 ;
-; NOT SUPPORTED: the `{}` linked-entity traversal (`LinkedEntityRelation` and
-; `LinkedEntityPath` below) is reproduced from the specification for
-; completeness, but the parser does not implement it -- the tokeniser has no
-; `{`/`}` token, so a filter that uses that axis is rejected. The specification
-; makes the rejection compliant: "If the filter conditions specified by the
-; query includes Linked Entity attributes then an error of type BadRequestData
-; shall be raised." Only the `.` (sub-attribute) and `[]` (compound value) axes
-; are supported.
+; All three attribute axes are implemented, including the `{}` linked-entity
+; traversal (`LinkedEntityRelation` / `LinkedEntityPath` below). Its optional
+; type constraint needs two or more comma-separated types, which is what keeps
+; the grammar unambiguous against a prefixed attribute name.
 ;
 ; `unicodeLetter` and `unicodeNumber` are defined in `grammar/_unicode.abnf` of
 ; `andromeda-ngsi-ld-lexicon`, which is where the grammars that are derived from
@@ -139,3 +135,21 @@ TermChar =/ %x5F                                ; _
 AttrName = unicodeLetter *TermChar
 EntityType = unicodeLetter *TermChar
 quotedStr = String                              ; "*char"
+
+; ============================================================================
+; Raw projection list (`pick` / `omit`) -- ABNF grammar (clause 4.21)
+; ============================================================================
+; The `pick`/`omit` selection language of clause 6.3.15, whose linked-entity
+; traversal clause 4.21 defines -- see `src/projection/grammar.rs`. It shares
+; the brace notation of the `q` grammar's `{}` axis above but not its meaning:
+; here the braces select which attributes of the linked entity are returned,
+; there they filter on one.
+;
+; `pick=observation{temperature,humidity}` selects the `observation`
+; relationship itself together with the `temperature` and `humidity`
+; attributes of the entity it links to; braces nest to select across a chain
+; of relationships.
+
+ProjectionTerm = AttrName *1(LinkedEntityTerm) *(orOp ProjectionTerm)
+LinkedEntityTerm = %x7B ProjectionTerm %x7D     ; { ProjectionTerm }
+orOp = %x7C / %x2C                              ; | or ,

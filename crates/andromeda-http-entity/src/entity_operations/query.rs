@@ -11,26 +11,30 @@ use crate::entity_operations::{
     EntityTenantState,
     ForwardQueryRequest,
     ForwardingOperation,
-    HashSet,
     IntoResponse,
-    JoinMode,
+    JoinRequest,
     JsonLd,
     NgsiLdCollectionResponse,
     NgsiLdProtocolHeaders,
-    NonZeroU32,
     OriginalUri,
     PostQueryParams,
     PreferHeader,
     ProblemResponse,
     Query,
+    RequestProjection,
+    ResolvedJoin,
     Response,
     ResponsePayload,
+    RetrievingJoin,
     SnapshotHeader,
     ValidatedQuery,
     Value,
     collect_warnings,
+    render_flat_join,
     start_rendering,
+    with_linked_resolution_warnings,
 };
+use std::iter::empty;
 
 pub(crate) async fn query(
     andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -69,25 +73,27 @@ pub(crate) async fn query(
             .with_entity_instance(&uri)?;
         return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
     }
-    // Merge fields from query string parameters
-    params.options = qparams.options;
-    params.local = qparams.local;
-    params.pick = qparams.pick;
-    params.omit = qparams.omit;
-    params.dataset_id = qparams.dataset_id;
-    params.format = qparams.format;
-    params.join = qparams.join;
-    params.join_level = qparams.join_level;
-    params.geometry_property = qparams.geometry_property;
+    // The same parameter may be written in the URL or in the canonical body.
+    // The specification does not say which wins, so this is broker
+    // convention: the URL is the more specific of the two and takes
+    // precedence, but only where it actually carries a value -- an absent
+    // query-string parameter leaves the body's member standing rather than
+    // erasing it.
+    params.options = qparams.options.or(params.options);
+    params.local = qparams.local.or(params.local);
+    params.pick = qparams.pick.or(params.pick);
+    params.omit = qparams.omit.or(params.omit);
+    params.dataset_id = qparams.dataset_id.or(params.dataset_id);
+    params.format = qparams.format.or(params.format);
+    params.join = qparams.join.or(params.join);
+    params.join_level = qparams.join_level.or(params.join_level);
+    params.geometry_property = qparams.geometry_property.or(params.geometry_property);
     protocol.extensions().apply_to_entity_query(&mut params).with_entity_instance(&uri)?;
     let language_filter = qparams.lang.or_else(|| params.lang.take()).or(protocol.language_filter);
     let incoming_via = protocol.incoming_via;
     params.validate().with_entity_instance(&uri)?;
 
     let opts = params.parse_options();
-    let join_mode = params.join;
-    let join_level = params.join_level.map_or(1, NonZeroU32::get);
-    let geometry_property = params.geometry_property.as_ref();
 
     let is_local = params.local.unwrap_or(false);
     let (local_entities, total_count) = service.query(&params, &context).await.with_entity_instance(&uri)?;
@@ -128,81 +134,76 @@ pub(crate) async fn query(
         }
     };
 
-    // Handle join
-    if join_mode.is_some() {
-        let linked = service
-            .resolve_linked_entities(&entities, join_level, opts.sys_attrs, &context, &HashSet::new())
-            .await
-            .with_entity_instance(&uri)?;
+    // Clause 6.3.15: the request's `pick`/`omit` govern both the matching
+    // entities' structural members and, through their clause 4.21 nested
+    // terms, the entities the traversal reaches. Both read it off the
+    // compilation the query already ran.
+    let request_projection = RequestProjection::of(service, &params, &context).await.with_entity_instance(&uri)?;
+    let projection = request_projection.projection();
 
-        if join_mode == Some(JoinMode::Flat) {
-            let mut all_values: Vec<Value> = Vec::new();
-            for entity in &entities {
-                all_values.push(
-                    EntityRenderer::new(entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_mode(opts.render_mode)
-                        .render()
-                        .with_entity_instance(&uri)?,
-                );
+    // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and
+    // an absent `join` retrieve no linked entity at all, so neither reaches
+    // the traversal.
+    if let Some(join) = RetrievingJoin::from_mode(params.join) {
+        let request = JoinRequest {
+            join,
+            join_level: params.join_level,
+            contained_by: params.contained_by.as_deref(),
+            sys_attrs: opts.sys_attrs,
+            projection,
+        };
+        let resolved = ResolvedJoin::prepare(service, &entities, &context, &request).await.with_entity_instance(&uri)?;
+        // Clause 6.3.17: a Linked Entity the join could not reach leaves the
+        // body incomplete, and the warning header is what says so.
+        let warnings = with_linked_resolution_warnings(warnings, &resolved.failures);
+
+        let payload = match join {
+            // Flat: the root entities and their linked entities side by side,
+            // the roots ahead of the linked (clause 4.5.23).
+            RetrievingJoin::Flat => render_flat_join(
+                entities.iter(),
+                resolved.linked.values(),
+                language_filter.as_ref(),
+                opts.render_mode,
+                projection,
+            )
+            .with_entity_instance(&uri)?,
+            // Inline: the renderer nests the linked entities into each root,
+            // narrowing each nested copy by the sub-projection its own
+            // Relationship carried (clause 4.21).
+            RetrievingJoin::Inline => {
+                let mut entity_values: Vec<Value> = Vec::with_capacity(entities.len());
+                for entity in &entities {
+                    entity_values.push(
+                        EntityRenderer::new(entity)
+                            .with_optional_language_filter(language_filter.as_ref())
+                            .with_inline_linked_entities(&resolved.linked)
+                            .with_optional_linked_projection(resolved.linked_projection())
+                            .with_optional_structural_projection(projection)
+                            .with_mode(opts.render_mode)
+                            .render()
+                            .with_entity_instance(&uri)?,
+                    );
+                }
+                entity_values
             }
-            for linked_entity in linked.values() {
-                all_values.push(
-                    EntityRenderer::new(linked_entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_mode(opts.render_mode)
-                        .render()
-                        .with_entity_instance(&uri)?,
-                );
-            }
-            let rendered = start_rendering(accept.media_type(), &context, protocol.prefer.rendering_preferences())
-                .with_geometry_property(geometry_property)
-                .with_payload(ResponsePayload::Collection(all_values))
-                .render()
-                .with_entity_instance(&uri)?;
-            let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
-            if let Some(count) = total_count {
-                response = response.with_total_count(count as usize);
-            }
-            return Ok(response.into_response());
-        } else {
-            // Inline: renderer handles join + mode transformation
-            let mut entity_values: Vec<Value> = Vec::new();
-            for entity in &entities {
-                entity_values.push(
-                    EntityRenderer::new(entity)
-                        .with_optional_language_filter(language_filter.as_ref())
-                        .with_inline_linked_entities(&linked)
-                        .with_mode(opts.render_mode)
-                        .render()
-                        .with_entity_instance(&uri)?,
-                );
-            }
-            let rendered = start_rendering(accept.media_type(), &context, protocol.prefer.rendering_preferences())
-                .with_geometry_property(geometry_property)
-                .with_payload(ResponsePayload::Collection(entity_values))
-                .render()
-                .with_entity_instance(&uri)?;
-            let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
-            if let Some(count) = total_count {
-                response = response.with_total_count(count as usize);
-            }
-            return Ok(response.into_response());
+        };
+
+        let rendered = start_rendering(accept.media_type(), &context, protocol.prefer.rendering_preferences())
+            .with_geometry_property(params.geometry_property.as_ref())
+            .with_payload(ResponsePayload::Collection(payload))
+            .render()
+            .with_entity_instance(&uri)?;
+        let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
+        if let Some(count) = total_count {
+            response = response.with_total_count(count as usize);
         }
+        return Ok(response.into_response());
     }
 
-    let entity_values = entities
-        .iter()
-        .map(|entity| {
-            EntityRenderer::new(entity)
-                .with_optional_language_filter(language_filter.as_ref())
-                .with_mode(opts.render_mode)
-                .render()
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .with_entity_instance(&uri)?;
+    let entity_values = render_flat_join(entities.iter(), empty(), language_filter.as_ref(), opts.render_mode, projection).with_entity_instance(&uri)?;
     let rendered = start_rendering(accept.media_type(), &context, protocol.prefer.rendering_preferences())
-        .with_geometry_property(geometry_property)
+        .with_geometry_property(params.geometry_property.as_ref())
         .with_payload(ResponsePayload::Collection(entity_values))
         .render()
         .with_entity_instance(&uri)?;

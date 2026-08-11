@@ -39,6 +39,7 @@ use std::{
 };
 use tracing::{trace, warn};
 
+/// The lowercase `Accept` field name the context negotiation header is sent under.
 static ACCEPT: HeaderName = HeaderName::from_static("accept");
 
 /// The fixed negotiation set used for remote JSON-LD contexts.

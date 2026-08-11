@@ -171,9 +171,67 @@ pub fn vehicle_replacement_json(id: &str) -> Value {
     })
 }
 
+/// A Building carrying nothing but its identity, used as the body a context
+/// source answers a Linked Entity retrieval with.
+pub fn minimal_building(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Building",
+        "category": {
+            "type": "Property",
+            "value": "commercial"
+        },
+        "@context": COMPOUND_CONTEXT
+    })
+}
+
+/// A Building whose `linkedTo` Relationship names `target`.
+///
+/// Clause 4.5.23.1 makes the `objectType` annotation the eligibility gate for
+/// resolving the object outside the local store: with it the object is an
+/// Internal Linked Entity a registered context source may hold, without it an
+/// object the store does not have stays a plain URI.
+pub fn building_linking_to(id: &str, target: &str, object_type: Option<&str>) -> Value {
+    let mut entity = json!({
+        "id": id,
+        "type": "Building",
+        "linkedTo": {
+            "type": "Relationship",
+            "object": target
+        },
+        "@context": COMPOUND_CONTEXT
+    });
+
+    if let Some(object_type) = object_type {
+        entity["linkedTo"]["objectType"] = json!(object_type);
+    }
+
+    entity
+}
+
 // ---------------------------------------------------------------------------
 // Registration builders
 // ---------------------------------------------------------------------------
+
+/// Registration of one Building held by the context source at `endpoint`.
+pub fn building_registration(reg_id: &str, entity_id: &str, endpoint: &str) -> Value {
+    json!({
+        "id": reg_id,
+        "type": "ContextSourceRegistration",
+        "information": [
+            {
+                "entities": [
+                    {
+                        "id": entity_id,
+                        "type": "Building"
+                    }
+                ]
+            }
+        ],
+        "endpoint": endpoint,
+        "@context": COMPOUND_CONTEXT
+    })
+}
 
 pub fn vehicle_registration(reg_id: &str, entity_id: Option<&str>, endpoint: &str, mode: Option<&str>) -> Value {
     let mut reg = json!({

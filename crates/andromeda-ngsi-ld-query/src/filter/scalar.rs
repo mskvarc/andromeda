@@ -45,6 +45,43 @@ pub enum Scalar {
     Time(NaiveTime),
 }
 
+impl Scalar {
+    /// Classify a bare or quoted literal operand by its shape.
+    ///
+    /// Clause 4.6.3 writes a temporal operand unquoted and gives no type tag, so
+    /// the literal's shape is the only thing that says which domain it belongs
+    /// to. A literal that *has* a temporal shape but does not parse is a
+    /// malformed request rather than a string that happens to contain colons —
+    /// which is why the classification and the parse live together here rather
+    /// than being re-derived by every caller.
+    pub fn from_literal(raw: &str) -> Result<Scalar, QueryError> {
+        if has_date_time_shape(raw) {
+            Ok(Scalar::DateTime(parse_date_time(raw)?))
+        } else if has_date_shape(raw) {
+            Ok(Scalar::Date(parse_date(raw)?))
+        } else if has_time_shape(raw) {
+            Ok(Scalar::Time(parse_time(raw)?))
+        } else {
+            Ok(Scalar::Str(raw.to_string()))
+        }
+    }
+}
+
+/// Whether a literal has the shape of an RFC 3339 `date-time`.
+fn has_date_time_shape(raw: &str) -> bool {
+    raw.len() >= 19 && raw.as_bytes().get(4) == Some(&b'-') && raw.as_bytes().get(10) == Some(&b'T')
+}
+
+/// Whether a literal has the shape of an RFC 3339 `full-date`.
+fn has_date_shape(raw: &str) -> bool {
+    raw.len() == 10 && raw.as_bytes().get(4) == Some(&b'-') && raw.as_bytes().get(7) == Some(&b'-')
+}
+
+/// Whether a literal has the shape of an RFC 3339 `full-time`.
+fn has_time_shape(raw: &str) -> bool {
+    raw.len() >= 8 && raw.as_bytes().get(2) == Some(&b':') && raw.as_bytes().get(5) == Some(&b':')
+}
+
 /// Parse an RFC 3339 `date-time` operand, normalising it to UTC.
 ///
 /// Returns the instant rather than a [`Scalar`] wrapping it: a caller that

@@ -2,7 +2,7 @@
 
 use andromeda_test_mocks::{
     callback_path::CallbackPath,
-    callback_server::MockResponse,
+    callback_server::{CapturedRequest, MockResponse},
     context_source_server::ContextSourceServer,
     server_config::MockServerConfig,
 };
@@ -11,6 +11,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header::CONTENT_TYPE},
 };
 use serde_json::Value;
+use std::time::Duration;
 
 pub struct ContextSourceAdapter {
     server: ContextSourceServer,
@@ -61,6 +62,11 @@ impl ContextSourceAdapter {
 
     pub async fn get_total_count(&self) -> usize {
         self.server.total_request_count()
+    }
+
+    /// Take the next forwarded request, so its method, path and query string can be asserted on.
+    pub async fn next_request(&self, timeout: Duration) -> CapturedRequest {
+        self.server.next_request(timeout).await.expect("Context Source captured a forwarded request")
     }
 
     pub fn url(&self, path: &str) -> String {

@@ -107,6 +107,21 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
                 "Invalid q expression: must contain at least one comparison operator",
             ));
         }
+        // Clause 4.9's `{}` axis addresses an attribute of a *linked* entity,
+        // and clause 5.8.1 evaluates a subscription's filter against the entity
+        // data carried by the change that triggered it. That data holds the
+        // Relationship's object URI, not the entity it names, so a traversal
+        // resolves nothing and the subscription could never fire. Accepting one
+        // would be worse than rejecting it: the client would see a live
+        // subscription that silently never notifies. Lifting this needs
+        // store-backed matching, which resolves the linked entity at match time
+        // the way the query path already does.
+        if expr.contains_linked_hop() {
+            return Err(SubscriptionError::validation(
+                "Invalid q expression: a filter that traverses into a linked entity is not supported for subscriptions, \
+                 because a subscription is matched against the notified entity's own data",
+            ));
+        }
     }
 
     if let Some(watched) = payload.get("watchedAttributes")
@@ -280,6 +295,33 @@ mod tests {
     fn create_requires_notification_configuration() {
         let result = validate_create_payload(&serde_json::json!({"type": "Subscription"}));
         assert!(matches!(result, Err(SubscriptionError::Validation { detail }) if detail == "notification is required"));
+    }
+
+    /// Clause 4.9 defines the `{}` axis over an entity's linked entities, and
+    /// clause 5.8.1 matches a subscription against the notification's entity
+    /// data alone. The broker has no store-backed matcher, so a subscription
+    /// carrying a traversal filter would be accepted and could never fire.
+    /// Rejecting it at validation is the honest answer, and it covers updates as
+    /// well because both paths validate here.
+    #[test]
+    fn a_subscription_whose_filter_traverses_a_linked_entity_is_rejected() {
+        let result = validate_common_fields(&serde_json::json!({"q": "isParkedIn{category==\"commercial\"}"}));
+        assert!(
+            matches!(&result, Err(SubscriptionError::Validation { detail }) if detail.contains("linked entity")),
+            "got {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_traversal_nested_inside_a_boolean_filter_is_rejected_too() {
+        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;isParkedIn{category==\"x\"}"}));
+        assert!(matches!(result, Err(SubscriptionError::Validation { .. })), "got {result:?}");
+    }
+
+    #[test]
+    fn a_filter_that_stays_within_one_entity_is_still_accepted() {
+        let result = validate_common_fields(&serde_json::json!({"q": "speed>50;brandName==\"Mercedes\""}));
+        assert!(result.is_ok(), "got {result:?}");
     }
 
     #[test]

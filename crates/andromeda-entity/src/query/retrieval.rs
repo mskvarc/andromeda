@@ -15,38 +15,56 @@ use crate::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, entity::compiled::CompiledEntityQuery, pagination::CountPolicy};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, entity::compiled::CompiledEntityQuery, pagination::CountPolicy, projection::compiled::Projection};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// What a clause 5.6.3 retrieval narrows the retrieved entity down to.
+///
+/// The four members are the request's selection parameters, applied in the
+/// order the clauses stack: `attrs` (clause 5.7.2) picks the attributes,
+/// `pick`/`omit` (clause 6.3.15) project what is left, `datasetId`
+/// (clause 4.5.5) narrows the surviving instances, and `sysAttrs`
+/// (clause 4.5.7) decides whether the clause 4.8 timestamps come along.
+pub struct RetrievalNarrowing<'a> {
+    /// The attributes the response is narrowed to; empty selects all.
+    pub attrs: &'a [AttributeName],
+    /// Whether the clause 4.8 system timestamps are included.
+    pub sys_attrs: SysAttrsInclusion,
+    /// The attribute instances the response is narrowed to; empty selects all.
+    pub dataset_ids: &'a [DatasetSelector],
+    /// The clause 6.3.15 projection, absent when the request named neither
+    /// `pick` nor `omit`.
+    pub projection: Option<&'a Projection>,
+}
+
 impl EntityQueryService {
-    /// Retrieve a single entity by identifier (clause 5.6.3), optionally
-    /// narrowing its attributes and attribute instances.
-    pub async fn get_inner(
-        &self,
-        id: &Uri,
-        attrs: &[AttributeName],
-        sys_attrs: SysAttrsInclusion,
-        dataset_ids: &[DatasetSelector],
-        context: &ContextSpec,
-    ) -> Result<Entity, EntityError> {
+    /// Retrieve a single entity by identifier (clause 5.6.3), narrowed to what
+    /// the request selected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError::not_found`] when no entity with that identifier
+    /// exists, or when `attrs` selected none of the attributes it has, and
+    /// otherwise whatever the store or the context expansion failed with.
+    pub async fn get_inner(&self, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<Entity, EntityError> {
         let Some(expanded_entity) = self.reader.get(id).await? else {
             return Err(EntityError::not_found(id));
         };
 
         let mut entity = self.compact_to_entity(expanded_entity, context, Some(id.as_str())).await?;
 
-        if sys_attrs == SysAttrsInclusion::Include
+        if narrowing.sys_attrs == SysAttrsInclusion::Include
             && let Some(snapshot) = self.reader.get_sys_attrs(id).await?
         {
             entity = entity.with_sys_attrs(&snapshot);
         }
 
-        if !attrs.is_empty() {
-            let mut wanted_iris = Vec::with_capacity(attrs.len());
-            for attr in attrs {
+        if !narrowing.attrs.is_empty() {
+            let mut wanted_iris = Vec::with_capacity(narrowing.attrs.len());
+            for attr in narrowing.attrs {
                 wanted_iris.push(self.expanded_key(attr.as_str(), context).await?);
             }
             self.filter_entity_attrs(&mut entity, &wanted_iris, context).await?;
@@ -56,8 +74,15 @@ impl EntityQueryService {
             }
         }
 
-        if !dataset_ids.is_empty() {
-            filter_entity_by_dataset_id(&mut entity, dataset_ids);
+        // Clause 6.3.15 is applied before the clause 4.5.23 traversal reads the
+        // entity's Relationships, matching the query path, where the projection
+        // runs inside the query and the join follows it.
+        if let Some(projection) = narrowing.projection {
+            self.project_entity(&mut entity, projection, context).await?;
+        }
+
+        if !narrowing.dataset_ids.is_empty() {
+            filter_entity_by_dataset_id(&mut entity, narrowing.dataset_ids);
         }
 
         Ok(entity)

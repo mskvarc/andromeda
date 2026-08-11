@@ -8,7 +8,7 @@ use typed_builder::TypedBuilder;
 /// Clause 6.3.15 defines `pick` and `omit` as mutually exclusive, and both as
 /// purely presentational: neither changes which entities match, which is why
 /// they are held apart from the selection.
-#[derive(Debug, Clone, Default, TypedBuilder)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, TypedBuilder)]
 #[builder(field_defaults(default))]
 pub struct Projection {
     /// Terms to include. Empty means every member.

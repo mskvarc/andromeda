@@ -10,12 +10,19 @@
 //!    an inline-join expansion and/or concise/simplified transformation before
 //!    being delivered.
 
-use crate::{concise::concise_value, error::RenderError, inline_join::apply_inline_join, simplify::simplify_value};
+use crate::{
+    concise::concise_value,
+    error::RenderError,
+    inline_join::apply_inline_join,
+    simplify::simplify_value,
+    structural_projection::prune_structural_members,
+};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
+use indexmap::IndexMap;
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// Renders a pre-compacted NGSI-LD JSON value with optional attribute
 /// filtering, inline-join expansion, and representation-mode transformation.
@@ -28,7 +35,10 @@ pub struct SnapshotRenderer<'a> {
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
     /// The entities `join=inline` resolves relationships against, if any.
-    inline_linked_entities: Option<&'a HashMap<Uri, Entity>>,
+    inline_linked_entities: Option<&'a IndexMap<Uri, Entity>>,
+    /// The clause 6.3.15 `pick`/`omit` structural-member rule to apply to
+    /// the payload's `id`, `type` and `scope` keys, if any.
+    structural_projection: Option<&'a Projection>,
 }
 
 impl<'a> SnapshotRenderer<'a> {
@@ -39,6 +49,7 @@ impl<'a> SnapshotRenderer<'a> {
             attrs_filter: None,
             mode: ResponseFormat::Normalized,
             inline_linked_entities: None,
+            structural_projection: None,
         }
     }
 
@@ -55,8 +66,15 @@ impl<'a> SnapshotRenderer<'a> {
     }
 
     /// Provide linked entities for `join=inline` expansion.
-    pub const fn with_inline_linked_entities(mut self, linked: &'a HashMap<Uri, Entity>) -> Self {
+    pub const fn with_inline_linked_entities(mut self, linked: &'a IndexMap<Uri, Entity>) -> Self {
         self.inline_linked_entities = Some(linked);
+        self
+    }
+
+    /// Apply the clause 6.3.15 structural-member rule to the payload's `id`,
+    /// `type` and `scope` keys.
+    pub const fn with_structural_projection(mut self, projection: &'a Projection) -> Self {
+        self.structural_projection = Some(projection);
         self
     }
 
@@ -72,6 +90,7 @@ impl<'a> SnapshotRenderer<'a> {
             attrs_filter,
             mode,
             inline_linked_entities,
+            structural_projection,
         } = self;
 
         if let Some(requested) = attrs_filter
@@ -85,15 +104,19 @@ impl<'a> SnapshotRenderer<'a> {
         }
 
         if let Some(linked) = inline_linked_entities {
-            apply_inline_join(&mut payload, linked, None)?;
+            apply_inline_join(&mut payload, linked, None, None)?;
         }
 
-        let transformed = match mode {
+        let mut transformed = match mode {
             ResponseFormat::Normalized => payload,
             ResponseFormat::Concise => concise_value(payload),
             // Clause 4.5.4 gives `keyValues` and `simplified` one rendering.
             ResponseFormat::KeyValues | ResponseFormat::Simplified => simplify_value(payload),
         };
+
+        if let Some(projection) = structural_projection {
+            prune_structural_members(&mut transformed, projection);
+        }
 
         Ok(transformed)
     }
@@ -102,6 +125,7 @@ impl<'a> SnapshotRenderer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_query::projection::term::ProjectionTerm;
     use serde_json::json;
 
     fn render(payload: Value, attrs: Option<&[AttributeName]>, mode: ResponseFormat) -> Value {
@@ -202,7 +226,7 @@ mod tests {
             "name": {"type": "Property", "value": "Conference Room"}
         }))
         .expect("entity");
-        let mut linked_map = HashMap::new();
+        let mut linked_map = IndexMap::new();
         linked_map.insert("urn:ngsi-ld:Room:1".parse().expect("valid URI"), linked_entity);
 
         let entity = json!({
@@ -217,5 +241,68 @@ mod tests {
             .expect("inline join");
         assert!(result["hasRoom"]["entity"].is_object());
         pretty_assertions::assert_eq!(result["hasRoom"]["entity"]["id"], "urn:ngsi-ld:Room:1");
+    }
+
+    /// Clause 6.3.15, literal reading: a non-empty `pick` naming only `id`
+    /// keeps `id` and drops `type`.
+    #[test]
+    fn structural_projection_of_pick_id_leaves_only_id() {
+        let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "Tower"}});
+        let projection = Projection {
+            pick: vec![ProjectionTerm::Id],
+            omit: Vec::new(),
+        };
+
+        let result = SnapshotRenderer::new(value).with_structural_projection(&projection).render().expect("render");
+
+        assert_eq!(result["id"], "urn:x");
+        assert!(result.get("type").is_none());
+    }
+
+    /// Clause 6.3.15: `omit` removes the structural members it lists, here
+    /// `scope`, while `id` and `type` survive untouched.
+    #[test]
+    fn structural_projection_of_omit_scope_removes_scope() {
+        let value = json!({"id": "urn:x", "type": "T", "scope": "/Madrid"});
+        let projection = Projection {
+            pick: Vec::new(),
+            omit: vec![ProjectionTerm::Scope],
+        };
+
+        let result = SnapshotRenderer::new(value).with_structural_projection(&projection).render().expect("render");
+
+        assert_eq!(result["id"], "urn:x");
+        assert_eq!(result["type"], "T");
+        assert!(result.get("scope").is_none());
+    }
+
+    /// Clause 6.3.15: `omit` removes `type` when the omit list names it.
+    #[test]
+    fn structural_projection_of_omit_type_removes_type() {
+        let value = json!({"id": "urn:x", "type": "T"});
+        let projection = Projection {
+            pick: Vec::new(),
+            omit: vec![ProjectionTerm::Type],
+        };
+
+        let result = SnapshotRenderer::new(value).with_structural_projection(&projection).render().expect("render");
+
+        assert_eq!(result["id"], "urn:x");
+        assert!(result.get("type").is_none());
+    }
+
+    /// `@context` is a JSON-LD transport concern, never a structural member,
+    /// and survives the structural-member rule.
+    #[test]
+    fn structural_projection_never_touches_context() {
+        let value = json!({"id": "urn:x", "type": "T", "@context": "https://example.com/context.jsonld"});
+        let projection = Projection {
+            pick: vec![ProjectionTerm::Id],
+            omit: Vec::new(),
+        };
+
+        let result = SnapshotRenderer::new(value).with_structural_projection(&projection).render().expect("render");
+
+        assert_eq!(result["@context"], "https://example.com/context.jsonld");
     }
 }

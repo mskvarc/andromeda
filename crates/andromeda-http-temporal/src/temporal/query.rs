@@ -1,44 +1,48 @@
 //! HTTP handling for temporal query.
 
-use crate::temporal::{
-    AcceptFormatNoGeo,
-    ContextSpec,
-    ContextUrl,
-    ContextualExpander,
-    CsrModeFilter,
-    DeferredSplitFilters,
-    ForwardTemporalQueryRequest,
-    ForwardingMode,
-    ForwardingOperation,
-    IntoResponse,
-    NgsiLdCollectionResponse,
-    NgsiLdProtocolHeaders,
-    OriginalUri,
-    PreferHeader,
-    ProblemResponse,
-    Response,
-    ResponsePayload,
-    ResultInstanceExt,
-    StatusCode,
-    TemporalQueryParameters,
-    TemporalQueryResult,
-    TemporalSimplifyPayload,
-    TemporalSimplifyRenderer,
-    TenantState,
-    TimeRel,
-    Uri,
-    ValidatedQuery,
-    Value,
-    collect_temporal_warnings,
-    compile_geo_query,
-    evaluate,
-    expand_q_expr,
-    matches_geo_query,
-    matches_scope_query,
-    start_rendering,
+use crate::{
+    join::apply_temporal_join,
+    temporal::{
+        AcceptFormatNoGeo,
+        ContextSpec,
+        ContextUrl,
+        ContextualExpander,
+        CsrModeFilter,
+        DeferredSplitFilters,
+        ForwardTemporalQueryRequest,
+        ForwardingMode,
+        ForwardingOperation,
+        IntoResponse,
+        NgsiLdCollectionResponse,
+        NgsiLdProtocolHeaders,
+        OriginalUri,
+        PreferHeader,
+        ProblemResponse,
+        Response,
+        ResponsePayload,
+        ResultInstanceExt,
+        StatusCode,
+        TemporalQueryParameters,
+        TemporalQueryResult,
+        TemporalSimplifyPayload,
+        TemporalSimplifyRenderer,
+        TenantState,
+        TimeRel,
+        Uri,
+        ValidatedQuery,
+        Value,
+        collect_temporal_warnings,
+        compile_geo_query,
+        evaluate,
+        expand_q_expr,
+        matches_geo_query,
+        matches_scope_query,
+        start_rendering,
+    },
 };
 use andromeda_federation::temporal_result::merge_temporal_query_results;
 use andromeda_http_response::content_range::build_content_range;
+use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::error::TemporalError;
 
 pub async fn query(
@@ -141,6 +145,7 @@ pub async fn query(
         any_truncated,
         range,
         warnings: _,
+        linked_candidates,
     } = result;
 
     // Distributed forwarding: query matching context sources unless local=true
@@ -229,12 +234,37 @@ pub async fn query(
         entities = filtered;
     }
 
+    // Join mode (clause 4.5.23) is parsed at the query boundary. `@none` and an
+    // absent `join` retrieve no linked entity at all, so neither reaches the
+    // traversal. The join runs after forwarding and after the deferred
+    // `splitEntities` filtering, so the roots it walks are the ones the client
+    // will actually be shown.
+    // Clause 5.5.9 counts the matches the query returned, which the linked
+    // entities are not: they accompany the result set rather than belonging to
+    // it. Counting before the flat join appends is what keeps `count` and the
+    // 206 decision about the roots alone. The join also resolves before
+    // EntityMap creation so a requested map can include the linked ids
+    // (spec 5.5.14, 5.7.4.4).
+    let returned = entities.len();
+
+    let (forwarding_warnings, linked_ids) = match RetrievingJoin::from_mode(params.join) {
+        Some(join) => {
+            let applied = apply_temporal_join(service, join, &mut entities, &linked_candidates, &params, &context, forwarding_warnings)
+                .await
+                .with_instance(&uri)?;
+            (applied.warnings, applied.linked_ids)
+        }
+        None => (forwarding_warnings, Vec::new()),
+    };
+
     // EntityMap creation (spec 5.5.14, 5.7.4.4): if entityMap=true was requested,
     // create a new EntityMap from all matching IDs (not just the current page).
     let entity_map_uri = if entity_map_requested {
         let mut all_ids = service.query_ids(&params, &context).await.with_instance(&uri)?;
         // Include forwarded entity IDs in the map (spec 5.7.4.4, 5.5.14)
         all_ids.extend(remote_ids);
+        // Include linked entity IDs the join resolved (spec 5.5.14, 5.7.4.4)
+        all_ids.extend(linked_ids);
         all_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
         all_ids.dedup();
         let lifetime = params.entity_map_lifetime.as_ref();
@@ -247,7 +277,6 @@ pub async fn query(
     };
 
     let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
-    let returned = entities.len();
 
     let values = if key_values {
         TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))

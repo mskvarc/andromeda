@@ -1,9 +1,11 @@
 use crate::{
     error::{EntityResultExt, internal_error, public_error},
+    join::{JoinRequest, ResolvedJoin},
     provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
+    request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
-use andromeda_entity::query::EntityQueryService;
+use andromeda_entity::query::{EntityQueryService, retrieval::RetrievalNarrowing};
 use andromeda_federation::{
     entity_result::{collect_forwarded_exclusive_attrs, collect_warnings, merge_retrieve_results, strip_exclusive_attrs_from_value},
     operation::ForwardingOperation,
@@ -22,6 +24,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{
     batch_projection::{batch_entity_error, batch_operation_result},
     collection::NgsiLdCollectionResponse,
+    linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
     render::start_rendering,
     single::NgsiLdResponse,
@@ -48,11 +51,12 @@ use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
     snapshot::SnapshotRenderer,
 };
-use andromeda_ngsi_ld_representation::join_mode::JoinMode;
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     deferred_split_filters::DeferredSplitFilters,
     entity::{AppendParams, GetEntityParams, PartialUpdateAttrParams, ReplaceAttrParams},
+    join_traversal::RetrievingJoin,
+    linked_retrieval_consistency::reject_linked_retrieval,
     local::LocalOnlyParams,
     options::OverwritePolicy as RequestOverwritePolicy,
 };
@@ -63,7 +67,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
-use std::{collections::HashSet, num::NonZeroU32};
 
 const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Uri> {
     match selector {

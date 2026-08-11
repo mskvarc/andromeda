@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, sc
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
-use std::collections::HashSet;
+use std::{collections::HashSet, num::NonZeroU32};
 use url::Url;
 
 /// Pre-compiled CSR subscription for in-memory matching against CSR changes.
@@ -103,8 +103,9 @@ pub struct CompiledSubscription {
     pub dataset_id: Option<Vec<Uri>>,
     /// Linked-entity join mode requested for notification data.
     pub notification_join: Option<JoinMode>,
-    /// Maximum linked-entity join depth.
-    pub notification_join_level: u32,
+    /// Maximum linked-entity join depth (clause 4.5.23 `joinLevel`), which
+    /// the spec bounds only by being a positive integer.
+    pub notification_join_level: NonZeroU32,
     /// Parsed context-source filter expression.
     pub compiled_csf: Option<Expr>,
     /// When true, this subscription only matches locally-stored entities (clause 5.5.13).

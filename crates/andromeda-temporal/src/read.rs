@@ -2,27 +2,15 @@
 
 use crate::{
     error::TemporalError,
-    service::{
-        TemporalQueryResult,
-        TemporalQueryWarning,
-        TemporalRange,
-        TemporalReadResult,
-        TemporalService,
-        has_explicit_context,
-        iri_short_name,
-        normalize_temporal_payload_without_context,
-    },
+    linked::candidates::TemporalLinkedCandidate,
+    read::rendered_entity::HistoryPresence,
+    service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService, has_explicit_context, iri_short_name},
 };
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{expanded::entity_member::extract_types, temporal::TemporalAggregationRow};
 use andromeda_ngsi_ld_query::{pagination::Pagination, temporal::compiled::CompiledTemporalQuery};
-use andromeda_ngsi_ld_render::temporal::{
-    aggregation::TemporalAggregationRenderer,
-    array_normalizer::TemporalArrayNormalizer,
-    entity::TemporalEntityRenderer,
-    values::TemporalValuesRenderer,
-};
+use andromeda_ngsi_ld_render::temporal::aggregation::TemporalAggregationRenderer;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use chrono::{DateTime, Utc};
@@ -50,50 +38,34 @@ impl TemporalService {
             .map(extract_types)
             .unwrap_or_default();
 
-        let format = compiled.representation.format;
+        let rendered = self.render_one_temporal_entity(entity_id, &entity_types, &compiled, context).await?;
 
-        if format == TemporalFormat::AggregatedValues {
-            let agg_rows = self.reader.query_entity_aggregation(entity_id, &compiled).await?;
-            let result = self.build_aggregated_compacted(entity_id, &entity_types, &agg_rows, &compiled, context).await?;
-            return Ok(TemporalReadResult { value: result, range: None });
-        }
-
-        let rows = self.reader.query_entity_history(entity_id, &compiled).await?.into_rows();
-
-        // When an attrs filter is specified and nothing matches, return 404
-        if rows.is_empty() && !compiled.instances.attr_filter.is_empty() {
+        // Clause 6.3.9: an `attrs` filter that selects nothing leaves no
+        // temporal representation to return, which is a 404 rather than an
+        // entity with no attributes.
+        if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {
             return Err(TemporalError::not_found(format!(
                 "No temporal data found for the specified attributes on entity {}",
                 entity_id
             )));
         }
 
-        let result = TemporalEntityRenderer::new(entity_id, &entity_types, &rows, &compiled).render();
-        let compacted = self.engine.compact(result.entity, context, CompactOptions::default()).await?;
-        let mut compacted = TemporalArrayNormalizer::new(compacted).render();
-        if !has_explicit_context(context) {
-            normalize_temporal_payload_without_context(&mut compacted);
-        }
-        let value = if format == TemporalFormat::TemporalValues {
-            TemporalValuesRenderer::new(compacted)
-                .render()
-                .map_err(|error| TemporalError::rendering(error.to_string()))?
-        } else {
-            compacted
-        };
-
-        let range = if result.truncated {
+        let range = if rendered.truncated {
             Some(TemporalRange {
                 interval: compiled.window.interval,
-                observed: result.time_range,
-                partition_total: result.max_partition_total,
+                observed: rendered.time_range,
+                partition_total: rendered.max_partition_total,
                 last_n_origin: compiled.instances.last_n_origin,
             })
         } else {
             None
         };
 
-        Ok(TemporalReadResult { value, range })
+        Ok(TemporalReadResult {
+            value: rendered.value,
+            range,
+            linked_candidates: rendered.candidates,
+        })
     }
 
     /// Query temporal entities matching the given filter and temporal parameters.
@@ -121,91 +93,39 @@ impl TemporalService {
 
         let mut entities = Vec::new();
         let mut warnings = Vec::new();
+        let mut linked_candidates: Vec<TemporalLinkedCandidate> = Vec::new();
         let mut any_truncated = false;
         let mut overall_min: Option<DateTime<Utc>> = None;
         let mut overall_max: Option<DateTime<Utc>> = None;
         let mut overall_partition_total: Option<i64> = None;
-        let is_aggregated = compiled.representation.format == TemporalFormat::AggregatedValues;
         for entity_id in entity_ids {
-            let entity_types = entity_types_map.get(&entity_id).cloned().unwrap_or_default(); // clone: owned copy needed; map is borrowed while loop continues
-            if is_aggregated {
-                match self.reader.query_entity_aggregation(&entity_id, &compiled).await {
-                    Ok(agg_rows) => {
-                        if !agg_rows.is_empty() {
-                            match self.build_aggregated_compacted(&entity_id, &entity_types, &agg_rows, &compiled, context).await {
-                                Ok(result) => entities.push(result),
-                                Err(e) => {
-                                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to build aggregated temporal result");
-                                    warnings.push(TemporalQueryWarning {
-                                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                                        message: e.to_string(),
-                                    });
-                                }
-                            }
-                        }
+            let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
+            match self.render_one_temporal_entity(&entity_id, entity_types, &compiled, context).await {
+                // An entity the window selects no history for is simply not part
+                // of the result set.
+                Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
+                Ok(rendered) => {
+                    if rendered.truncated {
+                        any_truncated = true;
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, entity_id = %entity_id, "Failed to query temporal aggregation");
-                        warnings.push(TemporalQueryWarning {
-                            entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                            message: e.to_string(),
-                        });
+                    if let Some((min_t, max_t)) = rendered.time_range {
+                        overall_min = Some(overall_min.map_or(min_t, |seen: DateTime<Utc>| seen.min(min_t)));
+                        overall_max = Some(overall_max.map_or(max_t, |seen: DateTime<Utc>| seen.max(max_t)));
                     }
+                    if let Some(partition_total) = rendered.max_partition_total {
+                        overall_partition_total = Some(overall_partition_total.map_or(partition_total, |seen: i64| seen.max(partition_total)));
+                    }
+                    linked_candidates.extend(rendered.candidates);
+                    entities.push(rendered.value);
                 }
-            } else {
-                match self.reader.query_entity_history(&entity_id, &compiled).await {
-                    Ok(outcome) => {
-                        let rows = outcome.into_rows();
-                        if !rows.is_empty() {
-                            let result = TemporalEntityRenderer::new(&entity_id, &entity_types, &rows, &compiled).render();
-                            if result.truncated {
-                                any_truncated = true;
-                            }
-                            if let Some((min_t, max_t)) = result.time_range {
-                                overall_min = Some(overall_min.map_or(min_t, |m: DateTime<Utc>| m.min(min_t)));
-                                overall_max = Some(overall_max.map_or(max_t, |m: DateTime<Utc>| m.max(max_t)));
-                            }
-                            if let Some(pt) = result.max_partition_total {
-                                overall_partition_total = Some(overall_partition_total.map_or(pt, |m: i64| m.max(pt)));
-                            }
-                            match self.engine.compact(result.entity, context, CompactOptions::default()).await {
-                                Ok(compacted) => {
-                                    let mut compacted = TemporalArrayNormalizer::new(compacted).render();
-                                    if !has_explicit_context(context) {
-                                        normalize_temporal_payload_without_context(&mut compacted);
-                                    }
-                                    if compiled.representation.format == TemporalFormat::TemporalValues {
-                                        match TemporalValuesRenderer::new(compacted).render() {
-                                            Ok(result) => entities.push(result),
-                                            Err(error) => {
-                                                tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render temporal values");
-                                                warnings.push(TemporalQueryWarning {
-                                                    entity_id: entity_id.clone(), // clone: the warning owns the identifier while the loop continues.
-                                                    message: error.to_string(),
-                                                });
-                                            }
-                                        }
-                                    } else {
-                                        entities.push(compacted);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!(error = %e, entity_id = %entity_id, "Failed to compact temporal entity");
-                                    warnings.push(TemporalQueryWarning {
-                                        entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                                        message: e.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, entity_id = %entity_id, "Failed to query temporal history");
-                        warnings.push(TemporalQueryWarning {
-                            entity_id: entity_id.clone(), // clone: entity_id is used by subsequent loop iterations
-                            message: e.to_string(),
-                        });
-                    }
+                // One entity that cannot be rendered degrades the result set
+                // rather than the query: the rest of the matches still answer.
+                Err(error) => {
+                    tracing::warn!(error = %error, entity_id = %entity_id, "Failed to render the temporal evolution of an entity");
+                    warnings.push(TemporalQueryWarning {
+                        entity_id, // moved: the warning owns the identifier this iteration finished with
+                        message: error.to_string(),
+                    });
                 }
             }
         }
@@ -227,6 +147,7 @@ impl TemporalService {
             any_truncated,
             range,
             warnings,
+            linked_candidates,
         })
     }
 
@@ -367,6 +288,9 @@ fn ensure_aggregation_supported(
         )))
     }
 }
+
+/// Rendering the temporal evolution of one entity over a compiled window.
+pub(crate) mod rendered_entity;
 
 #[cfg(test)]
 mod tests;
