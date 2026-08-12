@@ -11,6 +11,8 @@ use sqlx::migrate::{Migration, Migrator};
 /// behind from a fleet running two different binaries at the same version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaContract {
+    /// The lowest version among the embedded migrations.
+    first_version: SchemaVersion,
     /// The highest version among the embedded migrations.
     version: SchemaVersion,
     /// The digest over the whole embedded migration set.
@@ -21,6 +23,19 @@ impl SchemaContract {
     /// The contract an embedded migrator expresses.
     pub fn of(migrator: &Migrator) -> Result<SchemaContract, SchemaContractError> {
         SchemaContract::over(migrator.iter())
+    }
+
+    /// The lowest version this migration set owns.
+    ///
+    /// A database can carry more than one migration set in the single
+    /// `_sqlx_migrations` table sqlx gives it: the default tenant's database is
+    /// also the platform database, so the platform migrations are recorded
+    /// beside the tenant ones. The two sets occupy disjoint version ranges —
+    /// they must, since one table cannot record two migrations under one
+    /// version — so this floor is what tells a row of this set apart from a row
+    /// of another one when the applied history is read back.
+    pub const fn first_version(&self) -> SchemaVersion {
+        self.first_version
     }
 
     /// The stamped schema version.
@@ -36,16 +51,25 @@ impl SchemaContract {
     /// The contract a migration set expresses.
     ///
     /// Down migrations carry the version of the up migration they revert, so
-    /// they are excluded from the version as they are from the digest.
+    /// they are excluded from both versions as they are from the digest.
     fn over<'migration>(migrations: impl IntoIterator<Item = &'migration Migration> + Clone) -> Result<SchemaContract, SchemaContractError> {
-        let highest = migrations
-            .clone() // clone: the set is walked twice, once for the version and once for the digest
+        let versions = migrations
+            .clone() // clone: the set is walked twice, once for the versions and once for the digest
             .into_iter()
             .filter(|migration| !migration.migration_type.is_down_migration())
-            .map(|migration| migration.version)
-            .max()
-            .ok_or(SchemaContractError::NoMigrations)?;
+            .map(|migration| migration.version);
+        let (lowest, highest) = versions.fold((None, None), |(lowest, highest), version| {
+            (
+                Some(lowest.map_or(version, |lowest: i64| lowest.min(version))),
+                Some(highest.map_or(version, |highest: i64| highest.max(version))),
+            )
+        });
+        let (lowest, highest) = match (lowest, highest) {
+            (Some(lowest), Some(highest)) => (lowest, highest),
+            (None, _) | (_, None) => return Err(SchemaContractError::NoMigrations),
+        };
         Ok(SchemaContract {
+            first_version: SchemaVersion::try_from(lowest)?,
             version: SchemaVersion::try_from(highest)?,
             digest: MigrationsDigest::of(migrations),
         })
@@ -80,6 +104,23 @@ mod tests {
         };
         pretty_assertions::assert_eq!(contract.version().get(), 39);
         pretty_assertions::assert_eq!(contract.digest(), MigrationsDigest::of(&migrations));
+    }
+
+    /// The floor is what separates this set's applied rows from those of
+    /// another set sharing the database's one `_sqlx_migrations` table.
+    #[test]
+    fn the_contract_reports_the_lowest_version_the_set_owns() {
+        let migrations = vec![
+            migration(39, "dictionary growth guard", "ALTER TABLE attribute_names ADD COLUMN guard BOOLEAN"),
+            migration(2, "extensions", "CREATE EXTENSION postgis"),
+        ];
+
+        let contract = match SchemaContract::over(&migrations) {
+            Ok(value) => value,
+            Err(error) => unreachable!("the set has a contract: {error}"),
+        };
+        pretty_assertions::assert_eq!(contract.first_version().get(), 2);
+        pretty_assertions::assert_eq!(contract.version().get(), 39);
     }
 
     #[test]

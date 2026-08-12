@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0066: Canonicalize stored NGSI-LD `Time` values in the current-state projection
+-- 0065: Canonicalize stored NGSI-LD `Time` values in the current-state projection
 -- ============================================================================
 -- Clause 4.6.3 defines `Time` as an IETF RFC 3339 `full-time`, which pins a time
 -- of day exactly but admits many spellings of the same one: the offset may be `Z`
@@ -9,7 +9,7 @@
 --
 -- Clause 4.9 orders `Time` values chronologically with `<`, `>`, `<=` and `>=`.
 -- Those comparisons are answered from `current_attribute_values.value_string`,
--- which 0065 declared `COLLATE "C"` and which is therefore ordered byte-wise. A
+-- which 0057 declares `COLLATE "C"` and which is therefore ordered byte-wise. A
 -- byte-wise order over arbitrary spellings is not a chronological order:
 -- `12:00:00Z` sorts after `11:00:00+01:00` even though the two name the same time
 -- of day, and `12:00:00.5Z` sorts before `12:00:00Z` even though it is later.

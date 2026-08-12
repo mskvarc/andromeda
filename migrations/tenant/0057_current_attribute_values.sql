@@ -53,6 +53,18 @@
 -- own page more often, and vacuum cadence is the primary defence, as it is for
 -- the queue relations 0038 tuned.
 --
+-- Every text column here is `COLLATE "C"`, `value_string` included. Clause 4.9
+-- orders string values with `<`, `>`, `<=` and `>=` and clause 4.5.19 takes
+-- `min` and `max` over them, so under a locale collation the same `q` predicate
+-- would select different Entities on two clusters holding identical data, and
+-- current state would disagree with the `attribute_history.value_string`
+-- aggregation that answers the temporal form of the same question. It also
+-- decides the index set below: a locale-collated column plans an anchored
+-- `LIKE` as a filter rather than as B-tree range bounds unless a separate
+-- `text_pattern_ops` index exists, which is exactly the second index the
+-- byte-wise declaration is chosen to avoid.
+-- `docs/text-collation-invariant.md` states the invariant for the whole schema.
+--
 -- Index set, one named consumer each:
 --
 --   * the grain constraint -- the upsert conflict target of the synchronous
@@ -173,7 +185,7 @@ CREATE TABLE current_attribute_values (
     value_bool BOOLEAN,
     dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     value_number NUMERIC COMPRESSION lz4,
-    value_string TEXT COMPRESSION lz4,
+    value_string TEXT COMPRESSION lz4 COLLATE "C",
     value_geo geometry COMPRESSION lz4,
     value_object JSONB COMPRESSION lz4,
     value_uri TEXT COMPRESSION lz4 COLLATE "C",

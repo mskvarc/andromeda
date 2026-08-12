@@ -4,9 +4,10 @@
 //! zero, one and one hundred Subscriptions, and a batch commit affecting
 //! several Entities. Zero matches create no event; positive fan-out creates one
 //! immutable event per affected Entity and exactly one delivery per matching
-//! Subscription; `(write_id, event_ordinal)` is unique across the batch; claims
-//! update only the narrow delivery rows; and the stored bytes show the
-//! single-payload saving the split exists for.
+//! Subscription; `(write_id, event_ordinal)` is unique across the batch and
+//! makes a replay of the same commit idempotent rather than duplicating what it
+//! already announced; claims update only the narrow delivery rows; and the
+//! stored bytes show the single-payload saving the split exists for.
 
 use crate::{
     notification_fixture::{entity_id, entity_snapshot, subscription_id},
@@ -185,7 +186,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
 
 #[tokio::test]
 #[serial(durable_queue)]
-async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_refuses_a_replay() {
+async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_replay() {
     let pool = queue_database().await;
     let first = subscription_id();
     let second = subscription_id();
@@ -221,11 +222,19 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_refuses_a_r
         .expect("event ordinals");
     assert_eq!(ordinals, vec![0, 1, 2], "the ordinals are unique and deterministic across the batch");
 
-    // A replayed commit re-runs the same statement under the same identity.
-    let replay = record_events(&pool, &record, &events).await;
-    assert!(replay.is_err(), "a replayed write must not announce the same change twice");
-    assert_eq!(events_of(&pool, &record).await, 3, "the refused replay leaves the write's events untouched");
-    assert_eq!(deliveries_of(&pool, first_key).await, 3, "the refused replay owes no second delivery");
+    // A commit replayed after a crash re-runs the same statement under the
+    // write identity it was durably enqueued with. The replay has to succeed —
+    // a refusal would strand the crashed write's queue entry forever — and it
+    // has to announce nothing a second time, which the write identity's own
+    // uniqueness constraint is what settles.
+    record_events(&pool, &record, &events).await.expect("a replayed write is accepted");
+    assert_eq!(
+        events_of(&pool, &record).await,
+        3,
+        "the replay writes no second copy of an event it already wrote"
+    );
+    assert_eq!(deliveries_of(&pool, first_key).await, 3, "the replay owes no second delivery");
+    assert_eq!(deliveries_of(&pool, second_key).await, 3, "no subscriber is told the same change twice");
     pool.close().await;
 }
 

@@ -12,7 +12,7 @@ use andromeda_unit_catalog::{
     source_digest::SOURCE_SHA256,
     unit_code_entry::UnitCodeEntry,
     unit_code_id::UnitCodeId,
-    unit_code_registry::{UnitCodeRegistry, UnitCodeSnapshotMalformed, registry},
+    unit_code_registry::{RETIRED_REVISION_UNSET, UnitCodeRegistry, UnitCodeSnapshotMalformed, registry},
     unit_code_token::UnitCodeToken,
 };
 use cefact_units::UnitOfMeasure;
@@ -38,7 +38,7 @@ const GENERATED_AT: &str = "2026-08-11T00:00:00Z";
 const SNAPSHOT_HEADER: &str = "# generated - never hand-edited\n\
 # UN/CEFACT Recommendation 20 unit-code identity registry.\n\
 # Append-only: an identity assigned here is never reassigned and never removed.\n\
-# Columns: identity, common code, first revision, retiring revision (empty while current).\n\
+# Columns: identity, common code, first revision, retiring revision ('-' while current).\n\
 # Regenerate with: ANDROMEDA_UNIT_CATALOG_BLESS=1 cargo test -p andromeda-unit-catalog\n";
 
 /// Path of the committed identity snapshot, relative to the crate root.
@@ -121,7 +121,9 @@ fn assignment_over(catalog: &UnitCodeRegistry, codes: &[&'static str]) -> Result
 fn render_snapshot(entries: &[UnitCodeEntry]) -> String {
     let mut rendered = String::from(SNAPSHOT_HEADER);
     for entry in entries {
-        let retired = entry.retired_revision().map_or_else(String::new, |revision| revision.get().to_string());
+        let retired = entry
+            .retired_revision()
+            .map_or_else(|| RETIRED_REVISION_UNSET.to_owned(), |revision| revision.get().to_string());
         rendered.push_str(&format!("{}\t{}\t{}\t{}\n", entry.id(), entry.token(), entry.first_revision(), retired));
     }
     rendered
@@ -305,7 +307,7 @@ fn every_identity_decodes_back_to_the_code_it_was_assigned_for() -> Result<(), C
 fn upgrading_a_catalog_to_a_newer_revision_keeps_every_identity_and_appends_the_new_ones() -> Result<(), CatalogGenerationFailure> {
     // Identity 3 was withdrawn by revision 17 while identities 1 and 2 remain
     // current; the upgrade offers a code the fixture has never registered.
-    let released = UnitCodeRegistry::parse("1\tKGM\t9\t\n2\tMTR\t9\t\n3\tZZZ\t9\t17\n")?;
+    let released = UnitCodeRegistry::parse("1\tKGM\t9\t-\n2\tMTR\t9\t-\n3\tZZZ\t9\t17\n")?;
     let upgraded = assignment_over(&released, &["KGM", "MTR", "SEC"])?;
 
     let identity_of = |entries: &[UnitCodeEntry], code: &str| entries.iter().find(|entry| entry.token().as_str() == code).map(UnitCodeEntry::id);

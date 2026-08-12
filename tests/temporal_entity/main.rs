@@ -180,12 +180,18 @@ fn vehicle_temporal_with_location(id: &str) -> Value {
         "fuelLevel": [
             { "type": "Property", "value": 80, "observedAt": "2020-10-01T10:00:00Z" }
         ],
+        // The `observedAt` is what puts the GeoProperty on the observed-time
+        // axis a temporal query selects along (clause 5.7.3 defaults
+        // `timeproperty` to `observedAt`). Without it the instance declares no
+        // observation instant, so no `timerel` window can name it and the
+        // attribute would be absent from every temporal representation.
         "location": {
             "type": "GeoProperty",
             "value": {
                 "type": "Point",
                 "coordinates": [-8.503, 41.202]
-            }
+            },
+            "observedAt": "2020-10-01T10:00:00Z"
         },
         "@context": [COMPOUND_CONTEXT]
     })

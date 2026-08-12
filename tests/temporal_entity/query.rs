@@ -335,14 +335,16 @@ async fn temporal_query_geo_near_success() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Should return entity with location near the point
+    // Clause 4.10: the geo query selects on the GeoProperty, so the Vehicle at
+    // the reference point is returned with its location and the one that
+    // declares no location is not.
     let arr = body.as_array().expect("response should be array");
-    // The entity with location should be returned
-    if !arr.is_empty() {
-        // At least one should have location
-        let has_location = arr.iter().any(|e| e.get("location").is_some());
-        assert!(has_location || arr.is_empty(), "geo query should filter by location");
-    }
+    let matched = arr.iter().filter_map(|entity| entity["id"].as_str()).collect::<Vec<&str>>();
+    assert_eq!(matched, vec![vb.as_str()], "only the Vehicle near the reference point matches: {body}");
+    assert!(
+        arr.iter().all(|entity| entity.get("location").is_some()),
+        "the matched Vehicle carries the GeoProperty the query selected on: {body}"
+    );
 }
 
 #[tokio::test]

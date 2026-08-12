@@ -19,7 +19,7 @@ use sqlx::{
     Row,
     postgres::{PgPool, PgRow},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Whether what a read resolved may be published to the process-wide cache.
 ///
@@ -158,6 +158,16 @@ impl AttributeNameLookup for AttributeNameCache {
     /// against is the size that transaction sees, so a rollback hands the budget
     /// back; and no phase of a commit reaches into the pool for a second
     /// connection while already holding one.
+    ///
+    /// A cache miss is not evidence that a name is new. The cache only ever
+    /// holds what a *committed* read published, so every name minted inside a
+    /// transaction — and every name minted before this process started, until
+    /// something reads it back — misses. The dictionary is therefore asked
+    /// which of the missing names it already holds *before* the growth bound is
+    /// consulted, and the bound is decided against the names that genuinely
+    /// remain to be created. Deciding it against every miss would refuse a write
+    /// that reuses nothing but names the dictionary already holds, which is
+    /// precisely the write a tenant at its bound must keep serving.
     async fn resolve_or_create(
         &self,
         connection: &mut PgConnection,
@@ -167,7 +177,21 @@ impl AttributeNameLookup for AttributeNameCache {
         if missing.is_empty() {
             return Ok(resolved.into_iter().collect());
         }
-        let minted = distinct_text(&missing);
+        let wanted = distinct_text(&missing);
+
+        // The caller's connection rather than the pool: a name an earlier phase
+        // of this same transaction minted is uncommitted, and a read that could
+        // not see it would count it as new a second time.
+        let held = decode(&sqlx::query(NAME_SELECT_SQL).bind(&wanted).fetch_all(&mut *connection).await?)?;
+        let unheld = names_not_yet_held(&wanted, &held);
+        // What the dictionary already held may still be rolled back by the
+        // caller's transaction, so the mappings answer this caller and go no
+        // further -- see [`CachePublication`].
+        self.absorb(&held, CachePublication::Withhold);
+        resolved.extend(held);
+        if unheld.is_empty() {
+            return Ok(resolved.into_iter().collect());
+        }
 
         // The dictionary size is read from the table rather than from `ids`,
         // which only ever holds what this process has seen: a cache that was
@@ -177,16 +201,12 @@ impl AttributeNameLookup for AttributeNameCache {
         let existing: i64 = sqlx::query_scalar(DICTIONARY_SIZE_SQL).fetch_one(&mut *connection).await?;
         // `COUNT(*)` is never negative; saturating to `u64::MAX` on a value
         // that says otherwise refuses the write rather than admitting it.
-        self.growth_limit.admit(u64::try_from(existing).unwrap_or(u64::MAX), minted.len())?;
+        self.growth_limit.admit(u64::try_from(existing).unwrap_or(u64::MAX), unheld.len())?;
 
-        sqlx::query(NAME_INSERT_SQL).bind(&minted).execute(&mut *connection).await?;
-        let rows = sqlx::query(NAME_SELECT_SQL).bind(&minted).fetch_all(&mut *connection).await?;
-        let found = decode(&rows)?;
-        // This read sees the rows the statement above inserted, which the
-        // caller's transaction may still roll back, so the mappings answer this
-        // caller and go no further.
-        self.absorb(&found, CachePublication::Withhold);
-        resolved.extend(found);
+        sqlx::query(NAME_INSERT_SQL).bind(&unheld).execute(&mut *connection).await?;
+        let minted = decode(&sqlx::query(NAME_SELECT_SQL).bind(&unheld).fetch_all(&mut *connection).await?)?;
+        self.absorb(&minted, CachePublication::Withhold);
+        resolved.extend(minted);
         Ok(resolved.into_iter().collect())
     }
 }
@@ -202,6 +222,16 @@ fn distinct_text<'a>(missing: &[&'a AttributeName]) -> Vec<&'a str> {
     text.sort_unstable();
     text.dedup();
     text
+}
+
+/// The names of a batch the dictionary does not hold yet, in the order the
+/// batch was sorted into.
+///
+/// This is the count the growth bound is decided against: a name the dictionary
+/// already holds creates nothing, whether or not this process had it cached.
+fn names_not_yet_held<'a>(wanted: &[&'a str], held: &[(AttributeName, AttributeNameId)]) -> Vec<&'a str> {
+    let held: HashSet<&str> = held.iter().map(|(name, _)| name.as_str()).collect();
+    wanted.iter().filter(|name| !held.contains(*name)).copied().collect()
 }
 
 /// Read one dictionary result set back into typed pairs.
@@ -244,7 +274,15 @@ const NAME_SELECT_SQL: &str = "SELECT id, name FROM attribute_names WHERE name =
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_name_cache::{AttributeNameCache, CachePublication, DICTIONARY_SIZE_SQL, NAME_INSERT_SQL, NAME_SELECT_SQL, distinct_text},
+        attribute_name_cache::{
+            AttributeNameCache,
+            CachePublication,
+            DICTIONARY_SIZE_SQL,
+            NAME_INSERT_SQL,
+            NAME_SELECT_SQL,
+            distinct_text,
+            names_not_yet_held,
+        },
         attribute_name_lookup::AttributeNameLookup,
         dictionary_growth::DictionaryNameLimit,
     };
@@ -372,6 +410,25 @@ mod tests {
     #[test]
     fn a_batch_of_names_is_read_back_through_a_single_array_bind() {
         assert!(NAME_SELECT_SQL.contains("name = ANY($1)"));
+    }
+
+    /// The growth bound is decided against the names that genuinely have to be
+    /// created, not against every name this process happened not to have cached.
+    /// A dictionary at its bound must keep serving a write that reuses only
+    /// names it already holds, and a cache miss says nothing about whether it
+    /// holds them.
+    #[test]
+    fn only_the_names_the_dictionary_does_not_hold_count_against_the_growth_bound() {
+        let asked = [brand(), speed()];
+        let wanted: Vec<&str> = asked.iter().map(AttributeName::as_str).collect();
+        let holds_speed = [(speed(), AttributeNameId::from(7))];
+        let holds_both = [(speed(), AttributeNameId::from(7)), (brand(), AttributeNameId::from(9))];
+
+        assert_eq!(names_not_yet_held(&wanted, &holds_speed), vec![asked[0].as_str()]);
+        assert!(
+            names_not_yet_held(&wanted, &holds_both).is_empty(),
+            "a batch the dictionary holds in full creates nothing"
+        );
     }
 
     /// A tenant given its own bound keeps it; the default is only the fallback

@@ -147,9 +147,78 @@ FROM (SELECT count(*) AS n FROM entities_legacy) AS legacy,
      (SELECT count(*) AS n FROM entities) AS rebuilt
 WHERE legacy.n <> rebuilt.n;
 
-SELECT CAST('entities rebuild lost entity ' || e.id AS SMALLINT)
-FROM entities_legacy AS e
-WHERE NOT EXISTS (SELECT 1 FROM entities AS r WHERE r.id = e.id)
+-- Every copied column is verified, not just the identifier: a rebuild that
+-- silently dropped a scope path, restamped `modified_at`, truncated `payload`
+-- or reprojected `location` would otherwise pass a presence check and be
+-- discovered later as data loss, and the legacy table is dropped four lines
+-- below with no way back.
+--
+-- A canonical digest rather than a bidirectional `EXCEPT`, and the choice is
+-- not only about cost. `EXCEPT` needs an equality operator for every column it
+-- compares, and geometry equality is an operator whose history is bound up with
+-- bounding boxes rather than with coordinates, so a comparison built on it
+-- would not reliably notice a changed geometry at all. Rendering each geometry
+-- as EWKB and comparing the text is exact. It is also the cheaper shape here:
+-- `EXCEPT` in both directions sorts or hashes the full width of both relations
+-- twice, while the join below reduces each row to one bounded text and matches
+-- on the unique identifier once.
+--
+-- `location_geo` is absent because it is a stored generated column: it is a
+-- function of `location`, which is compared, so comparing it too would only
+-- restate the check.
+--
+-- The identifier is spelled `COLLATE "C"` explicitly. The legacy column carries
+-- the database collation and the rebuilt one carries `C`; naming the byte-wise
+-- one pins the join's comparison to a single, deterministic collation instead
+-- of leaving it to implicit-collation resolution between the two sides.
+WITH canonical AS (
+    SELECT 'legacy' AS side,
+           e.id,
+           e.created_at,
+           e.modified_at,
+           e.expires_at,
+           e.types,
+           e.scope_paths,
+           e.payload,
+           e.location,
+           e.observation_space,
+           e.operation_space
+    FROM entities_legacy AS e
+    UNION ALL
+    SELECT 'rebuilt',
+           r.id,
+           r.created_at,
+           r.modified_at,
+           r.expires_at,
+           r.types,
+           r.scope_paths,
+           r.payload,
+           r.location,
+           r.observation_space,
+           r.operation_space
+    FROM entities AS r
+),
+rendered AS (
+    SELECT c.side,
+           c.id COLLATE "C" AS id,
+           quote_nullable(c.types::text)
+               || E'\x01' || quote_nullable(c.scope_paths::text)
+               || E'\x01' || quote_nullable(c.payload::text)
+               || E'\x01' || quote_nullable(ST_AsEWKB(c.location)::text)
+               || E'\x01' || quote_nullable(ST_AsEWKB(c.observation_space)::text)
+               || E'\x01' || quote_nullable(ST_AsEWKB(c.operation_space)::text)
+               || E'\x01' || quote_nullable(c.created_at::text)
+               || E'\x01' || quote_nullable(c.modified_at::text)
+               || E'\x01' || quote_nullable(c.expires_at::text)
+               AS row_text
+    FROM canonical AS c
+)
+SELECT CAST('entities rebuild diverges on entity '
+            || COALESCE(legacy_side.id, rebuilt_side.id) AS SMALLINT)
+FROM (SELECT id, row_text FROM rendered WHERE side = 'legacy') AS legacy_side
+FULL JOIN (SELECT id, row_text FROM rendered WHERE side = 'rebuilt') AS rebuilt_side
+       ON rebuilt_side.id = legacy_side.id
+WHERE legacy_side.row_text IS DISTINCT FROM rebuilt_side.row_text
 LIMIT 1;
 
 DROP TABLE entities_legacy;

@@ -14,6 +14,18 @@
 -- `entity_id` resolves to the narrow temporal entity key, and the pre-check
 -- refuses any scope row whose entity has no temporal entity -- possible only
 -- because 0023 dropped this table's foreign key.
+--
+-- The digest below covers every migrated column, on the same construction 0051
+-- uses and for the same reason: both sides are mapped into the rebuilt column
+-- shape and unioned under a side marker, so the canonical text is written once
+-- and cannot drift between the side it validates and the side it validates
+-- against. `recorded_at` is in it because it is the one time axis a migrated
+-- scope row carries any information on -- a digest that omitted it would pass
+-- over a copy that had restamped every row -- and the synthesised write
+-- identity, the ordinal and the `value_kind` are in it because each is asserted
+-- by the insert above rather than read from the source, so nothing else would
+-- notice if the insert stopped producing them. Nullable members go through
+-- `quote_nullable`, which distinguishes a null from the empty string.
 -- ============================================================================
 
 SELECT CAST('scope_history row for entity ' || sh.entity_id
@@ -59,31 +71,72 @@ FROM (SELECT count(*) AS n FROM scope_history_legacy) AS legacy,
      (SELECT count(*) AS n FROM scope_history) AS rebuilt
 WHERE legacy.n <> rebuilt.n;
 
-WITH legacy AS (
-    SELECT te.entity_key,
-           count(*) AS n,
-           md5(string_agg(sh.instance_id || E'\x01' || sh.scope_path::text,
-                          E'\x02' ORDER BY sh.instance_id, sh."time")) AS digest
+WITH canonical AS (
+    SELECT 'legacy' AS side,
+           te.entity_key,
+           sh."time" AS recorded_at,
+           md5(sh.entity_id || '|' || sh.instance_id || '|' || sh."time"::text)::uuid AS write_id,
+           0 AS write_ordinal,
+           1::smallint AS value_kind,
+           CASE WHEN sh.instance_id ~ ('^urn:ngsi-ld:scope:instance:'
+                    || '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+                THEN NULL ELSE sh.instance_id END AS verbatim_instance_id,
+           CASE WHEN sh.instance_id ~ ('^urn:ngsi-ld:scope:instance:'
+                    || '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+                THEN substring(sh.instance_id FROM 28)::uuid END AS generated_instance_uuid,
+           sh.scope_path
     FROM scope_history_legacy AS sh
     JOIN temporal_entities AS te ON te.id = sh.entity_id
-    GROUP BY te.entity_key
-),
-rebuilt AS (
-    SELECT s.temporal_entity_key AS entity_key,
-           count(*) AS n,
-           md5(string_agg(
-               COALESCE(s.verbatim_instance_id,
-                        'urn:ngsi-ld:scope:instance:' || s.generated_instance_uuid::text)
-               || E'\x01' || s.scope_path::text,
-               E'\x02' ORDER BY COALESCE(s.verbatim_instance_id,
-                        'urn:ngsi-ld:scope:instance:' || s.generated_instance_uuid::text),
-                        s.recorded_at)) AS digest
+    UNION ALL
+    SELECT 'rebuilt',
+           s.temporal_entity_key,
+           s.recorded_at,
+           s.write_id,
+           s.write_ordinal,
+           s.value_kind,
+           s.verbatim_instance_id,
+           s.generated_instance_uuid,
+           s.scope_path
     FROM scope_history AS s
-    GROUP BY s.temporal_entity_key
+),
+rendered AS (
+    SELECT c.side,
+           c.entity_key,
+           COALESCE(c.verbatim_instance_id,
+                    'urn:ngsi-ld:scope:instance:' || c.generated_instance_uuid::text)
+               AS instance_id,
+           c.recorded_at,
+           c.write_id,
+           c.write_ordinal,
+           quote_nullable(COALESCE(c.verbatim_instance_id,
+                    'urn:ngsi-ld:scope:instance:' || c.generated_instance_uuid::text))
+               || E'\x01' || quote_nullable(c.scope_path::text)
+               || E'\x01' || quote_nullable(c.value_kind::text)
+               || E'\x01' || quote_nullable(c.recorded_at::text)
+               || E'\x01' || quote_nullable(c.write_id::text)
+               || E'\x01' || quote_nullable(c.write_ordinal::text)
+               AS row_text
+    FROM canonical AS c
+),
+digested AS (
+    -- `COLLATE "C"` for the same reason 0051 states it: the legacy instance
+    -- column and the rebuilt one carry different collations, and naming the
+    -- byte-wise one pins the aggregation order to a single, deterministic
+    -- choice that is identical on every cluster.
+    SELECT r.side,
+           r.entity_key,
+           count(*) AS n,
+           md5(string_agg(r.row_text, E'\x02'
+                          ORDER BY r.instance_id COLLATE "C", r.recorded_at,
+                                   r.write_id, r.write_ordinal)) AS digest
+    FROM rendered AS r
+    GROUP BY r.side, r.entity_key
 )
 SELECT CAST('scope_history backfill diverges on temporal entity '
-            || COALESCE(legacy.entity_key, rebuilt.entity_key)::text AS SMALLINT)
-FROM legacy FULL JOIN rebuilt ON rebuilt.entity_key = legacy.entity_key
-WHERE legacy.n IS DISTINCT FROM rebuilt.n
-   OR legacy.digest IS DISTINCT FROM rebuilt.digest
+            || COALESCE(legacy_side.entity_key, rebuilt_side.entity_key)::text AS SMALLINT)
+FROM (SELECT entity_key, n, digest FROM digested WHERE side = 'legacy') AS legacy_side
+FULL JOIN (SELECT entity_key, n, digest FROM digested WHERE side = 'rebuilt') AS rebuilt_side
+       ON rebuilt_side.entity_key = legacy_side.entity_key
+WHERE legacy_side.n IS DISTINCT FROM rebuilt_side.n
+   OR legacy_side.digest IS DISTINCT FROM rebuilt_side.digest
 LIMIT 1;

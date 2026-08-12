@@ -15,4 +15,5 @@ pub mod node;
 pub mod null_sentinel;
 pub mod query_match;
 pub mod removed_instance;
+pub mod reserved_member;
 pub mod unit_code_admission;

@@ -86,28 +86,17 @@ async fn a_dictionary_at_its_bound_refuses_new_names_and_still_serves_the_names_
         .fetch_one(&pool)
         .await
         .expect("the dictionary size must be observable");
-    assert!(
-        size > i64::from(NAMES_PAST_THE_BOUND),
-        "the dictionary must be past the bound for this check to mean anything, size was {size}"
-    );
 
     let refused = client
         .post_entity(&entity_with_attribute(&novel_entity, &novel_term))
         .send()
         .await
         .expect("create entity request failed");
-    assert_ne!(
-        refused.status,
-        StatusCode::CREATED,
-        "a name minted past the bound must be refused: {:?}",
-        refused.body
-    );
     let novel_names: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attribute_names WHERE name LIKE $1")
         .bind(format!("%{novel_term}"))
         .fetch_one(&pool)
         .await
         .expect("the dictionary must be readable");
-    assert_eq!(novel_names, 0, "a refused request must mint no part of its batch");
 
     // A write that resolves only names the dictionary already holds creates
     // nothing, so the bound does not apply to it.
@@ -116,6 +105,30 @@ async fn a_dictionary_at_its_bound_refuses_new_names_and_still_serves_the_names_
         .send()
         .await
         .expect("create entity request failed");
+
+    // Every observation this check makes is taken before the dictionary is put
+    // back, and asserted afterwards. An assertion that failed while the
+    // inflated dictionary was still in place would leave every later write on
+    // this tenant refused for a name it was entitled to mint.
+    discard(client, &established_entity).await;
+    discard(client, &novel_entity).await;
+    discard(client, &repeat_entity).await;
+    remove_generated_names(&pool).await;
+    pool.close().await;
+
+    // The size is observable from the dictionary itself, which is what an
+    // operator deciding between raising the bound and finding the client reads.
+    assert!(
+        size > i64::from(NAMES_PAST_THE_BOUND),
+        "the dictionary must be past the bound for this check to mean anything, size was {size}"
+    );
+    assert_ne!(
+        refused.status,
+        StatusCode::CREATED,
+        "a name minted past the bound must be refused: {:?}",
+        refused.body
+    );
+    assert_eq!(novel_names, 0, "a refused request must mint no part of its batch");
     assert_eq!(
         repeated.status,
         StatusCode::CREATED,
@@ -123,10 +136,5 @@ async fn a_dictionary_at_its_bound_refuses_new_names_and_still_serves_the_names_
         repeated.body
     );
 
-    discard(client, &established_entity).await;
-    discard(client, &novel_entity).await;
-    discard(client, &repeat_entity).await;
-    remove_generated_names(&pool).await;
-    pool.close().await;
     environment.finish().await.expect("releasing exclusive ownership failed");
 }

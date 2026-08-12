@@ -34,6 +34,11 @@ pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError>
 /// while `attribute_history` and `scope_history` carry no foreign key at all —
 /// hypertables cannot — so each is deleted through the streams and the
 /// catalogue that name it, before the rows those names live on are removed.
+///
+/// `attribute_history_instance_claims` is absent deliberately: it is an
+/// ordinary table whose foreign key cascades from `temporal_entities`, so the
+/// catalogue delete below reclaims every claim the prefix staked. The global
+/// reset still names it, because a `TRUNCATE` list is not a cascade.
 const PREFIX_DELETES: &[&str] = &[
     "DELETE FROM subscriptions WHERE id LIKE $1",
     "DELETE FROM context_source_registrations WHERE id LIKE $1",
@@ -110,6 +115,7 @@ mod tests {
             "temporal_entities",
             "temporal_attribute_streams",
             "attribute_history",
+            "attribute_history_instance_claims",
             "subscriptions",
             "context_source_registrations",
             "registration_information",

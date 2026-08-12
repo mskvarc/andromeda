@@ -9,6 +9,13 @@
 -- are reference data seeded by a migration from the assignment the broker
 -- compiles in: emptying them would leave every unit-code write without the row
 -- its foreign key needs, and nothing outside a migration may reseed them.
+--
+-- `attribute_history_instance_claims` is named explicitly rather than left to
+-- the cascade from `temporal_entities`. It carries the clause 4.5.7 uniqueness
+-- of a client-supplied `instanceId`, which `attribute_history` cannot carry
+-- itself, so a claim surviving the reset would refuse an identifier the next
+-- test case is entitled to use -- and relying on a cascade to reclaim it makes
+-- that depend on a foreign key rather than on this list.
 
 TRUNCATE
     write_records,
@@ -24,6 +31,7 @@ TRUNCATE
     registration_information,
     context_source_registrations,
     subscriptions,
+    attribute_history_instance_claims,
     attribute_history,
     temporal_attribute_streams,
     temporal_entities,

@@ -97,8 +97,8 @@ async fn temporal_semantics_operational_ordering_separates_commit_order_from_obs
     }
 }
 
-/// Every consequence of one batch shares its ingestion instant, and each write
-/// inside it numbers its consequences uniquely and densely from zero.
+/// Every consequence of one batch shares its ingestion instant and its write
+/// identity, and the batch numbers all of them uniquely and densely from zero.
 #[tokio::test]
 #[serial]
 async fn temporal_semantics_same_batch_ordering_is_unique_and_deterministic() {
@@ -123,27 +123,35 @@ async fn temporal_semantics_same_batch_ordering_is_unique_and_deterministic() {
     assert_eq!(first_rows.len(), 2);
     assert_eq!(second_rows.len(), 2);
 
-    // One batch is one ingestion instant, whatever it decomposes into.
-    let instants = first_rows.iter().chain(second_rows.iter()).map(|row| row.recorded_at).collect::<BTreeSet<_>>();
+    // One batch is one ingestion instant and one write identity, whatever it
+    // decomposes into: the identity is what correlates every durable
+    // consequence of the commit -- history, notification events, side-effect
+    // jobs -- and a replay of the commit resumes under exactly that identity.
+    let consequences = first_rows.iter().chain(second_rows.iter()).collect::<Vec<_>>();
+    let instants = consequences.iter().map(|row| row.recorded_at).collect::<BTreeSet<_>>();
     assert_eq!(instants.len(), 1, "every consequence of one batch shares one recorded_at");
+    let identities = consequences.iter().map(|row| row.write_id).collect::<BTreeSet<_>>();
+    assert_eq!(identities.len(), 1, "every consequence of one batch shares one write identity");
 
-    // Inside one write the ordinals are unique and dense, so a replay of the
-    // write reproduces exactly the same key for exactly the same consequence.
+    // The ordinals run across the whole commit rather than restarting per
+    // Entity, because they number the consequences of one identity: they are
+    // unique and dense, so a replay of the commit reproduces exactly the same
+    // key for exactly the same consequence.
+    let ordinals = consequences.iter().map(|row| row.write_ordinal).collect::<BTreeSet<_>>();
+    assert_eq!(ordinals.len(), consequences.len(), "ordinals inside one write are unique");
+    assert_eq!(
+        ordinals.iter().copied().collect::<Vec<i32>>(),
+        (0..i32::try_from(consequences.len()).expect("a four-row write is representable")).collect::<Vec<i32>>(),
+        "ordinals start at zero and leave no gap"
+    );
+
+    // Each Entity's own consequences are still a contiguous run inside that
+    // numbering, so nothing about the batch makes one Entity's rows collide
+    // with another's.
     for rows in [&first_rows, &second_rows] {
-        let identities = rows.iter().map(|row| row.write_id).collect::<BTreeSet<_>>();
-        assert_eq!(identities.len(), 1, "one Entity's consequences share one write identity");
-        let ordinals = rows.iter().map(|row| row.write_ordinal).collect::<BTreeSet<_>>();
-        assert_eq!(ordinals.len(), rows.len(), "ordinals inside one write are unique");
-        assert_eq!(
-            ordinals.iter().copied().collect::<Vec<i32>>(),
-            (0..i32::try_from(rows.len()).expect("a two-row write is representable")).collect::<Vec<i32>>(),
-            "ordinals start at zero and leave no gap"
-        );
+        let entity_ordinals = rows.iter().map(|row| row.write_ordinal).collect::<BTreeSet<_>>();
+        assert_eq!(entity_ordinals.len(), rows.len(), "one Entity's consequences are numbered distinctly");
     }
-
-    // The two writes are independent identities, so nothing about the batch
-    // makes one Entity's ordinals collide with another's.
-    assert_ne!(first_rows[0].write_id, second_rows[0].write_id);
 
     // Reconstruction picks the values the batch specified, per Entity.
     for (entity_id, speed, fuel) in [(&first_id, 1, 2), (&second_id, 3, 4)] {

@@ -1,15 +1,16 @@
 //! Verification matrix row "Timestamp precision policy".
 //!
-//! `docs/timestamp-precision.md` records the policy: every NGSI-LD instant is
-//! truncated to microseconds in Rust, before persistence, so the value the
-//! database stores is the value the broker decided on rather than one the
-//! column rounded on its own; and an instant outside the range the broker can
-//! represent is refused with a precise error rather than stored approximately.
+//! `docs/timestamp-precision.md` records the policy: a client-supplied NGSI-LD
+//! instant is accepted exactly as clause 4.6.3 defines it — the literal `Z`
+//! designator, at most six fractional-second digits — and anything else is
+//! refused with a precise error rather than normalised, truncated or stored
+//! approximately. An instant outside the range the broker can represent is
+//! refused for the same reason.
 //!
-//! The unit tests cover the truncation function. What this file adds is the
-//! end-to-end half the matrix row states: what a client sends decides what
-//! storage holds, nothing between them rounds, and an out-of-range date never
-//! reaches storage at all.
+//! The unit tests cover the parser. What this file adds is the end-to-end half
+//! the matrix row states: what a client sends decides what storage holds,
+//! nothing between them rounds, and a value the policy refuses never reaches
+//! storage at all.
 //!
 //! Rendering is the one place the two resolutions part company, and
 //! deliberately: `andromeda_ngsi_ld_lexicon::rfc3339` renders every timestamp
@@ -39,11 +40,9 @@ use serial_test::serial;
 /// Fractional digits below the microsecond the broker resolves to.
 ///
 /// The trailing `789` is what a naive `TIMESTAMPTZ` cast would round rather
-/// than drop, which is the difference the policy exists to remove.
+/// than drop, and what a truncating broker would silently discard. Clause 4.6.3
+/// admits six digits, so this value is neither: it is refused.
 const SUB_MICROSECOND: &str = "2026-03-04T05:06:07.123456789Z";
-
-/// The instant `SUB_MICROSECOND` truncates to.
-const TRUNCATED: &str = "2026-03-04T05:06:07.123456Z";
 
 /// An instant a microsecond-resolution timestamp represents exactly.
 const EXACT_MICROSECOND: &str = "2026-03-04T05:06:07.123456Z";
@@ -72,39 +71,34 @@ fn stored_instant(instant: Option<DateTime<Utc>>) -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
-/// Clause 4.6.3 types an NGSI-LD DateTime as an RFC 3339 instant and puts no
-/// resolution on it; the broker resolves to microseconds and says so. A
-/// sub-microsecond value is therefore truncated once, in Rust, and both storage
-/// and rendering agree on the truncated instant.
+/// Clause 4.6.3 caps an NGSI-LD DateTime at six fractional-second digits. A
+/// finer value is refused rather than truncated: discarding digits the client
+/// wrote is a policy of the broker's own invention, and the clause's explicit
+/// ceiling exists precisely to remove that ambiguity. Nothing about the refused
+/// write reaches storage, on either axis that carries a client instant.
 #[tokio::test]
 #[serial]
-async fn temporal_semantics_sub_microsecond_instants_are_truncated_once_before_persistence() {
+async fn temporal_semantics_sub_microsecond_instants_are_refused_rather_than_truncated() {
     let _serialized_environment = clean_database().await;
     let http = client();
     let pool = database().await;
-    let entity_id = unique_id("urn:ngsi-ld:Vehicle:timestamp_precision");
 
-    let created = create_entity(&http, &entity_with_instants(&entity_id, SUB_MICROSECOND, SUB_MICROSECOND)).await;
-    assert_eq!(created, StatusCode::CREATED, "the sub-microsecond fixture must be accepted");
-
-    let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri("inspected")).await;
-    assert_eq!(rows.len(), 1, "the fixture records exactly one observation");
-    let expected = TRUNCATED.parse::<DateTime<Utc>>().expect("a valid expected instant");
-    assert_eq!(
-        stored_instant(rows[0].observed_at),
-        expected.to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-        "the stored observedAt is the truncated instant, not a rounded one"
-    );
-
-    let (status, body) = get_temporal_entity(&http, &entity_id, "timerel=after&timeAt=2000-01-01T00:00:00Z").await;
-    assert_eq!(status, StatusCode::OK, "the temporal representation must answer: {body}");
-    let instances = rendered_instances(&body, "inspected");
-    assert_eq!(instances.len(), 1, "one observation renders: {body}");
-    assert_eq!(
-        instances[0]["observedAt"].as_str().unwrap_or_default(),
-        whole_seconds(expected),
-        "the rendering is the broker's whole-second form of the instant storage holds, not a rounded value: {body}"
-    );
+    // Each axis is exercised on its own, so neither can be the one carrying the
+    // refusal for both: the `observedAt` of clause 5.2.5 and a DateTime-typed
+    // Property value are held to the same policy.
+    for (observed_at, value) in [(SUB_MICROSECOND, EXACT_MICROSECOND), (EXACT_MICROSECOND, SUB_MICROSECOND)] {
+        let entity_id = unique_id("urn:ngsi-ld:Vehicle:timestamp_precision");
+        let created = create_entity(&http, &entity_with_instants(&entity_id, observed_at, value)).await;
+        assert_eq!(
+            created,
+            StatusCode::BAD_REQUEST,
+            "nine fractional digits exceed clause 4.6.3 and must be refused"
+        );
+        assert!(
+            stored_attribute_history(&pool, &entity_id, &attribute_iri("inspected")).await.is_empty(),
+            "a refused write must leave no history row behind"
+        );
+    }
 }
 
 /// A value already at the broker's resolution is stored and rendered unchanged,

@@ -95,6 +95,14 @@ pub fn generate_db_name(prefix: &DbNamePrefix, tenant_name: &TenantName) -> Tena
 }
 
 /// Create the named database if it does not already exist.
+///
+/// No locale or collation is specified, so the database inherits the cluster's.
+/// That is deliberate: every column whose comparison decides NGSI-LD behaviour
+/// declares `COLLATE "C"` itself, so the database default governs nothing the
+/// specification defines, and pinning it here would hide an omitted column
+/// declaration on databases Andromeda creates while leaving it live on every
+/// database an operator, a managed service or a restore provisions.
+/// `docs/text-collation-invariant.md` states the invariant and its inventory.
 pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &TenantDatabaseName) -> Result<(), ContextStoreError> {
     let admin_database = TenantDatabaseName::from("postgres".to_owned());
     let admin_url = base_url.with_db_name(&admin_database);

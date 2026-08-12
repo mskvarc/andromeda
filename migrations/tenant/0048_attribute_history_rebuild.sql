@@ -58,14 +58,29 @@
 -- it actually sits unrepresentable rather than something a reader repairs by
 -- guessing. It subsumes a range check on `value_kind`.
 --
+-- Every text column here is `COLLATE "C"`, including `value_string`. Clause 4.9
+-- orders string values with `<`, `>`, `<=` and `>=`, and clause 4.5.19's `min`
+-- and `max` over a string Property are answered by aggregating this column
+-- directly; the same comparison is answered from
+-- `current_attribute_values.value_string` for current state. A locale collation
+-- would order the two columns by whatever locale the cluster was initialised
+-- with, so temporal aggregation and current-state `q` could disagree on the same
+-- data. Byte-wise order is deterministic, is identical on every cluster, and is
+-- conformant: clause 4.9 defers string comparison to RFC 8259 clause 8.3 and
+-- only *recommends* Unicode Collation Algorithm ordering, so a deliberately
+-- code-point-oriented order is a choice the specification admits.
+-- `docs/text-collation-invariant.md` states the invariant for the whole schema.
+--
 -- Column order is alignment order -- not-null fixed-width descending, then
 -- nullable fixed-width, then varlena -- and is the order the binary COPY path
 -- stages its fields in.
 --
 -- No index is built CONCURRENTLY: the table is empty and unreachable at build
 -- time, so an ordinary CREATE INDEX inside this transaction is correct and
--- avoids leaving an invalid index behind on failure. No created/modified/
--- deleted-axis index is created yet; those are benchmark-gated.
+-- avoids leaving an invalid index behind on failure. TimescaleDB refuses
+-- concurrent index creation on a hypertable outright, so this is the only
+-- spelling available here in any case. No created/modified/deleted-axis index is
+-- created yet; those are benchmark-gated.
 -- ============================================================================
 
 CREATE TABLE attribute_history (
@@ -85,7 +100,7 @@ CREATE TABLE attribute_history (
     value_bool BOOLEAN,
     verbatim_instance_id TEXT COMPRESSION lz4 COLLATE "C",
     value_number NUMERIC COMPRESSION lz4,
-    value_string TEXT COMPRESSION lz4,
+    value_string TEXT COMPRESSION lz4 COLLATE "C",
     value_geo geometry COMPRESSION lz4,
     value_object JSONB COMPRESSION lz4,
     value_uri TEXT COMPRESSION lz4 COLLATE "C",
@@ -141,6 +156,45 @@ CREATE INDEX idx_attribute_history_stream_verbatim_instance
 CREATE INDEX idx_attribute_history_value_geo
     ON attribute_history USING GIST (value_geo)
     WHERE value_geo IS NOT NULL;
+
+-- ----------------------------------------------------------------------------
+-- Semantic-time summary over the whole hypertable
+-- ----------------------------------------------------------------------------
+-- `recorded_at` is the partition column, so a window on it is answered by chunk
+-- exclusion alone. `observed_at` is not, and the two indexes above lead with
+-- `stream_id`, so a temporal query that bounds `observedAt` without naming a
+-- stream -- which clause 5.7.2 permits, since `timerel` is independent of the
+-- entity selector -- has no access path but a full scan of every chunk.
+--
+-- The measured shape of that gap and of this index is
+-- `docs/proposals/database-schema-redesign-benchmarks.md` section 8: over four
+-- million rows in thirteen chunks the summary cut a broad seven-day window from
+-- 81.5 ms to 15.6 ms and its buffer traffic from 20,240 to 7,208, for 632 kB --
+-- 0.02% of the hypertable -- with no plan regression on the stream-led path,
+-- which keeps its B-tree. This is an addition to those indexes, never a
+-- replacement. The accept rests on a per-chunk `observed_at` correlation of
+-- 0.99 measured against synthetic data; below roughly 0.9 a BRIN summary
+-- degrades into a sequential scan carrying recheck cost on top, so production
+-- correlation and the real late-observation tail have to be measured before
+-- this index is treated as permanent, and re-measured after any change to the
+-- chunk interval.
+--
+-- `timestamptz_minmax_multi_ops` rather than the default single-range
+-- `timestamptz_minmax_ops`: a late observation arriving a year after the fact
+-- stretches a single per-block range across that year and makes the summary
+-- match every query, whereas a multi-range summary keeps the outlier in its own
+-- range and still excludes the block. The measured one-year-late window is
+-- exactly that case.
+--
+-- Deliberately not partial. The equivalent `WHERE observed_at IS NOT NULL`
+-- predicate would buy nothing -- BRIN summarises nulls per block rather than
+-- indexing them individually, so the null rows cost no entries -- and it would
+-- cost two things: the planner needs the predicate proven to use a partial
+-- index, and TimescaleDB's columnstore sparse-index builder skips partial
+-- indexes when deciding which columns get a minmax summary on a compressed
+-- chunk, which is precisely where this summary matters most.
+CREATE INDEX idx_attribute_history_observed_at_brin
+    ON attribute_history USING BRIN (observed_at timestamptz_minmax_multi_ops);
 
 -- ----------------------------------------------------------------------------
 -- Verbatim instanceId uniqueness

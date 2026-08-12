@@ -18,6 +18,19 @@ const FIELD_SEPARATOR: char = '\t';
 /// Number of columns each snapshot registration carries.
 const FIELD_COUNT: usize = 4;
 
+/// Sentinel written into the fourth field when a registration has not been
+/// retired.
+///
+/// A truly empty field renders as a trailing tab, which `git diff --check`
+/// flags as trailing whitespace on every one of the registry's thousands of
+/// current rows. The sentinel keeps the field non-empty without changing what
+/// it means.
+///
+/// Part of the TSV format this module publishes: the snapshot generator reads
+/// this constant rather than restating the literal, so the writer and the
+/// reader cannot drift on what an unset `retired_revision` looks like on disk.
+pub const RETIRED_REVISION_UNSET: &str = "-";
+
 /// The parsed registry, built once per process.
 static REGISTRY: LazyLock<Result<UnitCodeRegistry, UnitCodeSnapshotMalformed>> = LazyLock::new(|| UnitCodeRegistry::parse(SNAPSHOT));
 
@@ -155,7 +168,11 @@ fn parse_entry(line: &'static str, number: usize) -> Result<UnitCodeEntry, UnitC
         .and_then(|stored| UnitCodeId::try_from(stored).map_err(|_| UnitCodeSnapshotMalformed::Identity { line: number }))?;
     let token = UnitCodeToken::try_from(*token).map_err(|_| UnitCodeSnapshotMalformed::Token { line: number })?;
     let first_revision = parse_revision(first, number)?;
-    let retired_revision = if retired.is_empty() { None } else { Some(parse_revision(retired, number)?) };
+    let retired_revision = if *retired == RETIRED_REVISION_UNSET {
+        None
+    } else {
+        Some(parse_revision(retired, number)?)
+    };
     Ok(UnitCodeEntry::new(identity, token, first_revision, retired_revision))
 }
 
@@ -233,7 +250,7 @@ mod tests {
     };
 
     /// A two-registration snapshot in the committed format.
-    const SAMPLE: &str = "# generated - never hand-edited\n1\tKGM\t17\t\n2\tMTR\t17\t\n";
+    const SAMPLE: &str = "# generated - never hand-edited\n1\tKGM\t17\t-\n2\tMTR\t17\t-\n";
 
     #[test]
     fn a_snapshot_registration_decodes_to_its_typed_code() {
@@ -287,7 +304,7 @@ mod tests {
     #[test]
     fn a_repeated_identity_is_refused() {
         assert_eq!(
-            UnitCodeRegistry::parse("1\tKGM\t17\t\n1\tMTR\t17\t"),
+            UnitCodeRegistry::parse("1\tKGM\t17\t-\n1\tMTR\t17\t-"),
             Err(UnitCodeSnapshotMalformed::RepeatedIdentity { line: 2 })
         );
     }
@@ -295,7 +312,7 @@ mod tests {
     #[test]
     fn a_repeated_common_code_is_refused() {
         assert_eq!(
-            UnitCodeRegistry::parse("1\tKGM\t17\t\n2\tKGM\t17\t"),
+            UnitCodeRegistry::parse("1\tKGM\t17\t-\n2\tKGM\t17\t-"),
             Err(UnitCodeSnapshotMalformed::RepeatedToken { line: 2 })
         );
     }

@@ -7,10 +7,21 @@
 //! family does not define at all: clauses 4.5.3, 4.5.18, 4.5.20 and 4.5.24
 //! leave four families unitless, so a `unitCode` on one is invalid input
 //! (clause 5.5.9) rather than a shape persistence happens to reject.
+//!
+//! The walk steps over every member NGSI-LD reserves for itself. Those members
+//! are not attributes and their sub-nodes are not attribute instances: an
+//! Entity's two `scope` paths (clause 4.18) and a LanguageProperty's two
+//! language entries (clause 4.5.18) are each one member carrying two values,
+//! not one attribute carrying two default instances, and clause 4.5.5.1 says
+//! nothing about either.
 
 use crate::error::EntityError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{dataset_id::get_instance_dataset_id, unit_code_admission::forbidden_unit_code_family};
+use andromeda_ngsi_ld_model::expanded::{
+    dataset_id::get_instance_dataset_id,
+    reserved_member::is_reserved_member,
+    unit_code_admission::forbidden_unit_code_family,
+};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -33,6 +44,9 @@ pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), Entit
             let attribute_name = key
                 .parse::<AttributeName>()
                 .map_err(|error| EntityError::validation(format!("invalid expanded attribute name '{key}': {error}")))?;
+            if is_reserved_member(&attribute_name) {
+                continue;
+            }
             validate_attr_instances(&attribute_name, value)?;
         }
     }
@@ -220,6 +234,33 @@ mod tests {
             "https://example.org/member": [property(None), property(Some("urn:ngsi-ld:Dataset:a")), property(Some("urn:ngsi-ld:Dataset:b"))]
         }]);
         validate_attribute_envelopes(&payload).expect("distinct instance identities are well formed");
+    }
+
+    /// Clause 4.18 lets one Entity declare several scope paths, which expand
+    /// into several nodes under the one `scope` member. `scope` is not an
+    /// attribute (clause 4.5.4), so those nodes are paths rather than default
+    /// instances of one attribute.
+    #[test]
+    fn an_entity_declaring_several_scope_paths_is_accepted() {
+        let payload = json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            expanded_properties::SCOPE.as_str(): [{"@value": "/Madrid/Gardens"}, {"@value": "/CompanyA/UnitC"}],
+        }]);
+        validate_attribute_envelopes(&payload).expect("several scope paths are one member, not two instances");
+    }
+
+    /// Clause 4.5.18 gives a LanguageProperty one entry per language, which
+    /// expand into several nodes under the one `languageMap` member. An
+    /// attribute fragment carrying two languages is one instance, not two.
+    #[test]
+    fn an_attribute_fragment_declaring_several_languages_is_accepted() {
+        let fragment = json!([{
+            expanded_properties::LANGUAGE_MAP.as_str(): [
+                {"@value": "Grand Place", "@language": "en"},
+                {"@value": "Gran Lugar", "@language": "es"}
+            ]
+        }]);
+        validate_attribute_envelopes(&fragment).expect("two languages are one languageMap, not two instances");
     }
 
     #[test]

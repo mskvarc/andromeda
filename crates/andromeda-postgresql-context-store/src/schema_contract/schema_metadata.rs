@@ -72,9 +72,18 @@ pub async fn ensure_schema_contract(pool: &PgPool, contract: &SchemaContract) ->
 /// would be invisible to a binary-only recomputation, which would silently
 /// turn a diverged history into an accepted upgrade.
 ///
+/// The query is bounded below by the contract's own first version as well as
+/// above by the stamped one. sqlx records every migration set that runs against
+/// a database in that one table, and the default tenant's database is also the
+/// platform database, so its history interleaves the platform migrations with
+/// the tenant ones. Only the rows in this set's own version range are its
+/// history; digesting the other set's rows too would make the reconciliation
+/// digest something no stamp could ever equal, and every fleet upgrade of the
+/// default tenant would read as drift.
+///
 /// [`migrate_tenant_db`]: crate::tenant_database::migrate_tenant_db
 async fn reconcile_upgrade(pool: &PgPool, stamped: &StampedContract, contract: &SchemaContract) -> Result<(), SchemaContractError> {
-    let applied_digest = applied_migrations_digest_up_to(pool, stamped.version).await?;
+    let applied_digest = applied_migrations_digest_between(pool, contract.first_version(), stamped.version).await?;
     if applied_digest != stamped.digest {
         return Err(SchemaContractError::MigrationsDigestMismatch {
             expected: applied_digest,
@@ -89,17 +98,25 @@ async fn reconcile_upgrade(pool: &PgPool, stamped: &StampedContract, contract: &
     refuse_on_mismatch(&restamped, contract)
 }
 
-/// The digest of a tenant's actually-applied migrations, up to and including
-/// `up_to_version`, as `_sqlx_migrations` itself records them.
-async fn applied_migrations_digest_up_to(pool: &PgPool, up_to_version: SchemaVersion) -> Result<MigrationsDigest, SchemaContractError> {
+/// The digest of a tenant's actually-applied migrations between `from_version`
+/// and `up_to_version` inclusive, as `_sqlx_migrations` itself records them.
+///
+/// The lower bound names the migration set: rows below it were applied by
+/// another set sharing the same table (see [`reconcile_upgrade`]).
+async fn applied_migrations_digest_between(
+    pool: &PgPool,
+    from_version: SchemaVersion,
+    up_to_version: SchemaVersion,
+) -> Result<MigrationsDigest, SchemaContractError> {
     let rows = sqlx::query(
         r#"
         SELECT version, description, checksum
         FROM _sqlx_migrations
-        WHERE success AND version <= $1
+        WHERE success AND version >= $1 AND version <= $2
         ORDER BY version
         "#,
     )
+    .bind(i64::from(from_version.get()))
     .bind(i64::from(up_to_version.get()))
     .fetch_all(pool)
     .await?;
