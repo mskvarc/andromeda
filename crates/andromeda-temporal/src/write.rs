@@ -4,6 +4,7 @@ use crate::{
     error::TemporalError,
     port::mutator::TemporalDeleteScope,
     service::{CreateOrUpdateResult, TemporalService, iri_short_name},
+    unit_code_admission::{validate_entity_unit_code_admission, validate_instance_unit_code_admission},
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
@@ -22,6 +23,7 @@ impl TemporalService {
     pub async fn create_or_update(&self, mut payload: Value, context: &ContextSpec) -> Result<CreateOrUpdateResult, TemporalError> {
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
+        validate_entity_unit_code_admission(&expanded)?;
         let entity_id = {
             let entity_obj = expanded
                 .as_array()
@@ -80,6 +82,7 @@ impl TemporalService {
 
         normalize_entity_attributes(&mut payload);
         let expanded = self.engine.expand(payload, context).await?;
+        validate_entity_unit_code_admission(&expanded)?;
         self.add_attrs_internal(entity_id, Arc::new(expanded)).await?;
         Ok(())
     }
@@ -214,6 +217,7 @@ impl TemporalService {
 
         let expanded = self.engine.expand(payload, context).await?;
         let instance_value = expanded.as_array().and_then(|arr| arr.first()).cloned().unwrap_or(expanded); // clone: extracting first element from array requires owned value; original consumed by unwrap_or
+        validate_instance_unit_code_admission(attr_iri.as_str(), &instance_value)?;
 
         self.mutator.update_instance(instance, entity_id, &attr_iri, &instance_value).await
     }

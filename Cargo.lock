@@ -90,6 +90,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
+ "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-query",
@@ -168,6 +169,7 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
  "andromeda-postgresql-atomic-write",
+ "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-encoding",
@@ -1090,6 +1092,7 @@ dependencies = [
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
+ "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
  "andromeda-postgresql-query",
@@ -1105,6 +1108,22 @@ dependencies = [
  "strum",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-postgresql-attribute-dictionary"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-query",
+ "async-trait",
+ "dashmap",
+ "pretty_assertions",
+ "serde",
+ "sqlx",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -1156,6 +1175,7 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
+ "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
@@ -1169,7 +1189,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "confique",
- "dashmap",
  "derive_more",
  "hex",
  "iri-rs",
@@ -1219,7 +1238,6 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-postgresql-encoding",
  "andromeda-unit-catalog",
- "async-trait",
  "chrono",
  "derive_more",
  "iri-rs",
@@ -1263,6 +1281,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-query",

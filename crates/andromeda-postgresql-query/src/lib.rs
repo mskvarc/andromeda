@@ -25,7 +25,6 @@
 
 pub mod attribute_instance_correlation;
 pub mod attribute_name_id;
-pub mod attribute_name_lookup;
 pub mod bind;
 pub mod built;
 pub mod column_reference;

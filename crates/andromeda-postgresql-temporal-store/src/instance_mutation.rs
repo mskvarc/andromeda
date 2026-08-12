@@ -9,12 +9,19 @@
 
 use crate::{
     attribute_instance::{collect_metadata, detect_attribute_type, extract_observed_at},
+    attribute_kind_code::stored_attribute_kind,
     attribute_value::{AttributeValue, HistoryValueColumns, extract_attribute_value},
     error::TemporalStoreError,
     repo::TemporalRepository,
     unit_code_metadata::take_unit_code,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_family::InstanceFamily, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    instance_family::InstanceFamily,
+    instance_identity::InstanceIdentity,
+    uri::Uri,
+};
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
@@ -56,6 +63,7 @@ impl TemporalRepository {
     /// until that sweep runs, whereas guessing wrong and releasing early would
     /// corrupt replay identity for every sibling row still pointing at it.
     pub(crate) async fn delete_instance(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalStoreError> {
+        let mut tx = self.pool.begin().await?;
         let statement = match instance {
             InstanceIdentity::Generated(uuid) => sqlx::query(DELETE_GENERATED_INSTANCE_SQL).bind(uuid),
             InstanceIdentity::Verbatim(identifier) => sqlx::query(DELETE_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
@@ -63,12 +71,25 @@ impl TemporalRepository {
         let deleted = statement
             .bind(entity_id.as_str())
             .bind(attribute_name.as_str())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?
             .rows_affected();
         if deleted == 0 {
             return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
         }
+        // A broker-minted identifier never claims a row in the first place
+        // (`duplicate_instance_claim`), so only a verbatim one has a claim to
+        // release. Releasing it here is what lets a client reuse the
+        // `instanceId` of an instance it has just deleted.
+        if let InstanceIdentity::Verbatim(identifier) = instance {
+            sqlx::query(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL)
+                .bind(identifier.as_str())
+                .bind(entity_id.as_str())
+                .bind(attribute_name.as_str())
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -98,6 +119,7 @@ impl TemporalRepository {
             .bind(state.observed_at)
             .bind(state.metadata.as_ref())
             .bind(state.unit_code_id.map(UnitCodeId::get))
+            .bind(stored_attribute_kind(state.attribute_type).code())
             .execute(&self.pool)
             .await?
             .rows_affected();
@@ -144,6 +166,14 @@ struct UpdateInstanceState {
     /// The value shape the stored row declares, which the history table
     /// constrains to agree with the column the value lands in.
     value_kind: ValueKind,
+    /// The attribute family detected from the replacement instance.
+    ///
+    /// Clause 5.6.14 defines instance PATCH as replacement by the supplied
+    /// complete fragment, so a replacement that changes family must move the
+    /// stored `attribute_kind` along with the value columns: retaining it
+    /// here is what lets the update statement keep the two in agreement
+    /// rather than rendering the old family over the new value shape.
+    attribute_type: AttributeType,
 }
 
 /// Decode one expanded instance into owned PostgreSQL update state.
@@ -160,6 +190,7 @@ fn build_update_instance_state(expanded: &Value) -> Result<UpdateInstanceState, 
         unit_code_id,
         observed_at,
         value_kind,
+        attribute_type,
     })
 }
 
@@ -205,6 +236,17 @@ const DELETE_VERBATIM_INSTANCE_SQL: &str = concatcp!(
     ")"
 );
 
+/// Free the `(entity, attribute, verbatim instanceId)` claim a deleted
+/// instance held, so a future write may reuse the identifier (clause 4.5.7
+/// does not reserve a deleted instance's identity forever).
+const RELEASE_VERBATIM_INSTANCE_CLAIM_SQL: &str = r#"
+DELETE FROM attribute_history_instance_claims c
+USING temporal_entities te, attribute_names an
+WHERE c.verbatim_instance_id = $1
+  AND c.temporal_entity_key = te.entity_key AND te.id = $2
+  AND c.attribute_name_id = an.id AND an.name = $3
+"#;
+
 /// Value columns, declared shape, and the modification instant of one instance.
 ///
 /// `modified_at` is the NGSI-LD `modifiedAt` axis (clause 4.8), which a
@@ -215,6 +257,12 @@ const DELETE_VERBATIM_INSTANCE_SQL: &str = concatcp!(
 /// `$5` is the value's decimal literal, cast to the column's arbitrary-precision
 /// type: a number that has no exact double is stored by a modification exactly
 /// as a creation stores it.
+///
+/// `attribute_kind` is set alongside the value columns rather than left as it
+/// was: clause 5.6.14 defines this operation as replacement by the supplied
+/// complete fragment, and a replacement that changes family must move the
+/// row's declared family with it, or the row would render under its old
+/// family while storing the new family's value shape.
 const UPDATE_INSTANCE_ASSIGNMENTS: &str = r#"
 UPDATE attribute_history
 SET value_kind = $4,
@@ -228,6 +276,7 @@ SET value_kind = $4,
     observed_at = $12,
     metadata = $13,
     unit_code_id = $14,
+    attribute_kind = $15,
     modified_at = NOW()
 "#;
 
@@ -272,6 +321,7 @@ mod tests {
         instance_mutation::{
             DELETE_GENERATED_INSTANCE_SQL,
             DELETE_VERBATIM_INSTANCE_SQL,
+            RELEASE_VERBATIM_INSTANCE_CLAIM_SQL,
             SELECT_GENERATED_INSTANCE_SQL,
             SELECT_VERBATIM_INSTANCE_SQL,
             UPDATE_GENERATED_INSTANCE_SQL,
@@ -320,12 +370,38 @@ mod tests {
         }
     }
 
+    /// Clause 5.6.14 defines instance PATCH as replacement by the supplied
+    /// complete fragment: a replacement that changes attribute family must
+    /// move `attribute_kind` along with the value columns, or the row would
+    /// keep rendering under its old family while storing the new family's
+    /// value shape.
+    #[test]
+    fn a_modification_updates_the_stored_attribute_kind_alongside_the_value_columns() {
+        for statement in [UPDATE_GENERATED_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL] {
+            assert!(statement.contains("attribute_kind = $15"), "{statement}");
+            assert!(statement.contains("value_kind = $4"), "{statement}");
+        }
+    }
+
     #[test]
     fn a_deletion_removes_the_row_rather_than_recording_a_tombstone() {
         for statement in [DELETE_GENERATED_INSTANCE_SQL, DELETE_VERBATIM_INSTANCE_SQL] {
             assert!(statement.starts_with("DELETE FROM attribute_history"));
             assert!(!statement.contains("deleted_at"));
         }
+    }
+
+    /// Deleting a verbatim instance must free the identifier it claimed, or a
+    /// client could never reuse an `instanceId` it had already removed.
+    /// Resolved through the same entity-and-attribute scope every other
+    /// verbatim statement here uses, not through `stream_id`, since the claim
+    /// table carries no stream column.
+    #[test]
+    fn a_verbatim_deletion_releases_the_instance_claim_it_held() {
+        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("DELETE FROM attribute_history_instance_claims"));
+        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("c.verbatim_instance_id = $1"));
+        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("te.id = $2"));
+        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("an.name = $3"));
     }
 
     /// The value column is `NUMERIC`, and the statement binds its decimal

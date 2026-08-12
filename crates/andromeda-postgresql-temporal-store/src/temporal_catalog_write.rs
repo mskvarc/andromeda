@@ -45,9 +45,13 @@ impl TemporalRepository {
         if upsert.streams.is_empty() {
             return Ok(HashMap::new());
         }
+        // Resolved on this transaction's own connection: a stream row references
+        // its attribute's dictionary key, so the key has to be part of the same
+        // write, and taking a second pooled connection while holding this one
+        // would put the write at the mercy of the pool's remaining capacity.
         let name_to_id = self
             .attribute_names
-            .resolve_or_create(&distinct_attribute_names(&upsert.streams))
+            .resolve_or_create(tx, &distinct_attribute_names(&upsert.streams))
             .await
             .map_err(|error| TemporalStoreError::AttributeLookup(error.to_string()))?;
         let binds = stream_binds(&upsert.streams, &name_to_id)?;

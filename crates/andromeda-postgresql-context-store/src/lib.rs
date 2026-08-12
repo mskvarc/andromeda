@@ -8,8 +8,6 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-/// Shared `attribute_names` dictionary cache.
-pub mod attribute_names;
 /// Active PostgreSQL-family component discovery.
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.
@@ -20,8 +18,6 @@ pub mod csource_registration;
 pub mod csource_subscription;
 /// The current-state projection of the attribute instances entities hold.
 pub mod current_attribute_values;
-/// The bound on how large one tenant's attribute-name dictionary may grow.
-pub mod dictionary_growth;
 /// Persistence layer for NGSI-LD entities.
 pub mod entity;
 /// The contract between a domain enum and the PostgreSQL enum it is stored as.
@@ -65,6 +61,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
+        "andromeda-postgresql-attribute-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-encoding",

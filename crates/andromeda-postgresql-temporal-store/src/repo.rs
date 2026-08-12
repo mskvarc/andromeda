@@ -1,7 +1,7 @@
 //! Connection and capability holder for the PostgreSQL temporal repository.
 
 use crate::bulk_write_mode::BulkWriteMode;
-use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 

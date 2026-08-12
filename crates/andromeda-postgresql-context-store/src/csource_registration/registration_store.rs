@@ -4,12 +4,12 @@ use crate::csource_registration::{information_projection::replace_registration_i
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
     statement as csr_sql,
 };
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
-use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,

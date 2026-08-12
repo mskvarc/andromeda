@@ -19,7 +19,7 @@ use crate::{
     stored_history::{stored_history, temporal_catalog_rows},
     unique_id,
 };
-use andromeda_postgresql_context_store::attribute_names::AttributeNameCache;
+use andromeda_postgresql_attribute_dictionary::attribute_name_cache::AttributeNameCache;
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
     repo::TemporalRepository,

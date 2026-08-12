@@ -104,7 +104,7 @@ pub fn attribute_instance_family(expanded: &Value, attr: &AttributeName, dataset
 ///
 /// Clause 4.5.2 makes `Property` the family of an attribute that declares none,
 /// which is also what an instance carrying an unrecognised `@type` amounts to.
-fn declared_attribute_type(instance: &Value) -> AttributeType {
+pub(crate) fn declared_attribute_type(instance: &Value) -> AttributeType {
     instance
         .get("@type")
         .and_then(Value::as_array)

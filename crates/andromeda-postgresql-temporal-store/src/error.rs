@@ -1,6 +1,6 @@
 //! Error types for the temporal store crate.
 
-use crate::unit_code_metadata::UnitCodeMetadataError;
+use crate::{duplicate_instance_claim::DuplicateInstanceClaimError, unit_code_metadata::UnitCodeMetadataError};
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_ngsi_ld_model::attribute::json_number::JsonNumberError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
@@ -50,6 +50,10 @@ pub enum TemporalStoreError {
     /// The requested aggregate would have spanned inputs that do not share a meaning.
     #[error("temporal store aggregation: {0}")]
     MixedAggregationGroup(#[from] MixedAggregationGroup),
+    /// A client-supplied `instanceId` claimed more than one attribute instance
+    /// of the same attribute at once.
+    #[error("temporal store instance claim: {0}")]
+    DuplicateInstanceClaim(#[from] DuplicateInstanceClaimError),
 }
 
 impl From<TemporalStoreError> for TemporalError {
@@ -71,6 +75,9 @@ impl From<TemporalStoreError> for TemporalError {
             // carry is a property of the request, so an aggregate spanning
             // several of them is refused as client input.
             TemporalStoreError::MixedAggregationGroup(_) => TemporalError::validation(error.to_string()),
+            // Two instances claiming the same instanceId is a conflict in the
+            // client's own write, not a broker malfunction (clause 4.5.7).
+            TemporalStoreError::DuplicateInstanceClaim(_) => TemporalError::validation(error.to_string()),
             TemporalStoreError::Database(_)
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)

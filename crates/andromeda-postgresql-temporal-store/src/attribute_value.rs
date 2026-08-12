@@ -352,18 +352,15 @@ mod tests {
     }
 
     #[test]
-    fn a_sub_microsecond_datetime_is_truncated_before_it_reaches_the_column() {
+    fn a_sub_microsecond_datetime_is_rejected_rather_than_truncated() {
         let instance = serde_json::json!({
             expanded_properties::VALUE.as_str(): [{
                 "@value": "2026-07-25T10:00:00.1234569Z",
                 "@type": expanded_classes::DATE_TIME.as_str(),
             }]
         });
-        let columns = extract_attribute_value(&instance, AttributeType::Property)
-            .expect("a sub-microsecond datetime property")
-            .into_columns();
-        let stored = columns.value_datetime.expect("the datetime column is populated");
-        pretty_assertions::assert_eq!(stored.timestamp_subsec_nanos(), 123_456_000);
+        let error = extract_attribute_value(&instance, AttributeType::Property).expect_err("a datetime with more than microsecond precision is rejected");
+        assert!(matches!(error, TemporalStoreError::TimestampPrecision(_)), "got {error:?}");
     }
 
     #[test]

@@ -16,13 +16,14 @@
 use crate::commit_refusal::{persistence, unit_code};
 use andromeda_context_commit::error::CommitError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::current_attribute_values::{
     delete::delete_instances_in_tx,
     row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
     upsert::upsert_projection_in_tx,
 };
-use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, attribute_name_lookup::AttributeNameLookup};
+use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use andromeda_postgresql_temporal_store::{attribute_kind_code::stored_attribute_kind, unit_code_metadata::unit_code_in};
 use andromeda_temporal::append_intent::{TemporalAppendEntry, TemporalAppendIntent};
 use sqlx::{Postgres, Transaction};
@@ -60,7 +61,7 @@ pub(crate) async fn apply(
         return Ok(());
     }
 
-    let dictionary = resolve_dictionary(&projected, attribute_names).await?;
+    let dictionary = resolve_dictionary(tx, &projected, attribute_names).await?;
     let mut work = ProjectionWork::default();
     for (intent, entity_key) in &projected {
         collect(&mut work, intent, *entity_key, &dictionary)?;
@@ -78,8 +79,11 @@ pub(crate) async fn apply(
 /// Mint the dictionary key of every attribute the projected intents name.
 ///
 /// Creating rather than looking up: an attribute recorded for the first time
-/// has no key yet, and the projection's foreign key demands one.
+/// has no key yet, and the projection's foreign key demands one. Minted in the
+/// commit's own transaction, so a key exists exactly when the projected row that
+/// references it does.
 async fn resolve_dictionary(
+    tx: &mut Transaction<'_, Postgres>,
     projected: &[(&TemporalAppendIntent, EntityKey)],
     attribute_names: &dyn AttributeNameLookup,
 ) -> Result<HashMap<AttributeName, AttributeNameId>, CommitError> {
@@ -96,7 +100,7 @@ async fn resolve_dictionary(
     names.sort_unstable();
     names.dedup();
     let names = names;
-    attribute_names.resolve_or_create(&names).await.map_err(persistence)
+    attribute_names.resolve_or_create(tx, &names).await.map_err(persistence)
 }
 
 /// Turn one intent's entries into the projection work they describe.

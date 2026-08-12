@@ -141,3 +141,38 @@ CREATE INDEX idx_attribute_history_stream_verbatim_instance
 CREATE INDEX idx_attribute_history_value_geo
     ON attribute_history USING GIST (value_geo)
     WHERE value_geo IS NOT NULL;
+
+-- ----------------------------------------------------------------------------
+-- Verbatim instanceId uniqueness
+-- ----------------------------------------------------------------------------
+-- Clause 4.5.7 makes a client-supplied `instanceId` unique to one attribute
+-- instance of one attribute, on whichever `datasetId` stream carries it. The
+-- natural expression -- a unique index on `attribute_history` over
+-- `(temporal_entity_key, attribute_name_id, verbatim_instance_id)` -- cannot be
+-- built: `attribute_history` is a hypertable partitioned on `recorded_at`, and
+-- TimescaleDB refuses a unique index that omits the partitioning column, since
+-- per-chunk indexes cannot otherwise see a duplicate landing in a different
+-- chunk. Including `recorded_at` in the index would not fix that either --
+-- every write stamps its own wall-clock instant, so two rows claiming the same
+-- instanceId at different moments would still both pass it.
+--
+-- The invariant is therefore carried on an ordinary table instead, keyed by
+-- entity and attribute rather than by stream, because clause 4.5.7 does not
+-- scope `instanceId` to one `datasetId`: two sibling streams of the same
+-- attribute claiming the same instanceId is exactly the collision this table
+-- exists to refuse, not two independent identities that happen to collide.
+-- `idx_attribute_history_stream_verbatim_instance` above remains a lookup
+-- index only and carries no uniqueness of its own.
+--
+-- A row here is staked when a history row carrying a verbatim instanceId is
+-- written and freed when that row is removed -- by the dedup delete that
+-- precedes a replacing write, or by instance DELETE (clause 5.6.15). Neither
+-- path touches this table for a broker-minted identifier, which is unique by
+-- construction and never claims a row.
+CREATE TABLE attribute_history_instance_claims (
+    temporal_entity_key BIGINT NOT NULL REFERENCES temporal_entities(entity_key) ON DELETE CASCADE,
+    attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
+    verbatim_instance_id TEXT COLLATE "C" NOT NULL,
+    CONSTRAINT pk_attribute_history_instance_claims
+        PRIMARY KEY (temporal_entity_key, attribute_name_id, verbatim_instance_id)
+);

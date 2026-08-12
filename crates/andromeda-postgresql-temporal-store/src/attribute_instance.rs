@@ -5,7 +5,7 @@
 //! as metadata. This module owns which key is which.
 
 use crate::error::TemporalStoreError;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, ngsi_ld_date_time::NgsiLdDateTime};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
@@ -28,20 +28,20 @@ pub fn detect_attribute_type(instance: &Value) -> AttributeType {
 }
 
 /// The instance's validated `observedAt`, if it declares one.
+///
+/// Parsing is routed through [`NgsiLdDateTime`] so `observedAt` is held to the
+/// same clause 4.6.3 strict-UTC, six-fractional-digit policy as every other
+/// client-supplied `DateTime`, rather than accepting whatever `chrono`'s bare
+/// RFC 3339 parser admits.
 pub fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, TemporalStoreError> {
-    let raw = instance
+    instance
         .get(expanded_properties::OBSERVED_AT.as_str())
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|obj| obj.get("@value"))
         .and_then(|v| v.as_str())
-        .map(str::to_owned);
-    raw.map(|value| {
-        DateTime::parse_from_rfc3339(&value)
-            .map(|timestamp| timestamp.with_timezone(&Utc))
-            .map_err(|error| TemporalStoreError::Validation(format!("Invalid observedAt '{value}': {error}")))
-    })
-    .transpose()
+        .map(|raw| raw.parse::<NgsiLdDateTime>().map(NgsiLdDateTime::get).map_err(TemporalStoreError::from))
+        .transpose()
 }
 
 /// Whether the key is stored in a dedicated column instead of the metadata blob.

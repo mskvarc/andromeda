@@ -1,30 +1,41 @@
 //! The NGSI-LD `DateTime` lexical form at the broker's declared precision (ETSI GS CIM 009 clause 4.6.3).
 //!
-//! Clause 4.6.3 defines `DateTime` as an IETF RFC 3339 timestamp, which admits
-//! an unbounded number of fractional-second digits and an unbounded year. Neither
-//! is storable: PostgreSQL `TIMESTAMPTZ` resolves to microseconds and spans
-//! `4713-01-01 BC` to `294276 AD`, and it rounds finer input on ingestion without
-//! the broker ever deciding that.
+//! Clause 4.6.3 defines `DateTime` as an IETF RFC 3339 timestamp restricted to
+//! UTC: the trailing zone designator "shall always be equal to the character
+//! 'Z'", and the fractional-second part carries "up to a maximum of six"
+//! digits. [`NgsiLdDateTime`] enforces both restrictions on parsed input
+//! rather than silently reinterpreting it: a non-`Z` offset and more than six
+//! fractional digits are each refused with their own typed error instead of
+//! being normalised or truncated. Clause 4.6.3 also carries a compatibility
+//! note accepting a comma in place of the dot as the decimal separator; a
+//! client-supplied comma is accepted and rewritten to the canonical dot
+//! before parsing, so the value the broker stores and renders is always
+//! dot-separated.
 //!
-//! [`NgsiLdDateTime`] is where the broker decides instead. Microsecond resolution
-//! is Andromeda's declared temporal precision: a value carrying finer fractional
-//! digits is truncated here, in Rust, under that documented policy, so the value
-//! the broker stores is the value it renders and compares. Truncation discards the
-//! sub-microsecond remainder rather than rounding to the nearest microsecond, so
-//! the normalised instant is never later than the instant supplied and normalising
-//! an already-normalised value changes nothing. An instant outside the storable
-//! range is refused with [`NgsiLdDateTimeError::OutOfRange`] rather than being
-//! clamped.
+//! PostgreSQL `TIMESTAMPTZ` resolves to microseconds and spans `4713-01-01 BC`
+//! to `294276 AD`, narrower than clause 4.6.3's own unbounded year range. An
+//! instant outside that storable range is refused with
+//! [`NgsiLdDateTimeError::OutOfRange`] rather than clamped.
+//!
+//! [`NgsiLdDateTime::normalise`] additionally truncates a Rust-native instant
+//! — such as the broker's own write clock — to microsecond resolution. That
+//! path never sees client-supplied lexical text, so it is not a relaxation of
+//! the six-digit limit parsing enforces above; it exists because a value the
+//! broker itself mints can carry nanosecond resolution that the storage
+//! column cannot hold.
 //!
 //! The policy and its consequences are set out in `docs/timestamp-precision.md`.
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, SecondsFormat, Timelike, Utc, format::ParseErrorKind};
 use derive_more::{AsRef, Deref, Display};
-use std::str::FromStr;
+use std::{borrow::Cow, str::FromStr};
 use thiserror::Error;
 
-/// The number of nanoseconds in one microsecond, the resolution everything below truncates to.
+/// The number of nanoseconds in one microsecond, the resolution [`NgsiLdDateTime::normalise`] truncates to.
 const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
+
+/// The maximum number of fractional-second digits clause 4.6.3 admits.
+const MAX_FRACTIONAL_DIGITS: usize = 6;
 
 /// The proleptic Gregorian calendar date of Julian day zero, as `(year, month, day)`.
 ///
@@ -34,7 +45,7 @@ const NANOSECONDS_PER_MICROSECOND: u32 = 1_000;
 /// beyond it never survives parsing.
 const JULIAN_DAY_ZERO: (i32, u32, u32) = (-4713, 11, 24);
 
-/// Errors raised when a `DateTime` value cannot be accepted at microsecond resolution.
+/// Errors raised when a `DateTime` value cannot be accepted under the clause 4.6.3 policy.
 #[derive(Debug, Error)]
 pub enum NgsiLdDateTimeError {
     /// The text is not an RFC 3339 timestamp.
@@ -49,14 +60,27 @@ pub enum NgsiLdDateTimeError {
         /// The rejected text.
         value: String,
     },
+    /// The text carries a zone designator other than the literal `Z` character.
+    #[error("NGSI-LD DateTime value does not use the mandatory 'Z' UTC designator: {value}")]
+    NonUtcOffset {
+        /// The rejected text.
+        value: String,
+    },
+    /// The text carries more than six fractional-second digits.
+    #[error("NGSI-LD DateTime value carries more than six fractional-second digits: {value}")]
+    TooManyFractionalDigits {
+        /// The rejected text.
+        value: String,
+    },
 }
 
-/// An NGSI-LD `DateTime` normalised to the broker's microsecond precision.
+/// An NGSI-LD `DateTime` accepted under the broker's strict clause 4.6.3 policy.
 ///
-/// A value of this type is known to be storable and to carry no fractional digits
-/// finer than a microsecond, so persisting it and rendering it yield the same
-/// instant. [`Display`] renders it as RFC 3339 in UTC with six fractional digits,
-/// which is the lexical form at exactly the resolution the value holds.
+/// A value of this type is known to be storable, to carry the literal `Z` UTC
+/// designator, and to carry no more than six fractional digits, so persisting
+/// it and rendering it yield the same instant. [`Display`] renders it as RFC
+/// 3339 in UTC with six fractional digits, which is the canonical lexical
+/// form at exactly the resolution the value holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, AsRef, Deref, Display)]
 #[display("{}", _0.to_rfc3339_opts(SecondsFormat::Micros, true))]
 pub struct NgsiLdDateTime(DateTime<Utc>);
@@ -69,8 +93,10 @@ impl NgsiLdDateTime {
 
     /// Normalise an already-typed instant to microsecond resolution.
     ///
-    /// This is the same policy the parser applies, reached from a `chrono` value
-    /// rather than from lexical text.
+    /// This truncates a Rust-native instant — one the broker minted itself
+    /// rather than parsed from client text — to the storable resolution. It
+    /// is not reachable from [`FromStr`], which refuses rather than truncates
+    /// finer client-supplied precision.
     ///
     /// # Errors
     ///
@@ -94,24 +120,35 @@ impl NgsiLdDateTime {
     }
 }
 
-// Validating parser: the RFC 3339 grammar, the microsecond truncation policy and
-// the storable-range check are three steps no derive expresses, and the
-// `derive_more::FromStr` a newtype would otherwise get delegates to the inner
-// type's parser, which applies none of them.
+// Validating parser: the RFC 3339 grammar, the comma compatibility rewrite,
+// the mandatory-`Z` and six-digit precision checks, and the storable-range
+// check are steps no derive expresses, and the `derive_more::FromStr` a
+// newtype would otherwise get delegates to the inner type's parser, which
+// applies none of them.
 impl FromStr for NgsiLdDateTime {
     type Err = NgsiLdDateTimeError;
 
     fn from_str(value: &str) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
+        let candidate = accept_comma_decimal_separator(value)?;
+        if fractional_digit_count(&candidate).is_some_and(|count| count > MAX_FRACTIONAL_DIGITS) {
+            return Err(NgsiLdDateTimeError::TooManyFractionalDigits { value: value.to_string() });
+        }
         // `chrono` refuses a year beyond its own ceiling as a parse failure, so a
         // lexically valid timestamp that overflows is reported as out of range
         // rather than as malformed text.
-        let parsed = DateTime::parse_from_rfc3339(value).map_err(|error| {
+        let parsed = DateTime::parse_from_rfc3339(&candidate).map_err(|error| {
             if error.kind() == ParseErrorKind::OutOfRange {
                 NgsiLdDateTimeError::OutOfRange { value: value.to_string() }
             } else {
                 NgsiLdDateTimeError::Malformed { value: value.to_string() }
             }
         })?;
+        // Clause 4.6.3 requires the literal `Z` character; `+00:00` and every
+        // other numeric offset name the same instant but are not that
+        // character, so both are refused rather than accepted as synonyms.
+        if !candidate.ends_with('Z') {
+            return Err(NgsiLdDateTimeError::NonUtcOffset { value: value.to_string() });
+        }
         NgsiLdDateTime::normalise(parsed.with_timezone(&Utc)).map_err(|_| NgsiLdDateTimeError::OutOfRange { value: value.to_string() })
     }
 }
@@ -124,6 +161,26 @@ impl TryFrom<String> for NgsiLdDateTime {
     fn try_from(value: String) -> Result<NgsiLdDateTime, NgsiLdDateTimeError> {
         value.parse()
     }
+}
+
+/// Rewrite a client-supplied comma decimal separator to the canonical dot.
+///
+/// Clause 4.6.3 carries a compatibility note accepting a comma in requests.
+/// Exactly one comma is the form that note describes; text with more than one
+/// comma can never be a valid timestamp either way, so it is reported as
+/// malformed rather than silently collapsed.
+fn accept_comma_decimal_separator(value: &str) -> Result<Cow<'_, str>, NgsiLdDateTimeError> {
+    match value.matches(',').count() {
+        0 => Ok(Cow::Borrowed(value)),
+        1 => Ok(Cow::Owned(value.replacen(',', ".", 1))),
+        _ => Err(NgsiLdDateTimeError::Malformed { value: value.to_string() }),
+    }
+}
+
+/// Count the fractional-second digits in a dot-normalised candidate, if it declares any.
+fn fractional_digit_count(candidate: &str) -> Option<usize> {
+    let (_, after_dot) = candidate.split_once('.')?;
+    Some(after_dot.chars().take_while(char::is_ascii_digit).count())
 }
 
 /// Discard the sub-microsecond remainder of an instant.
@@ -175,34 +232,41 @@ mod tests {
     }
 
     #[test]
-    fn sub_microsecond_digits_are_truncated_rather_than_rounded() {
-        // Rounding would carry .1234569 up to .123457; the declared policy is to
-        // discard the remainder, so the stored instant is never later than the
-        // one supplied.
-        let parsed: NgsiLdDateTime = "2026-07-25T10:00:00.1234569Z".parse().expect("a sub-microsecond timestamp");
-        pretty_assertions::assert_eq!(parsed.get().nanosecond(), 123_456_000);
-        pretty_assertions::assert_eq!(parsed.to_string(), "2026-07-25T10:00:00.123456Z");
+    fn seven_fractional_digits_are_rejected_rather_than_rounded() {
+        // Rounding would carry .1234569 up to .123457; the strict policy is to
+        // refuse the extra digit rather than reinterpret the value.
+        let error = "2026-07-25T10:00:00.1234569Z"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("seven fractional digits exceed clause 4.6.3");
+        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
     }
 
     #[test]
-    fn a_full_nanosecond_timestamp_loses_exactly_its_last_three_digits() {
-        let parsed: NgsiLdDateTime = "1970-01-01T00:00:00.999999999Z".parse().expect("a nanosecond timestamp");
+    fn a_full_nanosecond_timestamp_is_rejected() {
+        let error = "1970-01-01T00:00:00.999999999Z"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("nine fractional digits exceed clause 4.6.3");
+        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+    }
+
+    #[test]
+    fn seven_fractional_digits_before_the_epoch_are_also_rejected() {
+        let error = "1969-12-31T23:59:59.0000005Z"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("seven fractional digits exceed clause 4.6.3 regardless of sign");
+        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+    }
+
+    #[test]
+    fn exactly_six_fractional_digits_is_the_accepted_maximum() {
+        let parsed: NgsiLdDateTime = "2026-07-25T10:00:00.999999Z".parse().expect("six fractional digits is the declared maximum");
         pretty_assertions::assert_eq!(parsed.get().nanosecond(), 999_999_000);
     }
 
     #[test]
-    fn truncation_before_the_epoch_also_moves_the_instant_earlier() {
-        // The nanosecond field is non-negative on both sides of the epoch, so a
-        // pre-epoch value truncates in the same direction as a later one.
-        let parsed: NgsiLdDateTime = "1969-12-31T23:59:59.0000005Z".parse().expect("a pre-epoch timestamp");
-        pretty_assertions::assert_eq!(parsed.get().nanosecond(), 0);
-        pretty_assertions::assert_eq!(parsed.to_string(), "1969-12-31T23:59:59.000000Z");
-    }
-
-    #[test]
     fn normalising_an_already_normalised_value_changes_nothing() {
-        let once: NgsiLdDateTime = "2026-07-25T10:00:00.1234569Z".parse().expect("a sub-microsecond timestamp");
-        let twice = NgsiLdDateTime::normalise(once.get()).expect("an already-truncated instant stays storable");
+        let once: NgsiLdDateTime = "2026-07-25T10:00:00.123456Z".parse().expect("a microsecond timestamp");
+        let twice = NgsiLdDateTime::normalise(once.get()).expect("an already-normalised instant stays storable");
         pretty_assertions::assert_eq!(once, twice);
     }
 
@@ -249,9 +313,48 @@ mod tests {
     }
 
     #[test]
-    fn a_non_utc_offset_is_normalised_to_utc() {
-        let parsed: NgsiLdDateTime = "2026-07-25T12:00:00.5+02:00".parse().expect("an offset timestamp");
-        pretty_assertions::assert_eq!(parsed.to_string(), "2026-07-25T10:00:00.500000Z");
+    fn a_non_utc_offset_is_rejected() {
+        // Clause 4.6.3: the trailing zone "shall always be equal to the
+        // character 'Z'". A numeric offset names a valid RFC 3339 instant but
+        // is not that character, so it is refused rather than normalised.
+        let error = "2026-07-25T12:00:00.5+02:00".parse::<NgsiLdDateTime>().expect_err("a non-Z offset is rejected");
+        assert!(matches!(error, NgsiLdDateTimeError::NonUtcOffset { .. }), "got {error:?}");
+    }
+
+    #[test]
+    fn a_plus_zero_offset_is_rejected_even_though_it_names_utc() {
+        // `+00:00` names the same instant as `Z` but is not the literal
+        // character the clause mandates.
+        let error = "2026-07-25T12:00:00+00:00"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("+00:00 is not the literal Z designator");
+        assert!(matches!(error, NgsiLdDateTimeError::NonUtcOffset { .. }), "got {error:?}");
+    }
+
+    #[test]
+    fn a_comma_decimal_separator_is_accepted_and_rendered_with_a_dot() {
+        // Clause 4.6.3's compatibility note accepts a comma in requests; the
+        // canonical rendering stays dot-separated regardless of what the
+        // client sent.
+        let parsed: NgsiLdDateTime = "2026-07-25T10:00:00,123456Z".parse().expect("a comma decimal separator is accepted");
+        pretty_assertions::assert_eq!(parsed.to_string(), "2026-07-25T10:00:00.123456Z");
+        pretty_assertions::assert_eq!(parsed.get().nanosecond(), 123_456_000);
+    }
+
+    #[test]
+    fn a_comma_decimal_separator_still_enforces_the_six_digit_limit() {
+        let error = "2026-07-25T10:00:00,1234567Z"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("seven digits exceed clause 4.6.3 whichever separator was used");
+        assert!(matches!(error, NgsiLdDateTimeError::TooManyFractionalDigits { .. }), "got {error:?}");
+    }
+
+    #[test]
+    fn more_than_one_comma_is_malformed() {
+        let error = "2026-07-25T10:00:00,12,3456Z"
+            .parse::<NgsiLdDateTime>()
+            .expect_err("two commas cannot spell one decimal separator");
+        assert!(matches!(error, NgsiLdDateTimeError::Malformed { .. }), "got {error:?}");
     }
 
     #[test]

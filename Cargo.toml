@@ -47,6 +47,7 @@ andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representa
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-notification = { path = "crates/andromeda-notification" }
 andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
+andromeda-postgresql-attribute-dictionary = { path = "crates/andromeda-postgresql-attribute-dictionary" }
 andromeda-postgresql-codes = { path = "crates/andromeda-postgresql-codes" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
@@ -110,6 +111,7 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-notification.workspace = true
+andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-query.workspace = true

@@ -21,9 +21,9 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::entity::{copy::create_batch_via_copy_in_tx, repo::EntityRepository, written_entity::WrittenEntity};
-use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
 use andromeda_temporal::append_intent::TemporalAppendIntent;
 use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};

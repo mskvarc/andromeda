@@ -51,6 +51,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
         "andromeda-postgresql-atomic-write",
+        "andromeda-postgresql-attribute-dictionary",
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-encoding",

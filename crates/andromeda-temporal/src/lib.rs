@@ -22,6 +22,7 @@ mod read;
 pub mod remote_linked;
 pub mod scope_observation;
 pub mod service;
+mod unit_code_admission;
 mod write;
 
 #[cfg(test)]

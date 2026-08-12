@@ -10,14 +10,17 @@
 //! Widening the dictionary key to `INTEGER` removed the 32,767-entry ceiling
 //! that used to cap that inflation by accident. This module replaces the
 //! accident with a stated policy: a per-tenant bound, refused as a typed error
-//! rather than as a key-space exhaustion, and an observable count of how many
-//! names the process has actually created.
+//! rather than as a key-space exhaustion.
+//!
+//! The bound is decided against the dictionary's own size, read inside the
+//! transaction that is about to mint names. Nothing in this process tallies how
+//! much of the bound has been taken: names are minted inside a caller's
+//! transaction and a rollback takes them away again, so a process-side tally
+//! would count creations the database never kept, and would refuse later writes
+//! on the strength of writes that never happened.
 
 use serde::{Deserialize, Serialize};
-use std::{
-    num::NonZeroU32,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::num::NonZeroU32;
 
 /// Upper bound on the number of distinct attribute IRIs one tenant's
 /// `attribute_names` dictionary may hold.
@@ -51,6 +54,42 @@ impl DictionaryNameLimit {
     pub const fn get(self) -> u32 {
         self.0.get()
     }
+
+    /// Decide whether `requested` new names may be added to a dictionary that
+    /// already holds `existing` of them.
+    ///
+    /// A request is admitted or refused whole: partially minting a batch would
+    /// leave the write path holding names for some of an Entity's attributes
+    /// and not others, which no caller can act on.
+    ///
+    /// `existing` is the size the caller's own transaction sees, so it already
+    /// includes the names earlier phases of that same transaction minted, and
+    /// it excludes the names of a transaction that rolled back.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictionaryGrowthExceeded`] when the batch would take the
+    /// dictionary past the bound.
+    pub fn admit(self, existing: u64, requested: usize) -> Result<(), DictionaryGrowthExceeded> {
+        // A `usize` wider than the bound can only be refused, so saturating at
+        // `u64::MAX` fails closed rather than wrapping into acceptance.
+        let requested = u64::try_from(requested).unwrap_or(u64::MAX);
+        if requested == 0 {
+            // A request that mints nothing cannot grow the dictionary, so the
+            // bound does not apply to it -- including on a dictionary that is
+            // already past the bound, which must still serve reads and writes
+            // of the names it already holds.
+            return Ok(());
+        }
+        if existing.saturating_add(requested) > u64::from(self.get()) {
+            return Err(DictionaryGrowthExceeded {
+                existing,
+                requested,
+                limit: self.get(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// A write would have taken the attribute-name dictionary past its bound.
@@ -58,6 +97,13 @@ impl DictionaryNameLimit {
 /// Carries all three quantities because the operator's next decision — raise
 /// the bound or find the client minting the names — depends on how far past the
 /// bound the request reached, not merely on that it did.
+///
+/// The bound is exact only against one writer at a time: two transactions each
+/// read the dictionary's size before either commits, so together they can cross
+/// it by the size of one batch. Making it exact would need the size and the
+/// insert under one lock on the whole dictionary, serialising every first write
+/// of every attribute; the bound exists to stop unbounded inflation, and
+/// overshooting it by one batch does not defeat that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("attribute-name dictionary limit reached: {existing} names recorded, {requested} new names requested, limit {limit}")]
 pub struct DictionaryGrowthExceeded {
@@ -69,83 +115,9 @@ pub struct DictionaryGrowthExceeded {
     pub limit: u32,
 }
 
-/// The per-tenant dictionary growth policy, and the count of names created
-/// under it.
-///
-/// The guard is advisory in the concurrent case: it is checked against a count
-/// read outside the inserting statement, so two writers racing to mint names
-/// can together cross the bound by the size of one batch. That is deliberate.
-/// Making the bound exact would need the count and the insert under one lock on
-/// the dictionary, serialising every first write of every attribute; the bound
-/// exists to stop unbounded inflation, and overshooting it by one batch does
-/// not defeat that.
-#[derive(Debug)]
-pub struct DictionaryGrowthGuard {
-    /// The configured bound.
-    limit: DictionaryNameLimit,
-    /// Names this process has created in this tenant's dictionary.
-    created: AtomicU64,
-}
-
-impl DictionaryGrowthGuard {
-    /// A guard enforcing `limit`, having created nothing yet.
-    pub const fn new(limit: DictionaryNameLimit) -> DictionaryGrowthGuard {
-        DictionaryGrowthGuard {
-            limit,
-            created: AtomicU64::new(0),
-        }
-    }
-
-    /// Decide whether `requested` new names may be added to a dictionary that
-    /// already holds `existing` of them.
-    ///
-    /// A request is admitted or refused whole: partially minting a batch would
-    /// leave the write path holding names for some of an Entity's attributes
-    /// and not others, which no caller can act on.
-    pub fn admit(&self, existing: u64, requested: usize) -> Result<(), DictionaryGrowthExceeded> {
-        // A `usize` wider than the bound can only be refused, so saturating at
-        // `u64::MAX` fails closed rather than wrapping into acceptance.
-        let requested = u64::try_from(requested).unwrap_or(u64::MAX);
-        if requested == 0 {
-            // A request that mints nothing cannot grow the dictionary, so the
-            // bound does not apply to it -- including on a dictionary that is
-            // already past the bound, which must still serve reads and writes
-            // of the names it already holds.
-            return Ok(());
-        }
-        if existing.saturating_add(requested) > u64::from(self.limit.get()) {
-            return Err(DictionaryGrowthExceeded {
-                existing,
-                requested,
-                limit: self.limit.get(),
-            });
-        }
-        Ok(())
-    }
-
-    /// Record that `count` names were actually created.
-    ///
-    /// Counts creations rather than resolutions: a resolution that found an
-    /// existing row cost the dictionary nothing, and conflating the two would
-    /// make the figure track query volume instead of growth.
-    pub fn record_created(&self, count: u64) {
-        self.created.fetch_add(count, Ordering::Relaxed);
-    }
-
-    /// Names this process has created in this tenant's dictionary.
-    pub fn created(&self) -> u64 {
-        self.created.load(Ordering::Relaxed)
-    }
-
-    /// The bound being enforced.
-    pub const fn limit(&self) -> DictionaryNameLimit {
-        self.limit
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::dictionary_growth::{DictionaryGrowthGuard, DictionaryNameLimit};
+    use crate::dictionary_growth::DictionaryNameLimit;
     use std::num::NonZeroU32;
 
     fn limit(names: u32) -> DictionaryNameLimit {
@@ -154,14 +126,12 @@ mod tests {
 
     #[test]
     fn a_batch_that_lands_exactly_on_the_bound_is_admitted() {
-        let guard = DictionaryGrowthGuard::new(limit(10));
-        assert!(guard.admit(7, 3).is_ok());
+        assert!(limit(10).admit(7, 3).is_ok());
     }
 
     #[test]
     fn a_batch_that_would_cross_the_bound_is_refused_whole() {
-        let guard = DictionaryGrowthGuard::new(limit(10));
-        let refused = guard.admit(7, 4).expect_err("the batch crosses the bound");
+        let refused = limit(10).admit(7, 4).expect_err("the batch crosses the bound");
         assert_eq!(refused.existing, 7);
         assert_eq!(refused.requested, 4);
         assert_eq!(refused.limit, 10);
@@ -172,27 +142,32 @@ mod tests {
     /// overshoot as headroom.
     #[test]
     fn a_dictionary_already_past_its_bound_admits_nothing_further() {
-        let guard = DictionaryGrowthGuard::new(limit(10));
-        assert!(guard.admit(11, 1).is_err());
+        assert!(limit(10).admit(11, 1).is_err());
     }
 
     /// A request resolving only names that already exist creates nothing, so it
     /// is admitted whatever the dictionary's size.
     #[test]
     fn a_request_creating_no_names_is_admitted_at_any_size() {
-        let guard = DictionaryGrowthGuard::new(limit(10));
-        assert!(guard.admit(10_000, 0).is_ok());
+        assert!(limit(10).admit(10_000, 0).is_ok());
     }
 
-    /// The counted quantity is names created, not names resolved: the guard is
-    /// how an operator sees growth, and growth is only what was minted.
+    /// The budget a write takes is held by the dictionary itself, inside that
+    /// write's transaction. A write that minted its whole batch and then rolled
+    /// back leaves the size it read behind it, so the next write is offered the
+    /// same headroom; nothing here remembers the batch that vanished.
     #[test]
-    fn the_observed_count_accumulates_only_created_names() {
-        let guard = DictionaryGrowthGuard::new(limit(10));
-        assert_eq!(guard.created(), 0);
-        guard.record_created(2);
-        guard.record_created(3);
-        assert_eq!(guard.created(), 5);
+    fn a_rolled_back_batch_leaves_its_budget_to_the_next_write() {
+        let limit = limit(10);
+        assert!(limit.admit(8, 2).is_ok(), "the first write fills the dictionary to its bound");
+        assert!(
+            limit.admit(8, 2).is_ok(),
+            "the first write rolled back, so the next one sees the same size and the same headroom"
+        );
+        assert!(
+            limit.admit(10, 1).is_err(),
+            "had the first write committed, the size it left refuses the next name"
+        );
     }
 
     #[test]

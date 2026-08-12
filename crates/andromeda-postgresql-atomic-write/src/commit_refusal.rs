@@ -37,7 +37,6 @@ pub(crate) fn context_store(error: ContextStoreError) -> CommitError {
         | ContextStoreError::InvalidRegex(_)
         | ContextStoreError::Render(_)
         | ContextStoreError::AttributeLookup(_)
-        | ContextStoreError::DictionaryGrowth(_)
         | ContextStoreError::ContextMapper(_)
         | ContextStoreError::Migration(_)
         | ContextStoreError::SchemaContract(_)

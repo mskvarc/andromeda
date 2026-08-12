@@ -9,13 +9,8 @@
 //! (clause 5.5.9) rather than a shape persistence happens to reject.
 
 use crate::error::EntityError;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    attribute_type::AttributeType,
-    unit_code_admission::{UnitCodeAdmission, unit_code_admission},
-    uri::Uri,
-};
-use andromeda_ngsi_ld_model::expanded::dataset_id::get_instance_dataset_id;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::{dataset_id::get_instance_dataset_id, unit_code_admission::forbidden_unit_code_family};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -90,12 +85,7 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
             )));
         }
 
-        if obj.contains_key(expanded_properties::UNIT_CODE.as_str())
-            && let Some(unitless) = types
-                .iter()
-                .copied()
-                .find(|attribute_type| unit_code_admission(*attribute_type) == UnitCodeAdmission::Forbidden)
-        {
+        if let Some(unitless) = forbidden_unit_code_family(instance) {
             return Err(EntityError::validation(format!(
                 "{unitless} '{attr_name}' cannot carry 'unitCode': the specification defines this attribute family without one"
             )));

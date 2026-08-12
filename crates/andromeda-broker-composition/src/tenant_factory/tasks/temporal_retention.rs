@@ -98,6 +98,11 @@ fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure {
         | TemporalStoreError::Query(_)
         | TemporalStoreError::NotFound(_)
         | TemporalStoreError::NumericPrecision(_)
-        | TemporalStoreError::TimestampPrecision(_) => TaskFailure::permanent(summary),
+        | TemporalStoreError::TimestampPrecision(_)
+        // Retention only deletes aged rows and never claims an instanceId, so
+        // this variant cannot actually reach this classifier; it is grouped
+        // with the other client-input refusals because that is what it would
+        // mean if it somehow did.
+        | TemporalStoreError::DuplicateInstanceClaim(_) => TaskFailure::permanent(summary),
     }
 }

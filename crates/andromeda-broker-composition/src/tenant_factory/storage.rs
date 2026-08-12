@@ -14,8 +14,8 @@ use andromeda_entity::{
 };
 use andromeda_jsonld::{config::JsonLdConfig, engine::processor::JsonLdEngine};
 use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
+use andromeda_postgresql_attribute_dictionary::{attribute_name_cache::AttributeNameCache, attribute_name_lookup::AttributeNameLookup};
 use andromeda_postgresql_context_store::{
-    attribute_names::AttributeNameCache,
     config::DatabaseConfig,
     csource_registration::registration_store::PostgresRegistrationStore,
     entity::repo::EntityRepository,
@@ -24,7 +24,6 @@ use andromeda_postgresql_context_store::{
     subscription::repo::SubscriptionRepository,
     tenant_database::{configure_pool_options, migrate_tenant_db},
 };
-use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_temporal_store::repo::TemporalRepository;
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;

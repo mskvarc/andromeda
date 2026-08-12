@@ -10,6 +10,7 @@ workspace = true
 [dependencies]
 andromeda-context-commit.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-query.workspace = true

@@ -20,8 +20,9 @@ use andromeda_context_commit::{
     write_record::WriteRecord,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
-use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, attribute_name_lookup::AttributeNameLookup};
+use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
 
@@ -64,7 +65,7 @@ pub(crate) async fn apply(
     if groups.is_empty() {
         return Ok(base);
     }
-    let dictionary = resolve_dictionary(&groups, attribute_names).await?;
+    let dictionary = resolve_dictionary(tx, &groups, attribute_names).await?;
     let events = groups
         .into_iter()
         .enumerate()
@@ -118,8 +119,10 @@ fn same_change(left: &SubscriptionMatch, right: &SubscriptionMatch) -> bool {
 /// Creating rather than looking up: the events are written in the transaction
 /// that first records the attribute, so a key may not exist yet, and the same
 /// dictionary the current-attribute projection mints through is used so one
-/// attribute never ends up with two keys.
+/// attribute never ends up with two keys. That transaction's own connection
+/// carries the resolution, so an event and the names it reports are one write.
 async fn resolve_dictionary(
+    tx: &mut Transaction<'_, Postgres>,
     groups: &[EventGroup<'_>],
     attribute_names: &dyn AttributeNameLookup,
 ) -> Result<HashMap<AttributeName, AttributeNameId>, CommitError> {
@@ -131,7 +134,7 @@ async fn resolve_dictionary(
     names.sort_unstable();
     names.dedup();
     let names = names;
-    attribute_names.resolve_or_create(&names).await.map_err(persistence)
+    attribute_names.resolve_or_create(tx, &names).await.map_err(persistence)
 }
 
 /// Turn one group into the event row it is written as.

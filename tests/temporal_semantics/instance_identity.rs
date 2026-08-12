@@ -211,3 +211,56 @@ async fn temporal_semantics_mixed_uuid_versions_read_and_join_without_rewriting(
         );
     }
 }
+
+/// Clause 4.5.7 makes a client-supplied `instanceId` unique to one attribute
+/// instance of one attribute, not to one `datasetId` stream of it. A write
+/// naming the same `instanceId` on two sibling dataset streams of the same
+/// attribute at once must be refused, not accepted onto both streams.
+#[tokio::test]
+#[serial]
+async fn temporal_semantics_a_shared_instance_id_across_sibling_dataset_streams_in_one_write_is_refused() {
+    let _serialized_environment = clean_database().await;
+    let http = client();
+    let pool = database().await;
+    let entity_id = unique_id("urn:ngsi-ld:Vehicle:duplicate_instance_id");
+    let shared_instance_id = "urn:ngsi-ld:my-own:instance:shared";
+
+    let (status, _) = create_temporal_entity(
+        &http,
+        &json!({
+            "id": entity_id,
+            "type": "Vehicle",
+            "speed": [
+                {
+                    "type": "Property",
+                    "value": 1,
+                    "observedAt": "2021-01-01T00:00:00Z",
+                    "instanceId": shared_instance_id,
+                    "datasetId": "urn:ngsi-ld:Dataset:a"
+                },
+                {
+                    "type": "Property",
+                    "value": 2,
+                    "observedAt": "2021-01-02T00:00:00Z",
+                    "instanceId": shared_instance_id,
+                    "datasetId": "urn:ngsi-ld:Dataset:b"
+                }
+            ]
+        }),
+    )
+    .await;
+    assert!(
+        !status.is_success(),
+        "a write claiming one instanceId across two sibling dataset streams must be refused, got {status}"
+    );
+
+    let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri("speed")).await;
+    let claims = rows
+        .iter()
+        .filter(|row| row.verbatim_instance_id.as_deref() == Some(shared_instance_id))
+        .count();
+    assert!(
+        claims <= 1,
+        "the shared instanceId must never be stored on both sibling streams at once, found {claims} rows"
+    );
+}

@@ -27,20 +27,34 @@ impl MigrationsDigest {
     /// and the set is ordered by version so the digest does not depend on the
     /// order the source happened to resolve.
     pub fn of<'migration>(migrations: impl IntoIterator<Item = &'migration Migration>) -> MigrationsDigest {
-        let mut ordered: Vec<&Migration> = migrations
-            .into_iter()
-            .filter(|migration| !migration.migration_type.is_down_migration())
-            .collect();
-        ordered.sort_unstable_by_key(|migration| migration.version);
+        MigrationsDigest::of_records(
+            migrations
+                .into_iter()
+                .filter(|migration| !migration.migration_type.is_down_migration())
+                .map(|migration| (migration.version, migration.description.as_ref(), migration.checksum.as_ref())),
+        )
+    }
+
+    /// Digest a set of `(version, description, checksum)` records directly,
+    /// bypassing the embedded [`Migration`] type.
+    ///
+    /// Shared by [`MigrationsDigest::of`], which digests the migrations the
+    /// running binary embeds, and by the schema-contract reconciliation path,
+    /// which digests rows read back from a tenant's own `_sqlx_migrations`
+    /// table: the two must use the identical framing for a digest computed
+    /// from one source to ever equal a digest computed from the other.
+    pub(crate) fn of_records<'record>(records: impl IntoIterator<Item = (i64, &'record str, &'record [u8])>) -> MigrationsDigest {
+        let mut ordered: Vec<(i64, &str, &[u8])> = records.into_iter().collect();
+        ordered.sort_unstable_by_key(|(version, _, _)| *version);
         let ordered = ordered;
 
         let mut hasher = Sha256::new();
-        for migration in ordered {
-            hasher.update(migration.version.to_string().as_bytes());
+        for (version, description, checksum) in ordered {
+            hasher.update(version.to_string().as_bytes());
             hasher.update([FIELD_SEPARATOR]);
-            hasher.update(migration.description.as_bytes());
+            hasher.update(description.as_bytes());
             hasher.update([FIELD_SEPARATOR]);
-            hasher.update(migration.checksum.as_ref());
+            hasher.update(checksum);
             hasher.update([RECORD_SEPARATOR]);
         }
         MigrationsDigest(hasher.finalize().into())
@@ -148,6 +162,27 @@ mod tests {
             Err(error) => unreachable!("a rendered digest parses: {error}"),
         };
         pretty_assertions::assert_eq!(parsed, digest);
+    }
+
+    #[test]
+    fn of_records_agrees_with_of_over_the_same_migrations() {
+        let migrations = vec![
+            migration(1, "extensions", "CREATE EXTENSION postgis"),
+            migration(2, "entities", "CREATE TABLE entities ()"),
+        ];
+        let records = migrations
+            .iter()
+            .map(|migration| (migration.version, migration.description.as_ref(), migration.checksum.as_ref()));
+
+        pretty_assertions::assert_eq!(MigrationsDigest::of_records(records), MigrationsDigest::of(&migrations));
+    }
+
+    #[test]
+    fn of_records_changes_when_a_records_checksum_changes() {
+        let baseline = MigrationsDigest::of_records([(1_i64, "extensions", [1_u8, 2, 3].as_slice())]);
+        let rechecksummed = MigrationsDigest::of_records([(1_i64, "extensions", [4_u8, 5, 6].as_slice())]);
+
+        assert_ne!(baseline, rechecksummed);
     }
 
     #[test]

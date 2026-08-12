@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_lexicon::{
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
     ngsi_ld_date::NgsiLdDate,
+    ngsi_ld_date_time::NgsiLdDateTime,
     ngsi_ld_time::NgsiLdTime,
     scope::grammar::ScopeBuf,
     uri::Uri,
@@ -257,6 +258,11 @@ fn extract_dataset_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
 }
 
 /// Decode the optional expanded observed-at timestamp.
+///
+/// Parsing is routed through [`NgsiLdDateTime`] so `observedAt` is held to the
+/// same clause 4.6.3 strict-UTC, six-fractional-digit policy as every other
+/// client-supplied `DateTime`, rather than accepting whatever `chrono`'s bare
+/// RFC 3339 parser admits.
 fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, TemporalError> {
     instance
         .get(expanded_properties::OBSERVED_AT.as_str())
@@ -265,8 +271,8 @@ fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, Tempor
         .and_then(|value| value.get("@value"))
         .and_then(Value::as_str)
         .map(|raw| {
-            DateTime::parse_from_rfc3339(raw)
-                .map(|timestamp| timestamp.with_timezone(&Utc))
+            raw.parse::<NgsiLdDateTime>()
+                .map(NgsiLdDateTime::get)
                 .map_err(|error| TemporalError::validation(format!("invalid observedAt '{raw}': {error}")))
         })
         .transpose()
@@ -474,13 +480,19 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
 /// land in orders them byte-wise, so only a fixed-width UTC rendering makes the
 /// two orders the same. `Date` is validated for the same reason: its canonical
 /// `YYYY-MM-DD` form already sorts chronologically, and a lenient spelling would
-/// not.
+/// not. `DateTime` is routed through [`NgsiLdDateTime`] rather than a bare
+/// `chrono` RFC 3339 parse for the same reason [`extract_observed_at`] routes
+/// `observedAt` through it: a non-`Z` offset or more than six fractional digits
+/// must be refused rather than silently reinterpreted into the `timestamptz`
+/// column, on every axis that carries a client-supplied instant, not only on
+/// `observedAt`.
 fn temporal_property_value(type_hint: Option<&str>, raw: &str) -> Option<Result<TemporalValue, TemporalError>> {
     let hint = type_hint?;
     if hint == expanded_classes::DATE_TIME.as_str() || hint == expanded_properties::XSD_DATETIME.as_str() {
         return Some(
-            DateTime::parse_from_rfc3339(raw)
-                .map(|timestamp| TemporalValue::DateTime(timestamp.with_timezone(&Utc)))
+            raw.parse::<NgsiLdDateTime>()
+                .map(NgsiLdDateTime::get)
+                .map(TemporalValue::DateTime)
                 .map_err(|error| TemporalError::validation(format!("invalid datetime property '{raw}': {error}"))),
         );
     }
@@ -508,7 +520,7 @@ fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{append_intent::TemporalAppendEntry, intent_preparation::prepare};
+    use crate::{append_intent::TemporalAppendEntry, error::TemporalError, intent_preparation::prepare};
     use andromeda_context_commit::{
         history_record::{HistoryRecord, tombstone},
         write_id::WriteId,
@@ -518,7 +530,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
     use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
     use chrono::{DateTime, TimeZone, Utc};
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::sync::Arc;
 
     /// Build a restored record so tests can hand `prepare` a fixed identity.
@@ -687,5 +699,48 @@ mod tests {
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
         assert!(prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0)).is_err());
+    }
+
+    /// Build the expanded payload of one `DateTime`-typed Property value.
+    fn datetime_property_payload(entity_id: &Uri, raw: &str) -> Arc<Value> {
+        Arc::new(json!([{
+            "@id": entity_id,
+            "https://example.com/installedAt": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "@value": raw,
+                    "@type": "https://uri.etsi.org/ngsi-ld/DateTime"
+                }]
+            }]
+        }]))
+    }
+
+    /// Clause 4.6.3 mandates the literal `Z` UTC designator; a `DateTime`
+    /// Property value carrying a numeric offset must be refused on the primary
+    /// write path exactly as it already is on instance PATCH, rather than
+    /// silently reinterpreted into the `timestamptz` column.
+    #[test]
+    fn a_datetime_property_value_with_a_non_utc_offset_is_refused() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let payload = datetime_property_payload(&entity_id, "2026-07-25T12:00:00+02:00");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+
+        let error = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
+            .expect_err("a non-Z offset must be refused, not silently reinterpreted");
+        assert!(matches!(error, TemporalError::Validation { .. }), "{error:?}");
+    }
+
+    /// Clause 4.6.3 admits at most six fractional-second digits; a seventh
+    /// digit must be refused on the primary write path exactly as it already
+    /// is on instance PATCH, rather than rounded by the storage column.
+    #[test]
+    fn a_datetime_property_value_with_seven_fractional_digits_is_refused() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let payload = datetime_property_payload(&entity_id, "2026-07-25T12:00:00.1234567Z");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+
+        let error = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
+            .expect_err("seven fractional digits must be refused, not rounded");
+        assert!(matches!(error, TemporalError::Validation { .. }), "{error:?}");
     }
 }

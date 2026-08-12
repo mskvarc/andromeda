@@ -85,7 +85,8 @@ use andromeda_ngsi_ld_model::{
     subscription::EntitySelector,
 };
 use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
-use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, attribute_name_lookup::AttributeNameLookup};
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
+use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use sqlx::{PgConnection, QueryBuilder, postgres::Postgres};
 use std::collections::HashMap;
 
@@ -323,7 +324,13 @@ pub async fn replace_registration_information(
     operations: Option<&[CsrOperation]>,
     attribute_names: &dyn AttributeNameLookup,
 ) -> Result<(), ContextStoreError> {
-    let ids = attribute_names.resolve_or_create(&projected_attribute_names(information)).await?;
+    // Resolved on the caller's connection, so the dictionary rows this mints
+    // belong to the transaction that writes the registration payload: the
+    // routing projection and the names it is keyed by land together or not at
+    // all.
+    let ids = attribute_names
+        .resolve_or_create(&mut *connection, &projected_attribute_names(information))
+        .await?;
     let routing = derive_routing(information, &ids);
 
     sqlx::query("DELETE FROM registration_information WHERE registration_id = $1")

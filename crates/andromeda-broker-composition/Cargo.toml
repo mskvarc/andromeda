@@ -43,6 +43,7 @@ andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-notification.workspace = true
 andromeda-postgresql-atomic-write.workspace = true
+andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-encoding.workspace = true

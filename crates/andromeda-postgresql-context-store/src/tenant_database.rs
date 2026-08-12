@@ -133,7 +133,11 @@ pub async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreErro
 /// The stamp is written here rather than by a migration because a migration
 /// cannot digest the migration set it belongs to. Verification refuses a tenant
 /// whose schema, server or extensions are not what this binary was built
-/// against, before any caller can publish the pool.
+/// against, before any caller can publish the pool — except a tenant whose
+/// stamp is behind this binary's contract and whose applied migration history
+/// proves it, which [`ensure_schema_contract`] re-stamps in place: a fleet
+/// upgrade migrates every tenant's schema on this same call, and a stamp left
+/// at the previous binary's version must not then read back as drift.
 pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreError> {
     let mut tenant_migrator = sqlx::migrate!("../../migrations/tenant");
     tenant_migrator.set_ignore_missing(true);

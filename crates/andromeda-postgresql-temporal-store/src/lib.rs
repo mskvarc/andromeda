@@ -30,6 +30,9 @@ pub mod attribute_value;
 pub mod bulk_write_mode;
 /// Binary COPY path for bulk attribute-history inserts.
 pub(crate) mod copy;
+/// The invariant that one client-supplied `instanceId` names one attribute
+/// instance across every sibling `datasetId` stream of an attribute.
+pub mod duplicate_instance_claim;
 mod entity_attribute_history;
 /// Error types for the temporal store crate.
 pub mod error;
@@ -89,6 +92,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-postgresql-attribute-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",

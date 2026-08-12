@@ -20,6 +20,7 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-notification.workspace = true
+andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true
@@ -33,7 +34,6 @@ andromeda-unit-catalog.workspace = true
 async-trait = "0.1.89"
 chrono = { version = "0.4.44", features = ["serde"] }
 confique = "0.4.0"
-dashmap = { version = "6.1.0", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display", "is_variant"] }
 hex = "0.4.3"
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }

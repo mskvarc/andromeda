@@ -4,6 +4,7 @@ use crate::{
     attribute_history_row::AttributeHistoryRow,
     bulk_write_mode::BulkWriteMode,
     copy::insert_history_batch_via_copy_in_tx,
+    duplicate_instance_claim::claim_write_failure,
     error::TemporalStoreError,
     repo::TemporalRepository,
     stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
@@ -29,7 +30,9 @@ impl TemporalRepository {
         if rows.is_empty() {
             return Ok(());
         }
-        run_history_dedup_deletes(tx, rows).await?;
+        let targets = verbatim_instance_targets(rows);
+        run_history_dedup_deletes(tx, &targets).await?;
+        claim_verbatim_instances(tx, &targets).await?;
         match self.bulk_write_mode {
             BulkWriteMode::Unnest => insert_history_batch_unnest_in_tx(tx, rows).await?,
             BulkWriteMode::CopyStaging => insert_history_batch_via_copy_in_tx(tx, rows).await?,
@@ -38,12 +41,54 @@ impl TemporalRepository {
     }
 }
 
+/// The `(stream, verbatim instanceId)` pair of every row in a batch that
+/// carries a client-supplied instance identity, one entry per row and not
+/// deduplicated.
+///
+/// Not deduplicated on purpose: two rows that name the same pair, or that
+/// resolve to the same `(entity, attribute, verbatim instanceId)` triple
+/// through sibling `datasetId` streams, must both reach
+/// [`claim_verbatim_instances`] so its constraint can refuse the second one.
+/// Collapsing them here would hide exactly the batch this module exists to
+/// catch.
+struct VerbatimInstanceTargets<'a> {
+    /// The stream each targeted row extends.
+    streams: Vec<Uuid>,
+    /// The verbatim identifier each targeted row carries.
+    ids: Vec<&'a str>,
+}
+
+/// Collect one batch's verbatim-identified rows as parallel arrays for the
+/// `UNNEST`-based statements below.
+fn verbatim_instance_targets(rows: &[AttributeHistoryRow]) -> VerbatimInstanceTargets<'_> {
+    let (streams, ids) = rows
+        .iter()
+        .filter_map(|row| verbatim_instance_id(&row.instance).map(|identifier| (row.stream_id.get(), identifier)))
+        .unzip();
+    VerbatimInstanceTargets { streams, ids }
+}
+
 /// Remove the rows a batch is about to supersede.
 ///
 /// A client that supplied its own `instanceId` (clause 4.5.7) is replacing a
-/// named instance, so the row carrying that verbatim identifier on the same
-/// stream goes first; nothing is deleted for broker-minted identifiers, which
-/// are unique by construction.
+/// named instance, so the row carrying that verbatim identifier goes first;
+/// nothing is deleted for broker-minted identifiers, which are unique by
+/// construction.
+///
+/// The delete is scoped to every sibling stream of the incoming row's
+/// `(entity, attribute)` — every `datasetId`, not only the one the incoming
+/// row targets — because clause 4.5.7 makes `instanceId` unique to one
+/// attribute instance, not to one dataset stream of it, and that is the same
+/// scope the instance PATCH and DELETE lookups already search. A narrower,
+/// single-stream scope would let a client address one row through the
+/// PATCH/DELETE endpoints while a same-named row on a sibling dataset stream
+/// silently kept its own separate lifetime, in violation of "one `instanceId`
+/// names one row".
+///
+/// The claim table gets the same treatment, for the same reason: a batch that
+/// legitimately replaces an already-claimed identity must first release the
+/// claim it is about to re-stake, or [`claim_verbatim_instances`] would refuse
+/// its own replacement as a conflict with itself.
 ///
 /// There used to be a second pass here deleting every row on the stream that
 /// shared an incoming row's `observedAt`, on the theory that a re-sent
@@ -60,27 +105,70 @@ impl TemporalRepository {
 /// write would silently drop the replace-on-resend behaviour it existed for
 /// while keeping the same footgun for any two writes that legitimately share
 /// an `observedAt` on one stream.
-async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
-    let mut verbatim_streams = Vec::new();
-    let mut verbatim_ids = Vec::new();
-    for row in rows {
-        if let Some(identifier) = verbatim_instance_id(&row.instance) {
-            verbatim_streams.push(row.stream_id.get());
-            verbatim_ids.push(identifier);
-        }
+async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, targets: &VerbatimInstanceTargets<'_>) -> Result<(), TemporalStoreError> {
+    if targets.ids.is_empty() {
+        return Ok(());
     }
-    if !verbatim_ids.is_empty() {
-        sqlx::query(HISTORY_VERBATIM_DEDUP_SQL)
-            .bind(&verbatim_streams)
-            .bind(&verbatim_ids)
-            .execute(&mut **tx)
-            .await?;
-    }
+    sqlx::query(HISTORY_VERBATIM_DEDUP_SQL)
+        .bind(&targets.streams)
+        .bind(&targets.ids)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query(CLAIM_VERBATIM_DEDUP_DELETE_SQL)
+        .bind(&targets.streams)
+        .bind(&targets.ids)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
-const HISTORY_VERBATIM_DEDUP_SQL: &str = "DELETE FROM attribute_history ah USING UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
-     WHERE ah.stream_id = d.stream_id AND ah.verbatim_instance_id = d.verbatim_instance_id";
+/// Stake this batch's claim on every `(entity, attribute, verbatim
+/// instanceId)` triple it carries.
+///
+/// This is what turns the race the review found into a refusal. Two rows in
+/// one batch that resolve to the same triple -- whether they name the same
+/// stream or sibling `datasetId` streams of the same attribute -- both appear
+/// in this statement's `SELECT`, and `attribute_history_instance_claims`'s
+/// primary key refuses the second one within the same `INSERT`, aborting the
+/// whole batch's transaction. Two concurrent batches claiming the same triple
+/// get the same refusal from the same constraint, whichever commits second --
+/// a guarantee no check confined to one batch's own rows could give, because
+/// by the time either transaction's `INSERT` runs, neither has seen the
+/// other's uncommitted row.
+async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &VerbatimInstanceTargets<'_>) -> Result<(), TemporalStoreError> {
+    if targets.ids.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(CLAIM_VERBATIM_INSTANCES_SQL)
+        .bind(&targets.streams)
+        .bind(&targets.ids)
+        .execute(&mut **tx)
+        .await
+        .map_err(claim_write_failure)?;
+    Ok(())
+}
+
+const HISTORY_VERBATIM_DEDUP_SQL: &str = "DELETE FROM attribute_history ah \
+     USING UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
+     JOIN temporal_attribute_streams s1 ON s1.id = d.stream_id \
+     WHERE ah.verbatim_instance_id = d.verbatim_instance_id \
+       AND ah.stream_id IN ( \
+           SELECT s2.id FROM temporal_attribute_streams s2 \
+           WHERE s2.temporal_entity_key = s1.temporal_entity_key AND s2.attribute_name_id = s1.attribute_name_id \
+       )";
+
+const CLAIM_VERBATIM_DEDUP_DELETE_SQL: &str = "DELETE FROM attribute_history_instance_claims c \
+     USING UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
+     JOIN temporal_attribute_streams s1 ON s1.id = d.stream_id \
+     WHERE c.verbatim_instance_id = d.verbatim_instance_id \
+       AND c.temporal_entity_key = s1.temporal_entity_key \
+       AND c.attribute_name_id = s1.attribute_name_id";
+
+const CLAIM_VERBATIM_INSTANCES_SQL: &str = "INSERT INTO attribute_history_instance_claims \
+     (temporal_entity_key, attribute_name_id, verbatim_instance_id) \
+     SELECT s.temporal_entity_key, s.attribute_name_id, d.verbatim_instance_id \
+     FROM UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
+     JOIN temporal_attribute_streams s ON s.id = d.stream_id";
 
 /// Column-major binds for one attribute-history batch.
 struct AttributeHistoryBinds<'a> {
@@ -236,7 +324,12 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, r
 
 #[cfg(test)]
 mod tests {
-    use crate::attribute_history_write::{ATTRIBUTE_HISTORY_INSERT_SQL, HISTORY_VERBATIM_DEDUP_SQL};
+    use crate::attribute_history_write::{
+        ATTRIBUTE_HISTORY_INSERT_SQL,
+        CLAIM_VERBATIM_DEDUP_DELETE_SQL,
+        CLAIM_VERBATIM_INSTANCES_SQL,
+        HISTORY_VERBATIM_DEDUP_SQL,
+    };
 
     #[test]
     fn deduplication_addresses_one_identity_column_and_never_the_generated_one() {
@@ -244,9 +337,42 @@ mod tests {
         assert!(!HISTORY_VERBATIM_DEDUP_SQL.contains("generated_instance_uuid"));
     }
 
+    /// The claim table is keyed by entity and attribute, not by stream, so its
+    /// dedup delete must resolve the incoming stream to that scope through the
+    /// same catalogue join the history dedup delete uses -- not by stream
+    /// identity, which would only free a claim on the exact stream being
+    /// rewritten and leave a sibling-stream claim stuck.
     #[test]
-    fn deduplication_is_confined_to_the_stream_the_batch_extends() {
-        assert!(HISTORY_VERBATIM_DEDUP_SQL.contains("ah.stream_id = d.stream_id"));
+    fn the_claim_dedup_delete_is_scoped_to_the_entity_and_attribute_not_the_stream() {
+        assert!(CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("DELETE FROM attribute_history_instance_claims"));
+        assert!(CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("c.temporal_entity_key = s1.temporal_entity_key"));
+        assert!(CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("c.attribute_name_id = s1.attribute_name_id"));
+        assert!(!CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("c.stream_id"));
+    }
+
+    /// The claim insert carries no `ON CONFLICT`: a duplicate triple, whether
+    /// from two rows in the same batch or from a concurrent batch, must reach
+    /// `attribute_history_instance_claims`'s primary key and fail the
+    /// statement, not be silently absorbed.
+    #[test]
+    fn the_claim_insert_lets_a_duplicate_triple_fail_the_statement() {
+        assert!(CLAIM_VERBATIM_INSTANCES_SQL.contains("INSERT INTO attribute_history_instance_claims"));
+        assert!(CLAIM_VERBATIM_INSTANCES_SQL.contains("temporal_entity_key, attribute_name_id, verbatim_instance_id"));
+        assert!(!CLAIM_VERBATIM_INSTANCES_SQL.contains("ON CONFLICT"));
+    }
+
+    /// Clause 4.5.7 makes `instanceId` unique to one attribute instance, not
+    /// to one dataset stream of it, so the delete must reach every sibling
+    /// stream of the incoming row's `(entity, attribute)` rather than only
+    /// the stream it targets — the same scope the instance PATCH and DELETE
+    /// lookups already search (`temporal_attribute_streams` joined on
+    /// `temporal_entity_key` and `attribute_name_id`, not on `stream_id`
+    /// alone).
+    #[test]
+    fn deduplication_is_widened_to_every_sibling_stream_of_the_entity_and_attribute() {
+        assert!(HISTORY_VERBATIM_DEDUP_SQL.contains("s2.temporal_entity_key = s1.temporal_entity_key"));
+        assert!(HISTORY_VERBATIM_DEDUP_SQL.contains("s2.attribute_name_id = s1.attribute_name_id"));
+        assert!(!HISTORY_VERBATIM_DEDUP_SQL.contains("ah.stream_id = d.stream_id"));
     }
 
     /// A row-level delete keyed only on `observedAt` cannot tell a replay of

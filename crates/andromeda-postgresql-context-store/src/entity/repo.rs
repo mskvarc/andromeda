@@ -11,7 +11,7 @@
 //! values.
 
 use andromeda_entity::storage_profile::StorageProfile;
-use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
+use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
