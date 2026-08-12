@@ -2,35 +2,32 @@
 
 use crate::{
     columns::{columns_for, expectations},
+    commit_refusal::{context_store, persistence, temporal},
+    consequences::{notification_events, side_effects},
     deferred_history,
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
     history_mode::TemporalHistoryCommitMode,
+    projection,
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter, consequences_land, validate_submission},
     deleted_entity::DeletedEntity,
     error::CommitError,
+    write_ordinal::WriteOrdinal,
     write_outcome::WriteOutcome,
+    write_record::WriteRecord,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_postgresql_context_store::{
-    attribute_current::queue::AttributeCurrentQueue,
-    entity::{copy::create_batch_via_copy_in_tx, repo::EntityRepository},
-    outbox::repo::{OutboxInsertRecord, OutboxRepository},
-    pending_side_effects::{
-        payload::{PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
-        repo::PendingSideEffectsRepository,
-    },
-};
-use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
-use serde_json::Value;
+use andromeda_postgresql_codes::entity_key::EntityKey;
+use andromeda_postgresql_context_store::entity::{copy::create_batch_via_copy_in_tx, repo::EntityRepository, written_entity::WrittenEntity};
+use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
+use andromeda_temporal::append_intent::TemporalAppendIntent;
+use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Display,
-};
+use std::{collections::HashMap, sync::Arc};
 
 /// PostgreSQL statement strategy used for fused entity inserts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +38,17 @@ pub enum EntityInsertMode {
     CopyStaging,
 }
 
+/// What one commit's entity statements produced.
+struct EntityMutations {
+    /// Submission-order outcome of every write in the commit.
+    outcomes: Vec<WriteOutcome>,
+    /// Surrogate key of every entity whose row this commit wrote.
+    ///
+    /// A delete contributes nothing: the projection's single foreign key
+    /// cascades from `entities`, so a deleted entity's rows go with it.
+    keys: HashMap<Uri, EntityKey>,
+}
+
 /// Atomic context committer backed by one tenant's PostgreSQL database.
 pub struct PostgresAtomicCommitter {
     /// Tenant pool whose connection owns the complete transaction.
@@ -49,8 +57,8 @@ pub struct PostgresAtomicCommitter {
     history_mode: TemporalHistoryCommitMode,
     /// Fused insert statement strategy.
     entity_insert_mode: EntityInsertMode,
-    /// Post-commit publisher for the current-attribute projection.
-    attribute_current_queue: AttributeCurrentQueue,
+    /// Dictionary the projection's attribute keys are minted through.
+    attribute_names: Arc<dyn AttributeNameLookup>,
 }
 
 impl PostgresAtomicCommitter {
@@ -59,19 +67,19 @@ impl PostgresAtomicCommitter {
         pool: &PgPool,
         history_mode: TemporalHistoryCommitMode,
         entity_insert_mode: EntityInsertMode,
-        attribute_current_queue: AttributeCurrentQueue,
+        attribute_names: Arc<dyn AttributeNameLookup>,
     ) -> PostgresAtomicCommitter {
         PostgresAtomicCommitter {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
             history_mode,
             entity_insert_mode,
-            attribute_current_queue,
+            attribute_names,
         }
     }
 
     /// Apply every current-state mutation and preserve submission-order
     /// outcomes.
-    async fn apply_entities(&self, tx: &mut Transaction<'_, Postgres>, writes: &[AtomicWrite]) -> Result<Vec<WriteOutcome>, CommitError> {
+    async fn apply_entities(&self, tx: &mut Transaction<'_, Postgres>, writes: &[AtomicWrite]) -> Result<EntityMutations, CommitError> {
         let EntityGroups {
             inserts,
             updates,
@@ -79,13 +87,14 @@ impl PostgresAtomicCommitter {
             untouched,
         } = group(writes);
         let mut outcomes: Vec<Option<WriteOutcome>> = writes.iter().map(|_| None).collect();
+        let mut keys: HashMap<Uri, EntityKey> = HashMap::new();
         for index in untouched {
             outcomes[index] = Some(WriteOutcome::NoEntityChange);
         }
-        self.apply_inserts(tx, &inserts, &mut outcomes).await?;
-        self.apply_updates(tx, &updates, &mut outcomes).await?;
+        self.apply_inserts(tx, &inserts, &mut outcomes, &mut keys).await?;
+        self.apply_updates(tx, &updates, &mut outcomes, &mut keys).await?;
         self.apply_deletes(tx, &deletes, &mut outcomes).await?;
-        outcomes
+        let outcomes = outcomes
             .into_iter()
             .enumerate()
             .map(|(index, outcome)| {
@@ -93,7 +102,8 @@ impl PostgresAtomicCommitter {
                     detail: format!("atomic write {index} produced no outcome"),
                 })
             })
-            .collect()
+            .collect::<Result<Vec<WriteOutcome>, CommitError>>()?;
+        Ok(EntityMutations { outcomes, keys })
     }
 
     /// Insert the grouped entity rows with the configured fused statement.
@@ -102,6 +112,7 @@ impl PostgresAtomicCommitter {
         tx: &mut Transaction<'_, Postgres>,
         inserts: &[IndexedWrite<'_>],
         outcomes: &mut [Option<WriteOutcome>],
+        keys: &mut HashMap<Uri, EntityKey>,
     ) -> Result<(), CommitError> {
         if inserts.is_empty() {
             return Ok(());
@@ -111,10 +122,10 @@ impl PostgresAtomicCommitter {
             EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, &columns).await,
             EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, &columns).await,
         }
-        .map_err(persistence)?;
-        let inserted: HashSet<Uri> = inserted.into_iter().collect();
+        .map_err(context_store)?;
+        record_keys(keys, inserted);
         for (index, write) in inserts {
-            outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(&inserted, write.entity_id.as_ref())));
+            outcomes[*index] = Some(insert_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
         }
         Ok(())
     }
@@ -125,19 +136,17 @@ impl PostgresAtomicCommitter {
         tx: &mut Transaction<'_, Postgres>,
         updates: &[IndexedWrite<'_>],
         outcomes: &mut [Option<WriteOutcome>],
+        keys: &mut HashMap<Uri, EntityKey>,
     ) -> Result<(), CommitError> {
         if updates.is_empty() {
             return Ok(());
         }
         let columns = columns_for(updates)?;
         let expected = expectations(updates);
-        let saved: HashSet<Uri> = EntityRepository::save_batch_in_tx(tx, &columns, &expected)
-            .await
-            .map_err(persistence)?
-            .into_iter()
-            .collect();
+        let saved = EntityRepository::save_batch_in_tx(tx, &columns, &expected).await.map_err(context_store)?;
+        record_keys(keys, saved);
         for (index, write) in updates {
-            outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(&saved, write.entity_id.as_ref())));
+            outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
         }
         Ok(())
     }
@@ -159,7 +168,7 @@ impl PostgresAtomicCommitter {
         let expected = expectations(deletes);
         let mut deleted: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, &ids, &expected)
             .await
-            .map_err(persistence)?
+            .map_err(context_store)?
             .into_iter()
             .map(|entity| (entity.id.clone(), entity)) // clone: both the lookup key and returned snapshot own the identifier.
             .collect();
@@ -168,151 +177,216 @@ impl PostgresAtomicCommitter {
         }
         Ok(())
     }
-
-    /// Persist notification outbox entries for landed writes.
-    async fn apply_outbox(tx: &mut Transaction<'_, Postgres>, landed: &[&AtomicWrite]) -> Result<(), CommitError> {
-        let entries: Vec<_> = landed.iter().flat_map(|write| write.outbox.iter()).collect();
-        if entries.is_empty() {
-            return Ok(());
-        }
-        let null = Value::Null;
-        let rows: Vec<OutboxInsertRecord<'_>> = entries
-            .iter()
-            .map(|entry| OutboxInsertRecord {
-                subscription_id: &entry.subscription_id,
-                entity_id: &entry.entity_id,
-                trigger: entry.trigger,
-                entity_snapshot: match entry.entity_snapshot.as_ref() {
-                    Some(snapshot) => snapshot,
-                    None => &null,
-                },
-                previous_snapshot: &entry.previous_snapshot,
-                changed_attrs: &entry.changed_attrs,
-            })
-            .collect();
-        OutboxRepository::insert_batch_in_tx(tx, &rows).await.map_err(persistence)?;
-        Ok(())
-    }
-
-    /// Persist asynchronous side-effect jobs for landed writes.
-    async fn apply_side_effects(tx: &mut Transaction<'_, Postgres>, landed: &[&AtomicWrite]) -> Result<(), CommitError> {
-        let mut merged = PersistedBatchSideEffectJob {
-            temporal_entities: Vec::new(),
-            change_events: Vec::new(),
-        };
-        for write in landed {
-            let Some(job) = &write.side_effects else {
-                continue;
-            };
-            merged
-                .temporal_entities
-                .extend(job.temporal_entities.iter().map(|(id, expanded)| PersistedTemporalEntity {
-                    id: id.as_ref().clone(), // clone: the persisted DTO owns the validated entity URI.
-                    expanded: Value::clone(expanded),
-                }));
-            merged.change_events.extend(job.change_events.iter().map(|event| PersistedChangeEvent {
-                entity_id: event.entity_id.clone(),       // clone: persistence owns the event identifier.
-                entity_types: event.entity_types.clone(), // clone: persistence owns the event type list.
-                trigger_reason: event.trigger_reason,
-                changed_attributes: event.changed_attributes.clone(), // clone: persistence owns the changed-attribute list.
-                occurred_at: event.occurred_at,
-                entity_snapshot: event.entity_snapshot.as_deref().cloned(),
-                previous_attributes: event.previous_attributes.as_deref().cloned(),
-                sys_attrs_snapshot: event.sys_attrs_snapshot.as_ref().map(|snapshot| PersistedSysAttrs {
-                    created_at: snapshot.created_at,
-                    modified_at: snapshot.modified_at,
-                    expires_at: snapshot.expires_at,
-                }),
-                origin: event.origin,
-            }));
-        }
-        if merged.temporal_entities.is_empty() && merged.change_events.is_empty() {
-            return Ok(());
-        }
-        PendingSideEffectsRepository::enqueue_in_tx(tx, &merged).await.map_err(persistence)?;
-        Ok(())
-    }
-}
-
-/// Convert a concrete PostgreSQL-store failure at the implementation boundary.
-fn persistence(error: impl Display) -> CommitError {
-    CommitError::Persistence { detail: error.to_string() }
 }
 
 /// Whether a fused statement returned an entity identifier.
-fn returned_flag(returned: &HashSet<Uri>, id: &Uri) -> RowReturned {
-    if returned.contains(id) { RowReturned::Yes } else { RowReturned::No }
+fn returned_flag(returned: &HashMap<Uri, EntityKey>, id: &Uri) -> RowReturned {
+    if returned.contains_key(id) { RowReturned::Yes } else { RowReturned::No }
+}
+
+/// Remember the surrogate key of every entity a fused statement wrote.
+fn record_keys(keys: &mut HashMap<Uri, EntityKey>, written: Vec<WrittenEntity>) {
+    keys.extend(written.into_iter().map(|entity| (entity.id, entity.key)));
+}
+
+/// Interpret every landed write's temporal consequences exactly once, and
+/// report the ordinal one past the last one this phase consumed.
+///
+/// History and the current-attribute projection are two readings of the same
+/// mutation, so they read one interpretation rather than each making their
+/// own. Every entity a commit lands shares the commit's one write identity, so
+/// their intents cannot each restart their own ordinal count at zero: every
+/// intent draws its entries' ordinals from the same running counter, seeded at
+/// `base`, and the counter advances past exactly the entries that intent used.
+fn interpret(landed: &[&AtomicWrite], record: &WriteRecord, base: WriteOrdinal) -> Result<(Vec<TemporalAppendIntent>, WriteOrdinal), CommitError> {
+    let mut next = base;
+    let mut intents = Vec::with_capacity(landed.len());
+    for write in landed {
+        let Some(intent) = TemporalAppendIntent::from_history(&write.entity_id, &write.history, *record, next).map_err(temporal)? else {
+            continue;
+        };
+        let advance = u32::try_from(intent.entries.len()).map_err(|error| CommitError::Invariant {
+            detail: format!(
+                "temporal intent for entity {} carries more entries than an ordinal can number: {error}",
+                write.entity_id
+            ),
+        })?;
+        next = next.advanced_by(advance).map_err(|error| CommitError::Invariant {
+            detail: format!("temporal consequence ordinal overflowed past entity {}: {error}", write.entity_id),
+        })?;
+        intents.push(intent);
+    }
+    Ok((intents, next))
+}
+
+impl PostgresAtomicCommitter {
+    /// Commit every write under one write identity, numbering every temporal,
+    /// notification and side-effect consequence from `base`.
+    ///
+    /// Every durable consequence of this commit — every landed entity's
+    /// temporal history entries, its notification events, and its side-effect
+    /// job — shares the one write identity and ingestion instant carried by
+    /// `record`, and draws its ordinals from the one running counter that
+    /// starts at `base`. `commit` mints a fresh record and starts that counter
+    /// at zero; `commit_replayed` reuses a durably stored record and resumes
+    /// the counter at its stored `consequence_base`. A side-effect job retried
+    /// after a crash therefore reproduces exactly the identity and ordinals its
+    /// first attempt would have produced, so the replay's rows collide with the
+    /// first attempt's on their row-level `ON CONFLICT ... DO NOTHING`
+    /// constraints instead of duplicating them.
+    async fn commit_under(&self, record: WriteRecord, base: WriteOrdinal, writes: Vec<AtomicWrite>) -> Result<Vec<WriteOutcome>, CommitError> {
+        if writes.is_empty() {
+            return Ok(Vec::new());
+        }
+        validate_submission(&writes)?;
+        let mut tx = self.pool.begin().await.map_err(persistence)?;
+        // Every fallible phase below borrows this owned transaction. SQLx
+        // rolls it back when an early `?` drops it, so no entity mutation
+        // can survive a failed history, projection, notification or side-effect
+        // write.
+        let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, &writes).await?;
+        let landed: Vec<&AtomicWrite> = writes
+            .iter()
+            .zip(&outcomes)
+            .filter(|(_, outcome)| consequences_land(outcome))
+            .map(|(write, _)| write)
+            .collect();
+        // One interpretation of the mutation's temporal consequences serves
+        // both the history phase and the projection phase, so the two can
+        // never disagree about what the write said.
+        let (intents, next) = interpret(&landed, &record, base)?;
+        match &self.history_mode {
+            TemporalHistoryCommitMode::Native { recorder } => history::apply(recorder, &mut tx, &record, &intents).await?,
+            TemporalHistoryCommitMode::Deferred { .. } => deferred_history::apply(&mut tx, &intents).await?,
+        }
+        projection::apply(&mut tx, &intents, &keys, self.attribute_names.as_ref()).await?;
+        let next = notification_events::apply(&mut tx, &landed, &record, next, self.attribute_names.as_ref()).await?;
+        side_effects::apply(&mut tx, &landed, &record, next).await?;
+
+        tx.commit().await.map_err(persistence)?;
+        tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
+        if !intents.is_empty()
+            && let TemporalHistoryCommitMode::Deferred { publisher } = &self.history_mode
+        {
+            publisher.intents_available();
+        }
+        Ok(outcomes)
+    }
 }
 
 impl ContextCommitter for PostgresAtomicCommitter {
     fn commit(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async move {
-            if writes.is_empty() {
-                return Ok(Vec::new());
-            }
-            validate_submission(&writes)?;
-            let mut tx = self.pool.begin().await.map_err(persistence)?;
-            // Every fallible phase below borrows this owned transaction. SQLx
-            // rolls it back when an early `?` drops it, so no entity mutation
-            // can survive a failed history, outbox or side-effect write.
-            let outcomes = self.apply_entities(&mut tx, &writes).await?;
-            let landed: Vec<&AtomicWrite> = writes
-                .iter()
-                .zip(&outcomes)
-                .filter(|(_, outcome)| consequences_land(outcome))
-                .map(|(write, _)| write)
-                .collect();
-            let (pending_attribute_current, deferred_intents) = match &self.history_mode {
-                TemporalHistoryCommitMode::Native { recorder } => (history::apply(recorder, &mut tx, &landed).await?, 0),
-                TemporalHistoryCommitMode::Deferred { .. } => (Vec::<HistoryBatchEntry>::new(), deferred_history::apply(&mut tx, &landed).await?),
-            };
-            PostgresAtomicCommitter::apply_outbox(&mut tx, &landed).await?;
-            PostgresAtomicCommitter::apply_side_effects(&mut tx, &landed).await?;
+        Box::pin(async move { self.commit_under(WriteRecord::mint(Utc::now()), WriteOrdinal::at(0), writes).await })
+    }
 
-            // Claim the projection sequence before commit so a concurrent query
-            // cannot observe current state while believing there is no projection
-            // work to await. Rows are published only after commit succeeds.
-            let reserved = self.attribute_current_queue.reserve(pending_attribute_current);
-            match tx.commit().await {
-                Ok(()) => {
-                    if let Some(reserved) = reserved {
-                        reserved.enqueue().await;
-                    }
-                    if deferred_intents > 0
-                        && let TemporalHistoryCommitMode::Deferred { publisher } = &self.history_mode
-                    {
-                        publisher.intents_available();
-                    }
-                    Ok(outcomes)
-                }
-                Err(error) => {
-                    if let Some(reserved) = reserved {
-                        reserved.abandon().await;
-                    }
-                    Err(persistence(error))
-                }
-            }
-        })
+    fn commit_replayed(&self, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async move { self.commit_under(replay.record, replay.consequence_base, writes).await })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::committer::{persistence, returned_flag};
-    use andromeda_context_commit::error::CommitError;
+    use crate::{
+        committer::{interpret, record_keys, returned_flag},
+        entity_group::RowReturned,
+    };
+    use andromeda_context_commit::{
+        atomic_write::AtomicWrite,
+        entity_mutation::EntityMutation,
+        history_record::HistoryRecord,
+        write_id::WriteId,
+        write_ordinal::WriteOrdinal,
+        write_record::WriteRecord,
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use std::collections::HashSet;
+    use andromeda_postgresql_codes::entity_key::EntityKey;
+    use andromeda_postgresql_context_store::entity::written_entity::WrittenEntity;
+    use chrono::{TimeZone, Utc};
+    use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
 
-    #[test]
-    fn returned_flag_reports_identifier_membership() {
-        let id = "urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI");
-        let returned = HashSet::from([id.clone()]); // clone: both the set and membership query own or borrow the identifier.
-        assert!(matches!(returned_flag(&returned, &id), crate::entity_group::RowReturned::Yes));
+    fn entity(id: &str, key: i64) -> WrittenEntity {
+        WrittenEntity {
+            key: EntityKey::try_from(key).expect("a positive surrogate key"),
+            id: id.parse::<Uri>().expect("valid entity URI"),
+        }
     }
 
     #[test]
-    fn concrete_store_errors_are_erased_at_the_port_boundary() {
-        let error = persistence("database unavailable");
-        assert!(matches!(error, CommitError::Persistence { .. }));
+    fn returned_flag_reports_identifier_membership() {
+        let mut keys = HashMap::new();
+        record_keys(&mut keys, vec![entity("urn:ngsi-ld:A", 1)]);
+        let present = "urn:ngsi-ld:A".parse::<Uri>().expect("valid entity URI");
+        let absent = "urn:ngsi-ld:B".parse::<Uri>().expect("valid entity URI");
+        assert!(matches!(returned_flag(&keys, &present), RowReturned::Yes));
+        assert!(matches!(returned_flag(&keys, &absent), RowReturned::No));
+    }
+
+    /// The projection is written against the surrogate key, so a write whose
+    /// row the statement did not return contributes no key and therefore no
+    /// projection row: there is no path by which a skipped write reaches the
+    /// projection.
+    #[test]
+    fn only_the_entities_a_statement_wrote_carry_a_surrogate_key_into_the_projection() {
+        let mut keys = HashMap::new();
+        record_keys(&mut keys, vec![entity("urn:ngsi-ld:A", 1), entity("urn:ngsi-ld:C", 3)]);
+        let mut named: Vec<String> = keys.keys().map(|id| id.as_str().to_owned()).collect();
+        named.sort();
+        pretty_assertions::assert_eq!(named, vec!["urn:ngsi-ld:A".to_owned(), "urn:ngsi-ld:C".to_owned()]);
+        pretty_assertions::assert_eq!(
+            keys.get(&"urn:ngsi-ld:C".parse::<Uri>().expect("valid entity URI"))
+                .map(|key| EntityKey::get(*key)),
+            Some(3)
+        );
+    }
+
+    fn observation_write(entity_id: &str) -> AtomicWrite {
+        let uri = entity_id.parse::<Uri>().expect("valid entity URI");
+        let payload = Arc::new(json!([{
+            "@id": entity_id,
+            "https://example.com/speed": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 1}]
+            }]
+        }]));
+        AtomicWrite::builder()
+            .entity_id(Arc::new(uri))
+            .entity(EntityMutation::None)
+            .history(vec![HistoryRecord::Observations(payload)])
+            .build()
+    }
+
+    /// Two entities landed by the same commit must not restart their ordinal
+    /// count at zero: the second entity's entries continue the running counter
+    /// where the first entity's left off.
+    #[test]
+    fn interpret_assigns_each_landed_entitys_intent_a_base_that_continues_the_previous_ones_ordinals() {
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let record = WriteRecord::restored(WriteId::mint(), recorded_at);
+        let first = observation_write("urn:ngsi-ld:A");
+        let second = observation_write("urn:ngsi-ld:B");
+        let landed = [&first, &second];
+
+        let (intents, next) = interpret(&landed, &record, WriteOrdinal::at(0)).expect("both entities interpret cleanly");
+
+        pretty_assertions::assert_eq!(intents.len(), 2);
+        pretty_assertions::assert_eq!(intents[0].base, WriteOrdinal::at(0));
+        pretty_assertions::assert_eq!(intents[1].base, WriteOrdinal::at(1));
+        pretty_assertions::assert_eq!(next, WriteOrdinal::at(2));
+    }
+
+    /// A replay resumes the running counter at the base it was handed rather
+    /// than at zero.
+    #[test]
+    fn interpret_resumes_the_running_counter_at_a_non_zero_base() {
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let record = WriteRecord::restored(WriteId::mint(), recorded_at);
+        let write = observation_write("urn:ngsi-ld:A");
+        let landed = [&write];
+
+        let (intents, next) = interpret(&landed, &record, WriteOrdinal::at(5)).expect("the entity interprets cleanly");
+
+        pretty_assertions::assert_eq!(intents[0].base, WriteOrdinal::at(5));
+        pretty_assertions::assert_eq!(next, WriteOrdinal::at(6));
     }
 }

@@ -8,10 +8,11 @@ use crate::{
 };
 use andromeda_context_commit::history_record::tombstone;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{
         entity_member::extract_types,
+        instance_key::attribute_instance_family,
         mutation::{attribute::delete_attr, selection::DatasetSelection},
     },
     notification::NotificationTrigger,
@@ -61,7 +62,13 @@ impl EntityService {
 
                 let mut history = Vec::with_capacity(tombstone_targets.len());
                 for target in &tombstone_targets {
-                    history.push(tombstone(&expanded_attr_name, target.as_ref()));
+                    // The family is read from the payload the deletion is
+                    // computed against, so the tombstone renders the null member
+                    // its family prescribes (clauses 4.5.7 and 4.5.8). A target
+                    // the catalogue knows and the payload does not is a Property
+                    // by clause 4.5.2.
+                    let attribute_type = attribute_instance_family(previous, &expanded_attr_name, target.as_ref()).unwrap_or(AttributeType::Property);
+                    history.push(tombstone(&expanded_attr_name, target.as_ref(), attribute_type));
                 }
 
                 let merged = Arc::new(existing);

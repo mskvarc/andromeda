@@ -8,7 +8,7 @@ use crate::{
 };
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{expanded::entity_member::extract_types, temporal::TemporalAggregationRow};
+use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::Pagination, temporal::compiled::CompiledTemporalQuery};
 use andromeda_ngsi_ld_render::temporal::aggregation::TemporalAggregationRenderer;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -29,13 +29,15 @@ impl TemporalService {
             return Err(TemporalError::not_found(entity_id.to_string()));
         }
 
+        // Clauses 4.5.1 and 4.5.6: the temporal catalogue is the authority for
+        // an entity's types, so the mandatory `type` member survives the clause
+        // 5.6.6 deletion that removes current state and leaves the Temporal
+        // Evolution standing.
         let entity_types = self
-            .entity_reader
-            .get(entity_id)
-            .await
-            .map_err(|error| TemporalError::persistence(error.to_string()))?
-            .as_ref()
-            .map(extract_types)
+            .reader
+            .entity_types(std::slice::from_ref(entity_id))
+            .await?
+            .remove(entity_id)
             .unwrap_or_default();
 
         let rendered = self.render_one_temporal_entity(entity_id, &entity_types, &compiled, context).await?;
@@ -80,16 +82,10 @@ impl TemporalService {
             .complete(compiled.pagination)
             .map_err(|error| TemporalError::internal(error.to_string()))?;
 
-        // Batch-fetch entity payloads to extract types (avoids N+1 queries).
-        let entity_payloads = self
-            .entity_reader
-            .get_batch(&entity_ids)
-            .await
-            .map_err(|error| TemporalError::persistence(error.to_string()))?;
-        let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = entity_payloads
-            .iter()
-            .map(|(id, payload)| (id.clone(), extract_types(payload))) // clone: the type index owns its validated entity URI.
-            .collect();
+        // One batch read of the temporal catalogue, which owns the entity types
+        // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
+        // state a clause 5.6.6 deletion has already removed.
+        let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(&entity_ids).await?;
 
         let mut entities = Vec::new();
         let mut warnings = Vec::new();

@@ -1,12 +1,5 @@
 use crate::{
-    append_intent::{
-        SequencedTemporalAppendIntent,
-        TemporalAppendEntry,
-        TemporalAppendIntent,
-        TemporalIntentId,
-        TemporalIntentSequence,
-        TemporalObservationIdentity,
-    },
+    append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentSequence, TemporalObservationIdentity},
     error::TemporalError,
     intent_drain::TemporalIntentDrain,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
@@ -22,12 +15,23 @@ use crate::{
         },
         mutation_barrier::TemporalMutationBarrier,
         pending_intent_reader::PendingTemporalIntentReader,
-        temporal_history_sink::{TemporalHistorySink, TemporalSinkAppendOutcome},
+        temporal_history_sink::TemporalHistorySink,
         temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue, TemporalIntentRetry},
     },
 };
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
-use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
+use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_type::AttributeType,
+    entity_type_name::EntityTypeName,
+    instance_identity::InstanceIdentity,
+    temporal_format::TemporalFormat,
+    time_prop::TimeProp,
+    uri::Uri,
+};
+use andromeda_ngsi_ld_model::{
+    attribute::json_number::JsonNumber,
+    temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
+};
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
@@ -41,7 +45,7 @@ use tokio::sync::Mutex;
 #[derive(Default)]
 struct RecordingQueueState {
     pending: Vec<ClaimedTemporalAppendIntent>,
-    acknowledged: Vec<TemporalIntentId>,
+    acknowledged: Vec<WriteId>,
     retries: Vec<TemporalIntentRetry>,
 }
 
@@ -121,14 +125,20 @@ impl TemporalIntentQueue for RecordingQueue {
 
     async fn acknowledge(&self, _owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<(), TemporalError> {
         let mut state = self.state.lock().await;
-        state.pending.retain(|claim| claim.pending.intent.id != intent.intent.id);
-        state.acknowledged.push(intent.intent.id);
+        state
+            .pending
+            .retain(|claim| claim.pending.intent.record.write_id() != intent.intent.record.write_id());
+        state.acknowledged.push(intent.intent.record.write_id());
         Ok(())
     }
 
     async fn retry(&self, _owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<(), TemporalError> {
         let mut state = self.state.lock().await;
-        if let Some(claim) = state.pending.iter_mut().find(|claim| claim.pending.intent.id == intent.intent.id) {
+        if let Some(claim) = state
+            .pending
+            .iter_mut()
+            .find(|claim| claim.pending.intent.record.write_id() == intent.intent.record.write_id())
+        {
             claim.attempts = claim.attempts.saturating_add(1);
         }
         state.retries.push(retry);
@@ -138,7 +148,7 @@ impl TemporalIntentQueue for RecordingQueue {
 
 #[derive(Default)]
 struct RecordingSinkState {
-    observations: HashMap<TemporalIntentId, (Uri, Vec<TemporalHistoryObservation>)>,
+    observations: HashMap<WriteId, (Uri, Vec<TemporalHistoryObservation>)>,
     reject: bool,
 }
 
@@ -159,13 +169,10 @@ impl RecordingSink {
 
 #[async_trait]
 impl TemporalHistorySink for RecordingSink {
-    async fn append(&self, intent: &TemporalAppendIntent) -> Result<TemporalSinkAppendOutcome, TemporalError> {
+    async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
         let mut state = self.state.lock().await;
         if state.reject {
             return Err(TemporalError::persistence("recording sink rejected append"));
-        }
-        if state.observations.contains_key(&intent.id) {
-            return Ok(TemporalSinkAppendOutcome::AlreadyPresent);
         }
         let observations = intent
             .history_entries()
@@ -177,19 +184,21 @@ impl TemporalHistorySink for RecordingSink {
                 TemporalAppendEntry::Tombstone {
                     attribute_name,
                     dataset_id,
-                    instance_id,
-                    recorded_at,
+                    attribute_type,
+                    instance,
                 } => Some(TemporalHistoryObservation {
                     row: TemporalHistoryRow {
                         attribute_name: attribute_name.clone(), // clone: the recording sink owns the tombstone identity.
-                        attribute_type: AttributeType::Property,
+                        attribute_type: *attribute_type,
                         dataset_id: dataset_id.clone(), // clone: the recording sink owns the dataset identity.
-                        value: TemporalValue::Tombstone,
+                        value: TemporalValue::Tombstone {
+                            deleted_at: intent.record.recorded_at(),
+                        },
                         observed_at: None,
-                        time: *recorded_at,
-                        created_at: *recorded_at,
-                        modified_at: *recorded_at,
-                        instance_id: instance_id.clone(), // clone: the recording sink owns the instance identity.
+                        recorded_at: intent.record.recorded_at(),
+                        created_at: None,
+                        modified_at: None,
+                        instance: instance.clone(), // clone: the recording sink owns the instance identity.
                         metadata: None,
                         partition_total: None,
                     },
@@ -198,8 +207,8 @@ impl TemporalHistorySink for RecordingSink {
                 TemporalAppendEntry::Scope { .. } => None,
             })
             .collect();
-        state.observations.insert(intent.id, (intent.entity_id.clone(), observations)); // clone: the recording sink owns the entity identity.
-        Ok(TemporalSinkAppendOutcome::Appended)
+        state.observations.insert(intent.record.write_id(), (intent.entity_id.clone(), observations)); // clone: the recording sink owns the entity identity.
+        Ok(())
     }
 }
 
@@ -216,6 +225,15 @@ impl TemporalHistoryReader for RecordingSink {
 
     async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
         Ok(self.state.lock().await.observations.values().any(|(stored_id, _)| stored_id == entity_id))
+    }
+
+    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+        let state = self.state.lock().await;
+        Ok(entity_ids
+            .iter()
+            .filter(|entity_id| state.observations.values().any(|(stored_id, _)| stored_id == *entity_id))
+            .map(|entity_id| (entity_id.clone(), Vec::new())) // clone: the index owns its validated entity URI.
+            .collect())
     }
 
     async fn query_entity_ids(&self, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
@@ -260,30 +278,27 @@ impl TemporalHistoryReader for RecordingSink {
 
 fn fixture() -> (SequencedTemporalAppendIntent, Uri) {
     let entity_id = "urn:ngsi-ld:Vehicle:deferred".parse::<Uri>().expect("valid entity ID");
-    let intent_id = TemporalIntentId::mint();
+    let record = WriteRecord::mint(instant());
     let row = TemporalHistoryRow {
         attribute_name: "https://example.com/speed".parse().expect("valid attribute name"),
         attribute_type: AttributeType::Property,
         dataset_id: None,
-        value: TemporalValue::Number(42.0),
+        value: TemporalValue::Number(JsonNumber::Signed(42)),
         observed_at: Some(instant()),
-        time: instant(),
-        created_at: instant(),
-        modified_at: instant(),
-        instance_id: format!("urn:ngsi-ld:attribute:instance:{intent_id}:0").parse().expect("valid instance ID"),
+        recorded_at: instant(),
+        created_at: Some(instant()),
+        modified_at: Some(instant()),
+        instance: InstanceIdentity::generate(),
         metadata: None,
         partition_total: None,
     };
     let pending = SequencedTemporalAppendIntent {
         sequence: TemporalIntentSequence::new(1).expect("positive sequence"),
         intent: TemporalAppendIntent {
-            id: intent_id,
+            record,
+            base: WriteOrdinal::at(0),
             entity_id: entity_id.clone(), // clone: fixture returns the identifier separately from the intent.
-            entries: vec![TemporalAppendEntry::Observation {
-                row,
-                client_supplied_instance_id: false,
-                recorded_at: instant(),
-            }],
+            entries: vec![TemporalAppendEntry::Observation { row }],
             selection_value: Some(serde_json::json!([{"@id": entity_id}])),
         },
     };
@@ -384,8 +399,8 @@ async fn sink_acceptance_before_acknowledgement_deduplicates_by_intent_identity(
     pretty_assertions::assert_eq!(
         rows[0].identity,
         Some(TemporalObservationIdentity {
-            intent_id: pending.intent.id,
-            ordinal: 0
+            write_id: pending.intent.record.write_id(),
+            ordinal: WriteOrdinal::at(0)
         })
     );
 }

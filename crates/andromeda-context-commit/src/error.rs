@@ -14,6 +14,19 @@ pub enum CommitError {
         /// The repeated entity identifier.
         entity_id: Arc<Uri>,
     },
+    /// The submitted content cannot be stored as written.
+    ///
+    /// A refusal the client caused and can act on — an Entity with no type
+    /// (clause 4.5.1), a `unitCode` outside the closed UN/CEFACT list
+    /// (clause 4.5.2), an attribute instance missing the member its type
+    /// requires — as opposed to a fault of the broker. The distinction is the
+    /// difference between `BadRequestData` and `InternalError` in clause 5.5.9,
+    /// so it belongs on the commit port rather than in the message text.
+    #[error("atomic context commit refused the submission: {detail}")]
+    Submission {
+        /// Human-readable detail naming what about the submission is unusable.
+        detail: String,
+    },
     /// An implementation could not persist or commit the write.
     #[error("atomic context commit failed: {detail}")]
     Persistence {
@@ -47,5 +60,18 @@ mod tests {
             detail: "connection closed".to_string(),
         };
         pretty_assertions::assert_eq!(error.to_string(), "atomic context commit failed: connection closed");
+    }
+
+    /// A refused submission reads as a statement about the request, so an
+    /// operator cannot confuse it with a broker fault in a log line.
+    #[test]
+    fn refused_submissions_read_as_a_fault_of_the_request() {
+        let error = CommitError::Submission {
+            detail: "entity urn:ngsi-ld:A carries no type".to_string(),
+        };
+        pretty_assertions::assert_eq!(
+            error.to_string(),
+            "atomic context commit refused the submission: entity urn:ngsi-ld:A carries no type"
+        );
     }
 }

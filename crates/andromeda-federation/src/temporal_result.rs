@@ -1,7 +1,7 @@
 //! Deterministic merging of context-source temporal entity responses.
 
 use crate::outcome::ForwardedTemporalEntities;
-use andromeda_ngsi_ld_lexicon::{instance_id::InstanceId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use indexmap::IndexMap;
 use serde_json::Value;
@@ -98,7 +98,7 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
     };
 
     // Collect existing instanceIds for deduplication
-    let existing_ids: HashSet<InstanceId> = local_arr
+    let existing_ids: HashSet<Uri> = local_arr
         .iter()
         .filter_map(|v| v.get("instanceId").and_then(|id| id.as_str()).and_then(|id| id.parse().ok()))
         .collect();
@@ -107,7 +107,7 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
         let dominated = item
             .get("instanceId")
             .and_then(|id| id.as_str())
-            .and_then(|id| id.parse::<InstanceId>().ok())
+            .and_then(|id| id.parse::<Uri>().ok())
             .is_some_and(|id| existing_ids.contains(&id));
         if !dominated {
             local_arr.push(item.clone()); // clone: adding remote temporal instance to merged array

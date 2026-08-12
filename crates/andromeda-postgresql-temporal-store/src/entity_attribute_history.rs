@@ -8,9 +8,8 @@ use async_trait::async_trait;
 #[async_trait]
 impl AttributeDatasetHistory for TemporalRepository {
     async fn dataset_identifiers(&self, entity: &Uri, attribute: &AttributeName) -> Result<Vec<Option<Uri>>, EntityError> {
-        TemporalRepository::get_teas_for_entity_attr(self, entity, attribute)
+        TemporalRepository::attribute_dataset_ids(self, entity, attribute)
             .await
-            .map(|entries| entries.into_iter().map(|entry| entry.dataset_id).collect())
             .map_err(|error| EntityError::persistence(error.to_string()))
     }
 }

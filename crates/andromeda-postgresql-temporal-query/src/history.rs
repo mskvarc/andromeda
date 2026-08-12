@@ -1,10 +1,15 @@
 //! Stage 2 of a temporal query: attribute history for one entity, optionally
 //! narrowed to the last `N` instances per attribute.
+//!
+//! The statement reads the rebuilt hypertable through the temporal catalogue
+//! alone - `attribute_history` to `temporal_attribute_streams` to
+//! `temporal_entities` - so an entity whose current state was deleted (clause
+//! 5.6.6) still answers with its evolution. Every row carries its own
+//! `attribute_kind` and `value_kind`, which is what the reconstruction reads:
+//! a historical instance's kind is a fact of the row, never re-derived from a
+//! catalogue that a later type change would have overwritten.
 
-use crate::{
-    aggregation::build_aggregation_query_sql,
-    time_column::{history_column, unprefixed_column},
-};
+use crate::aggregation::build_aggregation_query_sql;
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
@@ -14,6 +19,7 @@ use andromeda_postgresql_query::{
     bind::{BindBuilder, BindValue},
     built::BuiltQuery,
     error::RenderError,
+    time_column::{history_column, unprefixed_column},
 };
 use std::borrow::Cow;
 
@@ -25,14 +31,15 @@ use std::borrow::Cow;
 pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<BuiltQuery<'static>, RenderError> {
     let time_col = history_column(compiled.window.timeproperty);
     let mut binds = BindBuilder::default();
-    let mut conditions = vec![format!(
-        "\"tea\".\"entity_id\" = {}",
-        binds.bind(BindValue::String(Cow::Owned(entity_id.to_string())))
-    )];
+    let mut conditions = vec![format!("\"te\".\"id\" = {}", binds.bind(BindValue::String(Cow::Owned(entity_id.to_string()))))];
 
-    // When timeproperty=deletedAt, only return tombstone instances
+    // Clause 5.2.21: an instance is placed on the requested axis by the column
+    // that holds it. `deletedAt` exists only on a row that records a deletion,
+    // so asking for that axis asks for those rows and for no others; the
+    // deletion is recognised by the axis itself rather than by a sentinel value
+    // stored in a value column.
     if compiled.window.timeproperty == TimeProp::Deleted {
-        conditions.push("\"ah\".\"value_string\" = 'urn:ngsi-ld:null'".to_string());
+        conditions.push("\"ah\".\"deleted_at\" IS NOT NULL".to_string());
     }
 
     match compiled.window.interval {
@@ -63,14 +70,14 @@ pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporal
     // NULL `dataset_id`, so it is tested separately from the named ones.
     match DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter) {
         DatasetFilter::Unfiltered => {}
-        DatasetFilter::DefaultOnly => conditions.push("\"tea\".\"dataset_id\" IS NULL".to_string()),
+        DatasetFilter::DefaultOnly => conditions.push("\"s\".\"dataset_id\" IS NULL".to_string()),
         DatasetFilter::NamedOnly(named) => {
             let marker = binds.bind(BindValue::StringVec(Cow::Owned(named.iter().map(ToString::to_string).collect())));
-            conditions.push(format!("\"tea\".\"dataset_id\" = ANY({marker})"));
+            conditions.push(format!("\"s\".\"dataset_id\" = ANY({marker})"));
         }
         DatasetFilter::DefaultOrNamed(named) => {
             let marker = binds.bind(BindValue::StringVec(Cow::Owned(named.iter().map(ToString::to_string).collect())));
-            conditions.push(format!("(\"tea\".\"dataset_id\" = ANY({marker}) OR \"tea\".\"dataset_id\" IS NULL)"));
+            conditions.push(format!("(\"s\".\"dataset_id\" = ANY({marker}) OR \"s\".\"dataset_id\" IS NULL)"));
         }
     }
 
@@ -82,15 +89,53 @@ pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporal
     }
 }
 
+/// The catalogue path from the hypertable to the entity grain, shared by the
+/// ranked and unranked shapes so neither can reach a row the other cannot.
+pub(crate) const HISTORY_JOINS: &str = r#"FROM "attribute_history" AS "ah"
+JOIN "temporal_attribute_streams" AS "s" ON "s"."id" = "ah"."stream_id"
+JOIN "temporal_entities" AS "te" ON "te"."entity_key" = "s"."temporal_entity_key"
+JOIN "attribute_names" AS "an" ON "an"."id" = "s"."attribute_name_id""#;
+
 /// Columns every history row carries, before the optional `lastN` ranking.
-const BASE_COLUMNS: &str = r#""ah"."time", "ah"."tea_id",
+///
+/// The two instance-identity columns are projected side by side: a
+/// broker-minted identifier is a `UUID` rendered through the permanent URN
+/// template, a client-supplied one (clause 4.5.7 requires it to survive) is the
+/// stored text, and exactly one of them is populated on every row.
+const BASE_COLUMNS: &str = r#""ah"."recorded_at", "ah"."stream_id",
+       "ah"."attribute_kind", "ah"."value_kind",
+       "ah"."observed_at", "ah"."created_at", "ah"."modified_at", "ah"."deleted_at",
+       "ah"."generated_instance_uuid", "ah"."verbatim_instance_id",
        "ah"."value_number", "ah"."value_string", "ah"."value_bool",
        ST_AsEWKB("ah"."value_geo") as value_geo_ewkb,
        "ah"."value_object", "ah"."value_datetime", "ah"."value_uri",
-       "ah"."instance_id", "ah"."observed_at", "ah"."metadata",
-       "ah"."recorded_at", COALESCE("ah"."modified_at", "ah"."recorded_at") AS modified_at,
-       "ah"."intent_id", "ah"."intent_ordinal",
-       "an"."name" AS attribute_name, "tea"."attribute_type", "tea"."dataset_id", "tea"."value_type""#;
+       "ah"."unit_code_id", "ah"."metadata",
+       "ah"."write_id", "ah"."write_ordinal",
+       "an"."name" AS attribute_name, "s"."dataset_id""#;
+
+/// The same columns as [`BASE_COLUMNS`], read back from the ranking CTE where
+/// they are already unqualified.
+const RANKED_COLUMNS: &str = r#""recorded_at", "stream_id", "attribute_kind", "value_kind",
+       "observed_at", "created_at", "modified_at", "deleted_at",
+       "generated_instance_uuid", "verbatim_instance_id",
+       "value_number", "value_string", "value_bool", "value_geo_ewkb",
+       "value_object", "value_datetime", "value_uri",
+       "unit_code_id", "metadata", "write_id", "write_ordinal",
+       "attribute_name", "dataset_id""#;
+
+/// Total order over the instances of one stream, for the rankings and orderings
+/// that must not depend on the plan.
+///
+/// `(recorded_at, write_id, write_ordinal)` is the hypertable's unique key, so
+/// it separates every pair of rows, including two instances that share a value
+/// on the requested time axis.
+const WRITE_IDENTITY_DESC: &str = "\"ah\".\"recorded_at\" DESC, \"ah\".\"write_id\" DESC, \"ah\".\"write_ordinal\" DESC";
+
+/// The same total order, ascending, for the rendering order of clause 5.6.11.
+const WRITE_IDENTITY_ASC: &str = "\"ah\".\"recorded_at\" ASC, \"ah\".\"write_id\" ASC, \"ah\".\"write_ordinal\" ASC";
+
+/// The ascending total order read back from the ranking CTE.
+const RANKED_WRITE_IDENTITY_ASC: &str = "\"recorded_at\" ASC, \"write_id\" ASC, \"write_ordinal\" ASC";
 
 /// Build history query SQL (with optional lastN CTE).
 fn build_history_query_sql(
@@ -106,30 +151,22 @@ fn build_history_query_sql(
 
         format!(
             r#"WITH ranked AS (
-    SELECT {},
-           ROW_NUMBER() OVER (PARTITION BY "ah"."tea_id" ORDER BY {} DESC, "ah"."instance_id" DESC) as rn,
-           COUNT(*) OVER (PARTITION BY "ah"."tea_id") as partition_total
-    FROM "attribute_history" AS "ah"
-    JOIN "temporal_entity_attributes" AS "tea" ON "tea"."id" = "ah"."tea_id"
-    JOIN "attribute_names" AS "an" ON "an"."id" = "tea"."attribute_name_id"
-    WHERE {}
+    SELECT {BASE_COLUMNS},
+           ROW_NUMBER() OVER (PARTITION BY "ah"."stream_id" ORDER BY {time_col} DESC, {WRITE_IDENTITY_DESC}) as rn,
+           COUNT(*) OVER (PARTITION BY "ah"."stream_id") as partition_total
+    {HISTORY_JOINS}
+    WHERE {where_clause}
 )
-SELECT "time", "tea_id", "value_number", "value_string", "value_bool", "value_geo_ewkb",
-       "value_object", "value_datetime", "value_uri", "instance_id", "observed_at", "metadata", "recorded_at", "modified_at", "intent_id", "intent_ordinal",
-       "attribute_name", "attribute_type", "dataset_id", "value_type", "partition_total"
-FROM ranked WHERE "rn" <= {}
-ORDER BY "attribute_name", {} ASC, "instance_id" ASC"#,
-            BASE_COLUMNS, time_col, where_clause, rn_marker, time_col_unprefixed
+SELECT {RANKED_COLUMNS}, "partition_total"
+FROM ranked WHERE "rn" <= {rn_marker}
+ORDER BY "attribute_name", {time_col_unprefixed} ASC, {RANKED_WRITE_IDENTITY_ASC}"#
         )
     } else {
         format!(
-            r#"SELECT {}
-FROM "attribute_history" AS "ah"
-JOIN "temporal_entity_attributes" AS "tea" ON "tea"."id" = "ah"."tea_id"
-JOIN "attribute_names" AS "an" ON "an"."id" = "tea"."attribute_name_id"
-WHERE {}
-ORDER BY "an"."name", {} ASC"#,
-            BASE_COLUMNS, where_clause, time_col
+            r#"SELECT {BASE_COLUMNS}
+{HISTORY_JOINS}
+WHERE {where_clause}
+ORDER BY "an"."name", {time_col} ASC, {WRITE_IDENTITY_ASC}"#
         )
     };
 
@@ -150,6 +187,8 @@ mod tests {
         temporal::{aggregation_period::AggregationPeriod, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use chrono::{DateTime, Utc};
+    use iri_rs::IriBuf;
 
     fn instant(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
@@ -159,8 +198,6 @@ mod tests {
     fn vehicle_id() -> Uri {
         "urn:ngsi-ld:Vehicle:1".parse().expect("valid entity id")
     }
-    use chrono::{DateTime, Utc};
-    use iri_rs::IriBuf;
 
     /// A query with every filter absent, for tests that vary one part at a time.
     fn minimal_compiled() -> CompiledTemporalQuery {
@@ -181,22 +218,94 @@ mod tests {
     fn build_temporal_history_no_filters() {
         let compiled = minimal_compiled();
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
-        assert!(result.sql.contains("\"tea\".\"entity_id\" = $1"));
-        assert!(result.sql.contains("attribute_history"));
-        assert!(result.sql.contains("JOIN \"attribute_names\""));
-        assert!(result.sql.contains("ORDER BY"));
+        assert!(result.sql.contains("\"te\".\"id\" = $1"), "{}", result.sql);
+        assert!(result.sql.contains("attribute_history"), "{}", result.sql);
+        assert!(result.sql.contains("JOIN \"attribute_names\""), "{}", result.sql);
+        assert!(result.sql.contains("ORDER BY"), "{}", result.sql);
+    }
+
+    /// Clause 5.6.6 leaves the evolution standing when the current entity is
+    /// deleted, so stage 2 reaches the entity grain through the temporal
+    /// catalogue and names neither `entities` nor the retired one.
+    #[test]
+    fn history_reaches_the_entity_through_the_temporal_catalogue() {
+        let compiled = minimal_compiled();
+        let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
+        assert!(
+            sql.contains("JOIN \"temporal_attribute_streams\" AS \"s\" ON \"s\".\"id\" = \"ah\".\"stream_id\""),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("JOIN \"temporal_entities\" AS \"te\" ON \"te\".\"entity_key\" = \"s\".\"temporal_entity_key\""),
+            "{sql}"
+        );
+        assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
+        assert!(!sql.contains("\"entities\" AS"), "{sql}");
+    }
+
+    /// The kind of a historical instance is a fact of the row, because the
+    /// catalogue records only the current kind of the stream and would
+    /// reinterpret older rows through it.
+    #[test]
+    fn every_row_carries_its_own_attribute_and_value_kind() {
+        let compiled = minimal_compiled();
+        let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
+        assert!(sql.contains("\"ah\".\"attribute_kind\""), "{sql}");
+        assert!(sql.contains("\"ah\".\"value_kind\""), "{sql}");
+        assert!(!sql.contains("attribute_type"), "{sql}");
+        assert!(!sql.contains("value_type"), "{sql}");
+    }
+
+    /// Clause 4.5.7: a client-supplied `instanceId` survives verbatim while a
+    /// broker-minted one is a UUID rendered through the permanent template, so
+    /// both columns are projected and the reconstruction picks the populated one.
+    #[test]
+    fn both_halves_of_the_instance_identity_are_projected() {
+        let compiled = minimal_compiled();
+        let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
+        assert!(sql.contains("\"ah\".\"generated_instance_uuid\""), "{sql}");
+        assert!(sql.contains("\"ah\".\"verbatim_instance_id\""), "{sql}");
+        assert!(!sql.contains("\"instance_id\""), "{sql}");
+    }
+
+    /// All four axes of clause 5.2.21 are rendered, and the operational
+    /// `recorded_at` is projected for ordering only - never as a substitute for
+    /// an axis the row does not carry.
+    #[test]
+    fn all_four_time_axes_are_projected_without_substitution() {
+        let compiled = minimal_compiled();
+        let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
+        for column in ["observed_at", "created_at", "modified_at", "deleted_at", "recorded_at"] {
+            assert!(sql.contains(&format!("\"ah\".\"{column}\"")), "{column} missing: {sql}");
+        }
+        assert!(!sql.contains("COALESCE"), "{sql}");
+    }
+
+    /// Clause 5.2.21: the deletion axis exists only on the rows that record a
+    /// deletion, and those are recognised by the axis rather than by a null URN
+    /// stored in a value column (clauses 4.5.7 and 4.5.8 make that URN a
+    /// rendering, not a stored value).
+    #[test]
+    fn the_deleted_at_axis_selects_the_rows_that_carry_it() {
+        let mut compiled = minimal_compiled();
+        compiled.window.timeproperty = TimeProp::Deleted;
+        let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
+        assert!(sql.contains("\"ah\".\"deleted_at\" IS NOT NULL"), "{sql}");
+        assert!(!sql.contains("urn:ngsi-ld:null"), "{sql}");
     }
 
     #[test]
-    fn last_n_ranks_with_an_instance_id_tiebreaker() {
+    fn last_n_ranks_on_the_write_identity_tiebreaker() {
         // Two instances sharing a timestamp must be kept or dropped consistently
         // across executions, so the ROW_NUMBER window that picks the last N
-        // breaks ties on instance_id rather than leaving it to the plan.
+        // breaks ties on the hypertable's unique key rather than leaving it to
+        // the plan.
         let mut compiled = minimal_compiled();
         compiled.instances.last_n = Some(5);
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
         assert!(result.sql.contains("ROW_NUMBER()"), "{}", result.sql);
-        assert!(result.sql.contains("\"ah\".\"instance_id\" DESC"), "{}", result.sql);
+        assert!(result.sql.contains("PARTITION BY \"ah\".\"stream_id\""), "{}", result.sql);
+        assert!(result.sql.contains("\"ah\".\"write_ordinal\" DESC"), "{}", result.sql);
     }
 
     #[test]
@@ -227,6 +336,26 @@ mod tests {
         let result = build_temporal_history_query(&vehicle_id(), &compiled).unwrap();
         assert!(result.sql.contains(">="));
         assert!(result.sql.contains("<"));
+    }
+
+    /// Clause 4.11 defaults the selector to `observedAt`; each axis is filtered
+    /// on its own column, so an instance with no `observedAt` matches no
+    /// `observedAt` window.
+    #[test]
+    fn each_time_property_filters_its_own_column() {
+        let expected = [
+            (TimeProp::Observed, "\"ah\".\"observed_at\" < $2"),
+            (TimeProp::Created, "\"ah\".\"created_at\" < $2"),
+            (TimeProp::Modified, "\"ah\".\"modified_at\" < $2"),
+            (TimeProp::Deleted, "\"ah\".\"deleted_at\" < $2"),
+        ];
+        for (prop, predicate) in expected {
+            let mut compiled = minimal_compiled();
+            compiled.window.timeproperty = prop;
+            compiled.window.interval = TimeInterval::Before(instant("2024-01-15T10:00:00Z"));
+            let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
+            assert!(sql.contains(predicate), "{prop}: {sql}");
+        }
     }
 
     #[test]
@@ -284,8 +413,8 @@ mod tests {
     }
 
     /// Clause 4.5.5: `@none` selects the instance that carries no `datasetId`,
-    /// which the store holds as a NULL column, so it cannot be tested by the
-    /// same `= ANY` predicate as a named dataset.
+    /// which the stream catalogue holds as a NULL column, so it cannot be
+    /// tested by the same `= ANY` predicate as a named dataset.
     #[test]
     fn dataset_id_none_selects_the_default_instance() {
         let selectors = |raw: &[&str]| -> Vec<DatasetSelector> { raw.iter().map(|entry| DatasetSelector::parse(entry).expect("valid")).collect() };
@@ -293,20 +422,20 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none"]);
         let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
-        assert!(sql.contains("\"tea\".\"dataset_id\" IS NULL"), "{sql}");
-        assert!(!sql.contains("\"tea\".\"dataset_id\" = ANY"), "{sql}");
+        assert!(sql.contains("\"s\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(!sql.contains("\"s\".\"dataset_id\" = ANY"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["urn:ngsi-ld:Dataset:one"]);
         let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
-        assert!(sql.contains("\"tea\".\"dataset_id\" = ANY"), "{sql}");
-        assert!(!sql.contains("\"tea\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"s\".\"dataset_id\" = ANY"), "{sql}");
+        assert!(!sql.contains("\"s\".\"dataset_id\" IS NULL"), "{sql}");
 
         let mut compiled = minimal_compiled();
         compiled.instances.dataset_id_filter = selectors(&["@none", "urn:ngsi-ld:Dataset:one"]);
         let sql = build_temporal_history_query(&vehicle_id(), &compiled).unwrap().sql;
-        assert!(sql.contains("\"tea\".\"dataset_id\" = ANY"), "{sql}");
-        assert!(sql.contains("OR \"tea\".\"dataset_id\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"s\".\"dataset_id\" = ANY"), "{sql}");
+        assert!(sql.contains("OR \"s\".\"dataset_id\" IS NULL"), "{sql}");
     }
 
     #[test]

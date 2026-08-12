@@ -4,7 +4,7 @@
 //! context-source subscriptions (clause 5.11): the two differ in what they
 //! select and how they are notified, not in how they are stored.
 
-use crate::error::SubscriptionError;
+use crate::{error::SubscriptionError, stored_subscription::StoredSubscription};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
@@ -76,8 +76,8 @@ pub struct StatusUpdateFields {
 /// Storing subscriptions, and the lifecycle bookkeeping the notification path
 /// writes back to them.
 pub trait SubscriptionStore: Send + Sync + 'static {
-    /// Retrieve a subscription by identifier.
-    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Subscription>, SubscriptionError>>
+    /// Retrieve a subscription by identifier, with the key it is stored under.
+    fn get<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<StoredSubscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
@@ -103,8 +103,10 @@ pub trait SubscriptionStore: Send + Sync + 'static {
         'life0: 'async_trait,
         'life1: 'async_trait,
         Self: 'async_trait;
-    /// List all subscriptions with active status.
-    fn list_active<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<Subscription>, SubscriptionError>>
+    /// List all subscriptions with active status, each with the key it is
+    /// stored under, because these are the ones a matched event enqueues a
+    /// delivery against.
+    fn list_active<'life0, 'async_trait>(&'life0 self) -> BoxFuture<'async_trait, Result<Vec<StoredSubscription>, SubscriptionError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;

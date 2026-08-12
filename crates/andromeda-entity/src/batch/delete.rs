@@ -14,6 +14,7 @@ use andromeda_context_commit::{
     change_event::ChangeEvent,
     deleted_entity::DeletedEntity,
     entity_mutation::EntityMutation,
+    history_record::deletion_history,
     precondition::Precondition,
     write_outcome::WriteOutcome,
 };
@@ -33,26 +34,29 @@ impl EntityService {
     pub(super) async fn batch_delete_chunk(&self, chunk: &[Uri], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, EntityError> {
         let _id_guards = self.acquire_id_locks(chunk).await;
 
-        // Only the asynchronous path needs the payloads up front; inline mode
-        // reads them off the delete.
-        let prior = match mode {
+        // Both paths need the payloads up front: clause 5.6.6 records one
+        // tombstone per instance the entity still held, and those instances are
+        // unreadable once the row is gone. Only the asynchronous path
+        // additionally needs the system attributes its persisted notifications
+        // carry.
+        let payloads = self.reader.get_batch(chunk).await?;
+        let sys_attrs = match mode {
             BatchSideEffectMode::Inline => None,
-            BatchSideEffectMode::Enqueue => Some((self.reader.get_batch(chunk).await?, self.reader.get_sys_attrs_batch(chunk).await?)),
+            BatchSideEffectMode::Enqueue => Some(self.reader.get_sys_attrs_batch(chunk).await?),
         };
 
         let mut writes = Vec::with_capacity(chunk.len());
         for id in chunk {
-            let side_effects = prior.as_ref().and_then(|(payloads, sys_attrs)| {
-                let payload = payloads.get(id)?;
-                Some(BatchSideEffectJob {
-                    temporal_entities: Vec::new(),
-                    change_events: deletion_events(id, payload, sys_attrs.get(id)),
-                })
+            let payload = payloads.get(id);
+            let side_effects = sys_attrs.as_ref().zip(payload).map(|(sys_attrs, payload)| BatchSideEffectJob {
+                temporal_entities: Vec::new(),
+                change_events: deletion_events(id, payload, sys_attrs.get(id)),
             });
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(Arc::new(id.clone())) // clone: each write owns a shared validated identifier.
                     .entity(EntityMutation::Delete)
+                    .history(payload.map(deletion_history).unwrap_or_default())
                     .side_effects(side_effects)
                     .precondition(Precondition::MustExist)
                     .build(),

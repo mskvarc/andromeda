@@ -3,12 +3,22 @@
 //!
 //! JSON-LD expansion is happy to produce a `Property` with no `hasValue`; the
 //! specification is not, and clause 5.5.2 makes that a `BadRequestData` rather
-//! than something the store discovers later.
+//! than something the store discovers later. The same holds for a member the
+//! family does not define at all: clauses 4.5.3, 4.5.18, 4.5.20 and 4.5.24
+//! leave four families unitless, so a `unitCode` on one is invalid input
+//! (clause 5.5.9) rather than a shape persistence happens to reject.
 
 use crate::error::EntityError;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    unit_code_admission::{UnitCodeAdmission, unit_code_admission},
+    uri::Uri,
+};
+use andromeda_ngsi_ld_model::expanded::dataset_id::get_instance_dataset_id;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// Reject an expanded entity carrying an attribute instance with no value.
 pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), EntityError> {
@@ -40,6 +50,8 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
         Value::Array(arr) => arr.as_slice(),
         _other => return Ok(()),
     };
+
+    validate_instance_identities(attr_name, instances)?;
 
     for instance in instances {
         let Some(obj) = instance.as_object() else {
@@ -77,6 +89,153 @@ fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(
                 attr_name
             )));
         }
+
+        if obj.contains_key(expanded_properties::UNIT_CODE.as_str())
+            && let Some(unitless) = types
+                .iter()
+                .copied()
+                .find(|attribute_type| unit_code_admission(*attribute_type) == UnitCodeAdmission::Forbidden)
+        {
+            return Err(EntityError::validation(format!(
+                "{unitless} '{attr_name}' cannot carry 'unitCode': the specification defines this attribute family without one"
+            )));
+        }
     }
     Ok(())
+}
+
+/// Reject an attribute whose instances do not have distinct identities.
+///
+/// Clause 4.5.5.1: "There can only be one default Attribute instance for an
+/// Attribute with a given Attribute name in any request or response", and the
+/// named instances are distinguished by their `datasetId` (clause 5.2.5). Two
+/// instances sharing an identity name one instance twice, and a store that
+/// accepts them keeps only the last while the payload keeps both — so `q`,
+/// which reads the projection, would disagree with the representation.
+fn validate_instance_identities(attr_name: &AttributeName, instances: &[Value]) -> Result<(), EntityError> {
+    let mut seen: HashSet<Option<Uri>> = HashSet::with_capacity(instances.len());
+    for instance in instances {
+        if !instance.is_object() {
+            continue;
+        }
+        let dataset_id = get_instance_dataset_id(instance);
+        if !seen.insert(dataset_id.clone()) {
+            // clone: the reported identity outlives the set that detected it.
+            return Err(match dataset_id {
+                Some(dataset_id) => EntityError::validation(format!("attribute '{attr_name}' repeats the instance with datasetId '{dataset_id}'")),
+                None => EntityError::validation(format!("attribute '{attr_name}' carries more than one default instance")),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::attribute_envelope::validate_attribute_envelopes;
+    use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use serde_json::{Value, json};
+
+    /// One expanded entity carrying a single instance of `member`.
+    fn entity_with(instance: Value) -> Value {
+        json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.org/member": [instance] }])
+    }
+
+    /// Clauses 4.5.3, 4.5.18, 4.5.20 and 4.5.24 define these families without a
+    /// `unitCode`, so one on them is invalid input rather than a value to store.
+    #[test]
+    fn a_unit_code_on_a_family_the_specification_leaves_unitless_is_refused() {
+        let unitless = [
+            (AttributeType::Relationship, expanded_properties::OBJECT.as_str()),
+            (AttributeType::LanguageProperty, expanded_properties::LANGUAGE_MAP.as_str()),
+            (AttributeType::VocabProperty, expanded_properties::VOCAB.as_str()),
+            (AttributeType::JsonProperty, expanded_properties::JSON.as_str()),
+            (AttributeType::ListRelationship, expanded_properties::OBJECT_LIST.as_str()),
+        ];
+        for (attribute_type, value_key) in unitless {
+            let instance = json!({
+                "@type": [attribute_type.iri().as_str()],
+                value_key: [{"@id": "urn:ngsi-ld:Device:target"}],
+                expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}],
+            });
+            let error = validate_attribute_envelopes(&entity_with(instance)).expect_err("the family admits no unitCode");
+            assert!(error.to_string().contains("unitCode"), "{attribute_type}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_property_still_carries_its_unit_code() {
+        let instance = json!({
+            "@type": [AttributeType::Property.iri().as_str()],
+            expanded_properties::VALUE.as_str(): [{"@value": 1}],
+            expanded_properties::UNIT_CODE.as_str(): [{"@value": "KGM"}],
+        });
+        validate_attribute_envelopes(&entity_with(instance)).expect("a Property defines a unitCode member");
+    }
+
+    #[test]
+    fn a_relationship_without_a_unit_code_is_accepted() {
+        let instance = json!({
+            "@type": [AttributeType::Relationship.iri().as_str()],
+            expanded_properties::OBJECT.as_str(): [{"@id": "urn:ngsi-ld:Device:target"}],
+        });
+        validate_attribute_envelopes(&entity_with(instance)).expect("a Relationship with no unit is well formed");
+    }
+
+    /// Clause 4.5.5.1 admits exactly one default instance per attribute name.
+    #[test]
+    fn two_default_instances_of_one_attribute_are_refused() {
+        let property = |value: i64| {
+            json!({
+                "@type": [AttributeType::Property.iri().as_str()],
+                expanded_properties::VALUE.as_str(): [{"@value": value}],
+            })
+        };
+        let payload = json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.org/member": [property(1), property(9)] }]);
+        let error = validate_attribute_envelopes(&payload).expect_err("one default instance per attribute name");
+        assert!(error.to_string().contains("default instance"), "{error}");
+    }
+
+    /// Two instances of one `datasetId` name the same instance twice, which
+    /// clause 5.2.5 makes the discriminator precisely to prevent.
+    #[test]
+    fn two_instances_sharing_a_dataset_id_are_refused() {
+        let property = |value: i64| {
+            json!({
+                "@type": [AttributeType::Property.iri().as_str()],
+                expanded_properties::VALUE.as_str(): [{"@value": value}],
+                expanded_properties::DATASET_ID.as_str(): [{"@id": "urn:ngsi-ld:Dataset:a"}],
+            })
+        };
+        let payload = json!([{ "@id": "urn:ngsi-ld:Device:1", "https://example.org/member": [property(1), property(9)] }]);
+        let error = validate_attribute_envelopes(&payload).expect_err("one instance per datasetId");
+        assert!(error.to_string().contains("urn:ngsi-ld:Dataset:a"), "{error}");
+    }
+
+    #[test]
+    fn a_default_instance_beside_named_ones_is_accepted() {
+        let property = |dataset_id: Option<&str>| {
+            let mut instance = json!({
+                "@type": [AttributeType::Property.iri().as_str()],
+                expanded_properties::VALUE.as_str(): [{"@value": 1}],
+            });
+            if let Some(dataset_id) = dataset_id {
+                instance[expanded_properties::DATASET_ID.as_str()] = json!([{"@id": dataset_id}]);
+            }
+            instance
+        };
+        let payload = json!([{
+            "@id": "urn:ngsi-ld:Device:1",
+            "https://example.org/member": [property(None), property(Some("urn:ngsi-ld:Dataset:a")), property(Some("urn:ngsi-ld:Dataset:b"))]
+        }]);
+        validate_attribute_envelopes(&payload).expect("distinct instance identities are well formed");
+    }
+
+    #[test]
+    fn a_property_missing_its_value_is_refused() {
+        let instance = json!({"@type": [AttributeType::Property.iri().as_str()]});
+        let error = validate_attribute_envelopes(&entity_with(instance)).expect_err("clause 5.2.5 requires a value");
+        assert!(error.to_string().contains("value"), "{error}");
+    }
 }

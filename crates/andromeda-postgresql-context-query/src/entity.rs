@@ -142,7 +142,10 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
         condition = condition.add(union);
     }
 
-    // Attribute existence filter
+    // Attribute existence filter (clause 5.5.9 `attrs`). This axis names
+    // attributes by IRI without resolving them to a dictionary key, so it is
+    // compiled against the payload rather than `current_attribute_values`: the
+    // key-existence probe is served by the expression index on `payload->0`.
     if !query.selection.attrs.is_empty() {
         let mut attr_cond = Condition::any();
         for attr in &query.selection.attrs {
@@ -345,8 +348,7 @@ mod tests {
                 .build(),
         ];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
-        assert!(built.sql.contains("= ANY"));
-        assert!(built.sql.contains("\"types\""));
+        assert!(built.sql.contains("\"types\" @> ARRAY(SELECT "));
     }
 
     #[test]
@@ -365,7 +367,7 @@ mod tests {
                 .build(),
         ];
         let built = build_query(&q, &ResolvedAttributeNames::default()).unwrap();
-        assert!(built.sql.contains("= ANY"));
+        assert!(built.sql.contains("\"types\" @> ARRAY(SELECT "));
         assert!(built.sql.contains("AND"));
         assert!(built.sql.contains("OR"));
     }
@@ -413,7 +415,7 @@ mod tests {
             built.sql
         );
         assert_eq!(
-            built.sql.matches("= ANY(\"types\")").count(),
+            built.sql.matches("\"types\" @> ARRAY(SELECT ").count(),
             2,
             "each selector keeps its own type filter: {}",
             built.sql
@@ -438,9 +440,10 @@ mod tests {
         let mut q = empty_query();
         q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\"").unwrap());
         let built = build_query(&q, &temperature_is_known()).unwrap();
-        // Existence resolves through the temporal catalogue: `payload->0 ? $1`
-        // could never use the GIN index on `payload`.
-        assert!(built.sql.contains("\"temporal_entity_attributes\" AS \"tea_q\""), "{}", built.sql);
+        // A `q` existence predicate resolves through the current-state
+        // projection: row presence is existence, since a tombstone never
+        // reaches `current_attribute_values`.
+        assert!(built.sql.contains("\"current_attribute_values\""), "{}", built.sql);
         assert!(!built.sql.contains("\"payload\"->0 ?"), "{}", built.sql);
     }
 
@@ -454,7 +457,7 @@ mod tests {
         }));
         let built = build_query(&cq, &temperature_is_known()).unwrap();
         assert!(built.sql.contains("EXISTS"), "{}", built.sql);
-        assert!(built.sql.contains("\"ac\".\"value_number\" >"), "{}", built.sql);
+        assert!(built.sql.contains("\"value_number\" >"), "{}", built.sql);
         assert!(
             !built.sql.contains("jsonb_path_query_first"),
             "value predicates no longer scan the payload: {}",
@@ -720,8 +723,8 @@ mod tests {
     }
 
     /// Clause 4.10: `geoproperty` selects any GeoProperty of the entity. A
-    /// named one is held in `attribute_current`, so the whole statement — not
-    /// just the fragment — has to reach it there.
+    /// named one is held in `current_attribute_values`, so the whole statement —
+    /// not just the fragment — has to reach it there.
     #[test]
     fn a_named_geoproperty_filters_through_its_attribute_instance_rows() {
         let mut q = empty_query();
@@ -732,10 +735,10 @@ mod tests {
         });
         let names = ResolvedAttributeNames::from_pairs([(
             "https://example.com/customGeo".parse().expect("valid attribute name"),
-            AttributeNameId::from(42_i16),
+            AttributeNameId::from(42_i32),
         )]);
         let built = build_query(&q, &names).unwrap();
-        assert!(built.sql.contains("EXISTS (SELECT 1 FROM \"attribute_current\""), "{}", built.sql);
+        assert!(built.sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""), "{}", built.sql);
         assert!(built.sql.contains("\"attribute_name_id\" = 42"), "{}", built.sql);
         assert!(built.sql.contains("ST_GeomFromEWKB"), "reference side must still bind EWKB");
     }
@@ -782,7 +785,7 @@ mod tests {
     fn a_geoproperty_iri_containing_an_apostrophe_never_reaches_the_statement_text() {
         let names = ResolvedAttributeNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),
-            AttributeNameId::from(9_i16),
+            AttributeNameId::from(9_i32),
         )]);
         let relations = [
             GeoRel::Within,
@@ -836,7 +839,7 @@ mod tests {
         }];
         let names = ResolvedAttributeNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),
-            AttributeNameId::from(9_i16),
+            AttributeNameId::from(9_i32),
         )]);
         let built = build_query(&q, &names).unwrap();
         assert!(!built.sql.contains("brien"), "{}", built.sql);

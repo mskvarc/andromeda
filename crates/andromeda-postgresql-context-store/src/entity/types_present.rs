@@ -1,0 +1,96 @@
+//! The invariant that every stored entity carries at least one type.
+//!
+//! Clause 4.5.1 makes `type` a mandatory member of an Entity, and the
+//! `entities` table states the same thing as a check constraint. Stating it
+//! twice is deliberate: the constraint is what makes a typeless row
+//! unrepresentable no matter which statement wrote it, and the check below is
+//! what lets the write path name the offending entity instead of aborting the
+//! whole transaction on an anonymous constraint failure. Both report the same
+//! typed error, so a caller never has to tell the two apart.
+
+use crate::{entity::params::PreparedEntityColumns, error::ContextStoreError};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use serde_json::Value;
+use thiserror::Error;
+
+/// The name of the database check constraint that carries this invariant.
+pub const ENTITY_TYPES_PRESENT_CONSTRAINT: &str = "chk_entities_types_present";
+
+/// An entity write carried no type.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum EntityTypesMissing {
+    /// The write path refused the row before the statement ran, so the entity
+    /// it belongs to is known.
+    #[error("entity {0} carries no type, and clause 4.5.1 requires at least one")]
+    Rejected(Uri),
+    /// The database check constraint refused the row. The statement is set-based
+    /// and the constraint names no row, so no identifier is available.
+    #[error("an entity write carried no type, and clause 4.5.1 requires at least one")]
+    ConstraintViolated,
+}
+
+/// Refuse a column set in which any entity carries no type.
+///
+/// A type column is a JSON array of expanded type IRIs; anything that is not a
+/// non-empty array would land in the table as an empty `text[]`, which is the
+/// state the constraint forbids.
+pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesMissing> {
+    match columns
+        .ids
+        .iter()
+        .zip(&columns.types_json)
+        .find(|(_, types)| !matches!(types, Value::Array(types) if !types.is_empty()))
+    {
+        Some((id, _)) => Err(EntityTypesMissing::Rejected(Uri::clone(id))), // clone: the error outlives the borrowed column set.
+        None => Ok(()),
+    }
+}
+
+/// Lift a statement failure into the typed invariant when the entity types
+/// check constraint is what refused the write.
+pub fn entity_write_failure(error: sqlx::Error) -> ContextStoreError {
+    if let sqlx::Error::Database(database) = &error
+        && database.constraint() == Some(ENTITY_TYPES_PRESENT_CONSTRAINT)
+    {
+        return EntityTypesMissing::ConstraintViolated.into();
+    }
+    ContextStoreError::from(error)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::entity::{
+        params::PreparedEntityColumns,
+        types_present::{EntityTypesMissing, types_present},
+    };
+    use serde_json::json;
+
+    /// Build a one-row column set carrying the given type array.
+    fn columns_with_types(types: serde_json::Value) -> PreparedEntityColumns {
+        let mut columns = PreparedEntityColumns::with_capacity(1);
+        columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
+        columns.types_json.push(types);
+        columns
+    }
+
+    #[test]
+    fn a_typed_entity_satisfies_the_invariant() {
+        assert_eq!(types_present(&columns_with_types(json!(["https://example.com/Building"]))), Ok(()));
+    }
+
+    #[test]
+    fn an_entity_with_an_empty_type_array_is_named_in_the_rejection() {
+        let expected = "urn:ngsi-ld:Building:1".parse().expect("entity URI");
+        assert_eq!(types_present(&columns_with_types(json!([]))), Err(EntityTypesMissing::Rejected(expected)));
+    }
+
+    #[test]
+    fn a_type_column_that_is_not_an_array_is_refused_as_typeless() {
+        assert!(types_present(&columns_with_types(json!(null))).is_err());
+    }
+
+    #[test]
+    fn an_empty_column_set_satisfies_the_invariant() {
+        assert_eq!(types_present(&PreparedEntityColumns::with_capacity(0)), Ok(()));
+    }
+}

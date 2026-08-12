@@ -28,9 +28,6 @@ impl Precondition {
     }
 }
 
-/// Number of read-modify-write attempts made before reporting contention.
-pub const WRITE_ATTEMPTS: u32 = 3;
-
 /// Next action after one read-modify-write commit attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterAttempt {
@@ -56,7 +53,7 @@ pub const fn after_attempt(outcome: &WriteOutcome) -> AfterAttempt {
 #[cfg(test)]
 mod tests {
     use crate::{
-        precondition::{AfterAttempt, WRITE_ATTEMPTS, after_attempt},
+        precondition::{AfterAttempt, after_attempt},
         write_outcome::WriteOutcome,
     };
 
@@ -80,10 +77,5 @@ mod tests {
         ] {
             pretty_assertions::assert_eq!(after_attempt(&outcome), AfterAttempt::Settled);
         }
-    }
-
-    #[test]
-    fn the_retry_budget_is_three_attempts() {
-        pretty_assertions::assert_eq!(WRITE_ATTEMPTS, 3);
     }
 }

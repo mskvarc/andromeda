@@ -13,7 +13,7 @@ use std::collections::HashMap;
 /// are navigated inside the JSONB payload, never through `attribute_names`. A
 /// linked-entity traversal contributes the Relationship each hop descends
 /// through as well as the terminal attribute, because the hop probes
-/// `attribute_current` for that Relationship by dictionary key.
+/// `current_attribute_values` for that Relationship by dictionary key.
 pub fn referenced_attribute_names(expr: &Expr, out: &mut Vec<AttributeName>) {
     match expr {
         Expr::And(terms) | Expr::Or(terms) => {
@@ -41,8 +41,8 @@ fn path_attribute_names(path: &QueryPath, out: &mut Vec<AttributeName>) {
 /// Attribute-name dictionary ids for the IRIs a compiled `q` filter mentions.
 ///
 /// An IRI that is absent has no `attribute_names` row, and therefore no
-/// `attribute_current` or `temporal_entity_attributes` row either, so its
-/// predicates compile to constant `FALSE`.
+/// `current_attribute_values` row either, so its predicates compile to constant
+/// `FALSE`.
 ///
 /// There is deliberately no way to represent a *cached* miss. Resolution runs
 /// per query execution against a cache that only ever stores hits, so an
@@ -67,8 +67,9 @@ impl ResolvedAttributeNames {
         self.ids.get(attr).copied()
     }
 
-    /// Whether any attribute IRI resolved. Used to decide whether a query has
-    /// to wait on the projection's read-your-writes barrier at all.
+    /// Whether no attribute IRI in the filter resolved to a dictionary id, in
+    /// which case every projection probe the filter would compile is already
+    /// known to be unsatisfiable.
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }
@@ -108,8 +109,9 @@ mod tests {
 
     #[test]
     fn every_relationship_a_traversal_descends_is_collected_with_the_terminal_attribute() {
-        // Clause 4.9: each hop probes `attribute_current` for its Relationship
-        // by dictionary key, exactly as the terminal comparison does.
+        // Clause 4.9: each hop probes `current_attribute_values` for its
+        // Relationship by dictionary key, exactly as the terminal comparison
+        // does.
         assert_eq!(
             collected("\"https://example.com/outer\"{\"https://example.com/inner\"{\"https://example.com/zone\"==\"north\"}}"),
             vec!["https://example.com/inner", "https://example.com/outer", "https://example.com/zone"]

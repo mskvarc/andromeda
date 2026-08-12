@@ -10,13 +10,11 @@ use andromeda_entity::{
         reader::EntityReader,
         spatial_snapshot::EntitySpatialSnapshotSource,
     },
-    spatial_config::SpatialConfig,
     spatial_reconciliation::reconcile_location,
 };
 use andromeda_jsonld::{config::JsonLdConfig, engine::processor::JsonLdEngine};
 use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
 use andromeda_postgresql_context_store::{
-    attribute_current::{materializer::AttributeCurrentMaterializer, queue::AttributeCurrentQueue},
     attribute_names::AttributeNameCache,
     config::DatabaseConfig,
     csource_registration::registration_store::PostgresRegistrationStore,
@@ -26,8 +24,8 @@ use andromeda_postgresql_context_store::{
     subscription::repo::SubscriptionRepository,
     tenant_database::{configure_pool_options, migrate_tenant_db},
 };
-use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, projection_barrier::ProjectionBarrier};
-use andromeda_postgresql_temporal_store::{repo::TemporalRepository, timescale_features::TimescaleFeatures};
+use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
+use andromeda_postgresql_temporal_store::repo::TemporalRepository;
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
@@ -42,8 +40,7 @@ pub(super) struct TenantStorage {
     pub(super) pool: PgPool,
     pub(super) engine: JsonLdEngine,
     pub(super) context_hit_flush: Option<ContextHitFlushWorker>,
-    pub(super) materializer: AttributeCurrentMaterializer,
-    pub(super) attribute_current_queue: AttributeCurrentQueue,
+    pub(super) attribute_names: Arc<dyn AttributeNameLookup>,
     pub(super) temporal_repo: Arc<TemporalRepository>,
     pub(super) entity_ports: EntityStoragePorts,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
@@ -66,7 +63,6 @@ pub(super) async fn initialize_storage(
     database_config: &DatabaseConfig,
     tenancy_config: &TenancyConfig,
     jsonld_config: &JsonLdConfig,
-    spatial_config: &SpatialConfig,
     atomic_write_config: &AtomicWriteConfig,
     database_url: &Url,
     tenant: &TenantRef,
@@ -79,14 +75,6 @@ pub(super) async fn initialize_storage(
         .connect(database_url.as_str())
         .await?;
     migrate_tenant_db(&pool).await?;
-    let timescale_features = TimescaleFeatures::detect(&pool)
-        .await
-        .map_err(|error| TenantAssemblyError::invariant(format!("failed to probe TimescaleDB features: {error}")))?;
-    tracing::info!(
-        has_continuous_aggregates = timescale_features.has_continuous_aggregates,
-        "detected TimescaleDB capabilities"
-    );
-
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = jsonld_config.build_engine(Arc::clone(&context_repo))?;
     let context_hit_flush = engine.hit_counter().map(|hit_counter| {
@@ -103,27 +91,16 @@ pub(super) async fn initialize_storage(
     {
         tracing::warn!(%error, event = "attribute_names_preload_failed");
     }
-    let (materializer, attribute_current_queue, attribute_current_barrier) = AttributeCurrentMaterializer::new(
-        Arc::new(pool.clone()), // clone: the materializer and storage holder share the pool.
-        Duration::from_secs(spatial_config.lag_log_interval_secs),
-    );
-    if let Err(error) = materializer.reconcile_on_startup().await {
-        tracing::warn!(%error, event = "attribute_current_reconcile_failed");
-    }
     let bulk_write_mode = match atomic_write_config.bulk_mode {
         BulkWriteMode::Unnest => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::Unnest,
         BulkWriteMode::CopyStaging => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::CopyStaging,
     };
-    let temporal_repo = Arc::new(
-        TemporalRepository::new(&pool, bulk_write_mode, Arc::clone(&attribute_names) as Arc<dyn AttributeNameLookup>)
-            .with_features(timescale_features)
-            .with_barrier(Arc::new(attribute_current_barrier.clone()) as Arc<dyn ProjectionBarrier>), // clone: both read stores wait on one watermark.
-    );
-    let entity_repository = Arc::new(EntityRepository::new(
-        &pool,
-        Arc::clone(&attribute_names) as Arc<dyn AttributeNameLookup>,
-        Arc::new(attribute_current_barrier) as Arc<dyn ProjectionBarrier>,
-    ));
+    // One dictionary cache per tenant, shared by every path that resolves an
+    // attribute IRI: the temporal catalogue, the entity repository's read path
+    // and the projection the commit writes.
+    let attribute_names = Arc::clone(&attribute_names) as Arc<dyn AttributeNameLookup>; // clone: the cache outlives each port that holds it.
+    let temporal_repo = Arc::new(TemporalRepository::new(&pool, bulk_write_mode, Arc::clone(&attribute_names)));
+    let entity_repository = Arc::new(EntityRepository::new(&pool, Arc::clone(&attribute_names)));
     let entity_ports = EntityStoragePorts {
         reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>, // clone: every focused port shares one repository and pool.
         query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>, // clone: every focused port shares one repository and pool.
@@ -131,7 +108,8 @@ pub(super) async fn initialize_storage(
         expiry: Arc::clone(&entity_repository) as Arc<dyn EntityExpirySource>, // clone: every focused port shares one repository and pool.
         spatial_snapshots: entity_repository as Arc<dyn EntitySpatialSnapshotSource>,
     };
-    let registration_store = Arc::new(PostgresRegistrationStore::new(&pool)) as Arc<dyn RegistrationStore>;
+    // clone: the routing projection interns registered attribute names through the tenant's one dictionary.
+    let registration_store = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names))) as Arc<dyn RegistrationStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
     if let Err(error) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
@@ -145,8 +123,7 @@ pub(super) async fn initialize_storage(
         pool,
         engine,
         context_hit_flush,
-        materializer,
-        attribute_current_queue,
+        attribute_names,
         temporal_repo,
         entity_ports,
         registration_store,

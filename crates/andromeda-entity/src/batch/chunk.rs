@@ -11,13 +11,14 @@ use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
     entity_mutation::{EntityMutation, EntityRecord},
-    history_record::{HistoryRecord, tombstone},
+    history_record::HistoryRecord,
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::WriteOutcome,
+    write_retry::WRITE_ATTEMPTS,
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::instance_key::removed_attribute_instances,
+    expanded::removed_instance::removed_attribute_instances,
     notification::{ChangeOrigin, NotificationTrigger},
 };
 use chrono::Utc;
@@ -131,7 +132,7 @@ impl ChunkWrite {
     ) -> ChunkWrite {
         let tombstones = removed_attribute_instances(previous, &merged)
             .into_iter()
-            .map(|key| tombstone(&key.attr, key.dataset_id.as_ref()))
+            .map(HistoryRecord::Tombstone)
             .collect();
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
@@ -164,7 +165,7 @@ fn error_of(id: &Uri, outcome: &WriteOutcome) -> Option<EntityError> {
     match outcome {
         WriteOutcome::AlreadyExists => Some(EntityError::already_exists(id)),
         WriteOutcome::NotFound => Some(EntityError::not_found(id)),
-        WriteOutcome::Superseded => Some(EntityError::internal(format!("entity {id} was modified by another writer"))),
+        WriteOutcome::Superseded => Some(EntityError::contention(id, WRITE_ATTEMPTS)),
         WriteOutcome::Created | WriteOutcome::Updated | WriteOutcome::Deleted(_) | WriteOutcome::NoEntityChange | WriteOutcome::Skipped => None,
     }
 }
@@ -227,7 +228,7 @@ impl EntityService {
                 BatchSideEffectMode::Enqueue => {
                     // Tombstones stay inline in both modes: they describe what
                     // the payload just stopped saying, and deferring them would
-                    // leave `attribute_current` answering `q` filters with a
+                    // leave `current_attribute_values` answering `q` filters with a
                     // value the entity no longer has.
                     let job = BatchSideEffectJob {
                         temporal_entities: vec![(entity_id, observed)],

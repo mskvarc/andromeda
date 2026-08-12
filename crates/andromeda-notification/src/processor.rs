@@ -1,5 +1,10 @@
 pub(crate) mod payload;
 
+use crate::{
+    delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
+    delivery_entry::DeliveryEntry,
+    error::NotificationError,
+};
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
@@ -21,6 +26,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_spatial_index::key::SpatialKey;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
@@ -32,20 +38,15 @@ use andromeda_subscription::{
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};
-use serde_json::Value;
-use std::sync::Arc;
-use tracing::{debug, error};
-use uuid::Uuid;
-
-use crate::{
-    outbox_drain::{NotificationOutboxDelivery, NotificationOutboxDisposition},
-    outbox_entry::OutboxEntry,
-};
-
-use andromeda_spatial_index::key::SpatialKey;
 use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
-use std::collections::{HashMap, HashSet};
+use serde_json::Value;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tracing::{debug, error};
+use uuid::Uuid;
 
 const NOTIFICATION_CONCURRENCY: usize = 20;
 
@@ -470,37 +471,42 @@ impl NotificationProcessor {
     }
 }
 
-impl NotificationOutboxDelivery for NotificationProcessor {
-    fn deliver<'a>(&'a self, entry: &'a OutboxEntry) -> futures::future::BoxFuture<'a, Result<NotificationOutboxDisposition, crate::error::NotificationError>> {
+impl NotificationDeliveryTransport for NotificationProcessor {
+    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> futures::future::BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
         Box::pin(async move {
-            let is_deletion = matches!(entry.trigger, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted);
-            let snapshot = entry.entity_snapshot.clone(); // clone: the event owns the durable payload while the leased row remains available for acknowledgement.
+            let stored = &entry.event;
+            let is_deletion = matches!(stored.trigger, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted);
+            let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
             let event = ChangeEvent::builder()
-                .entity_id(entry.entity_id.clone()) // clone: the event and outbox row independently own the identifier.
+                .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
                 .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
-                .trigger_reason(entry.trigger)
-                .changed_attributes(entry.changed_attrs.clone()) // clone: the event owns its attribute names through delivery.
-                .occurred_at(entry.created_at)
+                .trigger_reason(stored.trigger)
+                .changed_attributes(stored.changed_attributes.clone()) // clone: the change event owns its attribute names through delivery.
+                .occurred_at(stored.created_at)
                 .entity_snapshot(is_deletion.then(|| snapshot.clone()).flatten()) // clone: deletion evaluation consumes its own snapshot value.
-                .previous_attributes(entry.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
+                .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
                 .origin(ChangeOrigin::Local)
                 .current_payload((!is_deletion).then(|| snapshot.map(Arc::new)).flatten())
                 .build();
             let outcome = self.apply_entity_change_for(event, Some(&entry.subscription_id)).await;
             if outcome.delivered > 0 {
-                Ok(NotificationOutboxDisposition::Delivered)
+                Ok(DeliveryDisposition::Delivered)
             } else if outcome.retryable_failures > 0 {
-                Ok(NotificationOutboxDisposition::RetryableFailure)
+                Ok(DeliveryDisposition::RetryableFailure {
+                    detail: format!("{} endpoint attempt(s) failed transiently", outcome.retryable_failures),
+                })
             } else if outcome.terminal_failures > 0 {
-                Ok(NotificationOutboxDisposition::TerminalFailure)
+                Ok(DeliveryDisposition::TerminalFailure {
+                    detail: format!("{} endpoint attempt(s) failed permanently", outcome.terminal_failures),
+                })
             } else {
-                Ok(NotificationOutboxDisposition::Obsolete)
+                Ok(DeliveryDisposition::Obsolete)
             }
         })
     }
 }
 
-/// Read expanded entity types from a persisted outbox snapshot.
+/// Read expanded entity types from a persisted event snapshot.
 fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
     let Some(snapshot) = snapshot else {
         return Vec::new();
@@ -529,7 +535,7 @@ mod tests {
         subscription::{EntitySelector, SubscriptionStatus},
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
-    use andromeda_subscription::matching::matches_subscription;
+    use andromeda_subscription::{matching::matches_subscription, subscription_key::SubscriptionKey};
     use std::num::NonZeroU32;
     use url::Url;
 
@@ -547,6 +553,7 @@ mod tests {
     fn make_sub(id: &str, selectors: Vec<EntitySelector>, triggers: Vec<&str>, watched: Option<Vec<&str>>) -> CompiledSubscription {
         CompiledSubscription {
             id: format!("urn:ngsi-ld:Subscription:{id}").parse().expect("a valid subscription URI"),
+            key: SubscriptionKey::try_from(1).expect("a valid subscription key"),
             status: SubscriptionStatus::Active,
             endpoint_uri: Url::parse("http://example.com/notify").expect("a valid endpoint URI"),
             endpoint_accept: None,

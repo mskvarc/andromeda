@@ -6,7 +6,7 @@
 //! callers is which relation the column is read from.
 
 use crate::{
-    operator::any_eq,
+    operator::array_contains,
     schema::{E, Entities},
 };
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
@@ -36,7 +36,7 @@ impl TypesColumn {
 pub fn condition(expr: &TypeExpr, column: TypesColumn) -> Condition {
     match expr {
         TypeExpr::Wildcard => Condition::all(),
-        TypeExpr::Type(iri) => Condition::all().add(any_eq(SeaExpr::val(iri.as_str()).into(), column.expr())),
+        TypeExpr::Type(iri) => Condition::all().add(array_contains(column.expr(), SeaExpr::val(iri.as_str()).into())),
         TypeExpr::And(children) => children.iter().fold(Condition::all(), |cond, child| cond.add(condition(child, column))),
         TypeExpr::Or(children) => children.iter().fold(Condition::any(), |cond, child| cond.add(condition(child, column))),
     }
@@ -60,11 +60,13 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
+    /// Clause 4.17 selects on membership, and the containment spelling is the
+    /// one the `types` GIN index can answer.
     #[test]
-    fn a_single_type_renders_an_array_membership_test() {
+    fn a_single_type_renders_an_array_containment_test() {
         let sql = render(condition(&TypeExpr::Type(iri("https://example.com/Vehicle")), TypesColumn::Entities));
-        assert!(sql.contains("= ANY"), "{sql}");
-        assert!(sql.contains("\"types\""), "{sql}");
+        assert!(sql.contains("\"types\" @> ARRAY(SELECT "), "{sql}");
+        assert!(!sql.contains("= ANY"), "{sql}");
     }
 
     #[test]

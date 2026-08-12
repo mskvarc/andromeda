@@ -3,6 +3,7 @@
 mod expiry;
 mod maintenance;
 mod notification;
+mod temporal_retention;
 
 use crate::{
     event::registration_change_sink::BroadcastRegistrationChangeSink,
@@ -22,9 +23,10 @@ use crate::{
                 register_csource_interval_notification,
                 register_csource_notification_processor,
                 register_interval_notification,
-                register_notification_outbox,
+                register_notification_delivery,
                 register_notification_processor,
             },
+            temporal_retention::register_temporal_retention,
         },
     },
 };
@@ -53,19 +55,19 @@ use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::{
     csource_interval::CsourceIntervalNotificationOperation,
+    delivery_config::DeliveryConfig,
+    delivery_drain::{NotificationDeliveryDrain, NotificationDeliveryTransport},
+    delivery_store::DeliveryStore,
     interval::IntervalNotificationOperation,
-    outbox_config::OutboxConfig,
-    outbox_drain::{NotificationOutboxDelivery, NotificationOutboxDrain},
-    outbox_store::OutboxStore,
     processor::{NotificationProcessor, NotificationProcessorDeps},
 };
 use andromeda_postgresql_context_store::{
-    attribute_current::materializer::AttributeCurrentMaterializer,
     csource_subscription::repo::CsourceSubscriptionRepository,
-    outbox::repo::OutboxRepository,
+    notification_delivery::queue::NotificationDeliveryQueue,
     pending_side_effects::repo::PendingSideEffectsRepository,
     subscription::repo::SubscriptionRepository,
 };
+use andromeda_postgresql_temporal_store::repo::TemporalRepository;
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::{executor::SnapshotPreparation, store::SnapshotStore};
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
@@ -117,13 +119,13 @@ impl TenantSignals {
 pub(super) struct TaskSupervisionInputs<'a> {
     pub(super) entity_config: &'a EntityConfig,
     pub(super) info_config: &'a InfoConfig,
-    pub(super) outbox_config: &'a OutboxConfig,
+    pub(super) delivery_config: &'a DeliveryConfig,
     pub(super) spatial_config: &'a SpatialConfig,
     pub(super) temporal_config: &'a TemporalConfig,
+    pub(super) temporal_repo: Arc<TemporalRepository>,
     pub(super) pool: &'a PgPool,
     pub(super) tenant: TenantRef,
     pub(super) signals: TenantSignals,
-    pub(super) materializer: AttributeCurrentMaterializer,
     pub(super) entity_policy: Arc<EntityService>,
     pub(super) subscription_policy: Arc<SubscriptionService<EntitySubscriptionVariant>>,
     pub(super) csource_subscription_policy: Arc<SubscriptionService<CsrSubscriptionVariant>>,
@@ -163,13 +165,13 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     let TaskSupervisionInputs {
         entity_config,
         info_config,
-        outbox_config,
+        delivery_config,
         spatial_config,
         temporal_config,
+        temporal_repo,
         pool,
         tenant,
         signals,
-        materializer,
         entity_policy,
         subscription_policy,
         csource_subscription_policy,
@@ -195,7 +197,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         registration,
         csource_subscription,
     } = signals;
-    let mut handles = vec![tokio::spawn(materializer.run())];
+    let mut handles: Vec<JoinHandle<()>> = Vec::new();
     let mut drain_wakes = Vec::new();
 
     if entity_config.batch_async_side_effect_threshold.is_some() {
@@ -255,17 +257,17 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         entity.clone(),
         subscription,
         Arc::clone(&notification_processor),
-        if outbox_config.enabled {
+        if delivery_config.enabled {
             EntityNotificationDelivery::Durable
         } else {
             EntityNotificationDelivery::Live
         },
     )?;
-    if outbox_config.enabled {
-        let store = Arc::new(OutboxRepository::new(pool)) as Arc<dyn OutboxStore>;
-        let delivery = notification_processor as Arc<dyn NotificationOutboxDelivery>;
-        let drain = NotificationOutboxDrain::new(store, delivery, outbox_config).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-        drain_wakes.push(register_notification_outbox(&task_supervisor, Arc::new(drain), outbox_config)?);
+    if delivery_config.enabled {
+        let store = Arc::new(NotificationDeliveryQueue::new(pool)) as Arc<dyn DeliveryStore>;
+        let transport = notification_processor as Arc<dyn NotificationDeliveryTransport>;
+        let drain = NotificationDeliveryDrain::new(store, transport, delivery_config).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+        drain_wakes.push(register_notification_delivery(&task_supervisor, Arc::new(drain), delivery_config)?);
     }
     let expiration_interval = temporal_config.expiration_check_interval_secs;
     register_subscription_expiry(&task_supervisor, "subscription-expiry", subscription_policy, expiration_interval)?;
@@ -308,6 +310,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         expiration_interval,
         entity_config.expiry_batch_size,
     )?;
+    register_temporal_retention(&task_supervisor, temporal_repo, temporal_config)?;
     register_snapshot_preparation(&task_supervisor, snapshot_preparation)?;
     register_snapshot_expiry(&task_supervisor, snapshot_store, expiration_interval)?;
     register_spatial_synchronization(

@@ -10,6 +10,7 @@ use crate::{
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
     linked_entity_forwarding::ForwardedLinkedEntitySource,
+    retry_delay::TokioRetryDelay,
     temporal_linked_forwarding::ForwardedTemporalLinkedSource,
     tenant_factory::{error::TenantAssemblyError, tasks::TenantSignals, transport::TenantTransports},
     tenant_state::AndromedaState,
@@ -18,7 +19,7 @@ use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
 use andromeda_entity::{
     EntityService,
-    OutboxWriteConfig,
+    NotificationWriteConfig,
     batch::execution::BatchExecutionConfig,
     batch_activity::BatchActivityTracker,
     change_sink::EntityChangeSink,
@@ -32,7 +33,7 @@ use andromeda_federation::{FederationService, config::FederationConfig};
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_subscription::config::NotificationConfig;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_notification::outbox_config::OutboxConfig;
+use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_context_store::{
     config::DatabaseConfig,
     csource_subscription::repo::CsourceSubscriptionRepository,
@@ -74,7 +75,7 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) federation_config: &'a FederationConfig,
     pub(super) info_config: &'a InfoConfig,
     pub(super) notification_config: &'a NotificationConfig,
-    pub(super) outbox_config: &'a OutboxConfig,
+    pub(super) delivery_config: &'a DeliveryConfig,
     pub(super) snapshot_config: &'a SnapshotConfig,
     pub(super) temporal_config: &'a TemporalConfig,
     pub(super) tenancy_config: &'a TenancyConfig,
@@ -111,7 +112,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         federation_config,
         info_config,
         notification_config,
-        outbox_config,
+        delivery_config,
         snapshot_config,
         temporal_config,
         tenancy_config,
@@ -142,6 +143,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     let entities = Arc::new(EntityService::new(
         Arc::clone(entity_reader),
         Arc::new(TokioBlockingExecutor),
+        Arc::new(TokioRetryDelay),
         attribute_history,
         Arc::clone(writes),
         engine.clone(),
@@ -156,7 +158,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
             async_side_effect_threshold: entity_config.batch_async_side_effect_threshold,
         },
         batch_activity.clone(), // clone: request services and worker supervision share activity state.
-        outbox_config.enabled.then(|| OutboxWriteConfig {
+        delivery_config.enabled.then(|| NotificationWriteConfig {
             subscription_cache: Arc::clone(subscription_cache),
         }),
     ));

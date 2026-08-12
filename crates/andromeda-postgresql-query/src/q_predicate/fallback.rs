@@ -1,10 +1,11 @@
-//! JSONB jsonpath fallback for the `q` predicate shapes the `attribute_current`
-//! projection cannot answer.
+//! JSONB jsonpath fallback for the `q` predicate shapes the
+//! `current_attribute_values` projection cannot answer.
 //!
 //! The projection stores one typed value per attribute instance. Sub-attributes
 //! (`temperature.observedAt`) and the interior of compound values
 //! (`address[city]`) live only inside the payload, so predicates addressing them
-//! read the payload directly. This path is unindexed by construction.
+//! read the payload directly. A numeric operand too large to survive the bind
+//! path exactly lands here as well. This path is unindexed by construction.
 
 use crate::{
     jsonb::{attribute_value_jsonpath, comparison_operand, escape_jsonpath},
@@ -168,26 +169,26 @@ mod tests {
 
     #[test]
     fn integers_beyond_f64_precision_fall_back_to_the_payload() {
-        // The projection stores `double precision`; JSONB stores exact numeric.
-        // Probing the projection here would answer from the rounded copy, so the
-        // entity would be visible via GET but denied by the filter.
+        // The operand can only travel as `double precision`, and beyond 2^53 it
+        // rounds. Probing the projection with the rounded operand would make the
+        // entity visible via GET but denied by the filter.
         let sql = render(&format!("\"{SPEED}\"==12345678901234567"));
         assert!(sql.contains("jsonb_path_query_first"), "{sql}");
-        assert!(!sql.contains("attribute_current"), "{sql}");
+        assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 
     #[test]
     fn a_range_bound_beyond_f64_precision_falls_back() {
         let sql = render(&format!("\"{SPEED}\"==1..12345678901234567"));
         assert!(sql.contains("jsonb_path_query_first"), "one lossy bound taints the range: {sql}");
-        assert!(!sql.contains("attribute_current"), "{sql}");
+        assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 
     #[test]
     fn sub_attribute_predicate_falls_back_to_jsonpath() {
         let sql = render("\"https://example.com/temperature\".\"https://uri.etsi.org/ngsi-ld/observedAt\">=\"2024-01-01T00:00:00Z\"");
         assert!(sql.contains("jsonb_path_query_first"), "{sql}");
-        assert!(!sql.contains("attribute_current"), "sub-attributes are not projected: {sql}");
+        assert!(!sql.contains("current_attribute_values"), "sub-attributes are not projected: {sql}");
     }
 
     #[test]
@@ -195,7 +196,7 @@ mod tests {
         let sql = render("\"https://example.com/address\"[city]==\"Berlin\"");
         assert!(sql.contains("jsonb_path_query_first"), "{sql}");
         assert!(sql.contains(".\\\"city\\\"") || sql.contains(".\"city\""), "{sql}");
-        assert!(!sql.contains("attribute_current"), "{sql}");
+        assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 
     #[test]

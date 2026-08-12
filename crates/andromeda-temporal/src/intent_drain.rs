@@ -85,7 +85,7 @@ impl TemporalIntentDrain {
         let mut retried = 0usize;
         for claim in claimed {
             match self.sink.append(&claim.pending.intent).await {
-                Ok(_) => {
+                Ok(()) => {
                     self.queue.acknowledge(self.owner, &claim.pending).await?;
                     acknowledged += 1;
                 }

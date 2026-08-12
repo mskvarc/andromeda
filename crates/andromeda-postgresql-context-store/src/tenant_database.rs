@@ -4,7 +4,10 @@
 //! identifier limits and migration order are decided once rather than per
 //! call site.
 
-use crate::error::ContextStoreError;
+use crate::{
+    error::ContextStoreError,
+    schema_contract::{contract::SchemaContract, schema_metadata::ensure_schema_contract},
+};
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
@@ -111,10 +114,12 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &Tenant
 }
 
 /// Run tenant and platform migrations against the given pool.
+///
+/// The platform database is also the unnamed default tenant's database, so it
+/// carries the tenant schema and its contract before the platform tables are
+/// added on top.
 pub async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreError> {
-    let mut tenant_migrator = sqlx::migrate!("../../migrations/tenant");
-    tenant_migrator.set_ignore_missing(true);
-    tenant_migrator.run(pool).await?;
+    migrate_tenant_db(pool).await?;
 
     let mut platform_migrator = sqlx::migrate!("../../migrations/platform");
     platform_migrator.set_ignore_missing(true);
@@ -122,11 +127,20 @@ pub async fn migrate_main_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreErro
     Ok(())
 }
 
-/// Run tenant-only migrations against the given pool.
+/// Run tenant-only migrations against the given pool, then stamp and verify the
+/// schema contract the migrated database now carries.
+///
+/// The stamp is written here rather than by a migration because a migration
+/// cannot digest the migration set it belongs to. Verification refuses a tenant
+/// whose schema, server or extensions are not what this binary was built
+/// against, before any caller can publish the pool.
 pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreError> {
     let mut tenant_migrator = sqlx::migrate!("../../migrations/tenant");
     tenant_migrator.set_ignore_missing(true);
     tenant_migrator.run(pool).await?;
+
+    let contract = SchemaContract::of(&tenant_migrator)?;
+    ensure_schema_contract(pool, &contract).await?;
     Ok(())
 }
 

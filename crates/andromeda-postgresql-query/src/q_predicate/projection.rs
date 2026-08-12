@@ -1,9 +1,10 @@
-//! `q` predicates compiled to `EXISTS` probes against the `attribute_current`
-//! projection.
+//! `q` predicates compiled to `EXISTS` probes against the
+//! `current_attribute_values` projection.
 
 use crate::{
     attribute_name_id::AttributeNameId,
     bind::BindBuilder,
+    column_reference::{qualified, quoted},
     error::RenderError,
     operator::{comparison, pattern_match},
     q_predicate::{
@@ -12,6 +13,7 @@ use crate::{
         target::QFilterTarget,
         traversal::LinkedHop,
     },
+    schema::CurrentAttributeValues,
 };
 use andromeda_ngsi_ld_query::{
     filter::{
@@ -22,7 +24,15 @@ use andromeda_ngsi_ld_query::{
     },
     pattern::Pattern,
 };
-use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
+use sea_query::{Alias, Condition, Expr as SeaExpr, Value as SeaValue};
+
+/// Alias of the projection scan every value probe reads.
+const PROBE_ALIAS: &str = "cav";
+
+/// Quoted `"cav"."column"` reference into the probe's projection scan.
+fn probe_column(column: CurrentAttributeValues) -> String {
+    qualified(&Alias::new(PROBE_ALIAS), &column)
+}
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
 pub fn compile(expr: &Expr, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
@@ -104,8 +114,8 @@ fn compile_local_predicate(pred: &Predicate, path: &AttrPath, target: &QFilterTa
 }
 
 /// Whether a path addresses an attribute's own value, which is the only thing
-/// `attribute_current` stores. Sub-attributes (`temperature.observedAt`) and
-/// compound value paths (`address[city]`) live inside the JSONB payload.
+/// `current_attribute_values` stores. Sub-attributes (`temperature.observedAt`)
+/// and compound value paths (`address[city]`) live inside the JSONB payload.
 const fn is_projection_eligible(path: &AttrPath) -> bool {
     path.sub_attrs.is_empty() && path.value_path.is_empty()
 }
@@ -113,17 +123,19 @@ const fn is_projection_eligible(path: &AttrPath) -> bool {
 /// Largest integer magnitude `f64` represents exactly.
 const F64_EXACT_INTEGER_LIMIT: i128 = 1 << 53;
 
-/// Whether a comparison target is outside what the projection can represent.
+/// Whether a comparison target is outside what a probe can carry to the
+/// projection.
 ///
-/// `attribute_current.value_number` is `double precision`, but JSONB stores
-/// numbers as exact `numeric`, so the payload holds the precise value while the
-/// projection holds a rounded one. Beyond 2^53 those disagree, and a probe
-/// against the projection would answer from the rounded copy: `GET` on the
-/// entity would show the exact value while the filter denied it existed.
+/// `current_attribute_values.value_number` is `numeric` and so holds exactly
+/// what the client wrote, but the comparison operand travels as `double
+/// precision` — the widest exact numeric type this crate can bind — and is cast
+/// back to `numeric` in the statement. Beyond 2^53 that round trip rounds the
+/// operand, and the probe would answer against a value the client never wrote:
+/// `GET` on the entity would show the exact number while the filter denied it.
 ///
 /// Such predicates go to the JSONB fallback instead, which reads the payload and
-/// compares as `numeric`. That is slower and unindexed, but it is the only
-/// source that still holds the value the client wrote.
+/// compares as `numeric` throughout. That is slower and unindexed, and it stops
+/// being necessary the moment a `numeric` bind value exists.
 fn scalar_exceeds_precision(scalar: &Scalar) -> bool {
     let Scalar::Number(number) = scalar else {
         return false;
@@ -159,20 +171,18 @@ fn unsatisfiable() -> Condition {
 
 /// Compile a bare existence predicate.
 ///
-/// Existence resolves through the temporal catalogue rather than the payload.
+/// A row in the projection *is* the attribute: the tombstone value kind belongs
+/// to history and never appears in current state, so an attribute deleted by
+/// clause 5.6.16 leaves no row behind and presence needs no further guard.
+///
+/// The probe reads the leading `(entity_key, attribute_name_id)` columns of the
+/// clause 4.5.5 grain constraint, so it is an index-only lookup on the same
+/// index the write path conflicts against.
+///
 /// The obvious alternative, `payload->0 ? '<iri>'`, cannot use the GIN index on
 /// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
 /// bare indexed column, and `payload->0` is an expression. It is a sequential
 /// scan.
-///
-/// Both probes here hit indexes that already exist and are already maintained:
-/// the outer one uses the leading `(entity_id, attribute_name_id)` prefix of the
-/// TEA uniqueness constraint, the inner one `attribute_current`'s primary key.
-///
-/// The inner probe is required because TEA rows outlive the attributes they
-/// describe — deleting an attribute writes a tombstone rather than dropping the
-/// catalogue row — so catalogue presence alone would report deleted attributes
-/// as present.
 fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_exists(path, target);
@@ -187,13 +197,13 @@ fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttri
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
     let attr = binds.bind(id.get());
     let sql = format!(
-        "EXISTS (SELECT 1 FROM \"temporal_entity_attributes\" AS \"tea_q\" \
-         WHERE \"tea_q\".\"entity_id\" = {corr} AND \"tea_q\".\"attribute_name_id\" = {attr} \
-         AND EXISTS (SELECT 1 FROM \"attribute_current\" AS \"ac\" \
-         WHERE \"ac\".\"tea_id\" = \"tea_q\".\"id\" AND {guard}))",
-        corr = target.entity_id_column(),
+        "EXISTS (SELECT 1 FROM {projection} AS \"{PROBE_ALIAS}\" \
+         WHERE {attr_column} = {attr} AND {key_column} = {corr})",
+        projection = quoted(&CurrentAttributeValues::Table),
+        attr_column = probe_column(CurrentAttributeValues::AttributeNameId),
         attr = attr,
-        guard = TOMBSTONE_GUARD,
+        key_column = probe_column(CurrentAttributeValues::EntityKey),
+        corr = target.entity_key_column(),
     );
     Condition::all().add(SeaExpr::cust_with_values(sql, binds.into_values()))
 }
@@ -202,24 +212,14 @@ fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttri
 // Comparisons against the projection
 // ---------------------------------------------------------------------------
 
-/// Excludes deletion tombstones, which are stored as
-/// `value_string = 'urn:ngsi-ld:null'`.
-///
-/// Applied to every projection probe, not only string ones: the
-/// `chk_attribute_current_single_value` constraint guarantees exactly one typed
-/// column is populated, so on a non-string row `value_string` is NULL and
-/// `NULL IS DISTINCT FROM '…'` is true. One uniform guard is easier to keep
-/// correct than a per-arm one.
-const TOMBSTONE_GUARD: &str = "\"ac\".\"value_string\" IS DISTINCT FROM 'urn:ngsi-ld:null'";
-
 /// Wrap a rendered value predicate — already accompanied by its binds — in the
-/// correlated `attribute_current` probe.
+/// correlated `current_attribute_values` probe.
 fn projection_condition(attr: String, value_sql: String, binds: BindBuilder<SeaValue>, target: &QFilterTarget) -> Condition {
     Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
 }
 
 /// Compile an equality comparison (`==`/`!=`) against the typed columns of
-/// `attribute_current`.
+/// `current_attribute_values`.
 fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget) -> Condition {
     // The markers are local to one `cust_with_values` fragment; sea-query
     // renumbers them when the enclosing statement is rendered.
@@ -254,7 +254,7 @@ fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership
 }
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
-/// of `attribute_current`.
+/// of `current_attribute_values`.
 fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget) -> Condition {
     let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
     let attr = binds.bind(id.get());
@@ -262,60 +262,82 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
     projection_condition(attr, value_sql, binds, target)
 }
 
-/// Wrap a value predicate in the correlated `attribute_current` probe.
+/// Wrap a value predicate in the correlated `current_attribute_values` probe.
 fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilterTarget) -> String {
     format!(
-        "EXISTS (SELECT 1 FROM \"attribute_current\" AS \"ac\" \
-         WHERE \"ac\".\"attribute_name_id\" = {attr} AND ({value}) AND {guard} \
-         AND \"ac\".\"entity_id\" = {corr})",
+        "EXISTS (SELECT 1 FROM {projection} AS \"{PROBE_ALIAS}\" \
+         WHERE {attr_column} = {attr} AND ({value}) \
+         AND {key_column} = {corr})",
+        projection = quoted(&CurrentAttributeValues::Table),
+        attr_column = probe_column(CurrentAttributeValues::AttributeNameId),
         attr = attr_placeholder,
         value = value_sql,
-        guard = TOMBSTONE_GUARD,
-        corr = target.entity_id_column(),
+        key_column = probe_column(CurrentAttributeValues::EntityKey),
+        corr = target.entity_key_column(),
     )
 }
 
 /// Compare one scalar against the typed column that holds values of its kind.
 ///
-/// The mapping mirrors what the temporal write path's `extract_attribute_value` writes:
+/// Every arm names exactly one typed column and compares it to a bound value, so
+/// each comparison is the shape the partial index over that column is predicated
+/// on: `value_number > $1` implies `value_number IS NOT NULL`, which is what
+/// makes `(attribute_name_id, value_number) WHERE value_number IS NOT NULL`
+/// applicable. Nothing tests `value_kind`, deliberately — the projection's
+/// check constraint already ties the kind to the populated column, and an added
+/// `value_kind = k` term would turn the NULL a wrong-kind row yields into
+/// `FALSE`, which under the negated forms (`!=` over a value list) flips a
+/// non-match into a match.
 ///
-/// * numbers land in `value_number` (`double precision`),
+/// The mapping mirrors what the write path projects:
+///
+/// * numbers land in `value_number` (`numeric`); the operand is bound as
+///   `double precision` and cast back, which is exact for every value
+///   [`scalar_exceeds_precision`] admits and keeps the comparison
+///   `numeric`-to-`numeric` so the typed index still applies,
 /// * booleans in `value_bool`,
 /// * date-times in `value_datetime`,
 /// * strings in `value_string` for Properties and single-valued
 ///   VocabProperties, and in `value_uri` for Relationship objects — clause 4.9
 ///   makes a Relationship's object a legal comparison target, so a string
 ///   comparison has to consider both,
-/// * plain dates and times in `value_string`, because the recorder only
-///   promotes full `DateTime`-typed values to `value_datetime`.
+/// * plain dates and times in `value_string`, because only full
+///   `DateTime`-typed values are projected to `value_datetime`.
 fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue>) -> String {
     let operator = comparison(op);
     match scalar {
         Scalar::Number(number) => match number.as_f64() {
             Some(value) => {
                 let placeholder = binds.bind(value);
-                format!("\"ac\".\"value_number\" {operator} {placeholder}")
+                let column = probe_column(CurrentAttributeValues::ValueNumber);
+                format!("{column} {operator} {placeholder}::numeric")
             }
-            // A `serde_json::Number` that will not fit an f64 cannot equal any
-            // stored `double precision` value.
+            // A `serde_json::Number` that fits no f64 cannot be carried to the
+            // projection at all, and one that large is out of range for
+            // `scalar_exceeds_precision` to have admitted a comparison anyway.
             None => "FALSE".to_string(),
         },
         Scalar::Bool(value) => {
             let placeholder = binds.bind(*value);
-            format!("\"ac\".\"value_bool\" {operator} {placeholder}")
+            let column = probe_column(CurrentAttributeValues::ValueBool);
+            format!("{column} {operator} {placeholder}")
         }
         Scalar::Str(value) => {
             let string_placeholder = binds.bind(value.as_str());
             let uri_placeholder = binds.bind(value.as_str());
-            format!("(\"ac\".\"value_string\" {operator} {string_placeholder} OR \"ac\".\"value_uri\" {operator} {uri_placeholder})")
+            let string_column = probe_column(CurrentAttributeValues::ValueString);
+            let uri_column = probe_column(CurrentAttributeValues::ValueUri);
+            format!("({string_column} {operator} {string_placeholder} OR {uri_column} {operator} {uri_placeholder})")
         }
         Scalar::DateTime(value) => {
             let placeholder = binds.bind(*value);
-            format!("\"ac\".\"value_datetime\" {operator} {placeholder}")
+            let column = probe_column(CurrentAttributeValues::ValueDatetime);
+            format!("{column} {operator} {placeholder}")
         }
         Scalar::Date(_) | Scalar::Time(_) => {
             let placeholder = binds.bind(scalar.literal_text());
-            format!("\"ac\".\"value_string\" {operator} {placeholder}")
+            let column = probe_column(CurrentAttributeValues::ValueString);
+            format!("{column} {operator} {placeholder}")
         }
     }
 }
@@ -332,10 +354,12 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue
 /// existence test in `NOT (...)`, which matched entities that simply lacked the
 /// attribute.
 ///
-/// A `gin_trgm_ops` trigram index can accelerate POSIX `~` (since PostgreSQL
-/// 9.3) whenever the pattern yields extractable trigrams — `urn:ngsi-ld:.*`
-/// does, an anchored `^A.*` does not. Either way the probe is narrowed by the
-/// `attribute_name_id` prefix of `idx_ac_attr_str` before any regex is evaluated.
+/// The `gin_trgm_ops` trigram index `idx_cav_string_trgm` can accelerate POSIX
+/// `~` (since PostgreSQL 9.3) whenever the pattern yields extractable trigrams
+/// — `urn:ngsi-ld:.*` does, an anchored `^A.*` does not. Either way the probe
+/// is narrowed by the `attribute_name_id` prefix of `idx_cav_attr_string`
+/// before any regex is evaluated. The `value_uri` disjunct has no trigram index
+/// of its own; it is evaluated over the rows that prefix already selected.
 fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_pattern(path, pattern, polarity, target);
@@ -355,7 +379,9 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
     // exactly as the comparison path does (clause 4.9): a URI is a string, so
     // `owner~="urn:Person:.*"` matches. Only one column is non-null per
     // instance, so the OR holds for `~=` and `!~=` alike.
-    let value_sql = format!("(\"ac\".\"value_string\" {operator} {string_placeholder} OR \"ac\".\"value_uri\" {operator} {uri_placeholder})");
+    let string_column = probe_column(CurrentAttributeValues::ValueString);
+    let uri_column = probe_column(CurrentAttributeValues::ValueUri);
+    let value_sql = format!("({string_column} {operator} {string_placeholder} OR {uri_column} {operator} {uri_placeholder})");
     Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
 }
 
@@ -426,9 +452,9 @@ mod tests {
     fn number_comparison_probes_typed_number_column() {
         let (sql, binds) = render(&format!("{}>50", quoted(SPEED)));
         assert!(sql.contains("EXISTS"), "{sql}");
-        assert!(sql.contains("\"attribute_current\""), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_number\" >"), "{sql}");
-        assert!(matches!(binds[0], BindValue::I16(7)), "attribute id binds as smallint: {binds:?}");
+        assert!(sql.contains("\"current_attribute_values\""), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
+        assert!(matches!(binds[0], BindValue::I32(7)), "attribute id binds as int4: {binds:?}");
         assert!(
             matches!(binds[1], BindValue::F64(value) if (value - 50.0).abs() < f64::EPSILON),
             "numeric literal binds as float8: {binds:?}"
@@ -436,40 +462,68 @@ mod tests {
     }
 
     #[test]
+    fn a_number_comparison_casts_its_operand_so_the_column_stays_numeric() {
+        // `value_number` is `numeric`. Without the cast the operand's
+        // `double precision` type wins operator resolution and the column is
+        // coerced instead, which both rounds it and makes the typed partial
+        // index inapplicable.
+        let (sql, _) = render(&format!("{}>50", quoted(SPEED)));
+        assert!(sql.contains("\"cav\".\"value_number\" > $2::numeric"), "{sql}");
+    }
+
+    #[test]
     fn a_pattern_covers_property_values_and_relationship_objects() {
         // Clause 4.9: a URI is a String, so `~=` over a Relationship's object
         // matches; the pattern must test `value_uri` as the comparison does.
         let (sql, _) = render("\"https://example.com/brandName\"~=\"Merc.*\"");
-        assert!(sql.contains("\"ac\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_uri\" ~"), "a pattern must also test relationship objects: {sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_uri\" ~"), "a pattern must also test relationship objects: {sql}");
     }
 
     #[test]
     fn string_comparison_covers_property_values_and_relationship_objects() {
         let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
-        assert!(sql.contains("\"ac\".\"value_string\" ="), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_uri\" ="), "relationship objects are legal targets: {sql}");
-        assert!(sql.contains("IS DISTINCT FROM 'urn:ngsi-ld:null'"), "tombstone guard missing: {sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_uri\" ="), "relationship objects are legal targets: {sql}");
+    }
+
+    #[test]
+    fn no_probe_guards_against_a_stored_deletion_marker() {
+        // A deleted attribute is an absent row in the projection, so there is
+        // nothing to exclude and no sentinel value a client could collide with.
+        let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
+        assert!(!sql.contains("IS DISTINCT FROM"), "{sql}");
+        assert!(!sql.contains("urn:ngsi-ld:null"), "{sql}");
+    }
+
+    #[test]
+    fn no_probe_filters_on_the_value_kind_code() {
+        // The projection's check constraint already pins the kind to the
+        // populated column, and a `value_kind = k` term would turn the NULL a
+        // wrong-kind row yields into FALSE, which a negated predicate then
+        // reads as a match.
+        let (sql, _) = render("\"https://example.com/color\"!=\"red\",\"blue\"");
+        assert!(!sql.contains("value_kind"), "{sql}");
     }
 
     #[test]
     fn boolean_comparison_binds_native_boolean() {
         let (sql, binds) = render("\"https://example.com/active\"==true");
-        assert!(sql.contains("\"ac\".\"value_bool\" ="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_bool\" ="), "{sql}");
         assert!(binds.iter().any(|b| matches!(b, BindValue::Bool(true))), "{binds:?}");
     }
 
     #[test]
     fn datetime_comparison_binds_native_timestamp() {
         let (sql, binds) = render("\"https://example.com/observed\">=2017-12-24T12:00:00Z");
-        assert!(sql.contains("\"ac\".\"value_datetime\" >="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_datetime\" >="), "{sql}");
         assert!(binds.iter().any(|b| matches!(b, BindValue::Timestamp(_))), "{binds:?}");
     }
 
     #[test]
-    fn date_scalar_compares_as_text_because_the_recorder_stores_it_that_way() {
+    fn date_scalar_compares_as_text_because_the_projection_stores_it_that_way() {
         let (sql, _) = render("\"https://example.com/d\"==2024-01-01");
-        assert!(sql.contains("\"ac\".\"value_string\" ="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
         assert!(!sql.contains("value_datetime"), "only full date-times reach value_datetime: {sql}");
     }
 
@@ -477,9 +531,9 @@ mod tests {
     fn inclusive_range_becomes_a_bounded_pair_inside_one_probe() {
         let (sql, binds) = render("\"https://example.com/temperature\"==10..20");
         assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not two: {sql}");
-        assert!(sql.contains("\"ac\".\"value_number\" >="), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_number\" <="), "{sql}");
-        assert!(matches!(binds[0], BindValue::I16(12)));
+        assert!(sql.contains("\"cav\".\"value_number\" >="), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" <="), "{sql}");
+        assert!(matches!(binds[0], BindValue::I32(12)));
         assert!(matches!(binds[1], BindValue::F64(value) if (value - 10.0).abs() < f64::EPSILON));
         assert!(matches!(binds[2], BindValue::F64(value) if (value - 20.0).abs() < f64::EPSILON));
     }
@@ -488,8 +542,8 @@ mod tests {
     fn excluded_range_requires_the_attribute_to_exist() {
         let (sql, _) = render("\"https://example.com/temperature\"!=10..20");
         assert!(sql.contains("EXISTS"), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_number\" <"), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_number\" >"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" <"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
     }
 
     #[test]
@@ -510,15 +564,15 @@ mod tests {
     #[test]
     fn integers_within_f64_precision_still_use_the_projection() {
         let (sql, _) = render(&format!("{}==9007199254740991", quoted(SPEED)));
-        assert!(sql.contains("attribute_current"), "2^53-1 is exact in f64: {sql}");
+        assert!(sql.contains("current_attribute_values"), "2^53-1 is exact in f64: {sql}");
     }
 
     #[test]
     fn floats_are_never_treated_as_lossy() {
         // A value written as a float is already an f64-shaped quantity; only
-        // large integers can lose precision moving into the projection.
+        // large integers can lose precision on the way to the probe.
         let (sql, _) = render(&format!("{}>1.5", quoted(SPEED)));
-        assert!(sql.contains("\"ac\".\"value_number\" >"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
     }
 
     // -- patterns ------------------------------------------------------------
@@ -526,14 +580,13 @@ mod tests {
     #[test]
     fn pattern_match_uses_posix_regex_on_the_string_column() {
         let (sql, _) = render("\"https://example.com/name\"~=\"^A.*\"");
-        assert!(sql.contains("\"ac\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("IS DISTINCT FROM 'urn:ngsi-ld:null'"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
     }
 
     #[test]
     fn negated_pattern_sits_inside_the_probe_so_missing_attributes_do_not_match() {
         let (sql, _) = render("\"https://example.com/name\"!~=\"^A.*\"");
-        assert!(sql.contains("\"ac\".\"value_string\" !~"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
         assert!(
             !sql.contains("NOT (EXISTS") && !sql.contains("NOT EXISTS"),
             "clause 4.9 requires the target element to be present: {sql}"
@@ -546,25 +599,31 @@ mod tests {
     fn unknown_attribute_iri_compiles_to_a_constant_false() {
         let (sql, _) = render_with(&format!("\"{}\">1", "https://example.com/never-written"), &names(), &QFilterTarget::entities());
         assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("attribute_current"), "no probe is emitted when no row can exist: {sql}");
+        assert!(!sql.contains("current_attribute_values"), "no probe is emitted when no row can exist: {sql}");
     }
 
     // -- existence -----------------------------------------------------------
 
     #[test]
-    fn bare_existence_probes_the_temporal_catalogue_not_the_payload() {
+    fn bare_existence_is_the_presence_of_a_projection_row() {
+        // A deleted attribute leaves no row, so presence needs no second probe
+        // and no tombstone test.
         let (sql, binds) = render(&quoted(SPEED));
-        assert!(sql.contains("\"temporal_entity_attributes\" AS \"tea_q\""), "{sql}");
-        assert!(sql.contains("\"attribute_current\""), "presence must exclude tombstones: {sql}");
-        assert!(!sql.contains("\"payload\"->0 ?"), "the payload probe cannot use the GIN index: {sql}");
-        assert!(matches!(binds[0], BindValue::I16(7)), "{binds:?}");
+        pretty_assertions::assert_eq!(
+            sql,
+            concat!(
+                r#"SELECT "id" FROM "entities" WHERE EXISTS (SELECT 1 FROM "current_attribute_values" AS "cav" "#,
+                r#"WHERE "cav"."attribute_name_id" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
+            )
+        );
+        assert!(matches!(binds[0], BindValue::I32(7)), "{binds:?}");
     }
 
     #[test]
     fn unknown_attribute_existence_compiles_to_a_constant_false() {
         let (sql, _) = render("\"https://example.com/never-written\"");
         assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
+        assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 
     // -- boolean structure ---------------------------------------------------
@@ -583,19 +642,20 @@ mod tests {
     // -- correlation ---------------------------------------------------------
 
     #[test]
-    fn temporal_stage_one_correlates_on_the_catalogue_entity_id() {
+    fn a_correlated_statement_probes_against_the_entity_key_of_its_own_alias() {
         let (sql, _) = render_with(
             &format!("{}>50", quoted(SPEED)),
             &names(),
-            &QFilterTarget::correlated((Alias::new("tea"), Alias::new("entity_id")), (Alias::new("e"), Alias::new("payload"))),
+            &QFilterTarget::correlated((Alias::new("ce"), Alias::new("entity_key")), (Alias::new("ce"), Alias::new("payload"))),
         );
-        assert!(sql.contains("\"ac\".\"entity_id\" = \"tea\".\"entity_id\""), "{sql}");
+        assert!(sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
     }
 
     #[test]
-    fn entity_queries_correlate_on_the_entities_primary_key() {
+    fn entity_queries_correlate_on_the_entities_surrogate_key() {
         let (sql, _) = render(&format!("{}>50", quoted(SPEED)));
-        assert!(sql.contains("\"ac\".\"entity_id\" = \"entities\".\"id\""), "{sql}");
+        assert!(sql.contains("\"cav\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
+        assert!(!sql.contains("\"entities\".\"id\""), "the URI is not the correlation column: {sql}");
     }
 
     // -- attribute collection ------------------------------------------------
@@ -608,24 +668,21 @@ mod tests {
     #[test]
     fn a_single_hop_probes_the_relationship_and_joins_the_entity_it_names() {
         let (sql, binds) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
-        assert!(sql.contains("\"attribute_current\" AS \"ac_ln1\""), "{sql}");
+        assert!(sql.contains("\"current_attribute_values\" AS \"cav_ln1\""), "{sql}");
         assert!(
-            sql.contains("JOIN \"entities\" AS \"le1\" ON \"le1\".\"id\" = \"ac_ln1\".\"value_uri\""),
+            sql.contains("JOIN \"entities\" AS \"le1\" ON \"le1\".\"id\" = \"cav_ln1\".\"value_uri\""),
             "the hop resolves the object through the projection, not the payload: {sql}"
         );
-        assert!(sql.contains("\"ac_ln1\".\"entity_id\" = \"entities\".\"id\""), "{sql}");
+        assert!(sql.contains("\"cav_ln1\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
+        // The inner comparison is correlated against the linked entity's key,
+        // which is the row the join on its URI landed on.
+        assert!(sql.contains("\"cav\".\"entity_key\" = \"le1\".\"entity_key\""), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
         assert!(
-            sql.contains("\"ac_ln1\".\"value_uri\" IS DISTINCT FROM 'urn:ngsi-ld:null'"),
-            "a tombstoned relationship names no entity: {sql}"
-        );
-        // The inner comparison is correlated against the linked entity.
-        assert!(sql.contains("\"ac\".\"entity_id\" = \"le1\".\"id\""), "{sql}");
-        assert!(sql.contains("\"ac\".\"value_string\" ="), "{sql}");
-        assert!(
-            matches!(binds[0], BindValue::I16(19)),
+            matches!(binds[0], BindValue::I32(19)),
             "the relationship's dictionary key binds first: {binds:?}"
         );
-        assert!(matches!(binds[1], BindValue::I16(20)), "then the inner attribute's: {binds:?}");
+        assert!(matches!(binds[1], BindValue::I32(20)), "then the inner attribute's: {binds:?}");
     }
 
     #[test]
@@ -647,16 +704,14 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS (SELECT 1 FROM "attribute_current" AS "ac_ln1" "#,
-                r#"JOIN "entities" AS "le1" ON "le1"."id" = "ac_ln1"."value_uri" "#,
-                r#"WHERE "ac_ln1"."entity_id" = "entities"."id" "#,
-                r#"AND "ac_ln1"."attribute_name_id" = $1 "#,
-                r#"AND "ac_ln1"."value_uri" IS DISTINCT FROM 'urn:ngsi-ld:null' "#,
-                r#"AND (($2 = ANY("le1"."types")) OR ($3 = ANY("le1"."types"))) "#,
-                r#"AND (EXISTS (SELECT 1 FROM "attribute_current" AS "ac" "#,
-                r#"WHERE "ac"."attribute_name_id" = $4 AND (("ac"."value_string" = $5 OR "ac"."value_uri" = $6)) "#,
-                r#"AND "ac"."value_string" IS DISTINCT FROM 'urn:ngsi-ld:null' "#,
-                r#"AND "ac"."entity_id" = "le1"."id")))"#,
+                r#"SELECT "id" FROM "entities" WHERE EXISTS (SELECT 1 FROM "current_attribute_values" AS "cav_ln1" "#,
+                r#"JOIN "entities" AS "le1" ON "le1"."id" = "cav_ln1"."value_uri" "#,
+                r#"WHERE "cav_ln1"."entity_key" = "entities"."entity_key" "#,
+                r#"AND "cav_ln1"."attribute_name_id" = $1 "#,
+                r#"AND (("le1"."types" @> ARRAY(SELECT $2::TEXT)) OR ("le1"."types" @> ARRAY(SELECT $3::TEXT))) "#,
+                r#"AND (EXISTS (SELECT 1 FROM "current_attribute_values" AS "cav" "#,
+                r#"WHERE "cav"."attribute_name_id" = $4 AND (("cav"."value_string" = $5 OR "cav"."value_uri" = $6)) "#,
+                r#"AND "cav"."entity_key" = "le1"."entity_key")))"#,
             )
         );
         assert!(
@@ -687,23 +742,23 @@ mod tests {
             quoted("https://example.com/inner"),
             quoted("https://example.com/zone")
         ));
-        for alias in ["ac_ln1", "le1", "ac_ln2", "le2"] {
+        for alias in ["cav_ln1", "le1", "cav_ln2", "le2"] {
             assert!(sql.contains(&format!("AS \"{alias}\"")), "{alias} missing from {sql}");
         }
         assert!(
-            sql.contains("\"ac_ln2\".\"entity_id\" = \"le1\".\"id\""),
+            sql.contains("\"cav_ln2\".\"entity_key\" = \"le1\".\"entity_key\""),
             "the second hop starts at the first's target: {sql}"
         );
-        assert!(sql.contains("\"ac\".\"entity_id\" = \"le2\".\"id\""), "{sql}");
+        assert!(sql.contains("\"cav\".\"entity_key\" = \"le2\".\"entity_key\""), "{sql}");
     }
 
     #[test]
-    fn a_bare_existence_through_a_hop_probes_the_catalogue_of_the_linked_entity() {
+    fn a_bare_existence_through_a_hop_probes_the_projection_of_the_linked_entity() {
         let (sql, _) = render(&format!("{}{{{}}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
-        assert!(sql.contains("\"attribute_current\" AS \"ac_ln1\""), "{sql}");
+        assert!(sql.contains("\"current_attribute_values\" AS \"cav_ln1\""), "{sql}");
         assert!(
-            sql.contains("\"tea_q\".\"entity_id\" = \"le1\".\"id\""),
-            "existence resolves through the catalogue of the entity the hop landed on: {sql}"
+            sql.contains("\"cav\".\"entity_key\" = \"le1\".\"entity_key\""),
+            "existence resolves against the entity the hop landed on: {sql}"
         );
     }
 
@@ -713,6 +768,6 @@ mod tests {
         // ever written, so no entity is reachable through it.
         let (sql, _) = render(&format!("{}{{{}==\"x\"}}", quoted("https://example.com/never-written"), quoted(CATEGORY)));
         assert!(sql.contains("FALSE"), "{sql}");
-        assert!(!sql.contains("ac_ln1"), "no probe is emitted when no row can exist: {sql}");
+        assert!(!sql.contains("cav_ln1"), "no probe is emitted when no row can exist: {sql}");
     }
 }

@@ -2,116 +2,230 @@
 //! [`TemporalHistoryRow`] and [`TemporalAggregationRow`] types declared by the
 //! temporal store port.
 //!
-//! Every column probe, EWKB-to-GeoJSON conversion, tombstone detection, and
-//! legacy `effective_value_type` heuristic lives here so that neither the
-//! service layer nor the renderers ever import `sqlx`.
+//! Every column probe, code decode, EWKB-to-GeoJSON conversion and instance
+//! identity reassembly lives here so that neither the service layer nor the
+//! renderers ever import `sqlx`.
+//!
+//! Nothing in this module guesses. The rebuilt history table records which
+//! typed column holds a row's value, so the value is read from that column and
+//! from no other; a stored code the registry has never assigned fails the
+//! decode rather than falling back to a default, because a row written by a
+//! later release must be reported as unreadable instead of being silently
+//! reinterpreted.
 
-use crate::{error::TemporalStoreError, mapper::row_to_tea, value_type::ValueType};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, uri::Uri};
-use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+use crate::{attribute_kind_code::attribute_type_of, error::TemporalStoreError, unit_code_metadata::restore_unit_code};
+use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_ngsi_ld_model::{
+    attribute::json_number::JsonNumber,
+    temporal::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
+};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
-use andromeda_temporal::append_intent::{TemporalIntentId, TemporalObservationIdentity};
+use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
+use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use sqlx::{Row, postgres::PgRow};
-use std::str::FromStr;
+use serde_json::{Number, Value};
+use sqlx::{Row, postgres::PgRow, types::BigDecimal};
+use uuid::Uuid;
 
 /// Decode one `attribute_history` row into a [`TemporalHistoryRow`].
-///
-/// Mirrors the column-reading logic previously spread across
-/// `parse_tea_entry` and `history_row_to_expanded_instance`, but returns
-/// the neutral row type instead of expanded JSON. The EWKB-to-GeoJSON
-/// conversion and the legacy `effective_value_type` heuristic are handled
-/// here so the renderer never touches a database type.
-pub(crate) fn decode_history_row(row: &PgRow) -> Result<andromeda_temporal::port::history_reader::TemporalHistoryObservation, TemporalStoreError> {
-    let tea = row_to_tea(row)?;
-
-    let is_tombstone = row.try_get::<Option<String>, _>("value_string").ok().flatten().as_deref() == Some(expanded_properties::NULL_URI.as_str());
-
-    let value = if is_tombstone {
-        TemporalValue::Tombstone
-    } else {
-        decode_typed_value(row, tea.value_type)?
-    };
-
-    let observed_at = row.try_get::<Option<DateTime<Utc>>, _>("observed_at").unwrap_or(None);
-    let time: DateTime<Utc> = row.try_get("time").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let created_at: DateTime<Utc> = row.try_get("recorded_at").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let modified_at: DateTime<Utc> = row.try_get("modified_at").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let instance_id_raw: String = row.try_get("instance_id").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let instance_id = instance_id_raw
-        .parse::<InstanceId>()
-        .map_err(|error| TemporalStoreError::Decode(format!("Invalid attribute_history.instance_id '{instance_id_raw}': {error}")))?;
-    let metadata: Option<Value> = row.try_get("metadata").unwrap_or(None);
-    let partition_total: Option<i64> = row.try_get("partition_total").ok();
+pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryObservation, TemporalStoreError> {
+    let attribute_kind = decode_attribute_kind(row)?;
+    let value = decode_value(row)?;
+    let mut metadata: Option<Value> = row.try_get("metadata").unwrap_or(None);
+    restore_unit_code(&mut metadata, decode_unit_code_id(row)?)?;
 
     let temporal_row = TemporalHistoryRow {
-        attribute_name: tea.attribute_name,
-        attribute_type: tea.attribute_type,
-        dataset_id: tea.dataset_id,
+        attribute_name: decode_attribute_name(row)?,
+        attribute_type: attribute_type_of(attribute_kind),
+        dataset_id: decode_dataset_id(row)?,
         value,
-        observed_at,
-        time,
-        created_at,
-        modified_at,
-        instance_id,
+        // Each axis is read from its own column and from no other. A row that
+        // recorded no instant on an axis keeps none, because filling one in
+        // from the write clock would invent a match on a Temporal Property the
+        // observation does not have (clauses 4.11 and 5.2.21).
+        observed_at: nullable_instant(row, "observed_at")?,
+        recorded_at: required_instant(row, "recorded_at")?,
+        created_at: nullable_instant(row, "created_at")?,
+        modified_at: nullable_instant(row, "modified_at")?,
+        instance: decode_instance_identity(row)?,
         metadata,
-        partition_total,
+        partition_total: row.try_get("partition_total").ok(),
     };
-    let intent_id = row
-        .try_get::<Option<uuid::Uuid>, _>("intent_id")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.intent_id: {error}")))?;
-    let intent_ordinal = row
-        .try_get::<Option<i32>, _>("intent_ordinal")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.intent_ordinal: {error}")))?;
-    let identity = intent_id
-        .zip(intent_ordinal)
-        .map(|(intent_id, ordinal)| {
-            u32::try_from(ordinal)
-                .map(|ordinal| TemporalObservationIdentity {
-                    intent_id: TemporalIntentId::from_uuid(intent_id),
-                    ordinal,
-                })
-                .map_err(|error| TemporalStoreError::Decode(format!("negative attribute_history.intent_ordinal: {error}")))
+    Ok(TemporalHistoryObservation {
+        row: temporal_row,
+        identity: Some(decode_write_identity(row)?),
+    })
+}
+
+/// Read the row's attribute family from its stored code.
+fn decode_attribute_kind(row: &PgRow) -> Result<AttributeKind, TemporalStoreError> {
+    let stored: i16 = row
+        .try_get("attribute_kind")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.attribute_kind: {error}")))?;
+    AttributeKind::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))
+}
+
+/// Read the row's expanded attribute IRI.
+fn decode_attribute_name(row: &PgRow) -> Result<AttributeName, TemporalStoreError> {
+    let raw: String = row.try_get("attribute_name").map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+    raw.parse::<AttributeName>()
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute name '{raw}': {error}")))
+}
+
+/// Read the stream's multi-attribute discriminator.
+fn decode_dataset_id(row: &PgRow) -> Result<Option<Uri>, TemporalStoreError> {
+    row.try_get::<Option<String>, _>("dataset_id")
+        .map_err(|error| TemporalStoreError::Decode(error.to_string()))?
+        .map(|raw| {
+            raw.parse::<Uri>()
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid dataset_id '{raw}': {error}")))
         })
-        .transpose()?;
-    Ok(andromeda_temporal::port::history_reader::TemporalHistoryObservation { row: temporal_row, identity })
+        .transpose()
+}
+
+/// Reassemble the identifier this instance is published to clients under.
+///
+/// The two identifier columns are mutually exclusive by check constraint, so a
+/// row populating both or neither is corrupt rather than ambiguous, and is
+/// reported instead of being resolved by precedence.
+fn decode_instance_identity(row: &PgRow) -> Result<InstanceIdentity, TemporalStoreError> {
+    let generated: Option<Uuid> = row
+        .try_get("generated_instance_uuid")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.generated_instance_uuid: {error}")))?;
+    let verbatim: Option<String> = row
+        .try_get("verbatim_instance_id")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.verbatim_instance_id: {error}")))?;
+    match (generated, verbatim) {
+        (Some(uuid), None) => Ok(InstanceIdentity::Generated(uuid)),
+        (None, Some(raw)) => Ok(InstanceIdentity::Verbatim(raw.parse::<Uri>().map_err(|error| {
+            TemporalStoreError::Decode(format!("invalid attribute_history.verbatim_instance_id '{raw}': {error}"))
+        })?)),
+        (Some(_), Some(_)) => Err(TemporalStoreError::Decode(
+            "attribute_history row populates both instance identifier columns".to_owned(),
+        )),
+        (None, None) => Err(TemporalStoreError::Decode(
+            "attribute_history row populates neither instance identifier column".to_owned(),
+        )),
+    }
+}
+
+/// Read the identity of the atomic write that produced the row.
+fn decode_write_identity(row: &PgRow) -> Result<TemporalObservationIdentity, TemporalStoreError> {
+    let write_id: Uuid = row
+        .try_get("write_id")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.write_id: {error}")))?;
+    let ordinal: i32 = row
+        .try_get("write_ordinal")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.write_ordinal: {error}")))?;
+    Ok(TemporalObservationIdentity {
+        write_id: WriteId::from_uuid(write_id),
+        ordinal: WriteOrdinal::try_from(ordinal).map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.write_ordinal: {error}")))?,
+    })
+}
+
+/// Read a non-null timestamp column.
+fn required_instant(row: &PgRow, column: &str) -> Result<DateTime<Utc>, TemporalStoreError> {
+    row.try_get::<Option<DateTime<Utc>>, _>(column)
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.{column}: {error}")))?
+        .ok_or_else(|| TemporalStoreError::Decode(format!("attribute_history.{column} is absent and has no substitute")))
+}
+
+/// Read a nullable timestamp column, preserving its absence.
+fn nullable_instant(row: &PgRow, column: &str) -> Result<Option<DateTime<Utc>>, TemporalStoreError> {
+    row.try_get::<Option<DateTime<Utc>>, _>(column)
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.{column}: {error}")))
+}
+
+/// Read the row's stored unit-code identity.
+///
+/// A stored value outside the range the catalog assigns fails the decode: it
+/// cannot name a registration, so rendering the instance without its unit would
+/// silently change what the value means.
+pub(crate) fn decode_unit_code_id(row: &PgRow) -> Result<Option<UnitCodeId>, TemporalStoreError> {
+    row.try_get::<Option<i16>, _>("unit_code_id")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.unit_code_id: {error}")))?
+        .map(|stored| UnitCodeId::try_from(stored).map_err(|error| TemporalStoreError::Decode(format!("attribute_history.unit_code_id {stored}: {error}"))))
+        .transpose()
+}
+
+/// Read the row's value from the column its stored value kind names.
+fn decode_value(row: &PgRow) -> Result<TemporalValue, TemporalStoreError> {
+    let stored: i16 = row
+        .try_get("value_kind")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.value_kind: {error}")))?;
+    let kind = ValueKind::try_from(stored).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+    match kind {
+        ValueKind::Tombstone => Ok(TemporalValue::Tombstone {
+            deleted_at: required_instant(row, "deleted_at")?,
+        }),
+        ValueKind::Number => Ok(TemporalValue::Number(decode_number(row)?)),
+        ValueKind::String => Ok(TemporalValue::String(required_column(row, "value_string")?)),
+        ValueKind::Boolean => Ok(TemporalValue::Boolean(required_column(row, "value_bool")?)),
+        ValueKind::Geometry => Ok(TemporalValue::Geometry(decode_geometry(row)?)),
+        ValueKind::Object => Ok(TemporalValue::Object(required_column(row, "value_object")?)),
+        ValueKind::DateTime => Ok(TemporalValue::DateTime(required_column(row, "value_datetime")?)),
+        ValueKind::Uri => {
+            let raw: String = required_column(row, "value_uri")?;
+            raw.parse::<Uri>()
+                .map(TemporalValue::Uri)
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.value_uri '{raw}': {error}")))
+        }
+    }
+}
+
+/// Read the column the row's value kind declared, which must be populated.
+fn required_column<'r, T>(row: &'r PgRow, column: &str) -> Result<T, TemporalStoreError>
+where
+    T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    row.try_get::<Option<T>, _>(column)
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.{column}: {error}")))?
+        .ok_or_else(|| TemporalStoreError::Decode(format!("attribute_history.{column} is empty but the row declares that shape")))
+}
+
+/// Read the arbitrary-precision value column.
+///
+/// The stored column is `NUMERIC` and the neutral observation carries the shape
+/// the value was parsed in, so the decimal literal is read back as the JSON
+/// number it was written from: an integer beyond 2^53 comes out as that integer
+/// rather than as the double nearest to it.
+fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
+    let stored: BigDecimal = required_column(row, "value_number")?;
+    let literal = stored.to_string();
+    let number: Number =
+        serde_json::from_str(&literal).map_err(|error| TemporalStoreError::Decode(format!("attribute_history.value_number '{literal}': {error}")))?;
+    Ok(JsonNumber::try_from(&number)?)
+}
+
+/// Read the geometry column, which the query layer selects as EWKB.
+fn decode_geometry(row: &PgRow) -> Result<Value, TemporalStoreError> {
+    let bytes: Vec<u8> = required_column(row, "value_geo_ewkb")?;
+    let ewkb = Ewkb::try_from(bytes.as_slice()).map_err(|error| TemporalStoreError::Decode(format!("EWKB read: {error}")))?;
+    let geometry = Geometry::try_from(&ewkb)
+        .map_err(|error| TemporalStoreError::Decode(format!("EWKB decode: {error}")))?
+        .to_geojson();
+    serde_json::to_value(&geometry).map_err(|error| TemporalStoreError::Decode(format!("GeoJSON serialize: {error}")))
 }
 
 /// Decode one aggregation row into a [`TemporalAggregationRow`].
 pub(crate) fn decode_aggregation_row(row: &PgRow) -> Result<TemporalAggregationRow, TemporalStoreError> {
-    let attribute_name_raw: String = row.try_get("attribute_name").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let attribute_name = attribute_name_raw
-        .parse::<AttributeName>()
-        .map_err(|error| TemporalStoreError::Decode(format!("Invalid aggregation attribute_name '{attribute_name_raw}': {error}")))?;
-    let attribute_type_raw: String = row.try_get("attribute_type").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let attribute_type = AttributeType::from_str(&attribute_type_raw)
-        .map_err(|error| TemporalStoreError::Decode(format!("Invalid aggregation attribute_type '{attribute_type_raw}': {error}")))?;
-    let dataset_id = row
-        .try_get::<Option<String>, _>("dataset_id")
-        .map_err(|error| TemporalStoreError::Decode(error.to_string()))?
-        .map(|raw| {
-            raw.parse::<Uri>()
-                .map_err(|error| TemporalStoreError::Decode(format!("Invalid aggregation dataset_id '{raw}': {error}")))
-        })
-        .transpose()?;
-
-    let value_type_raw: String = row.try_get("value_type").map_err(|e| TemporalStoreError::Decode(e.to_string()))?;
-    let value_type = ValueType::from_str(&value_type_raw).map_err(|e| TemporalStoreError::Decode(format!("Invalid value type '{}': {}", value_type_raw, e)))?;
-
-    let bucket_start: Option<DateTime<Utc>> = row.try_get("bucket_start").ok();
-    let bucket_end: Option<DateTime<Utc>> = row.try_get("bucket_end").ok();
+    let value_kind_raw: i16 = row
+        .try_get("value_kind")
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid aggregation value_kind: {error}")))?;
+    let value_kind = ValueKind::try_from(value_kind_raw).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
 
     Ok(TemporalAggregationRow {
-        attribute_name,
-        attribute_type,
-        dataset_id,
-        bucket_start,
-        bucket_end,
+        attribute_name: decode_attribute_name(row)?,
+        attribute_type: attribute_type_of(decode_attribute_kind(row)?),
+        dataset_id: decode_dataset_id(row)?,
+        bucket_start: row.try_get("bucket_start").ok(),
+        bucket_end: row.try_get("bucket_end").ok(),
         avg: row.try_get("agg_avg").ok(),
-        min: decode_agg_min_max(row, value_type, "agg_min", "agg_min_str", "agg_min_dt"),
-        max: decode_agg_min_max(row, value_type, "agg_max", "agg_max_str", "agg_max_dt"),
+        min: decode_agg_min_max(row, value_kind, "agg_min", "agg_min_str", "agg_min_dt"),
+        max: decode_agg_min_max(row, value_kind, "agg_max", "agg_max_str", "agg_max_dt"),
         sum: row.try_get("agg_sum").ok(),
         sumsq: row.try_get("agg_sumsq").ok(),
         stddev: row.try_get("agg_stddev").ok(),
@@ -120,53 +234,14 @@ pub(crate) fn decode_aggregation_row(row: &PgRow) -> Result<TemporalAggregationR
     })
 }
 
-/// Decide which typed column actually holds this row's value and decode it.
-///
-/// See the neutral temporal renderer for the
-/// rationale: the catalogue's `value_type` can disagree with the populated
-/// column on legacy rows, so detection is column-driven.
-fn decode_typed_value(row: &PgRow, declared: ValueType) -> Result<TemporalValue, TemporalStoreError> {
-    if let Some(v) = row.try_get::<Option<f64>, _>("value_number").ok().flatten() {
-        return Ok(TemporalValue::Number(v));
-    }
-    if let Some(v) = row.try_get::<Option<bool>, _>("value_bool").ok().flatten() {
-        return Ok(TemporalValue::Boolean(v));
-    }
-    if let Some(v) = row.try_get::<Option<DateTime<Utc>>, _>("value_datetime").ok().flatten() {
-        return Ok(TemporalValue::DateTime(v));
-    }
-    if let Some(v) = row.try_get::<Option<String>, _>("value_uri").ok().flatten() {
-        let uri = v
-            .parse::<Uri>()
-            .map_err(|error| TemporalStoreError::Decode(format!("Invalid attribute_history.value_uri '{v}': {error}")))?;
-        return Ok(TemporalValue::Uri(uri));
-    }
-    if let Some(v) = row.try_get::<Option<Value>, _>("value_object").ok().flatten() {
-        return Ok(TemporalValue::Object(v));
-    }
-    if let Some(bytes) = row.try_get::<Option<Vec<u8>>, _>("value_geo_ewkb").ok().flatten() {
-        let ewkb = Ewkb::try_from(bytes.as_slice()).map_err(|e| TemporalStoreError::Decode(format!("EWKB read: {e}")))?;
-        let geometry = andromeda_ngsi_ld_geometry::geometry::Geometry::try_from(&ewkb)
-            .map_err(|e| TemporalStoreError::Decode(format!("EWKB decode: {e}")))?
-            .to_geojson();
-        let geo_json = serde_json::to_value(&geometry).map_err(|e| TemporalStoreError::Decode(format!("GeoJSON serialize: {e}")))?;
-        return Ok(TemporalValue::Geometry(geo_json));
-    }
-    if let Some(v) = row.try_get::<Option<String>, _>("value_string").ok().flatten() {
-        return Ok(TemporalValue::String(v));
-    }
-
-    Err(TemporalStoreError::Decode(format!(
-        "attribute_history row declares {declared} but contains no typed value"
-    )))
-}
-
 /// Decode a typed min/max aggregation column into [`AggregationMinMax`].
-fn decode_agg_min_max(row: &PgRow, value_type: ValueType, num_col: &str, str_col: &str, dt_col: &str) -> Option<AggregationMinMax> {
-    match value_type {
-        ValueType::String => row.try_get::<String, _>(str_col).ok().map(AggregationMinMax::String),
-        ValueType::DateTime => row.try_get::<DateTime<Utc>, _>(dt_col).ok().map(AggregationMinMax::DateTime),
-        ValueType::Number | ValueType::Boolean | ValueType::Object => row.try_get::<f64, _>(num_col).ok().map(AggregationMinMax::Number),
-        ValueType::Uri | ValueType::Geometry => None,
+fn decode_agg_min_max(row: &PgRow, value_kind: ValueKind, num_col: &str, str_col: &str, dt_col: &str) -> Option<AggregationMinMax> {
+    match value_kind {
+        ValueKind::String => row.try_get::<String, _>(str_col).ok().map(AggregationMinMax::String),
+        ValueKind::DateTime => row.try_get::<DateTime<Utc>, _>(dt_col).ok().map(AggregationMinMax::DateTime),
+        ValueKind::Number | ValueKind::Boolean | ValueKind::Object => row.try_get::<f64, _>(num_col).ok().map(AggregationMinMax::Number),
+        // A geometry has no ordering, a URI is aggregated by count alone, and a
+        // tombstone carries nothing to take an extremum of.
+        ValueKind::Geometry | ValueKind::Uri | ValueKind::Tombstone => None,
     }
 }

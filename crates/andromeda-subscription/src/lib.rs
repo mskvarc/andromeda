@@ -29,6 +29,10 @@ mod normalization;
 pub mod status;
 /// Subscription persistence ports and write values.
 pub mod store;
+/// A stored Subscription paired with its surrogate key.
+pub mod stored_subscription;
+/// The surrogate key a stored Subscription is referenced by.
+pub mod subscription_key;
 /// Throttling-window arithmetic.
 pub mod throttle;
 mod validation;

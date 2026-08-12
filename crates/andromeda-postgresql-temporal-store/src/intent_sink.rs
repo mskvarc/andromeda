@@ -1,244 +1,246 @@
 //! Idempotent temporal append sink backed by PostgreSQL history tables.
 
 use crate::{
+    attribute_history_row::AttributeHistoryRow,
+    attribute_history_value::AttributeHistoryValue,
+    attribute_kind_code::stored_attribute_kind,
     error::TemporalStoreError,
-    params::{ScopeHistoryEntry, TeaBatchEntry},
     repo::TemporalRepository,
-    value_type::ValueType,
+    scope_history_entry::ScopeHistoryEntry,
+    scope_history_value::ScopeHistoryValue,
+    semantic_time_axes::SemanticTimeAxes,
+    temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
+    unit_code_metadata::take_unit_code,
+    write_record_persist::persist_write_record,
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
-use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_postgresql_context_store::attribute_current::queue::AttributeCurrentQueue;
-use andromeda_postgresql_query::history_batch_entry::HistoryBatchEntry;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::{
+    expanded::entity_member::extract_types,
+    temporal::{TemporalHistoryRow, TemporalValue},
+};
+use andromeda_postgresql_codes::stream_id::StreamId;
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
     error::TemporalError,
-    port::temporal_history_sink::{TemporalHistorySink, TemporalSinkAppendOutcome},
+    port::temporal_history_sink::TemporalHistorySink,
+    scope_observation::ScopeObservation,
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 /// PostgreSQL temporal history used through the idempotent append port.
+///
+/// The sink writes Temporal Evolution and nothing else. Current entity state
+/// and its `current_attribute_values` projection are written together by the
+/// transaction that mutates the entity, so a deferred history append neither
+/// produces nor publishes projection work: an append that reaches this sink
+/// describes an entity mutation that has already committed.
 pub struct PostgresTemporalHistorySink {
     /// Temporal repository selected for the sink workload.
     repository: Arc<TemporalRepository>,
-    /// Projection publication for PostgreSQL current-attribute reads.
-    attribute_current: AttributeCurrentQueue,
 }
 
 impl PostgresTemporalHistorySink {
     /// Construct one PostgreSQL-backed idempotent history sink.
-    pub const fn new(repository: Arc<TemporalRepository>, attribute_current: AttributeCurrentQueue) -> PostgresTemporalHistorySink {
-        PostgresTemporalHistorySink { repository, attribute_current }
+    pub const fn new(repository: Arc<TemporalRepository>) -> PostgresTemporalHistorySink {
+        PostgresTemporalHistorySink { repository }
     }
 
-    /// Append all typed intent entries in the receipt transaction.
+    /// Append all typed intent entries in the caller's transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError::NotFound`] when the intent extends a
+    /// Temporal Evolution that does not exist and declares no entity type to
+    /// create it with, [`TemporalStoreError::Validation`] when an entry cannot
+    /// be encoded, and [`TemporalStoreError::Database`] when a statement fails.
     pub(crate) async fn append_entries(
         repository: &TemporalRepository,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         intent: &TemporalAppendIntent,
-    ) -> Result<Vec<HistoryBatchEntry>, TemporalStoreError> {
-        let tea_entries = Self::tea_entries(repository, intent).await?;
-        let tea_results = repository.upsert_tea_batch_in_tx(tx, &tea_entries).await?;
-        let tea_ids = tea_results
-            .into_iter()
-            .map(|row| ((row.attribute_name, row.dataset_id), row.id))
-            .collect::<HashMap<_, _>>();
+    ) -> Result<(), TemporalStoreError> {
+        let recorded_at = intent.record.recorded_at();
+        let streams = repository.upsert_temporal_catalog_in_tx(tx, &catalog_upsert(intent), recorded_at).await?;
         let mut history = Vec::new();
         let mut scopes = Vec::new();
         for (position, entry) in intent.entries.iter().enumerate() {
-            let ordinal =
-                i32::try_from(position).map_err(|error| TemporalStoreError::Validation(format!("temporal intent ordinal is out of range: {error}")))?;
+            let delta = u32::try_from(position)
+                .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry position {position} is out of range: {error}")))?;
+            let ordinal = intent
+                .base
+                .advanced_by(delta)
+                .map_err(|error| TemporalStoreError::Validation(format!("temporal intent entry ordinal at position {position} overflowed: {error}")))?;
+            let identity = TemporalObservationIdentity {
+                write_id: intent.record.write_id(),
+                ordinal,
+            };
             match entry {
-                TemporalAppendEntry::Observation {
-                    row,
-                    client_supplied_instance_id,
-                    recorded_at,
-                } => {
-                    let tea_id = tea_ids
-                        .get(&(row.attribute_name.clone(), row.dataset_id.clone())) // clone: lookup key follows the catalogue's owned natural key.
-                        .copied()
-                        .ok_or_else(|| TemporalStoreError::Query("temporal sink catalogue upsert returned no matching row".to_owned()))?;
-                    history.push(history_entry(
-                        tea_id,
-                        row,
-                        *recorded_at,
-                        *client_supplied_instance_id,
-                        TemporalObservationIdentity {
-                            intent_id: intent.id,
-                            ordinal: u32::try_from(ordinal).map_err(|error| TemporalStoreError::Validation(error.to_string()))?,
-                        },
-                    )?);
+                TemporalAppendEntry::Observation { row } => {
+                    let stream_id = resolve_stream(&streams, &row.attribute_name, row.dataset_id.as_ref())?;
+                    history.push(observation_row(stream_id, row, recorded_at, identity)?);
                 }
                 TemporalAppendEntry::Tombstone {
                     attribute_name,
                     dataset_id,
-                    instance_id,
-                    recorded_at,
+                    attribute_type,
+                    instance,
                 } => {
-                    let tea_id = tea_ids
-                        .get(&(attribute_name.clone(), dataset_id.clone())) // clone: lookup key follows the catalogue's owned natural key.
-                        .copied()
-                        .ok_or_else(|| TemporalStoreError::Query("temporal sink tombstone catalogue upsert returned no matching row".to_owned()))?;
-                    history.push(HistoryBatchEntry {
-                        time: *recorded_at,
-                        tea_id,
-                        value_number: None,
-                        value_string: Some(expanded_properties::NULL_URI.as_str().to_owned()),
-                        value_bool: None,
-                        value_geo: None,
-                        value_object: None,
-                        value_datetime: None,
-                        value_uri: None,
-                        instance_id: instance_id.clone(), // clone: the persisted row owns its stable instance identity.
-                        observed_at: None,
+                    let stream_id = resolve_stream(&streams, attribute_name, dataset_id.as_ref())?;
+                    history.push(AttributeHistoryRow {
+                        recorded_at,
+                        identity,
+                        stream_id,
+                        // The family the ended instance belonged to is carried on
+                        // the tombstone, which is what lets the render synthesise
+                        // the null member that family prescribes.
+                        attribute_kind: stored_attribute_kind(*attribute_type),
+                        // A deletion records its instant and no typed value; the
+                        // null representation is synthesised from the attribute
+                        // family at render time (clauses 4.5.7 and 4.5.8).
+                        value: AttributeHistoryValue::Tombstone { deleted_at: recorded_at },
+                        axes: SemanticTimeAxes::default(),
+                        instance: instance.clone(), // clone: the persisted row owns its stable instance identity.
+                        unit_code_id: None,
                         metadata: None,
-                        recorded_at: *recorded_at,
-                        instance_id_client_supplied: false,
-                        intent_id: Some(intent.id.as_uuid()),
-                        intent_ordinal: Some(ordinal),
                     });
                 }
-                TemporalAppendEntry::Scope {
-                    path,
-                    instance_id,
+                TemporalAppendEntry::Scope { observation, instance } => scopes.push(ScopeHistoryEntry {
                     recorded_at,
-                } => scopes.push(ScopeHistoryEntry {
-                    time: *recorded_at,
                     entity_id: intent.entity_id.clone(), // clone: each persisted scope row owns its entity identity.
-                    scope_path: path.clone(),            // clone: each persisted scope row owns its validated path.
-                    instance_id: instance_id.clone(),    // clone: each persisted scope row owns its instance identity.
+                    identity,
+                    value: match observation {
+                        // clone: each persisted scope row owns its validated path.
+                        ScopeObservation::Path(path) => ScopeHistoryValue::Path(path.clone()),
+                        // Clause 4.18 reserves `urn:ngsi-ld:null` for a deleted
+                        // scope, which the row records as a deletion instant with
+                        // no path rather than as a sentinel path.
+                        ScopeObservation::Deleted => ScopeHistoryValue::Tombstone { deleted_at: recorded_at },
+                    },
+                    axes: SemanticTimeAxes::default(),
+                    instance: instance.clone(), // clone: each persisted scope row owns its instance identity.
                 }),
             }
         }
         repository.insert_history_batch_in_tx(tx, &history).await?;
         repository.insert_scope_history_batch_in_tx(tx, &scopes).await?;
-        Ok(history)
-    }
-
-    /// Build catalogue rows, retaining existing tombstone attribute types.
-    async fn tea_entries(repository: &TemporalRepository, intent: &TemporalAppendIntent) -> Result<Vec<TeaBatchEntry>, TemporalStoreError> {
-        let mut entries = Vec::new();
-        for entry in &intent.entries {
-            match entry {
-                TemporalAppendEntry::Observation { row, .. } => entries.push(TeaBatchEntry {
-                    entity_id: intent.entity_id.clone(),        // clone: the catalogue row owns the entity identity.
-                    attribute_name: row.attribute_name.clone(), // clone: the catalogue row owns the attribute identity.
-                    attribute_type: row.attribute_type,
-                    dataset_id: row.dataset_id.clone(), // clone: the catalogue row owns the dataset identity.
-                    value_type: value_type(&row.value),
-                }),
-                TemporalAppendEntry::Tombstone {
-                    attribute_name, dataset_id, ..
-                } => {
-                    let existing = repository.get_teas_for_entity_attr(&intent.entity_id, attribute_name).await?;
-                    let matching = existing
-                        .iter()
-                        .find(|row| row.dataset_id.as_ref() == dataset_id.as_ref())
-                        .or_else(|| existing.first());
-                    entries.push(TeaBatchEntry {
-                        entity_id: intent.entity_id.clone(),    // clone: the catalogue row owns the entity identity.
-                        attribute_name: attribute_name.clone(), // clone: the catalogue row owns the attribute identity.
-                        attribute_type: matching.map_or(AttributeType::Property, |row| row.attribute_type),
-                        dataset_id: dataset_id.clone(), // clone: the catalogue row owns the dataset identity.
-                        value_type: matching.map_or(ValueType::String, |row| row.value_type),
-                    });
-                }
-                TemporalAppendEntry::Scope { .. } => {}
-            }
-        }
-        Ok(entries)
+        Ok(())
     }
 }
 
 #[async_trait]
 impl TemporalHistorySink for PostgresTemporalHistorySink {
-    async fn append(&self, intent: &TemporalAppendIntent) -> Result<TemporalSinkAppendOutcome, TemporalError> {
+    async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
         let mut tx = self.repository.pool.begin().await.map_err(persistence)?;
-        let receipt = sqlx::query("INSERT INTO temporal_history_sink_receipts (intent_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING intent_id")
-            .bind(intent.id.as_uuid())
-            .fetch_optional(&mut *tx)
+        persist_write_record(&mut tx, &intent.record).await.map_err(persistence)?;
+        // No claim gate: a replay of the same intent always reaches this call
+        // again, and its rows collide with the ones the first attempt wrote on
+        // their row-level `ON CONFLICT ... DO NOTHING` constraints instead of
+        // duplicating them.
+        PostgresTemporalHistorySink::append_entries(&self.repository, &mut tx, intent)
             .await
             .map_err(persistence)?;
-        if receipt.is_none() {
-            return Ok(TemporalSinkAppendOutcome::AlreadyPresent);
-        }
-        let history = PostgresTemporalHistorySink::append_entries(&self.repository, &mut tx, intent)
-            .await
-            .map_err(persistence)?;
-        let reserved = self.attribute_current.reserve(history);
-        match tx.commit().await {
-            Ok(()) => {
-                if let Some(reserved) = reserved {
-                    reserved.enqueue().await;
-                }
-                Ok(TemporalSinkAppendOutcome::Appended)
-            }
-            Err(error) => {
-                if let Some(reserved) = reserved {
-                    reserved.abandon().await;
-                }
-                Err(persistence(error))
-            }
-        }
+        tx.commit().await.map_err(persistence)?;
+        Ok(())
     }
 }
 
-fn history_entry(
-    tea_id: uuid::Uuid,
-    row: &TemporalHistoryRow,
-    recorded_at: chrono::DateTime<chrono::Utc>,
-    client_supplied_instance_id: bool,
-    identity: TemporalObservationIdentity,
-) -> Result<HistoryBatchEntry, TemporalStoreError> {
-    let mut entry = HistoryBatchEntry {
-        time: row.time,
-        tea_id,
-        value_number: None,
-        value_string: None,
-        value_bool: None,
-        value_geo: None,
-        value_object: None,
-        value_datetime: None,
-        value_uri: None,
-        instance_id: row.instance_id.clone(), // clone: the persisted row owns its instance identity.
-        observed_at: row.observed_at,
-        metadata: row.metadata.clone(), // clone: the persisted row owns its metadata.
-        recorded_at,
-        instance_id_client_supplied: client_supplied_instance_id,
-        intent_id: Some(identity.intent_id.as_uuid()),
-        intent_ordinal: Some(i32::try_from(identity.ordinal).map_err(|error| TemporalStoreError::Validation(error.to_string()))?),
+/// The catalogue rows one intent needs before its history rows can be stored.
+///
+/// Entity types come from the observation payload the intent was prepared from,
+/// which is the only place a write states what the entity is; an intent that
+/// carries none — an attribute deletion, say — extends a Temporal Evolution that
+/// must already exist.
+fn catalog_upsert(intent: &TemporalAppendIntent) -> TemporalCatalogUpsert {
+    let types = intent.selection_value.as_ref().map(extract_types).unwrap_or_default();
+    let mut streams: Vec<TemporalStreamKey> = Vec::with_capacity(intent.entries.len());
+    for entry in &intent.entries {
+        let key = match entry {
+            TemporalAppendEntry::Observation { row } => TemporalStreamKey {
+                attribute_name: row.attribute_name.clone(), // clone: the catalogue grain owns the attribute identity.
+                dataset_id: row.dataset_id.clone(),         // clone: the catalogue grain owns the dataset identity.
+            },
+            TemporalAppendEntry::Tombstone {
+                attribute_name, dataset_id, ..
+            } => TemporalStreamKey {
+                attribute_name: attribute_name.clone(), // clone: the catalogue grain owns the attribute identity.
+                dataset_id: dataset_id.clone(),         // clone: the catalogue grain owns the dataset identity.
+            },
+            TemporalAppendEntry::Scope { .. } => continue,
+        };
+        streams.push(key);
+    }
+    TemporalCatalogUpsert {
+        entity_id: intent.entity_id.clone(), // clone: the catalogue upsert owns the entity identity.
+        types,
+        streams,
+    }
+}
+
+/// Find the stream the catalogue upsert assigned to one attribute grain.
+fn resolve_stream(
+    streams: &HashMap<TemporalStreamKey, StreamId>,
+    attribute_name: &AttributeName,
+    dataset_id: Option<&Uri>,
+) -> Result<StreamId, TemporalStoreError> {
+    let key = TemporalStreamKey {
+        attribute_name: attribute_name.clone(), // clone: the lookup key follows the catalogue's owned natural key.
+        dataset_id: dataset_id.cloned(),
     };
+    streams
+        .get(&key)
+        .copied()
+        .ok_or_else(|| TemporalStoreError::Query("temporal sink catalogue upsert returned no matching stream".to_owned()))
+}
+
+/// Build one history row from a neutral observation.
+fn observation_row(
+    stream_id: StreamId,
+    row: &TemporalHistoryRow,
+    recorded_at: DateTime<Utc>,
+    identity: TemporalObservationIdentity,
+) -> Result<AttributeHistoryRow, TemporalStoreError> {
+    let mut metadata = row.metadata.clone(); // clone: the persisted row owns its metadata.
+    let unit_code_id = take_unit_code(&mut metadata)?;
+    Ok(AttributeHistoryRow {
+        recorded_at,
+        identity,
+        stream_id,
+        attribute_kind: stored_attribute_kind(row.attribute_type),
+        value: stored_value(row)?,
+        axes: SemanticTimeAxes {
+            // Each axis is preserved exactly as the observation carried it. An
+            // observation that declared none keeps none, so it matches no window
+            // on that Temporal Property (clauses 4.11 and 5.2.21).
+            observed_at: row.observed_at,
+            created_at: row.created_at,
+            modified_at: row.modified_at,
+        },
+        instance: row.instance.clone(), // clone: the persisted row owns its instance identity.
+        unit_code_id,
+        metadata,
+    })
+}
+
+/// Translate a neutral observation value into the shape the row stores.
+fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, TemporalStoreError> {
     match &row.value {
-        TemporalValue::Number(value) => entry.value_number = Some(*value),
-        TemporalValue::String(value) => entry.value_string = Some(value.clone()), // clone: the persisted row owns the string.
-        TemporalValue::Boolean(value) => entry.value_bool = Some(*value),
-        TemporalValue::Geometry(value) => {
-            entry.value_geo = Some(Geometry::from_geojson_value(value).map_err(|error| TemporalStoreError::Validation(error.to_string()))?);
-        }
-        TemporalValue::Object(value) => entry.value_object = Some(Value::clone(value)), // clone: the persisted row owns the structured value.
-        TemporalValue::DateTime(value) => entry.value_datetime = Some(*value),
-        TemporalValue::Uri(value) => entry.value_uri = Some(value.clone()), // clone: the persisted row owns the URI.
-        TemporalValue::Tombstone => entry.value_string = Some(expanded_properties::NULL_URI.as_str().to_owned()),
-    }
-    Ok(entry)
-}
-
-const fn value_type(value: &TemporalValue) -> ValueType {
-    match value {
-        TemporalValue::Number(_) => ValueType::Number,
-        TemporalValue::String(_) | TemporalValue::Tombstone => ValueType::String,
-        TemporalValue::Boolean(_) => ValueType::Boolean,
-        TemporalValue::Geometry(_) => ValueType::Geometry,
-        TemporalValue::Object(_) => ValueType::Object,
-        TemporalValue::DateTime(_) => ValueType::DateTime,
-        TemporalValue::Uri(_) => ValueType::Uri,
+        TemporalValue::Number(value) => Ok(AttributeHistoryValue::Number(*value)),
+        TemporalValue::String(value) => Ok(AttributeHistoryValue::String(value.clone())), // clone: the persisted row owns the string.
+        TemporalValue::Boolean(value) => Ok(AttributeHistoryValue::Boolean(*value)),
+        TemporalValue::Geometry(value) => Ok(AttributeHistoryValue::Geometry(
+            Geometry::from_geojson_value(value).map_err(|error| TemporalStoreError::Validation(error.to_string()))?,
+        )),
+        TemporalValue::Object(value) => Ok(AttributeHistoryValue::Object(Value::clone(value))), // clone: the persisted row owns the structured value.
+        TemporalValue::DateTime(value) => Ok(AttributeHistoryValue::DateTime(*value)),
+        TemporalValue::Uri(value) => Ok(AttributeHistoryValue::Uri(value.clone())), // clone: the persisted row owns the URI.
+        TemporalValue::Tombstone { deleted_at } => Ok(AttributeHistoryValue::Tombstone { deleted_at: *deleted_at }),
     }
 }
 
+/// Classify one store failure at the temporal port boundary.
 fn persistence(error: impl std::fmt::Display) -> TemporalError {
     TemporalError::persistence(error.to_string())
 }

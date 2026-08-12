@@ -172,7 +172,7 @@ async fn temporal_query_georel_2d_reference_matches_3d_history() {
 
 /// NGSI-LD 4.10 applies to a temporal query exactly as it does to a
 /// current-state one: `geoproperty` may name any GeoProperty, and one that is
-/// not the default is read from its `attribute_current` instance rows,
+/// not the default is read from its `current_attribute_values` instance rows,
 /// correlated through the alias stage 1 joins `entities` under.
 #[tokio::test]
 async fn temporal_query_georel_on_a_custom_geoproperty_matches() {

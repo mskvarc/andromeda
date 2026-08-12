@@ -13,10 +13,14 @@
 //! [`COPY`]: https://www.postgresql.org/docs/current/sql-copy.html
 
 use crate::{
-    entity::{mapper::stored_uri, params::PreparedEntityColumns},
+    entity::{
+        mapper::stored_written_entity,
+        params::PreparedEntityColumns,
+        types_present::{entity_write_failure, types_present},
+        written_entity::WrittenEntity,
+    },
     error::ContextStoreError,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_encoding::copy::{write_bytea_opt, write_field_count, write_header, write_jsonb, write_text, write_timestamptz_opt, write_trailer};
 use sqlx::{Executor, Postgres, Transaction};
 
@@ -56,17 +60,22 @@ SELECT
     s.expires_at
 FROM stage_entities s
 ON CONFLICT (id) DO NOTHING
-RETURNING id
+RETURNING entity_key, id
 "#;
 
 /// Bulk-insert via binary COPY into a staging table, then materialise into
-/// `entities` inside the provided transaction. Returns the list of IDs
-/// actually inserted (rows blocked by `ON CONFLICT (id) DO NOTHING` are
-/// omitted).
-pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, columns: &PreparedEntityColumns) -> Result<Vec<Uri>, ContextStoreError> {
+/// `entities` inside the provided transaction. Returns the rows actually
+/// inserted (rows blocked by `ON CONFLICT (id) DO NOTHING` are omitted), each
+/// carrying the surrogate key the projection written in the same transaction is
+/// keyed on.
+///
+/// The insert names its target columns explicitly, so the physical column order
+/// of `entities` is free to change without this statement moving.
+pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, columns: &PreparedEntityColumns) -> Result<Vec<WrittenEntity>, ContextStoreError> {
     if columns.ids.is_empty() {
         return Ok(Vec::new());
     }
+    types_present(columns)?;
 
     tx.execute(CREATE_STAGE_ENTITIES_SQL).await?;
 
@@ -77,8 +86,11 @@ pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, col
         copy.finish().await?;
     }
 
-    let rows: Vec<(String,)> = sqlx::query_as(INSERT_FROM_STAGE_CREATE_SQL).fetch_all(&mut **tx).await?;
-    rows.into_iter().map(|(id,)| stored_uri(id)).collect()
+    let rows: Vec<(i64, String)> = sqlx::query_as(INSERT_FROM_STAGE_CREATE_SQL)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(entity_write_failure)?;
+    rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
 }
 
 /// Encode a set of entity columns into the Postgres binary COPY format.

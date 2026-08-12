@@ -1,0 +1,110 @@
+//! Seeding temporal rows directly, for populations no API request can produce.
+//!
+//! Two matrix rows need storage the broker never writes today: streams whose
+//! identifiers are migrated version-4 UUIDs, and history old enough for an
+//! operator retention horizon to age out. Both are properties of migrated
+//! tenants rather than of new writes, so the fixtures are inserted through the
+//! tenant connection and then read back through the ordinary paths.
+
+use chrono::{DateTime, Utc};
+use sqlx::{PgPool, Row};
+use uuid::Uuid;
+
+/// One directly seeded `attribute_history` row.
+pub struct SeededHistoryRow {
+    /// Stream the row belongs to.
+    pub stream_id: Uuid,
+    /// Operational write clock, which decides the chunk the row lands in.
+    pub recorded_at: DateTime<Utc>,
+    /// Identity of the write the row is attributed to.
+    pub write_id: Uuid,
+    /// Broker-minted instance identifier of the row.
+    pub generated_instance_uuid: Uuid,
+    /// Declared observation instant.
+    pub observed_at: DateTime<Utc>,
+    /// Numeric value the row carries.
+    pub value_number: i32,
+}
+
+/// Insert a temporal Entity and return its narrow key.
+pub async fn seed_temporal_entity(pool: &PgPool, entity_id: &str, entity_type: &str) -> i64 {
+    sqlx::query(SEED_TEMPORAL_ENTITY_SQL)
+        .bind(entity_id)
+        .bind(entity_type)
+        .fetch_one(pool)
+        .await
+        .expect("seeded temporal entity")
+        .get("entity_key")
+}
+
+/// Resolve, creating if needed, the dictionary identity of one attribute name.
+pub async fn attribute_name_id(pool: &PgPool, attribute_name: &str) -> i32 {
+    sqlx::query(ATTRIBUTE_NAME_ID_SQL)
+        .bind(attribute_name)
+        .fetch_one(pool)
+        .await
+        .expect("attribute dictionary identity")
+        .get("id")
+}
+
+/// Insert one attribute stream under a caller-chosen identifier.
+///
+/// The identifier is a parameter because the version of the UUID is exactly
+/// what the mixed-version row is about.
+pub async fn seed_stream(pool: &PgPool, stream_id: Uuid, temporal_entity_key: i64, attribute_name_id: i32) {
+    sqlx::query(SEED_STREAM_SQL)
+        .bind(stream_id)
+        .bind(temporal_entity_key)
+        .bind(attribute_name_id)
+        .execute(pool)
+        .await
+        .expect("seeded attribute stream");
+}
+
+/// Insert one history row and the idempotency record that protects it.
+pub async fn seed_history_row(pool: &PgPool, row: &SeededHistoryRow) {
+    sqlx::query(SEED_WRITE_RECORD_SQL)
+        .bind(row.write_id)
+        .bind(row.recorded_at)
+        .execute(pool)
+        .await
+        .expect("seeded idempotency record");
+    sqlx::query(SEED_HISTORY_ROW_SQL)
+        .bind(row.recorded_at)
+        .bind(row.write_id)
+        .bind(row.stream_id)
+        .bind(row.generated_instance_uuid)
+        .bind(row.observed_at)
+        .bind(row.value_number)
+        .execute(pool)
+        .await
+        .expect("seeded history row");
+}
+
+const SEED_TEMPORAL_ENTITY_SQL: &str = r#"
+INSERT INTO temporal_entities (created_at, modified_at, id, types)
+VALUES (NOW(), NOW(), $1, ARRAY[$2])
+RETURNING entity_key
+"#;
+
+const ATTRIBUTE_NAME_ID_SQL: &str = r#"
+INSERT INTO attribute_names (name) VALUES ($1)
+ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+RETURNING id
+"#;
+
+const SEED_STREAM_SQL: &str = r#"
+INSERT INTO temporal_attribute_streams (id, temporal_entity_key, attribute_name_id)
+VALUES ($1, $2, $3)
+"#;
+
+const SEED_WRITE_RECORD_SQL: &str = r#"
+INSERT INTO write_records (write_id, recorded_at, accepted_at) VALUES ($1, $2, $2)
+"#;
+
+const SEED_HISTORY_ROW_SQL: &str = r#"
+INSERT INTO attribute_history
+    (recorded_at, write_id, stream_id, write_ordinal, attribute_kind, value_kind,
+     generated_instance_uuid, observed_at, created_at, modified_at, value_number)
+VALUES ($1, $2, $3, 0, 1, 1, $4, $5, $1, $1, $6)
+"#;

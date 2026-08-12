@@ -8,8 +8,8 @@ use crate::{
     batch_side_effect_job::BatchSideEffectJob,
     entity_mutation::EntityMutation,
     history_record::HistoryRecord,
-    new_outbox_entry::NewOutboxEntry,
     precondition::Precondition,
+    subscription_match::SubscriptionMatch,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use std::sync::Arc;
@@ -25,9 +25,9 @@ pub struct AtomicWrite {
     /// Temporal Evolution records produced by the mutation.
     #[builder(default)]
     pub history: Vec<HistoryRecord>,
-    /// Notification outbox entries produced by the mutation.
+    /// Subscriptions the mutation matched, each owed a notification event.
     #[builder(default)]
-    pub outbox: Vec<NewOutboxEntry>,
+    pub subscription_matches: Vec<SubscriptionMatch>,
     /// Durable job used by the opt-in asynchronous batch path.
     #[builder(default)]
     pub side_effects: Option<BatchSideEffectJob>,
@@ -49,7 +49,7 @@ mod tests {
             .entity(EntityMutation::None)
             .build();
         assert!(write.history.is_empty());
-        assert!(write.outbox.is_empty());
+        assert!(write.subscription_matches.is_empty());
         assert!(write.side_effects.is_none());
         pretty_assertions::assert_eq!(write.precondition, Precondition::None);
     }

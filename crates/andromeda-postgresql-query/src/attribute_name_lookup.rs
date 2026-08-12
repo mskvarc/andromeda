@@ -1,6 +1,6 @@
 //! Consumer-declared port for the attribute-name dictionary.
 //!
-//! Both store crates resolve expanded attribute IRIs to their `SMALLINT`
+//! Both store crates resolve expanded attribute IRIs to their `INTEGER`
 //! dictionary keys. The concrete cache lives in whichever crate owns the
 //! `attribute_names` table; this trait lets the other crate depend on the
 //! capability without depending on the concrete implementation.

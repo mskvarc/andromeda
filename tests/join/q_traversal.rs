@@ -8,7 +8,6 @@
 //! result count against a page smaller than the matching set.
 
 use crate::{create, get_one, ids_from_array, query};
-use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_test_client::{entity::results_count, entity_attribute::DatasetSelection};
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail::BAD_REQUEST_DATA};
 use andromeda_test_harness::environment::TestEnvironment;
@@ -303,15 +302,16 @@ async fn q_linked_hop_matches_any_relationship_instance() {
 }
 
 /// Clause 4.9 with clause 5.6.5: an attribute that has been deleted names
-/// nothing, so the hop cannot cross it. The broker records the deletion as a
-/// tombstone rather than by forgetting the attribute existed, and the probe has
-/// to exclude that tombstone rather than follow it into a join.
+/// nothing, so the hop cannot cross it. Current state holds what an entity
+/// carries now, so the deletion removes the projection row rather than marking
+/// it, and there is no sentinel for the probe to exclude by hand. The deletion
+/// itself survives in Temporal Evolution, which clause 5.6.6 leaves standing.
 ///
-/// The pre-deletion assertion is what makes this a test of the tombstone: it
+/// The pre-deletion assertion is what makes this a test of the deletion: it
 /// establishes that both roots matched for the same reason, so the change after
-/// the delete can only be the tombstone.
+/// the delete can only be the removed attribute.
 #[tokio::test]
-async fn q_linked_hop_does_not_match_through_tombstoned_relationship() {
+async fn q_linked_hop_does_not_match_through_a_deleted_relationship() {
     let scope = TestEnvironment::from_suite("join").await.expect("isolated test environment");
     let client = scope.client();
     let id_commercial = scope.id("Building:qt-commercial");
@@ -340,20 +340,22 @@ async fn q_linked_hop_does_not_match_through_tombstoned_relationship() {
     let after = query(client, &filter).await;
     assert_eq!(ids_from_array(&after), vec![id_car_live], "the hop must not cross a tombstoned Relationship");
 
-    // Without this the case could pass vacuously: if the delete simply dropped
-    // the projection row there would be no tombstone for the probe to skip.
-    // The preceding query has already waited on the projection barrier, so the
-    // row this reads is settled. A tombstone is the null sentinel in
-    // `value_string` with no `value_uri` for the probe's join to follow.
-    let projected: Vec<(Option<String>, Option<String>)> = sqlx::query_as("SELECT value_string, value_uri FROM attribute_current WHERE entity_id = $1")
-        .bind(&id_car_tombstoned)
-        .fetch_all(scope.database_pool())
-        .await
-        .expect("attribute_current probe failed");
-    assert_eq!(
-        projected,
-        vec![(Some(expanded_properties::NULL_URI.as_str().to_owned()), None)],
-        "the deleted Relationship must survive in the projection as a tombstone"
+    // The projection is written inside the transaction that mutates the entity,
+    // so the delete's effect on it is visible the moment the request returned
+    // and this read needs no barrier. The entity carried exactly one attribute,
+    // so the deletion must leave it with no projection row at all: an absent row
+    // is what a deleted instance is, and nothing the probe has to filter out.
+    let projected: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT c.value_string, c.value_uri FROM current_attribute_values c \
+         JOIN entities e ON e.entity_key = c.entity_key WHERE e.id = $1",
+    )
+    .bind(&id_car_tombstoned)
+    .fetch_all(scope.database_pool())
+    .await
+    .expect("current_attribute_values probe failed");
+    assert!(
+        projected.is_empty(),
+        "the deleted Relationship must leave no projection row behind: {projected:?}"
     );
     scope.finish().await.expect("cleanup failed");
 }

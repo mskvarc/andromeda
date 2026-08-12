@@ -13,6 +13,7 @@ mod create;
 mod delete;
 mod query;
 mod retrieve;
+mod routing_projection;
 mod update;
 
 use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail as error};

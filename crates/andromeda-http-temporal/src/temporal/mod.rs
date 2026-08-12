@@ -21,7 +21,13 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, time_rel::TimeRel, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    instance_family::InstanceFamily,
+    instance_identity::InstanceIdentity,
+    time_rel::TimeRel,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::{
     expanded::query_match::{matches_geo_query, matches_scope_query},
     registration::ForwardingMode,

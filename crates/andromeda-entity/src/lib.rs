@@ -34,8 +34,8 @@ pub mod geo_property_geometry;
 pub mod id_lock;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
-/// Turning one mutation into the outbox entries its subscribers need.
-pub mod outbox_fanout;
+/// Turning one mutation into the subscriptions it matched.
+pub mod notification_fanout;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
 /// Caller-shaped ports consumed by entity policy.
@@ -73,7 +73,7 @@ use crate::{
     batch_activity::BatchActivityTracker,
     change_sink::EntityChangeSink,
     id_lock::{IdLockMap, acquire_id_locks_in},
-    port::{attribute_history::AttributeDatasetHistory, blocking_executor::BlockingExecutor, reader::EntityReader},
+    port::{attribute_history::AttributeDatasetHistory, blocking_executor::BlockingExecutor, reader::EntityReader, retry_delay::RetryDelay},
     side_effect::{AsyncPreference, BatchSideEffectMode, resolve_side_effect_mode},
 };
 use andromeda_context_commit::{batch_side_effect_job::BatchSideEffectJob, change_event::ChangeEvent, committer::ContextCommitter};
@@ -87,9 +87,9 @@ use dashmap::DashMap;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// Configuration for outbox-based notification delivery.
+/// Configuration for durable notification-event recording at commit time.
 #[derive(Clone, Debug)]
-pub struct OutboxWriteConfig {
+pub struct NotificationWriteConfig {
     /// Shared subscription cache for matching entity mutations against subscriptions.
     pub subscription_cache: Arc<SubscriptionCache>,
 }
@@ -98,13 +98,14 @@ pub struct OutboxWriteConfig {
 pub struct EntityService {
     reader: Arc<dyn EntityReader>,
     blocking_executor: Arc<dyn BlockingExecutor>,
+    retry_delay: Arc<dyn RetryDelay>,
     attribute_history: Arc<dyn AttributeDatasetHistory>,
     writes: Arc<dyn ContextCommitter>,
     engine: JsonLdEngine,
     change_sink: Option<Arc<dyn EntityChangeSink>>,
     batch_activity: BatchActivityTracker,
     batch_execution: BatchExecutionConfig,
-    outbox: Option<OutboxWriteConfig>,
+    notifications: Option<NotificationWriteConfig>,
     id_locks: Arc<IdLockMap>,
 }
 
@@ -113,13 +114,14 @@ impl EntityService {
     pub fn new(
         reader: Arc<dyn EntityReader>,
         blocking_executor: Arc<dyn BlockingExecutor>,
+        retry_delay: Arc<dyn RetryDelay>,
         attribute_history: Arc<dyn AttributeDatasetHistory>,
         writes: Arc<dyn ContextCommitter>,
         engine: JsonLdEngine,
         change_sink: Option<Arc<dyn EntityChangeSink>>,
         batch_config: BatchExecutionConfig,
         batch_activity: BatchActivityTracker,
-        outbox: Option<OutboxWriteConfig>,
+        notifications: Option<NotificationWriteConfig>,
     ) -> EntityService {
         let id_locks: Arc<IdLockMap> = Arc::new(DashMap::new());
         let batch_execution = BatchExecutionConfig {
@@ -135,13 +137,14 @@ impl EntityService {
         EntityService {
             reader,
             blocking_executor,
+            retry_delay,
             attribute_history,
             writes,
             engine,
             change_sink,
             batch_activity,
             batch_execution,
-            outbox,
+            notifications,
             id_locks,
         }
     }

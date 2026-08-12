@@ -52,6 +52,18 @@ pub enum EntityError {
         /// Conflicting entity identifier.
         identifier: Uri,
     },
+    /// Concurrent writers superseded the mutation on every attempt it was given.
+    ///
+    /// The submitted content is not at fault and nothing about it needs
+    /// changing: the entity is simply being written faster than a
+    /// read-modify-write can land against it.
+    #[error("entity {identifier} is being modified concurrently: the write lost its precondition on all {attempts} attempts and can be retried unchanged")]
+    Contention {
+        /// Contended entity identifier.
+        identifier: Uri,
+        /// Attempts spent before the broker gave up.
+        attempts: u32,
+    },
     /// The selected storage capability cannot answer the operation safely.
     #[error("entity operation is not supported: {detail}")]
     OperationNotSupported {
@@ -79,9 +91,13 @@ pub enum EntityError {
     /// An attribute-list identifier has invalid NGSI-LD URN form.
     #[error(transparent)]
     AttributeListIdentifier(#[from] AttributeListIdParseError),
-    /// An atomic context write failed.
+    /// An atomic context write failed for a reason the client cannot act on.
+    ///
+    /// A commit that refused the submitted content never reaches this variant:
+    /// [`From<CommitError>`] turns that refusal into [`EntityError::Validation`],
+    /// which is what clause 5.5.9 reports as `BadRequestData`.
     #[error(transparent)]
-    Commit(#[from] CommitError),
+    Commit(CommitError),
     /// A persistence adapter could not complete the operation.
     #[error("entity persistence failed: {detail}")]
     Persistence {
@@ -94,6 +110,22 @@ pub enum EntityError {
         /// Internal diagnostic detail.
         detail: String,
     },
+}
+
+/// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
+/// The commit port reports a refused submission separately from its own faults,
+/// and collapsing both into one variant would answer an unusable request with
+/// `InternalError` and invite the client to retry it forever (clause 5.5.9).
+impl From<CommitError> for EntityError {
+    fn from(error: CommitError) -> EntityError {
+        match error {
+            CommitError::Submission { detail } => EntityError::Validation { detail },
+            failure @ (CommitError::DuplicateEntity { .. }
+            | CommitError::Persistence { .. }
+            | CommitError::Invariant { .. }
+            | CommitError::UnexpectedOutcomeCount { .. }) => EntityError::Commit(failure),
+        }
+    }
 }
 
 impl EntityError {
@@ -132,6 +164,14 @@ impl EntityError {
     pub fn already_exists(identifier: &Uri) -> EntityError {
         EntityError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
+        }
+    }
+
+    /// Construct a write-contention failure over the attempts it consumed.
+    pub fn contention(identifier: &Uri, attempts: u32) -> EntityError {
+        EntityError::Contention {
+            identifier: identifier.clone(), // clone: the error owns the borrowed request identifier.
+            attempts,
         }
     }
 

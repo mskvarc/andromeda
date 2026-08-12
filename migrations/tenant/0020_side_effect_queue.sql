@@ -16,13 +16,23 @@
 CREATE TABLE pending_side_effects (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- The commit that enqueued this job: its own `recorded_at`, and the first
+    -- ordinal free in its consequence numbering after temporal history and
+    -- notification events already drew from it. A worker that leases and
+    -- replays this job resumes the commit's write identity and ordinal
+    -- counter from exactly these two values, rather than minting a new
+    -- identity or restarting the counter at zero, which is what keeps a
+    -- crash-retried delivery from duplicating the commit's consequences.
+    recorded_at TIMESTAMPTZ NOT NULL,
+    consequence_base INTEGER NOT NULL,
     attempts SMALLINT NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     locked_until TIMESTAMPTZ,
     locked_by TEXT,
     dead BOOLEAN NOT NULL DEFAULT FALSE,
     last_error TEXT,
-    payload JSONB NOT NULL
+    payload JSONB NOT NULL,
+    CONSTRAINT chk_pse_consequence_base_non_negative CHECK (consequence_base >= 0)
 );
 
 CREATE INDEX idx_pse_claim_candidates

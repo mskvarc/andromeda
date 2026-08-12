@@ -1,12 +1,15 @@
 //! In-process cache over the `attribute_names` dictionary.
 //!
-//! `attribute_names` maps expanded attribute IRIs to a `SMALLINT` key used by
-//! the temporal catalogue, the history hypertable, and the `attribute_current`
-//! projection. Both the write path (which must create missing entries) and the
+//! `attribute_names` maps expanded attribute IRIs to an `INTEGER` key used by
+//! the temporal catalogue, the history hypertable, and the
+//! `current_attribute_values` projection. Both the write path (which must create missing entries) and the
 //! `q`-filter read path (which must not) resolve through this one cache, so a
 //! tenant holds a single copy of the dictionary rather than one per repository.
 
-use crate::error::ContextStoreError;
+use crate::{
+    dictionary_growth::{DictionaryGrowthGuard, DictionaryNameLimit},
+    error::ContextStoreError,
+};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_query::{
     attribute_name_id::AttributeNameId,
@@ -30,15 +33,37 @@ pub struct AttributeNameCache {
     pool: PgPool,
     /// Cached mappings from expanded IRI text to dictionary id.
     ids: DashMap<AttributeName, AttributeNameId>,
+    /// Bound on how far this tenant's dictionary may grow, and how far it has.
+    growth: DictionaryGrowthGuard,
 }
 
 impl AttributeNameCache {
-    /// Create a cache backed by the given tenant pool.
+    /// Create a cache backed by the given tenant pool, bounded by
+    /// [`DictionaryNameLimit::DEFAULT`].
     pub fn new(pool: &PgPool) -> AttributeNameCache {
         AttributeNameCache {
             pool: pool.clone(), // clone: Arc ref-count bump
             ids: DashMap::new(),
+            growth: DictionaryGrowthGuard::new(DictionaryNameLimit::DEFAULT),
         }
+    }
+
+    /// Bound this tenant's dictionary at `limit` instead of the default.
+    ///
+    /// Taken per cache rather than per process because the dictionary is
+    /// per-tenant: one tenant modelling a large domain is not a reason to let
+    /// every other tenant's dictionary grow with it.
+    #[must_use = "the bound applies to the returned cache"]
+    pub fn with_growth_limit(self, limit: DictionaryNameLimit) -> AttributeNameCache {
+        AttributeNameCache {
+            growth: DictionaryGrowthGuard::new(limit),
+            ..self
+        }
+    }
+
+    /// The dictionary growth bound and the count of names created under it.
+    pub const fn growth(&self) -> &DictionaryGrowthGuard {
+        &self.growth
     }
 
     /// Load the whole dictionary into the cache.
@@ -48,7 +73,7 @@ impl AttributeNameCache {
     pub async fn preload(&self) -> Result<(), ContextStoreError> {
         let rows = sqlx::query("SELECT id, name FROM attribute_names").fetch_all(&self.pool).await?;
         for row in rows {
-            let id: i16 = row.get("id");
+            let id: i32 = row.get("id");
             let name_raw: String = row.get("name");
             let name = name_raw
                 .parse::<AttributeName>()
@@ -83,14 +108,27 @@ impl AttributeNameCache {
         }
 
         let missing_text: Vec<&str> = missing.iter().map(|name| name.as_str()).collect();
-        sqlx::query(
+
+        // The dictionary size is read from the table rather than from `ids`,
+        // which only ever holds what this process has seen: a cache that was
+        // never preloaded would otherwise report a size of nearly zero and let
+        // the bound be crossed silently. The read is paid only when a name is
+        // genuinely new, which is once per distinct attribute IRI per process.
+        let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attribute_names").fetch_one(&self.pool).await?;
+        // `COUNT(*)` is never negative; saturating to `u64::MAX` on a value
+        // that says otherwise refuses the write rather than admitting it.
+        self.growth.admit(u64::try_from(existing).unwrap_or(u64::MAX), missing_text.len())?;
+
+        let created = sqlx::query(
             "INSERT INTO attribute_names (name) \
              SELECT name FROM UNNEST($1::text[]) AS t(name) \
              ON CONFLICT (name) DO NOTHING",
         )
         .bind(&missing_text)
         .execute(&self.pool)
-        .await?;
+        .await?
+        .rows_affected();
+        self.growth.record_created(created);
 
         let rows = sqlx::query("SELECT id, name FROM attribute_names WHERE name = ANY($1)")
             .bind(&missing_text)
@@ -102,7 +140,7 @@ impl AttributeNameCache {
             let name = name_raw
                 .parse::<AttributeName>()
                 .map_err(|error| ContextStoreError::Internal(format!("Invalid attribute_names.name '{name_raw}': {error}")))?;
-            let id = AttributeNameId::from(row.try_get::<i16, _>("id")?);
+            let id = AttributeNameId::from(row.try_get::<i32, _>("id")?);
             self.ids.insert(name.clone(), id); // clone: the cache and the result map each need an owned key
             resolved.insert(name, id);
         }
@@ -114,7 +152,7 @@ impl AttributeNameCache {
     ///
     /// The read path. An IRI the broker has never recorded resolves to nothing,
     /// and its predicates compile to a constant `FALSE` -- correct, because no
-    /// `attribute_current` or `temporal_entity_attributes` row can reference a
+    /// `current_attribute_values` or `temporal_attribute_streams` row can reference a
     /// dictionary entry that does not exist.
     ///
     /// Misses are re-queried on every call rather than remembered, so an
@@ -149,7 +187,7 @@ impl AttributeNameCache {
                 let name = name_raw
                     .parse::<AttributeName>()
                     .map_err(|error| ContextStoreError::Internal(format!("Invalid attribute_names.name '{name_raw}': {error}")))?;
-                let id = AttributeNameId::from(row.try_get::<i16, _>("id")?);
+                let id = AttributeNameId::from(row.try_get::<i32, _>("id")?);
                 self.ids.insert(name.clone(), id); // clone: cache keeps its own key
                 ids_by_name.insert(name, id);
             }
@@ -184,6 +222,7 @@ impl AttributeNameLookup for AttributeNameCache {
 mod tests {
     use super::*;
     use sqlx::postgres::PgConnectOptions;
+    use std::num::NonZeroU32;
 
     /// A cache over a pool that can never connect.
     ///
@@ -226,6 +265,22 @@ mod tests {
         // The pool points nowhere, so this only succeeds if no query is issued.
         let resolved = cache.lookup(&[speed()]).await.ok().and_then(|names| names.get(&speed()));
         assert_eq!(resolved, Some(AttributeNameId::from(7)));
+    }
+
+    /// A tenant given its own bound keeps it; the default is only the fallback
+    /// for a tenant that was configured with none.
+    #[tokio::test]
+    async fn a_configured_growth_bound_replaces_the_default_one() {
+        let configured = DictionaryNameLimit::new(NonZeroU32::new(64).expect("a non-zero test bound"));
+        assert_eq!(cache().growth().limit(), DictionaryNameLimit::DEFAULT);
+        assert_eq!(cache().with_growth_limit(configured).growth().limit(), configured);
+    }
+
+    /// The observable count starts at nothing: it reports what this process
+    /// minted, not what the dictionary already held.
+    #[tokio::test]
+    async fn a_fresh_cache_has_created_no_dictionary_entries() {
+        assert_eq!(cache().growth().created(), 0);
     }
 
     #[tokio::test]

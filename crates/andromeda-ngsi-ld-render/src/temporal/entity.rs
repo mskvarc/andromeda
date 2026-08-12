@@ -95,7 +95,12 @@ impl<'a> TemporalEntityRenderer<'a> {
                 }
             }
 
-            let obs = row.observed_at.or(Some(row.time));
+            // Clause 6.3.10 cuts unsynchronized attributes on the time axis the
+            // query selected, so the position of an instance is its instant on
+            // exactly that axis (clause 4.11 defaults it to `observedAt`). An
+            // instance that carries no instant on the selected axis has no
+            // position and takes no part in the cut.
+            let obs = row.time_axis(compiled.window.timeproperty);
             if let Some(t) = obs {
                 min_time = Some(min_time.map_or(t, |m: DateTime<Utc>| m.min(t)));
                 max_time = Some(max_time.map_or(t, |m: DateTime<Utc>| m.max(t)));
@@ -221,8 +226,8 @@ fn matches_expanded_attribute(term: &ProjectionTerm, attr_name: &AttributeName) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_id::InstanceId, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, temporal_format::TemporalFormat, time_prop::TimeProp};
+    use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, temporal::TemporalValue};
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         pagination::Pagination,
@@ -231,6 +236,7 @@ mod tests {
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::TimeZone;
     use iri_rs::IriBuf;
+    use uuid::Uuid;
 
     fn instant() -> DateTime<Utc> {
         Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant")
@@ -249,14 +255,12 @@ mod tests {
             attribute_name: attr_name(attr),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(1.0),
+            value: TemporalValue::Number(JsonNumber::Double(1.0)),
             observed_at: Some(instant()),
-            time: instant(),
-            created_at: instant(),
-            modified_at: instant(),
-            instance_id: format!("urn:ngsi-ld:attribute:instance:{instance}")
-                .parse::<InstanceId>()
-                .expect("valid instance ID"),
+            recorded_at: instant(),
+            created_at: Some(instant()),
+            modified_at: Some(instant()),
+            instance: InstanceIdentity::Generated(Uuid::from_u128(u128::from(instance))),
             metadata: None,
             partition_total: None,
         }

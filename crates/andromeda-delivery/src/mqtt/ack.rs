@@ -93,7 +93,7 @@ impl AckTracker {
     /// Fail every waiting publish, for a connection that has gone down.
     ///
     /// Dropping the senders resolves each receiver to a cancellation, which the
-    /// delivery path turns into a retryable failure so the outbox retransmits.
+    /// delivery path turns into a retryable failure so the delivery queue retransmits.
     pub fn fail_all(&mut self) {
         self.unassigned.clear();
         self.in_flight.clear();

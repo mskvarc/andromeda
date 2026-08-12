@@ -1,12 +1,17 @@
 //! The PostgreSQL entity store.
 //!
-//! Holds the tenant pool plus the two things a pushed-down `q` predicate needs:
-//! the attribute-name dictionary the projection is keyed on, and the barrier
-//! that says the projection has caught up. Both are properties of this store,
-//! not of the policy above it, which is why they live here and not in the port.
+//! Holds the tenant pool plus the one thing a pushed-down `q` predicate needs:
+//! the attribute-name dictionary the current-value projection is keyed on. That
+//! is a property of this store, not of the policy above it, which is why it
+//! lives here and not in the port.
+//!
+//! Nothing here waits for the projection. It is written inside the same
+//! transaction as the entity row it describes, so a committed write is a
+//! visible write and a reader that can see the entity can see its projected
+//! values.
 
 use andromeda_entity::storage_profile::StorageProfile;
-use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookup, projection_barrier::ProjectionBarrier};
+use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
 use sqlx::postgres::PgPool;
 use std::sync::Arc;
 
@@ -17,8 +22,6 @@ pub struct EntityRepository {
     pub(super) pool: PgPool,
     /// The attribute-name dictionary, shared with the temporal store.
     pub(super) attribute_names: Arc<dyn AttributeNameLookup>,
-    /// The barrier that says the `attribute_current` projection has caught up.
-    pub(super) attribute_current: Arc<dyn ProjectionBarrier>,
 }
 
 impl EntityRepository {
@@ -32,11 +35,10 @@ impl EntityRepository {
     pub const PROFILE: StorageProfile = StorageProfile::POSTGIS_LTREE;
 
     /// Create a new entity repository backed by the given connection pool.
-    pub fn new(pool: &PgPool, attribute_names: Arc<dyn AttributeNameLookup>, attribute_current: Arc<dyn ProjectionBarrier>) -> EntityRepository {
+    pub fn new(pool: &PgPool, attribute_names: Arc<dyn AttributeNameLookup>) -> EntityRepository {
         EntityRepository {
             pool: pool.clone(), // clone: Arc ref-count bump
             attribute_names,
-            attribute_current,
         }
     }
 }

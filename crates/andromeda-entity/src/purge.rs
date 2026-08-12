@@ -15,7 +15,7 @@ use andromeda_context_commit::{
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, instance_key::removed_attribute_instances},
+    expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances},
     notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
@@ -148,8 +148,8 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
 
     let removed = removed_attribute_instances(previous, &purged);
     let mut history = Vec::with_capacity(removed.len());
-    for key in removed {
-        history.push(HistoryRecord::Tombstone(key));
+    for instance in removed {
+        history.push(HistoryRecord::Tombstone(instance));
     }
 
     let merged = Arc::new(purged);

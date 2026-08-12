@@ -8,6 +8,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-http-headers.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
@@ -15,9 +16,8 @@ async-trait = "0.1.89"
 confique = { version = "0.4.0", features = ["toml"] }
 contextual = "0.1.6"
 dashmap = { version = "6.1.0", features = ["inline"] }
-iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 headers = "0.4.1"
-http = "1.4.0"
+iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
 jsonld-core = "0.22.0"
 jsonld-syntax = { version = "0.22.0", features = ["serde-json"] }

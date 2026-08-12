@@ -10,7 +10,7 @@ use crate::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     subscription::repo::SubscriptionRepository,
     subscription_store::{
-        mapper::{row_from_pg, row_to_subscription, rows_to_subscriptions, stored_subscription_uri},
+        mapper::{row_from_pg, row_to_stored_subscription, rows_to_stored_subscriptions, stored_subscription_uri},
         params::DatasetIdPresence,
     },
 };
@@ -19,6 +19,7 @@ use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
 use andromeda_subscription::{
     error::SubscriptionError,
     store::{SubscriptionFields, SubscriptionStore},
+    stored_subscription::StoredSubscription,
 };
 use sqlx::{Row, postgres::PgArguments, query::Query, types::Json};
 use std::fmt::Display;
@@ -42,7 +43,7 @@ macro_rules! impl_subscription_store {
     ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr, create_sql: $create:expr, update_sql: $update:expr, create_binds: $create_fn:expr, update_binds: $update_fn:expr) => {
         #[async_trait::async_trait]
         impl SubscriptionStore for $type {
-            async fn get(&self, id: &Uri) -> Result<Option<Subscription>, SubscriptionError> {
+            async fn get(&self, id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
                 let pg_row = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
                     .bind(id.as_str())
                     .fetch_optional(&self.pool)
@@ -50,7 +51,7 @@ macro_rules! impl_subscription_store {
                 match pg_row {
                     Some(pg) => {
                         let row = row_from_pg(&pg, $hdi).map_err(persistence_error)?;
-                        Ok(Some(row_to_subscription(row).map_err(persistence_error)?))
+                        Ok(Some(row_to_stored_subscription(row).map_err(persistence_error)?))
                     }
                     None => Ok(None),
                 }
@@ -63,7 +64,13 @@ macro_rules! impl_subscription_store {
                     .fetch_one(&self.pool).await.map_err(persistence_error)?;
                 let pg_rows = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE kind = '", $kind, "' ORDER BY created_at ASC LIMIT $1 OFFSET $2"))
                     .bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(persistence_error)?;
-                let subscriptions = rows_to_subscriptions(&pg_rows, $hdi).map_err(persistence_error)?;
+                // A listing renders resources, so the surrogate key each row
+                // carries is dropped rather than threaded into the response.
+                let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
+                    .into_iter()
+                    .map(|stored| stored.subscription)
+                    .collect();
                 Ok((subscriptions, count_row.0))
             }
 
@@ -79,10 +86,10 @@ macro_rules! impl_subscription_store {
                 Ok(row.0)
             }
 
-            async fn list_active(&self) -> Result<Vec<Subscription>, SubscriptionError> {
+            async fn list_active(&self) -> Result<Vec<StoredSubscription>, SubscriptionError> {
                 let pg_rows = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE status = 'active' AND kind = '", $kind, "'"))
                     .fetch_all(&self.pool).await.map_err(persistence_error)?;
-                rows_to_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
+                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
             }
 
             async fn claim_notification_slot(&self, id: &Uri, earliest_allowed_last_notification: Option<chrono::DateTime<chrono::Utc>>) -> Result<bool, SubscriptionError> {
@@ -138,7 +145,13 @@ macro_rules! impl_subscription_store {
             async fn find_due_interval_subscriptions(&self) -> Result<Vec<Subscription>, SubscriptionError> {
                 let pg_rows = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE status = 'active' AND kind = '", $kind, "' AND time_interval IS NOT NULL AND ((last_notification IS NULL AND created_at <= NOW() - make_interval(secs => time_interval)) OR (last_notification IS NOT NULL AND last_notification <= NOW() - make_interval(secs => time_interval)))"))
                     .fetch_all(&self.pool).await.map_err(persistence_error)?;
-                rows_to_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
+                // An interval notification is sent straight to the endpoint and
+                // never enqueues a delivery, so it needs no surrogate key.
+                Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
+                    .into_iter()
+                    .map(|stored| stored.subscription)
+                    .collect())
             }
         }
     };
@@ -355,7 +368,7 @@ WHERE id = $1 AND kind = 'csource'
 impl_subscription_store!(
     SubscriptionRepository,
     kind: "entity",
-    columns: "id, type, subscription_name, description, entities, \
+    columns: "id, subscription_key, type, subscription_name, description, entities, \
               watched_attributes, notification_trigger, time_interval, \
               q, geo_q, scope_q, csf, dataset_id, is_active, notification, \
               expires_at, throttling, status::text AS status, temporal_q, lang, \
@@ -371,7 +384,7 @@ impl_subscription_store!(
 impl_subscription_store!(
     CsourceSubscriptionRepository,
     kind: "csource",
-    columns: "id, type, subscription_name, description, entities, \
+    columns: "id, subscription_key, type, subscription_name, description, entities, \
               watched_attributes, notification_trigger, time_interval, \
               q, geo_q, scope_q, csf, is_active, notification, \
               expires_at, throttling, status::text AS status, temporal_q, lang, \

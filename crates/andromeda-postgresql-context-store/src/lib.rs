@@ -1,15 +1,13 @@
 //! PostgreSQL-backed context store for the NGSI-LD context broker.
 //!
 //! This crate owns the persistence layer for entity state, subscriptions,
-//! context-source registrations, outbox events, and the `attribute_current`
-//! projection. It does NOT depend on the temporal store; both stores are
-//! independent.
+//! context-source registrations, notification events and deliveries, and the
+//! `current_attribute_values` projection. It does NOT depend on the temporal
+//! store; both stores are independent.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-/// The `attribute_current` projection and the worker that maintains it.
-pub mod attribute_current;
 /// Shared `attribute_names` dictionary cache.
 pub mod attribute_names;
 /// Active PostgreSQL-family component discovery.
@@ -20,6 +18,10 @@ pub mod config;
 pub mod csource_registration;
 /// Repository for NGSI-LD context source subscriptions.
 pub mod csource_subscription;
+/// The current-state projection of the attribute instances entities hold.
+pub mod current_attribute_values;
+/// The bound on how large one tenant's attribute-name dictionary may grow.
+pub mod dictionary_growth;
 /// Persistence layer for NGSI-LD entities.
 pub mod entity;
 /// The contract between a domain enum and the PostgreSQL enum it is stored as.
@@ -30,12 +32,12 @@ pub mod error;
 pub mod health;
 /// Persistence layer for JSON-LD context documents.
 pub mod jsonld_context;
-/// Persistence layer for the notification outbox.
-pub mod outbox;
+/// Persistence layer for the notification delivery queue.
+pub mod notification_delivery;
 /// Durable side-effect queue for opt-in async batch processing.
 pub mod pending_side_effects;
-/// Rebuilding one TEA's `attribute_current` row from `attribute_history`.
-pub mod repair_attribute_current;
+/// The schema contract one tenant database carries, and what it is checked against.
+pub mod schema_contract;
 /// Persistence layer for snapshot records.
 pub mod snapshot;
 /// Filling the entity spatial index from the store.
@@ -63,6 +65,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
+        "andromeda-postgresql-codes",
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
@@ -71,6 +74,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-spatial-index",
         "andromeda-subscription",
         "andromeda-tenancy",
+        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
     ],

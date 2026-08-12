@@ -2,7 +2,8 @@
 //! fully-resolved set of update values.
 //!
 //! Pure service-layer logic: no I/O, no SQL. The repository applies the
-//! produced [`ResolvedCsrUpdate`] as an unconditional UPDATE.
+//! produced [`ResolvedCsrUpdate`](crate::resolved_update::ResolvedCsrUpdate) as
+//! an unconditional UPDATE.
 
 use crate::{error::RegistrationError, store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;

@@ -12,5 +12,7 @@ pub mod expiry;
 pub mod query;
 /// Entity payload and snapshot reads.
 pub mod reader;
+/// Runtime-neutral waiting between contended write attempts.
+pub mod retry_delay;
 /// Typed spatial-index rebuild snapshots.
 pub mod spatial_snapshot;

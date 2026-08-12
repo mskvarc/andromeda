@@ -1,6 +1,10 @@
 //! SQL generation for Context Source Registration queries using sea-query.
 
-use crate::csr::{coverage::entity_type_coverage, filter::csr_expr_to_condition};
+use crate::csr::{
+    coverage::entity_type_coverage,
+    filter::csr_expr_to_condition,
+    projection::{attribute_name_candidate, id_pattern_candidate},
+};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_query::{
@@ -173,8 +177,11 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         condition = condition.add(SeaExpr::col(Csr::Id).is_in(ids));
     }
 
-    // ID pattern filter: match against information[].entities[].idPattern
+    // ID pattern filter: match against information[].entities[].idPattern. The
+    // projection preselect compares the stored pattern text and never evaluates
+    // it, so the unnesting below remains what decides the match.
     if let Some(id_pattern) = &query.id_pattern {
+        condition = condition.add(id_pattern_candidate(id_pattern));
         condition = condition.add(SeaExpr::cust_with_values(
             "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
              WHERE NOT jsonb_exists(info, 'entities') \
@@ -184,8 +191,11 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         ));
     }
 
-    // Attrs filter: match against information[].propertyNames / relationshipNames
+    // Attrs filter: match against information[].propertyNames /
+    // relationshipNames. The preselect resolves the requested names through the
+    // dictionary the projection interns them with; the unnesting decides.
     if !query.attrs.is_empty() {
+        condition = condition.add(attribute_name_candidate(&query.attrs));
         let attrs = &query.attrs;
         let placeholders: Vec<String> = (1..=attrs.len()).map(|i| format!("${}", i)).collect();
         let any_list = placeholders.join(", ");
@@ -365,6 +375,42 @@ mod tests {
         let built = build_csr_query(&q).unwrap();
         assert!(built.sql.contains("propertyNames"));
         assert!(built.sql.contains("relationshipNames"));
+    }
+
+    #[test]
+    fn the_selective_filters_preselect_against_the_routing_projection() {
+        // Type, id pattern and attribute names each gain an indexed semi-join
+        // over the projection; the `information` unnesting they are conjoined
+        // with still decides membership, so the preselect only has to be a
+        // superset of it.
+        let mut q = empty_query();
+        q.entity_type = Some(iri("https://example.com/Vehicle"));
+        q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
+        q.attrs = vec![iri("https://example.com/speed")];
+        let built = build_csr_query(&q).unwrap();
+        assert!(built.sql.contains("ri.\"entity_types\" IS NULL"), "{}", built.sql);
+        assert!(built.sql.contains("ri.\"entity_id_pattern\" IS NULL"), "{}", built.sql);
+        assert!(built.sql.contains("ri.\"property_name_ids\" IS NULL"), "{}", built.sql);
+        assert!(built.sql.contains("jsonb_array_elements(\"information\")"), "{}", built.sql);
+    }
+
+    #[test]
+    fn a_query_without_selective_filters_reads_no_projection() {
+        // Nothing to narrow: an unfiltered discovery must not pay for a
+        // semi-join that would admit every registration anyway.
+        let built = build_csr_query(&empty_query()).unwrap();
+        assert!(!built.sql.contains("registration_information"), "{}", built.sql);
+    }
+
+    #[test]
+    fn the_count_statement_carries_the_same_preselect_as_the_page() {
+        // Clause 5.5.9: the total must count exactly the rows the page draws
+        // from, so both statements share one condition.
+        let mut q = empty_query();
+        q.attrs = vec![iri("https://example.com/speed")];
+        let built = build_csr_query(&q).unwrap();
+        let count_sql = built.count_sql.expect("count statement is always generated");
+        assert!(count_sql.contains("registration_information"), "{count_sql}");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! The atomic commit port and the semantics shared by its implementations.
 
-use crate::{atomic_write::AtomicWrite, error::CommitError, write_outcome::WriteOutcome};
+use crate::{atomic_write::AtomicWrite, commit_replay::CommitReplay, error::CommitError, write_outcome::WriteOutcome};
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
 /// Owned future returned by an object-safe atomic commit implementation.
@@ -12,8 +12,23 @@ pub trait ContextCommitter: Send + Sync + 'static {
     ///
     /// The writes are independent: NGSI-LD clauses 5.6.7 through 5.6.10 permit
     /// partial batch success. Every durable consequence of one landed write is
-    /// nevertheless committed in the same atomic unit as its entity mutation.
+    /// nevertheless committed in the same atomic unit as its entity mutation,
+    /// under a freshly minted write identity and an ordinal counter that starts
+    /// at zero.
     fn commit(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
+
+    /// Commit writes as the replay of a previously enqueued, partially durable
+    /// commit.
+    ///
+    /// Every consequence lands under `replay.record`'s identity instead of a
+    /// freshly minted one, and the ordinal counter that numbers temporal,
+    /// notification and side-effect consequences resumes at
+    /// `replay.consequence_base` instead of zero. A durable side-effect job
+    /// retried after a crash therefore reproduces exactly the identity and
+    /// ordinals its first attempt would have produced, so the replay's rows
+    /// collide with the first attempt's on their row-level `ON CONFLICT ... DO
+    /// NOTHING` constraints instead of duplicating them.
+    fn commit_replayed(&self, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 }
 
 /// Reject a submission that names one entity more than once.

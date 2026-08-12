@@ -167,6 +167,19 @@ mod tests {
         }
     }
 
+    /// Clause 5.5.9: a temporal body the commit refused is invalid input, so
+    /// the client learns what to change instead of being told to retry. The
+    /// policy conversion is what carries the refusal out of the commit port.
+    #[test]
+    fn a_commit_that_refused_the_submission_reports_bad_request_data() {
+        let error = TemporalError::from(CommitError::Submission {
+            detail: "'QQQ' is not a UN/CEFACT common code".to_string(),
+        });
+        let report = classify_temporal_error(&error);
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::BadRequestData);
+        pretty_assertions::assert_eq!(report.detail(), "'QQQ' is not a UN/CEFACT common code");
+    }
+
     #[test]
     fn temporal_public_detail_is_preserved() {
         let report = classify_temporal_error(&TemporalError::validation("missing timerel"));

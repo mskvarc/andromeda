@@ -2,8 +2,9 @@
 //!
 //! `andromeda-ngsi-ld-query` compiles a request into the languages ETSI GS CIM
 //! 009 v1.9.1 defines; this crate says how each of them is written in
-//! PostgreSQL. A `q` filter becomes a probe against the `attribute_current`
-//! projection, a `georel` becomes a PostGIS predicate, a `scopeQ` becomes an
+//! PostgreSQL. A `q` filter becomes a probe against the
+//! `current_attribute_values` projection, a `georel` becomes a PostGIS
+//! predicate, a `scopeQ` becomes an
 //! `lquery` match, a type selection becomes a predicate over the `types` array
 //! — plus the primitives those renderings are built from: typed bind values,
 //! schema identifiers, jsonpath and literal escaping, and the two operators
@@ -30,18 +31,16 @@ pub mod built;
 pub mod column_reference;
 pub mod error;
 pub mod geo_predicate;
-/// Input for a single attribute history observation in a bulk insert.
-pub mod history_batch_entry;
 pub mod jsonb;
 pub mod literal;
 pub mod ltree;
 pub mod operator;
 pub mod postgis;
 pub mod projected_attribute_names;
-pub mod projection_barrier;
 pub mod q_predicate;
 pub mod schema;
 pub mod scope_predicate;
+pub mod time_column;
 pub mod type_predicate;
 pub mod value_binding;
 
@@ -53,6 +52,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-encoding",
+        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
     ],

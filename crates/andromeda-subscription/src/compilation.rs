@@ -1,6 +1,9 @@
 //! Compilation of persisted subscriptions into matching state.
 
-use crate::compiled::{CompiledCsrSubscription, CompiledSubscription};
+use crate::{
+    compiled::{CompiledCsrSubscription, CompiledSubscription},
+    stored_subscription::StoredSubscription,
+};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
@@ -13,8 +16,13 @@ use std::{collections::HashSet, num::NonZeroU32};
 use strum::IntoEnumIterator;
 use tracing::debug;
 
-/// Compile a domain subscription into a pre-compiled form for fast matching.
-pub fn compile_subscription(sub: &Subscription) -> CompiledSubscription {
+/// Compile a stored subscription into a pre-compiled form for fast matching.
+///
+/// Takes the stored pair rather than the resource alone: matching ends in a
+/// delivery enqueued against the surrogate key, so the key has to survive
+/// compilation alongside everything the match itself needs.
+pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription {
+    let sub = &stored.subscription;
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
     let triggers: Vec<NotificationTrigger> = sub
         .selection
@@ -24,6 +32,7 @@ pub fn compile_subscription(sub: &Subscription) -> CompiledSubscription {
     let watched_attrs = sub.selection.watched_attributes.as_ref().cloned().map(HashSet::from_iter);
     CompiledSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.
+        key: stored.key,
         status: sub.lifecycle.status,
         endpoint_uri: sub.notification.endpoint.uri.clone(), // clone: compiled state owns endpoint configuration.
         endpoint_accept: sub.notification.endpoint.accept.clone(), // clone: compiled state owns endpoint configuration.

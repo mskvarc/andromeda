@@ -1,6 +1,6 @@
 //! PostgreSQL implementation of the registration persistence port.
 
-use crate::csource_registration::mapper::row_to_csr;
+use crate::csource_registration::{information_projection::replace_registration_information, mapper::row_to_csr};
 use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
@@ -9,6 +9,7 @@ use andromeda_postgresql_context_query::csr::{
     statement as csr_sql,
 };
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_query::attribute_name_lookup::AttributeNameLookup;
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
@@ -19,20 +20,31 @@ use iri_rs::IriBuf;
 use sea_query::{Alias, Expr as SeaExpr, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 /// PostgreSQL-backed registration persistence adapter.
+///
+/// Holds two representations of the same facts: the registration payload, which
+/// every response body is rendered from, and the `registration_information`
+/// routing projection derived from its `information`, which discovery
+/// preselects against. Every mutation below rewrites the projection in the same
+/// transaction as the payload, so no reader observes one without the other.
 #[derive(Debug)]
 pub struct PostgresRegistrationStore {
     /// Tenant-scoped PostgreSQL connection pool.
     pool: PgPool,
+    /// The tenant's attribute-name dictionary, which the routing projection
+    /// interns registered property and relationship names through.
+    attribute_names: Arc<dyn AttributeNameLookup>,
 }
 
 impl PostgresRegistrationStore {
-    /// Create a registration store backed by the supplied tenant pool.
-    pub fn new(pool: &PgPool) -> PostgresRegistrationStore {
+    /// Create a registration store backed by the supplied tenant pool and the
+    /// tenant's shared attribute-name dictionary.
+    pub fn new(pool: &PgPool, attribute_names: Arc<dyn AttributeNameLookup>) -> PostgresRegistrationStore {
         PostgresRegistrationStore {
             pool: pool.clone(), // clone: `PgPool` is an atomically reference-counted pool handle.
+            attribute_names,
         }
     }
 }
@@ -112,6 +124,23 @@ fn operation_names(operations: Option<&[CsrOperation]>) -> Option<Vec<String>> {
 #[async_trait]
 impl RegistrationStore for PostgresRegistrationStore {
     async fn delete_expired(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+        let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
+        // The projection rows go first and are selected by the same predicate as
+        // the deletion below, so the two statements agree on which registrations
+        // expired without depending on the foreign key's referential action.
+        sqlx::query(
+            r#"
+            DELETE FROM registration_information
+            WHERE registration_id IN (
+                SELECT id FROM context_source_registrations
+                WHERE expires_at IS NOT NULL AND expires_at <= $1
+            )
+            "#,
+        )
+        .bind(cutoff)
+        .execute(&mut *transaction)
+        .await
+        .map_err(persistence_error)?;
         let rows = sqlx::query(
             r#"
             WITH expired AS (
@@ -134,10 +163,15 @@ impl RegistrationStore for PostgresRegistrationStore {
             "#,
         )
         .bind(cutoff)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *transaction)
         .await
         .map_err(persistence_error)?;
-        rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+        let expired = rows
+            .iter()
+            .map(|row| row_to_csr(row).map_err(persistence_error))
+            .collect::<Result<Vec<_>, _>>()?;
+        transaction.commit().await.map_err(persistence_error)?;
+        Ok(expired)
     }
 
     async fn exists(&self, id: &Uri) -> Result<bool, RegistrationError> {
@@ -154,6 +188,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         let context_source_info = params.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
         let operations = operation_names(params.operations.as_deref());
         let scopes = params.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
+        let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         sqlx::query(
             r#"
             INSERT INTO context_source_registrations (
@@ -201,9 +236,19 @@ impl RegistrationStore for PostgresRegistrationStore {
         .bind(params.jsonld_context.as_ref().map(url::Url::as_str))
         .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&params.additional_properties)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|error| create_error(error, id))?;
+        replace_registration_information(
+            &mut transaction,
+            id,
+            params.information.as_deref().unwrap_or_default(),
+            params.operations.as_deref(),
+            self.attribute_names.as_ref(),
+        )
+        .await
+        .map_err(persistence_error)?;
+        transaction.commit().await.map_err(persistence_error)?;
         Ok(())
     }
 
@@ -266,6 +311,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         let context_source_info = values.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
         let operations = operation_names(values.operations.as_deref());
         let scopes = values.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
+        let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let result = sqlx::query(
             r#"
             UPDATE context_source_registrations SET
@@ -316,10 +362,28 @@ impl RegistrationStore for PostgresRegistrationStore {
         .bind(values.jsonld_context.as_ref().map(url::Url::as_str))
         .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
         .bind(&values.additional_properties)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await
         .map_err(persistence_error)?;
-        Ok(mutation_outcome(result.rows_affected()))
+        let outcome = mutation_outcome(result.rows_affected());
+        match outcome {
+            // Nothing was replaced, so nothing derived from it may be rewritten:
+            // a missing registration has no projection rows to speak for.
+            RegistrationMutation::Missing => transaction.rollback().await.map_err(persistence_error)?,
+            RegistrationMutation::Applied => {
+                replace_registration_information(
+                    &mut transaction,
+                    id,
+                    &values.information,
+                    values.operations.as_deref(),
+                    self.attribute_names.as_ref(),
+                )
+                .await
+                .map_err(persistence_error)?;
+                transaction.commit().await.map_err(persistence_error)?;
+            }
+        }
+        Ok(outcome)
     }
 
     async fn find_matching(&self, entity_type: Option<&IriBuf>, entity_id: Option<&Uri>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
@@ -356,11 +420,21 @@ impl RegistrationStore for PostgresRegistrationStore {
     }
 
     async fn delete(&self, id: &Uri) -> Result<RegistrationMutation, RegistrationError> {
-        let result = sqlx::query("DELETE FROM context_source_registrations WHERE id = $1")
+        let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
+        // Removed before the payload so the deletion holds whatever referential
+        // action the foreign key carries; a registration that lingers in the
+        // projection keeps being preselected for distributed operations.
+        sqlx::query("DELETE FROM registration_information WHERE registration_id = $1")
             .bind(id.as_str())
-            .execute(&self.pool)
+            .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;
+        let result = sqlx::query("DELETE FROM context_source_registrations WHERE id = $1")
+            .bind(id.as_str())
+            .execute(&mut *transaction)
+            .await
+            .map_err(persistence_error)?;
+        transaction.commit().await.map_err(persistence_error)?;
         Ok(mutation_outcome(result.rows_affected()))
     }
 }

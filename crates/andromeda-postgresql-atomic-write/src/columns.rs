@@ -1,6 +1,6 @@
 //! Encoding semantic entity records into PostgreSQL bind columns.
 
-use crate::entity_group::IndexedWrite;
+use crate::{commit_refusal::persistence, entity_group::IndexedWrite};
 use andromeda_context_commit::error::CommitError;
 use andromeda_postgresql_context_store::entity::params::PreparedEntityColumns;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
@@ -21,12 +21,10 @@ pub(crate) fn columns_for(writes: &[IndexedWrite<'_>]) -> Result<PreparedEntityC
         columns
             .scope_paths_json
             .push(Value::Array(record.scopes.iter().map(|scope| Value::String(scope_to_ltree(scope))).collect()));
-        columns
-            .push_payload(Value::clone(&record.payload))
-            .map_err(|error| CommitError::Persistence { detail: error.to_string() })?;
+        columns.push_payload(Value::clone(&record.payload)).map_err(persistence)?;
         columns
             .push_geometries(record.location.as_ref(), record.observation_space.as_ref(), record.operation_space.as_ref())
-            .map_err(|error| CommitError::Persistence { detail: error.to_string() })?;
+            .map_err(persistence)?;
         columns.expires_ats.push(record.expires_at);
     }
     Ok(columns)

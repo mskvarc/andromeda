@@ -109,6 +109,17 @@ pub fn write_uuid_opt(buf: &mut Vec<u8>, value: Option<uuid::Uuid>) {
     }
 }
 
+/// Append an optional 16-bit integer field in network byte order.
+pub fn write_i16_opt(buf: &mut Vec<u8>, value: Option<i16>) {
+    match value {
+        Some(value) => {
+            write_length(buf, 2);
+            buf.extend_from_slice(&value.to_be_bytes());
+        }
+        None => write_null(buf),
+    }
+}
+
 /// Append an optional 32-bit integer field in network byte order.
 pub fn write_i32_opt(buf: &mut Vec<u8>, value: Option<i32>) {
     match value {

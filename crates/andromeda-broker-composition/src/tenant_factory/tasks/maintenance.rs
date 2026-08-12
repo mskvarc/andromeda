@@ -175,7 +175,9 @@ pub(super) fn classify_registration_expiry_failure(error: RegistrationError) -> 
 pub(super) fn classify_entity_expiry_failure(error: EntityError) -> TaskFailure {
     let summary = error.to_string();
     match error {
-        EntityError::Commit(_) | EntityError::Persistence { detail: _ } => TaskFailure::transient(summary),
+        EntityError::Commit(_) | EntityError::Persistence { detail: _ } | EntityError::Contention { identifier: _, attempts: _ } => {
+            TaskFailure::transient(summary)
+        }
         EntityError::Internal { detail: _ } => TaskFailure::invariant_violation(summary),
         EntityError::Validation { detail: _ }
         | EntityError::NotFound { identifier: _ }

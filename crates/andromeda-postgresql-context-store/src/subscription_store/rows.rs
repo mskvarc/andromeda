@@ -13,6 +13,7 @@ use andromeda_ngsi_ld_model::{
     subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
+use andromeda_subscription::subscription_key::SubscriptionKey;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;
@@ -25,6 +26,8 @@ use url::Url;
 pub struct SubscriptionRow {
     /// Subscription identifier.
     pub id: Uri,
+    /// Store-assigned surrogate key the notification queue references.
+    pub key: SubscriptionKey,
     /// Optional human-readable name.
     pub subscription_name: Option<String>,
     /// Optional free-text description.

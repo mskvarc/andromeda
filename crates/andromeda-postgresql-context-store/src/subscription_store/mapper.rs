@@ -20,6 +20,7 @@ use andromeda_ngsi_ld_model::subscription::{
     SubscriptionSelection,
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+use andromeda_subscription::{stored_subscription::StoredSubscription, subscription_key::SubscriptionKey};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;
@@ -31,6 +32,11 @@ use url::Url;
 pub fn stored_subscription_uri(raw: String) -> Result<Uri, ContextStoreError> {
     raw.parse()
         .map_err(|error| ContextStoreError::Internal(format!("Invalid stored subscription id '{raw}': {error}")))
+}
+
+/// Parse a stored surrogate key into a [`SubscriptionKey`].
+fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreError> {
+    SubscriptionKey::try_from(raw).map_err(|error| ContextStoreError::Internal(format!("stored subscription key is not a valid surrogate key: {error}")))
 }
 
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
@@ -105,6 +111,7 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
     let status_label: String = row.try_get("status")?;
     Ok(SubscriptionRow {
         id,
+        key: stored_subscription_key(row.try_get("subscription_key")?)?,
         subscription_name: row.try_get("subscription_name")?,
         description: row.try_get("description")?,
         entities,
@@ -144,32 +151,45 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
 /// subscription with it: a listing becomes a 500, and `list_active` empties the
 /// matching cache so no subscription fires at all. A multi-row read therefore
 /// reports what it can read and logs what it cannot, while
-/// [`row_to_subscription`] keeps its hard error for `get`, where the client
-/// named that one subscription and has to be told it is unreadable.
+/// [`row_to_stored_subscription`] keeps its hard error for `get`, where the
+/// client named that one subscription and has to be told it is unreadable.
 ///
 /// A listing's total still counts the stored rows, so it can exceed the number
 /// returned. That is the honest figure: the rows are there, this build cannot
 /// read them.
-pub fn rows_to_subscriptions(rows: &[sqlx::postgres::PgRow], dataset_id_presence: DatasetIdPresence) -> Result<Vec<Subscription>, ContextStoreError> {
+pub fn rows_to_stored_subscriptions(
+    rows: &[sqlx::postgres::PgRow],
+    dataset_id_presence: DatasetIdPresence,
+) -> Result<Vec<StoredSubscription>, ContextStoreError> {
     let mut subscriptions = Vec::with_capacity(rows.len());
     for pg_row in rows {
         let row = row_from_pg(pg_row, dataset_id_presence)?;
         // clone: the identifier is needed for the log after `row` is consumed,
         // and it is the only thing that names the row that failed
         let id = row.id.clone();
-        match row_to_subscription(row) {
-            Ok(subscription) => subscriptions.push(subscription),
+        match row_to_stored_subscription(row) {
+            Ok(stored) => subscriptions.push(stored),
             Err(error) => warn!(subscription_id = %id, %error, "subscription row could not be read and was omitted"),
         }
     }
     Ok(subscriptions)
 }
 
+/// Convert a persistence-shaped `SubscriptionRow` into the resource paired with
+/// the key it is stored under.
+pub fn row_to_stored_subscription(row: SubscriptionRow) -> Result<StoredSubscription, ContextStoreError> {
+    let key = row.key;
+    Ok(StoredSubscription {
+        key,
+        subscription: row_to_subscription(row)?,
+    })
+}
+
 /// Convert a persistence-shaped `SubscriptionRow` into the domain [`Subscription`].
 ///
 /// Parses JSON columns into typed domain values and derives the notification
 /// delivery status from the `last_success`/`last_failure` timestamps.
-pub fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStoreError> {
+fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStoreError> {
     let mut notification: NotificationParams = row.notification;
 
     notification.times_sent = Some(row.times_sent);

@@ -9,7 +9,13 @@
 //! that expires unacknowledged becomes claimable again.
 
 use crate::error::EntityError;
-use andromeda_context_commit::batch_side_effect_job::BatchSideEffectJob;
+use andromeda_context_commit::{
+    batch_side_effect_job::BatchSideEffectJob,
+    lease_acknowledgement::LeaseAcknowledgement,
+    side_effect_job_id::SideEffectJobId,
+    write_ordinal::WriteOrdinal,
+    write_record::WriteRecord,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use derive_more::{AsRef, Display};
@@ -32,11 +38,25 @@ impl SideEffectLeaseOwner {
 #[derive(Debug)]
 pub struct LeasedSideEffect {
     /// Queue entry identifier, used to acknowledge or reschedule the job.
-    pub id: Uuid,
+    pub id: SideEffectJobId,
     /// How many times this job has already been attempted.
     pub attempts: i16,
     /// The work to perform.
     pub job: BatchSideEffectJob,
+    /// The identity and ingestion instant the job's enqueueing commit shares
+    /// with its other consequences.
+    ///
+    /// A worker delivering this job replays under `record` rather than minting
+    /// a fresh identity, so a crash-retried delivery reproduces exactly the
+    /// identity its first attempt would have produced.
+    pub record: WriteRecord,
+    /// First ordinal free in the enqueueing commit's consequence numbering.
+    ///
+    /// A worker delivering this job resumes the commit's running ordinal
+    /// counter at this value rather than restarting it at zero, so a
+    /// crash-retried delivery reproduces exactly the ordinals its first
+    /// attempt would have produced.
+    pub consequence_base: WriteOrdinal,
 }
 
 /// Draining the durable side-effect queue.
@@ -57,28 +77,50 @@ pub trait SideEffectQueue: Send + Sync + 'static {
         'life1: 'async_trait,
         Self: 'async_trait;
 
-    /// Acknowledge a completed job, removing it. Returns whether it existed.
-    fn ack<'life0, 'async_trait>(&'life0 self, id: Uuid) -> BoxFuture<'async_trait, Result<bool, EntityError>>
+    /// Acknowledge a completed job, removing it.
+    ///
+    /// Guarded by `owner` holding a still-live lease: an acknowledgement whose
+    /// lease has since expired and been reclaimed by another worker reports
+    /// [`LeaseAcknowledgement::Lost`] rather than deleting a row that worker
+    /// now owns.
+    fn ack<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: SideEffectJobId,
+        owner: &'life1 SideEffectLeaseOwner,
+    ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where
         'life0: 'async_trait,
+        'life1: 'async_trait,
         Self: 'async_trait;
 
     /// Release a failed job for another attempt at `next_attempt_at`.
-    fn nack<'life0, 'life1, 'async_trait>(
+    ///
+    /// Guarded by `owner` holding a still-live lease, exactly as [`Self::ack`].
+    fn nack<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        id: Uuid,
-        error: &'life1 str,
+        id: SideEffectJobId,
+        owner: &'life1 SideEffectLeaseOwner,
+        error: &'life2 str,
         next_attempt_at: DateTime<Utc>,
-    ) -> BoxFuture<'async_trait, Result<bool, EntityError>>
+    ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Dead-letter a job that has exhausted its attempts. Returns whether it existed.
-    fn mark_dead<'life0, 'life1, 'async_trait>(&'life0 self, id: Uuid, error: &'life1 str) -> BoxFuture<'async_trait, Result<bool, EntityError>>
+    /// Dead-letter a job that has exhausted its attempts.
+    ///
+    /// Guarded by `owner` holding a still-live lease, exactly as [`Self::ack`].
+    fn mark_dead<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        id: SideEffectJobId,
+        owner: &'life1 SideEffectLeaseOwner,
+        error: &'life2 str,
+    ) -> BoxFuture<'async_trait, Result<LeaseAcknowledgement, EntityError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
+        'life2: 'async_trait,
         Self: 'async_trait;
 }

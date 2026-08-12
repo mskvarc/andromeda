@@ -144,7 +144,7 @@ impl NotificationTransport for MqttTransportHandle {
                 endpoint: self.config.endpoint_uri.clone(), // clone: the error owns the endpoint it names
                 detail: "connection lost before the broker acknowledged the publish".to_string(),
             }),
-            // The broker did not acknowledge within the allowed time; the outbox
+            // The broker did not acknowledge within the allowed time; the delivery queue
             // retransmits rather than assuming it arrived.
             Err(_elapsed) => Err(TransportError::Timeout {
                 endpoint: self.config.endpoint_uri.clone(), // clone: same

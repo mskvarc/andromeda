@@ -17,7 +17,6 @@ pub mod aggregation;
 pub mod history;
 pub mod schema;
 pub mod stage1;
-pub mod time_column;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
@@ -25,6 +24,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-query",
         "andromeda-postgresql-query",
+        "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",

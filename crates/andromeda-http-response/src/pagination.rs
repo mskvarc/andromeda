@@ -7,8 +7,10 @@ use andromeda_http_headers::{
     link::{header::Link, relation_type::RelationType, value::LinkValue},
     media_type::APPLICATION_LD_JSON,
 };
-use axum::{http::Uri, response::Response};
-use headers::HeaderMapExt;
+use axum::{
+    http::{Uri, header::LINK},
+    response::Response,
+};
 use iri_rs::IriRefBuf;
 use mediatype::MediaTypeBuf;
 use url::form_urlencoded;
@@ -85,59 +87,55 @@ pub fn append_pagination_links(
         PaginationMediaType::None => None,
     };
 
-    let mut links = Vec::new();
+    let mut links: Vec<(RelationType, String)> = Vec::new();
 
     match style {
         PaginationStyle::OffsetPrevNext => {
             if offset > 0 {
                 let prev_offset = (offset - limit).max(0);
-                links.push(("prev", build_page_link(uri, style, ("limit", limit), ("offset", prev_offset))));
+                links.push((RelationType::Prev, build_page_link(uri, style, ("limit", limit), ("offset", prev_offset))));
             }
             if offset + limit < total {
-                links.push(("next", build_page_link(uri, style, ("limit", limit), ("offset", offset + limit))));
+                links.push((RelationType::Next, build_page_link(uri, style, ("limit", limit), ("offset", offset + limit))));
             }
         }
         PaginationStyle::PagePrevNext => {
             let current_page = (offset / limit) + 1;
             let total_pages = (total + limit - 1) / limit;
             if current_page > 1 {
-                links.push(("prev", build_page_link(uri, style, ("limit", limit), ("page", current_page - 1))));
+                links.push((RelationType::Prev, build_page_link(uri, style, ("limit", limit), ("page", current_page - 1))));
             }
             if current_page < total_pages {
-                links.push(("next", build_page_link(uri, style, ("limit", limit), ("page", current_page + 1))));
+                links.push((RelationType::Next, build_page_link(uri, style, ("limit", limit), ("page", current_page + 1))));
             }
         }
         PaginationStyle::OffsetFull => {
             let last_offset = ((total - 1) / limit) * limit;
-            links.push(("first", build_page_link(uri, style, ("limit", limit), ("offset", 0))));
-            links.push(("last", build_page_link(uri, style, ("limit", limit), ("offset", last_offset))));
+            links.push((RelationType::First, build_page_link(uri, style, ("limit", limit), ("offset", 0))));
+            links.push((RelationType::Last, build_page_link(uri, style, ("limit", limit), ("offset", last_offset))));
             if offset > 0 {
                 let prev_offset = (offset - limit).max(0);
-                links.push(("prev", build_page_link(uri, style, ("limit", limit), ("offset", prev_offset))));
+                links.push((RelationType::Prev, build_page_link(uri, style, ("limit", limit), ("offset", prev_offset))));
             }
             if offset + limit < total {
-                links.push(("next", build_page_link(uri, style, ("limit", limit), ("offset", offset + limit))));
+                links.push((RelationType::Next, build_page_link(uri, style, ("limit", limit), ("offset", offset + limit))));
             }
         }
     }
 
     let values = links
         .into_iter()
-        .filter_map(|(rel, target)| {
-            let relation = match rel {
-                "prev" => RelationType::Prev,
-                "next" => RelationType::Next,
-                "first" => RelationType::First,
-                "last" => RelationType::Last,
-                _ => return None,
-            };
+        .filter_map(|(relation, target)| {
             IriRefBuf::new(target)
                 .ok()
                 .map(|target| LinkValue::with_params(target, Some(relation), mt.clone()))
         })
         .collect::<Vec<_>>();
-    if let Some(link) = Link::from_values(values) {
-        response.headers_mut().typed_insert(link);
+    // Appended rather than inserted: a response rendered with the `@context` in
+    // the headers (NGSI-LD 6.3.5) already carries a `Link` header, and replacing
+    // it would drop the context the client needs to expand the body.
+    if let Some(value) = Link::from_values(values).and_then(|link| link.to_header_value()) {
+        response.headers_mut().append(LINK, value);
     }
 }
 
@@ -215,6 +213,25 @@ mod tests {
         let uri = parse_uri("/subscriptions");
         append_pagination_links(&mut response, &uri, 10, 0, 0, PaginationStyle::OffsetPrevNext, PaginationMediaType::JsonLd);
         assert!(response.headers().get("Link").is_none());
+    }
+
+    #[test]
+    fn existing_context_link_header_survives_pagination_links() {
+        let mut response = empty_response();
+        let context = IriRefBuf::new("https://example.com/ctx.jsonld".to_string()).expect("IRI reference");
+        Link::insert_jsonld_contexts(response.headers_mut(), [context]);
+        let uri = parse_uri("/subscriptions?limit=1&offset=1");
+        append_pagination_links(&mut response, &uri, 1, 1, 3, PaginationStyle::OffsetPrevNext, PaginationMediaType::JsonLd);
+
+        let values = response
+            .headers()
+            .get_all(LINK)
+            .into_iter()
+            .filter_map(|value| value.to_str().ok())
+            .collect::<Vec<_>>();
+        assert_eq!(values.len(), 2);
+        assert!(values.iter().any(|value| value.contains("json-ld#context")));
+        assert!(values.iter().any(|value| value.contains("rel=\"next\"")));
     }
 
     #[test]

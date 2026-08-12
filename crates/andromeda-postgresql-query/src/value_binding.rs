@@ -23,6 +23,7 @@ macro_rules! bind_values {
                 ::andromeda_postgresql_query::bind::BindValue::String(s) => q.bind(s.as_ref()),
                 ::andromeda_postgresql_query::bind::BindValue::StringVec(v) => q.bind(v.as_ref()),
                 ::andromeda_postgresql_query::bind::BindValue::I64(i) => q.bind(*i),
+                ::andromeda_postgresql_query::bind::BindValue::I32(i) => q.bind(*i),
                 ::andromeda_postgresql_query::bind::BindValue::I16(i) => q.bind(*i),
                 ::andromeda_postgresql_query::bind::BindValue::F64(f) => q.bind(*f),
                 ::andromeda_postgresql_query::bind::BindValue::Bool(b) => q.bind(*b),

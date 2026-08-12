@@ -5,10 +5,10 @@
 //! temporal query layer can filter and aggregate without parsing JSON. This
 //! module owns the mapping from an expanded JSON-LD instance to that column.
 
-use crate::{error::TemporalStoreError, value_type::ValueType};
+use crate::error::TemporalStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::geo_property::expanded_geo_node_to_geometry;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, ngsi_ld_date_time::NgsiLdDateTime, uri::Uri};
+use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, expanded::geo_property::expanded_geo_node_to_geometry};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -17,8 +17,12 @@ use serde_json::Value;
 ///
 /// Exactly one is populated; which one is decided by [`AttributeValue`].
 pub struct HistoryValueColumns {
-    /// Numeric value for number-typed properties.
-    pub value_number: Option<f64>,
+    /// Decimal literal for the arbitrary-precision numeric column.
+    ///
+    /// The column is `NUMERIC`, so the value is handed over as its decimal text:
+    /// an integer beyond the range the double format names individually reaches
+    /// storage unchanged rather than being refused or rounded at the boundary.
+    pub value_number: Option<String>,
     /// String value for string-typed properties.
     pub value_string: Option<String>,
     /// Boolean value for boolean-typed properties.
@@ -36,8 +40,8 @@ pub struct HistoryValueColumns {
 /// The value of one attribute instance, resolved to the column it belongs in.
 #[derive(Debug)]
 pub enum AttributeValue {
-    /// A JSON number.
-    Number(f64),
+    /// A JSON number, in the shape it was parsed in.
+    Number(JsonNumber),
     /// A JSON string that is not an `xsd:dateTime`.
     String(String),
     /// A JSON boolean.
@@ -46,27 +50,18 @@ pub enum AttributeValue {
     Geometry(Geometry),
     /// A structured value: object, array, language map, JSON literal or list.
     Object(Value),
-    /// An RFC 3339 timestamp, still in its lexical form.
-    DateTime(String),
+    /// An RFC 3339 timestamp, already normalised to the broker's microsecond precision.
+    DateTime(NgsiLdDateTime),
     /// A Relationship object IRI.
     Uri(Uri),
 }
 
 impl AttributeValue {
-    /// The `ValueType` discriminant the attribute catalogue records for this value.
-    pub const fn value_type(&self) -> ValueType {
-        match self {
-            AttributeValue::Number(_) => ValueType::Number,
-            AttributeValue::String(_) => ValueType::String,
-            AttributeValue::Boolean(_) => ValueType::Boolean,
-            AttributeValue::Geometry(_) => ValueType::Geometry,
-            AttributeValue::Object(_) => ValueType::Object,
-            AttributeValue::DateTime(_) => ValueType::DateTime,
-            AttributeValue::Uri(_) => ValueType::Uri,
-        }
-    }
-
     /// Spread this value across the history row's typed columns.
+    ///
+    /// Infallible by construction: every value that can fail to reach a column
+    /// has already been rejected by [`extract_attribute_value`], so no branch
+    /// here can silently leave a column empty.
     pub fn into_columns(self) -> HistoryValueColumns {
         let mut columns = HistoryValueColumns {
             value_number: None,
@@ -78,14 +73,12 @@ impl AttributeValue {
             value_uri: None,
         };
         match self {
-            AttributeValue::Number(number) => columns.value_number = Some(number),
+            AttributeValue::Number(number) => columns.value_number = Some(number.to_string()),
             AttributeValue::String(text) => columns.value_string = Some(text),
             AttributeValue::Boolean(flag) => columns.value_bool = Some(flag),
             AttributeValue::Geometry(geometry) => columns.value_geo = Some(geometry),
             AttributeValue::Object(object) => columns.value_object = Some(object),
-            AttributeValue::DateTime(text) => {
-                columns.value_datetime = DateTime::parse_from_rfc3339(&text).map(|dt| dt.with_timezone(&Utc)).ok();
-            }
+            AttributeValue::DateTime(instant) => columns.value_datetime = Some(instant.get()),
             AttributeValue::Uri(uri) => columns.value_uri = Some(uri),
         }
         columns
@@ -199,11 +192,15 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
                 if (type_hint == Some(expanded_classes::DATE_TIME.as_str()) || type_hint == Some(expanded_properties::XSD_DATETIME.as_str()))
                     && let Some(s) = value.as_str()
                 {
-                    return Ok(AttributeValue::DateTime(s.to_string()));
+                    return Ok(AttributeValue::DateTime(s.parse::<NgsiLdDateTime>()?));
                 }
 
                 match value {
-                    Value::Number(n) => Ok(AttributeValue::Number(n.as_f64().unwrap_or(0.0))),
+                    // The history column is `NUMERIC`, so the number keeps the
+                    // shape it was parsed in and reaches storage as its decimal
+                    // literal: a clause 5.6.14 modification stores exactly the
+                    // values a creation does.
+                    Value::Number(number) => Ok(AttributeValue::Number(JsonNumber::try_from(number)?)),
                     Value::Bool(b) => Ok(AttributeValue::Boolean(*b)),
                     Value::String(s) => Ok(AttributeValue::String(s.clone())), // clone: need owned String for the enum payload; s is borrowed from JSON
                     Value::Object(_) | Value::Array(_) => Ok(AttributeValue::Object(value.clone())), // clone: need owned Value for the enum payload; value is borrowed from JSON
@@ -230,7 +227,6 @@ mod tests {
             }]
         });
         let value = extract_attribute_value(&instance, AttributeType::Property).expect("datetime property");
-        pretty_assertions::assert_eq!(value.value_type(), ValueType::DateTime);
         let columns = value.into_columns();
         assert!(columns.value_datetime.is_some());
         assert!(columns.value_string.is_none());
@@ -242,7 +238,7 @@ mod tests {
         let columns = extract_attribute_value(&instance, AttributeType::Property)
             .expect("numeric property")
             .into_columns();
-        pretty_assertions::assert_eq!(columns.value_number, Some(12.5));
+        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("12.5"));
     }
 
     #[test]
@@ -259,5 +255,55 @@ mod tests {
     #[test]
     fn a_property_with_no_value_is_rejected() {
         assert!(extract_attribute_value(&serde_json::json!({}), AttributeType::Property).is_err());
+    }
+
+    /// One above 2^53, which the double format cannot name. Clause 5.6.14
+    /// modifies an instance in place, and the value it can store must be the
+    /// same set a creation can store: the `NUMERIC` column takes both.
+    #[test]
+    fn an_integer_with_no_exact_double_reaches_the_numeric_column_unchanged() {
+        let instance: Value = serde_json::from_str(&format!(r#"{{"{}": [{{"@value": 9007199254740993}}]}}"#, expanded_properties::VALUE.as_str()))
+            .expect("a well-formed expanded property");
+        let columns = extract_attribute_value(&instance, AttributeType::Property)
+            .expect("an arbitrary-precision integer")
+            .into_columns();
+        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("9007199254740993"));
+    }
+
+    #[test]
+    fn a_large_integer_that_the_double_format_names_exactly_is_still_accepted() {
+        let instance: Value = serde_json::from_str(&format!(r#"{{"{}": [{{"@value": 9007199254740992}}]}}"#, expanded_properties::VALUE.as_str()))
+            .expect("a well-formed expanded property");
+        let columns = extract_attribute_value(&instance, AttributeType::Property)
+            .expect("2^53 has an exact double")
+            .into_columns();
+        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("9007199254740992"));
+    }
+
+    #[test]
+    fn a_sub_microsecond_datetime_is_truncated_before_it_reaches_the_column() {
+        let instance = serde_json::json!({
+            expanded_properties::VALUE.as_str(): [{
+                "@value": "2026-07-25T10:00:00.1234569Z",
+                "@type": expanded_classes::DATE_TIME.as_str(),
+            }]
+        });
+        let columns = extract_attribute_value(&instance, AttributeType::Property)
+            .expect("a sub-microsecond datetime property")
+            .into_columns();
+        let stored = columns.value_datetime.expect("the datetime column is populated");
+        pretty_assertions::assert_eq!(stored.timestamp_subsec_nanos(), 123_456_000);
+    }
+
+    #[test]
+    fn an_unparsable_datetime_is_rejected_rather_than_stored_as_null() {
+        let instance = serde_json::json!({
+            expanded_properties::VALUE.as_str(): [{
+                "@value": "yesterday",
+                "@type": expanded_classes::DATE_TIME.as_str(),
+            }]
+        });
+        let error = extract_attribute_value(&instance, AttributeType::Property).expect_err("the value is not a timestamp");
+        assert!(matches!(error, TemporalStoreError::TimestampPrecision(_)), "got {error:?}");
     }
 }

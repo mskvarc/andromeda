@@ -43,26 +43,34 @@ fn jsonld_link_value() -> String {
     format!("<{TEST_SUITE_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
-fn vehicle_entity(id: &str) -> Value {
+/// The instant every fixture attribute declares as its `observedAt`.
+///
+/// Clause 4.11 makes `observedAt` the time property a temporal query selects by
+/// default, and clause 5.2.21 admits only the four semantic axes, so an
+/// attribute instance recorded without `observedAt` matches no `observedAt`
+/// window and the broker never substitutes its write clock for one. The
+/// fixtures therefore declare an observation time, which is what makes them
+/// visible to the temporal cases of this suite.
+const FIXTURE_OBSERVED_AT: &str = "2021-01-01T00:00:00Z";
+
+/// A `speed` Property carrying the fixture observation time.
+fn observed_speed(speed: i64) -> Value {
     json!({
-        "id": id,
-        "type": "Vehicle",
-        "speed": {
-            "type": "Property",
-            "value": 50
-        },
-        "@context": TEST_SUITE_CONTEXT
+        "type": "Property",
+        "value": speed,
+        "observedAt": FIXTURE_OBSERVED_AT
     })
+}
+
+fn vehicle_entity(id: &str) -> Value {
+    vehicle_entity_with_speed(id, 50)
 }
 
 fn vehicle_entity_with_speed(id: &str, speed: i64) -> Value {
     json!({
         "id": id,
         "type": "Vehicle",
-        "speed": {
-            "type": "Property",
-            "value": speed
-        },
+        "speed": observed_speed(speed),
         "@context": TEST_SUITE_CONTEXT
     })
 }
@@ -73,13 +81,11 @@ fn vehicle_linking_to(id: &str, target: &str) -> Value {
     json!({
         "id": id,
         "type": "Vehicle",
-        "speed": {
-            "type": "Property",
-            "value": 50
-        },
+        "speed": observed_speed(50),
         "linkedTo": {
             "type": "Relationship",
-            "object": target
+            "object": target,
+            "observedAt": FIXTURE_OBSERVED_AT
         },
         "@context": TEST_SUITE_CONTEXT
     })

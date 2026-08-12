@@ -3,7 +3,7 @@
 //! Extracts the compilation and caching logic formerly owned by
 //! `NotificationWorker` into a shared, concurrency-safe structure
 //! backed by `DashMap`. Used by both the notification worker (event
-//! matching) and the entity service (outbox entry generation).
+//! matching) and the entity service (notification-event generation).
 
 use crate::{
     change::SubscriptionChange,
@@ -77,10 +77,10 @@ impl SubscriptionCache {
         self.inner.clear();
         self.by_type.clear();
         self.untyped.clear();
-        for sub in subscriptions {
-            let compiled = compile_subscription(&sub);
+        for stored in subscriptions {
+            let compiled = compile_subscription(&stored);
             self.index_insert(&compiled);
-            self.inner.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
+            self.inner.insert(stored.subscription.id.clone(), Arc::new(compiled)); // clone: the map owns its key
         }
         Ok(())
     }
@@ -90,9 +90,9 @@ impl SubscriptionCache {
         match change {
             SubscriptionChange::Upserted(id) => {
                 match repo.get(id).await {
-                    Ok(Some(sub)) => {
-                        if sub.lifecycle.status == SubscriptionStatus::Active {
-                            let compiled = compile_subscription(&sub);
+                    Ok(Some(stored)) => {
+                        if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
+                            let compiled = compile_subscription(&stored);
                             self.index_remove(id);
                             self.index_insert(&compiled);
                             self.inner.insert(id.clone(), Arc::new(compiled)); // clone: the map owns its key
@@ -254,16 +254,17 @@ impl SubscriptionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SubscriptionError;
+    use crate::{error::SubscriptionError, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use std::num::NonZeroU32;
     use url::Url;
 
-    fn make_compiled_sub(id: &str, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {
+    fn make_compiled_sub(id: &str, key: i64, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {
         Ok(CompiledSubscription {
             id: format!("urn:ngsi-ld:Subscription:{id}")
                 .parse()
                 .map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription URI: {error}")))?,
+            key: SubscriptionKey::try_from(key).map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription key: {error}")))?,
             status: SubscriptionStatus::Active,
             endpoint_uri: Url::parse("http://example.com/notify")
                 .map_err(|error| SubscriptionError::internal(format!("invalid fixture endpoint URI: {error}")))?,
@@ -311,13 +312,24 @@ mod tests {
         assert!(cache.is_empty());
         assert_eq!(cache.len(), 0);
 
-        let sub1 = make_compiled_sub("sub1", "Vehicle", vec!["entityCreated"])?;
+        let sub1 = make_compiled_sub("sub1", 1, "Vehicle", vec!["entityCreated"])?;
         cache.inner.insert(sub1.id.clone(), Arc::new(sub1)); // clone: the map owns its key
         assert_eq!(cache.len(), 1);
 
-        let sub2 = make_compiled_sub("sub2", "Building", vec!["entityCreated"])?;
+        let sub2 = make_compiled_sub("sub2", 2, "Building", vec!["entityCreated"])?;
         cache.inner.insert(sub2.id.clone(), Arc::new(sub2)); // clone: the map owns its key
         assert_eq!(cache.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn a_cached_subscription_carries_its_store_key_beside_its_identifier() -> Result<(), SubscriptionError> {
+        let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"])?;
+        let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
+        cache.inner.insert(id.clone(), Arc::new(subscription)); // clone: the map owns its key
+
+        assert_eq!(cache.get(&id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
         Ok(())
     }
 }

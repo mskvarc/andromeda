@@ -7,6 +7,7 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
+use crate::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
@@ -56,6 +57,10 @@ pub struct CompiledCsrSubscription {
 pub struct CompiledSubscription {
     /// Subscription identifier.
     pub id: Uri,
+    /// The identity the store assigned this subscription, carried beside the
+    /// identifier so a match enqueues its delivery against the narrow key while
+    /// the notification it produces still names the subscription by its URI.
+    pub key: SubscriptionKey,
     /// Current lifecycle status.
     pub status: SubscriptionStatus,
     /// Notification endpoint URL.

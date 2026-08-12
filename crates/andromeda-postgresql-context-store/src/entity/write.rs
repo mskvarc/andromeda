@@ -2,15 +2,28 @@
 //!
 //! There is one statement per kind of change, and it serves any number of
 //! entities: a single-entity write is a set of one, which is why no per-row
-//! variant exists. Each statement returns the identifiers it affected, and the
-//! caller turns that into a per-entity outcome by asking what the write assumed.
+//! variant exists. Each statement returns the rows it affected, and the caller
+//! turns that into a per-entity outcome by asking what the write assumed.
+//!
+//! Insert and update return the surrogate key alongside the identifier, because
+//! the projection of current attribute values is written against that key in
+//! this same transaction and must not have to read the row back to find it.
+//! Delete returns neither: the projection is removed by the single ownership
+//! edge that cascades from `entities`, and clause 5.6.6 leaves the temporal
+//! evolution standing, so an Entity deletion touches no other relation.
 //!
 //! No statement here reads. A read-modify-write takes its "before" snapshot
 //! outside the transaction and states what it assumed in a precondition, which
 //! the update statement enforces.
 
 use crate::{
-    entity::{mapper::stored_uri, params::PreparedEntityColumns, repo::EntityRepository},
+    entity::{
+        mapper::{stored_uri, stored_written_entity},
+        params::PreparedEntityColumns,
+        repo::EntityRepository,
+        types_present::{entity_write_failure, types_present},
+        written_entity::WrittenEntity,
+    },
     error::ContextStoreError,
 };
 use andromeda_context_commit::deleted_entity::DeletedEntity;
@@ -40,7 +53,7 @@ SELECT
 FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
     AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
 ON CONFLICT (id) DO NOTHING
-RETURNING id
+RETURNING entity_key, id
 "#;
 
 /// Overwrite entities, optionally only where they still stand as the caller
@@ -66,7 +79,7 @@ FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::b
     AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at, expected_modified_at)
 WHERE entities.id = d.id
   AND (d.expected_modified_at IS NULL OR entities.modified_at = d.expected_modified_at)
-RETURNING entities.id
+RETURNING entities.entity_key, entities.id
 "#;
 
 /// Remove entities, optionally only where they still stand as the caller read
@@ -88,14 +101,15 @@ RETURNING entities.id, entities.payload, entities.created_at, entities.modified_
 
 impl EntityRepository {
     /// Insert every entity in `entities` that does not already exist, returning
-    /// the identifiers actually inserted.
-    pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<Uri>, ContextStoreError> {
+    /// the rows actually inserted.
+    pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<WrittenEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
+        types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let rows: Vec<(String,)> = sqlx::query_as(ENTITY_INSERT_SQL)
+        let rows: Vec<(i64, String)> = sqlx::query_as(ENTITY_INSERT_SQL)
             .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
@@ -105,13 +119,14 @@ impl EntityRepository {
             .bind(&entities.op_spaces)
             .bind(&entities.expires_ats)
             .fetch_all(&mut **tx)
-            .await?;
+            .await
+            .map_err(entity_write_failure)?;
 
-        rows.into_iter().map(|(id,)| stored_uri(id)).collect()
+        rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
     }
 
     /// Overwrite every entity in `entities` whose expectation still holds,
-    /// returning the identifiers actually written.
+    /// returning the rows actually written.
     ///
     /// `expected_modified_at` is positionally aligned with `entities`; a `None`
     /// entry overwrites unconditionally.
@@ -119,7 +134,7 @@ impl EntityRepository {
         tx: &mut Transaction<'_, Postgres>,
         entities: &PreparedEntityColumns,
         expected_modified_at: &[Option<DateTime<Utc>>],
-    ) -> Result<Vec<Uri>, ContextStoreError> {
+    ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -130,9 +145,10 @@ impl EntityRepository {
                 entities.ids.len()
             )));
         }
+        types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let rows: Vec<(String,)> = sqlx::query_as(ENTITY_UPDATE_SQL)
+        let rows: Vec<(i64, String)> = sqlx::query_as(ENTITY_UPDATE_SQL)
             .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
@@ -143,9 +159,10 @@ impl EntityRepository {
             .bind(&entities.expires_ats)
             .bind(expected_modified_at)
             .fetch_all(&mut **tx)
-            .await?;
+            .await
+            .map_err(entity_write_failure)?;
 
-        rows.into_iter().map(|(id,)| stored_uri(id)).collect()
+        rows.into_iter().map(|(key, id)| stored_written_entity(key, id)).collect()
     }
 
     /// Delete every entity in `ids` whose expectation still holds, returning
@@ -153,6 +170,12 @@ impl EntityRepository {
     ///
     /// The payload and system attributes come back because the clause 5.6.10
     /// notification carries both and cannot read them once the row is gone.
+    ///
+    /// Nothing else is deleted here. The current attribute values the entity
+    /// owns go with it through the one foreign key that cascades from
+    /// `entities`, and the entity's temporal evolution deliberately survives:
+    /// clause 5.6.6 deletes the Entity, and only clause 5.6.16 deletes its
+    /// history.
     ///
     /// `expected_modified_at` is positionally aligned with `ids`; a `None` entry
     /// deletes unconditionally.
@@ -245,6 +268,25 @@ mod tests {
     #[test]
     fn the_fused_insert_keeps_its_conflict_clause() {
         assert!(ENTITY_INSERT_SQL.contains("ON CONFLICT (id) DO NOTHING"));
-        assert!(ENTITY_INSERT_SQL.contains("RETURNING id"));
+        assert!(ENTITY_INSERT_SQL.contains("RETURNING entity_key, id"));
+    }
+
+    #[test]
+    fn both_writing_statements_return_the_surrogate_key_with_the_identifier() {
+        assert!(ENTITY_INSERT_SQL.contains("RETURNING entity_key, id"));
+        assert!(ENTITY_UPDATE_SQL.contains("RETURNING entities.entity_key, entities.id"));
+    }
+
+    #[test]
+    fn the_fused_delete_removes_nothing_but_the_entity_row() {
+        assert!(ENTITY_DELETE_SQL.contains("DELETE FROM entities"));
+        for relation in [
+            "current_attribute_values",
+            "attribute_history",
+            "temporal_entities",
+            "temporal_attribute_streams",
+        ] {
+            assert!(!ENTITY_DELETE_SQL.contains(relation), "entity deletion must not name {relation}");
+        }
     }
 }

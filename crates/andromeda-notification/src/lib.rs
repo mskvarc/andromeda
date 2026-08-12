@@ -1,4 +1,4 @@
-//! Notification evaluation, payload construction, delivery policy, and durable outbox semantics.
+//! Notification evaluation, payload construction, delivery policy, and durable event and delivery semantics.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -7,21 +7,31 @@
 pub mod csource_interval;
 /// Context-source event notification evaluation.
 pub mod csource_processor;
+/// Attempt ceiling after which a notification delivery is dead-lettered.
+pub mod delivery_attempt_ceiling;
+/// Retry wait for a failed notification delivery.
+pub mod delivery_backoff;
+/// Notification delivery runtime configuration.
+pub mod delivery_config;
+/// One bounded notification delivery pass.
+pub mod delivery_drain;
+/// A pending delivery of a notification event to one subscription.
+pub mod delivery_entry;
+/// Length bound applied to a stored delivery failure diagnostic.
+pub mod delivery_error_bound;
+/// Worker ownership of a claimed notification delivery.
+pub mod delivery_lease;
+/// Notification delivery queue persistence.
+pub mod delivery_store;
 /// Focused notification failures.
 pub mod error;
 /// Entity interval notification evaluation.
 pub mod interval;
-/// Notification outbox runtime configuration.
-pub mod outbox_config;
-/// One bounded outbox-delivery pass.
-pub mod outbox_drain;
-/// Durable notification outbox entries.
-pub mod outbox_entry;
-/// Durable notification outbox persistence.
-pub mod outbox_store;
+/// The immutable notification event a write produces.
+pub mod notification_event;
 /// Entity event notification evaluation.
 pub mod processor;
-/// Stable ownership identity for an outbox lease.
+/// Stable ownership identity for a notification delivery lease.
 pub mod worker_instance_id;
 
 #[cfg(test)]

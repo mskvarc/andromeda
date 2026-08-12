@@ -55,7 +55,7 @@ impl DeliveryResult {
     }
 
     /// Whether a failed delivery should be retried. A terminal failure must not
-    /// be, or the outbox burns its whole attempt budget on a delivery that can
+    /// be, or the delivery queue burns its whole attempt budget on a delivery that can
     /// never succeed.
     pub const fn should_retry(&self) -> bool {
         matches!(self, DeliveryResult::RetryableFailure)
@@ -192,7 +192,7 @@ fn report_stream<E: Error>(subscription_id: &Uri, outcome: Result<(), E>) -> Del
         }
         Err(error) => {
             debug!(subscription_id = %subscription_id, error = %error, "streaming notification delivery failed");
-            // A stream push has no outbox to retry through — the client must
+            // A stream push has no delivery queue to retry through — the client must
             // reconnect — so a failed push is terminal, not retryable.
             DeliveryResult::TerminalFailure
         }

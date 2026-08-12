@@ -8,8 +8,8 @@ use std::borrow::Cow;
 /// A typed bind value for parameterized SQL queries.
 ///
 /// The typed variants exist so `q`-filter predicates can be compared against
-/// `attribute_current`'s native columns (`double precision`, `boolean`,
-/// `timestamptz`, `smallint`) instead of being rendered as text and cast in
+/// `current_attribute_values`'s native columns (`numeric`, `boolean`,
+/// `timestamptz`, `integer`) instead of being rendered as text and cast in
 /// SQL. A text comparison is neither index-eligible nor semantically correct
 /// for timestamps, where lexicographic order diverges from temporal order
 /// whenever offsets differ.
@@ -21,9 +21,14 @@ pub enum BindValue<'a> {
     StringVec(Cow<'a, [String]>),
     /// A 64-bit integer value.
     I64(i64),
-    /// A 16-bit integer value; binds as PostgreSQL `smallint`.
+    /// A 32-bit integer value; binds as PostgreSQL `integer`.
     ///
     /// Used for `attribute_names.id` dictionary keys.
+    I32(i32),
+    /// A 16-bit integer value; binds as PostgreSQL `smallint`.
+    ///
+    /// Used for the `smallint` columns the broker owns, such as a snapshot's
+    /// priority.
     I16(i16),
     /// A double-precision float; binds as PostgreSQL `double precision`.
     F64(f64),
@@ -87,7 +92,10 @@ pub fn sea_values_to_bind_values(values: Values) -> Result<Vec<BindValue<'static
         .into_iter()
         .map(|value| match value {
             Value::String(Some(s)) => Ok(BindValue::String(Cow::Owned(s.to_string()))),
-            Value::Int(Some(i)) => Ok(BindValue::I64(i64::from(i))),
+            // `int4` stays `int4`: the dictionary key is the only value bound
+            // this way, and widening it to `int8` would make every
+            // `attribute_name_id = $N` comparison cross-type.
+            Value::Int(Some(i)) => Ok(BindValue::I32(i)),
             Value::BigInt(Some(i)) => Ok(BindValue::I64(i)),
             Value::BigUnsigned(Some(u)) => Ok(BindValue::I64(u as i64)),
             Value::Unsigned(Some(u)) => Ok(BindValue::I64(i64::from(u))),
@@ -117,6 +125,7 @@ mod tests {
     fn typed_sea_query_values_map_to_typed_bind_values() {
         let values = Values(vec![
             Value::SmallInt(Some(7)),
+            Value::Int(Some(4242)),
             Value::Double(Some(50.5)),
             Value::Bool(Some(true)),
             Value::ChronoDateTimeUtc(Some(Box::new(Utc.timestamp_opt(1_700_000_000, 0).single().expect("timestamp")))),
@@ -125,11 +134,12 @@ mod tests {
         ]);
         let binds = sea_values_to_bind_values(values).expect("bind conversion");
         assert!(matches!(binds[0], BindValue::I16(7)), "{binds:?}");
-        assert!(matches!(binds[1], BindValue::F64(value) if (value - 50.5).abs() < f64::EPSILON), "{binds:?}");
-        assert!(matches!(binds[2], BindValue::Bool(true)), "{binds:?}");
-        assert!(matches!(binds[3], BindValue::Timestamp(_)), "{binds:?}");
-        assert!(matches!(&binds[4], BindValue::String(text) if text == "text"), "{binds:?}");
-        assert!(matches!(binds[5], BindValue::I64(42)), "{binds:?}");
+        assert!(matches!(binds[1], BindValue::I32(4242)), "int4 must not widen to int8: {binds:?}");
+        assert!(matches!(binds[2], BindValue::F64(value) if (value - 50.5).abs() < f64::EPSILON), "{binds:?}");
+        assert!(matches!(binds[3], BindValue::Bool(true)), "{binds:?}");
+        assert!(matches!(binds[4], BindValue::Timestamp(_)), "{binds:?}");
+        assert!(matches!(&binds[5], BindValue::String(text) if text == "text"), "{binds:?}");
+        assert!(matches!(binds[6], BindValue::I64(42)), "{binds:?}");
     }
 
     #[test]

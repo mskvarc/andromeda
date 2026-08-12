@@ -14,6 +14,8 @@ pub mod atomic_write;
 pub mod batch_side_effect_job;
 /// The entity change event consumed after a commit.
 pub mod change_event;
+/// The record and ordinal base a replayed commit continues under.
+pub mod commit_replay;
 /// The atomic commit port and submission semantics.
 pub mod committer;
 /// An entity captured immediately before deletion.
@@ -24,12 +26,29 @@ pub mod entity_mutation;
 pub mod error;
 /// Temporal-history consequences carried by a write.
 pub mod history_record;
-/// Notification outbox data known at commit time.
-pub mod new_outbox_entry;
+/// Whether a lease-guarded acknowledgement reached the row it targeted.
+pub mod lease_acknowledgement;
 /// Preconditions and retry classification for entity mutations.
 pub mod precondition;
+/// The identity of one durable side-effect job.
+pub mod side_effect_job_id;
+/// Subscriptions a committing write matched.
+pub mod subscription_match;
+/// The process-wide clock broker-minted version-7 identities come from.
+mod uuid_v7_clock;
+/// The identity of one atomic broker write.
+pub mod write_id;
+/// The position of one consequence inside its atomic write.
+pub mod write_ordinal;
 /// Per-entity atomic write outcomes.
 pub mod write_outcome;
+/// The identity and ingestion instant a write is replayed under.
+pub mod write_record;
+/// The attempt budget and backoff a contended write follows.
+pub mod write_retry;
+
+#[cfg(test)]
+andromeda_architecture_checks::forbid_sql!();
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

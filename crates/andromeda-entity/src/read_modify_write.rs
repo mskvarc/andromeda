@@ -16,11 +16,13 @@
 use crate::{EntityService, error::EntityError};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
-    precondition::{AfterAttempt, Precondition, WRITE_ATTEMPTS, after_attempt},
+    precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::{WriteOutcome, single},
+    write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
+use std::slice::from_ref;
 
 impl EntityService {
     /// Commit one entity's read-modify-write, re-reading whatever a concurrent
@@ -33,15 +35,26 @@ impl EntityService {
     /// Returns `None` when the entity does not exist or when `build` declined to
     /// produce a write.
     ///
+    /// Requests that target the same entity take the same broker-side guard, so
+    /// the compare-and-set only ever loses to a writer this process does not
+    /// own — another broker instance, or a batch chunk holding the guard for a
+    /// set of identifiers. Those losses are absorbed by re-reading behind the
+    /// [`backoff_after_lost_attempts`] wait, which separates writers that
+    /// collided rather than restarting them together.
+    ///
     /// # Errors
     ///
     /// Propagates whatever `build` or the coordinator returns, and reports
-    /// [`EntityError::internal`] once the attempt budget is spent.
+    /// [`EntityError::Contention`] once the attempt budget is spent.
     pub(crate) async fn commit_read_modify_write<B>(&self, id: &Uri, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
         B: FnMut(&Value) -> Result<Option<AtomicWrite>, EntityError>,
     {
-        for attempt in 1..=WRITE_ATTEMPTS {
+        let _id_guard = self.acquire_id_locks(from_ref(id)).await;
+
+        for lost_attempts in 0..WRITE_ATTEMPTS {
+            self.wait_before_retry(lost_attempts).await;
+
             let Some(snapshot) = self.reader.get_snapshot(id).await? else {
                 return Ok(None);
             };
@@ -54,14 +67,18 @@ impl EntityService {
             match after_attempt(&outcome) {
                 AfterAttempt::Settled => return Ok(Some(outcome)),
                 AfterAttempt::Vanished => return Ok(None),
-                AfterAttempt::Reread => {
-                    if attempt == WRITE_ATTEMPTS {
-                        return Err(exhausted(id));
-                    }
-                }
+                AfterAttempt::Reread => continue,
             }
         }
-        Err(exhausted(id))
+        Err(EntityError::contention(id, WRITE_ATTEMPTS))
+    }
+
+    /// Hold a writer that has lost `lost_attempts` attempts before it tries
+    /// again; a writer that has lost none is not held at all.
+    pub(crate) async fn wait_before_retry(&self, lost_attempts: u32) {
+        if lost_attempts > 0 {
+            self.retry_delay.wait(backoff_after_lost_attempts(lost_attempts)).await;
+        }
     }
 
     /// Commit a read-modify-write and hand back whatever its computation
@@ -96,13 +113,4 @@ impl EntityService {
         }
         produced.ok_or_else(|| EntityError::internal(format!("read-modify-write for {id} landed without producing a result")))
     }
-}
-
-/// The error a read-modify-write reports once it has spent its attempts.
-///
-/// NGSI-LD 5.5.2 has no ProblemDetails type for "the broker lost a
-/// compare-and-set", and answering 409 would tell the client to retry a request
-/// the broker has already retried [`WRITE_ATTEMPTS`] times.
-fn exhausted(id: &Uri) -> EntityError {
-    EntityError::internal(format!("entity {id} was modified by another writer on every one of {WRITE_ATTEMPTS} attempts"))
 }

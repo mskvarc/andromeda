@@ -11,7 +11,7 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_family::InstanceFamily, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
@@ -190,7 +190,7 @@ impl TemporalService {
         &self,
         entity_id: &Uri,
         attr_id: &AttributeName,
-        instance_id: &InstanceId,
+        instance: &InstanceIdentity,
         payload: Value,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
@@ -205,14 +205,17 @@ impl TemporalService {
             return Err(TemporalError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
         }
 
-        if !self.mutator.instance_exists(instance_id, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute instance {} not found", instance_id)));
+        if !self.mutator.instance_exists(instance, entity_id, &attr_iri).await? {
+            return Err(TemporalError::not_found(format!(
+                "Attribute instance {} not found",
+                instance.rendered(InstanceFamily::Attribute)
+            )));
         }
 
         let expanded = self.engine.expand(payload, context).await?;
         let instance_value = expanded.as_array().and_then(|arr| arr.first()).cloned().unwrap_or(expanded); // clone: extracting first element from array requires owned value; original consumed by unwrap_or
 
-        self.mutator.update_instance(instance_id, entity_id, &attr_iri, &instance_value).await
+        self.mutator.update_instance(instance, entity_id, &attr_iri, &instance_value).await
     }
 
     /// Delete a specific attribute instance by its instance ID.
@@ -220,7 +223,7 @@ impl TemporalService {
         &self,
         entity_id: &Uri,
         attr_id: &AttributeName,
-        instance_id: &InstanceId,
+        instance: &InstanceIdentity,
         context: &ContextSpec,
     ) -> Result<(), TemporalError> {
         self.mutation_barrier.synchronize(entity_id).await?;
@@ -234,11 +237,14 @@ impl TemporalService {
             return Err(TemporalError::not_found(format!("Attribute {} not found on entity {}", attr_iri, entity_id)));
         }
 
-        if !self.mutator.instance_exists(instance_id, entity_id, &attr_iri).await? {
-            return Err(TemporalError::not_found(format!("Attribute instance {} not found", instance_id)));
+        if !self.mutator.instance_exists(instance, entity_id, &attr_iri).await? {
+            return Err(TemporalError::not_found(format!(
+                "Attribute instance {} not found",
+                instance.rendered(InstanceFamily::Attribute)
+            )));
         }
 
-        self.mutator.delete_instance(instance_id, entity_id, &attr_iri).await?;
+        self.mutator.delete_instance(instance, entity_id, &attr_iri).await?;
         Ok(())
     }
 }

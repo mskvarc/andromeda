@@ -14,6 +14,28 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 
+/// Statement enqueueing a batch of temporal append intents.
+///
+/// One commit may land more than one entity, and every intent it produces
+/// shares the commit's single write identity; that alone does not identify
+/// one durable intent, because a batch commit in
+/// `BatchSideEffectMode::Enqueue` mode writes an inline intent for an
+/// entity's tombstones and later replays that same entity's deferred
+/// side-effect job under the same write identity, producing a second intent
+/// for the same entity whose entries occupy a different ordinal range. The
+/// deduplicating key is therefore `(write_id, entity_id, base)`, matching
+/// `uq_temporal_append_intents_write`, rather than `(write_id, entity_id)`.
+/// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
+/// original identity enqueue no second copy of any entity's intent at a given
+/// base.
+const ENQUEUE_INTENTS_SQL: &str = r#"
+INSERT INTO temporal_append_intents (write_id, entity_id, base, intent)
+SELECT input.write_id, input.entity_id, input.base, input.intent
+FROM UNNEST($1::uuid[], $2::text[], $3::integer[], $4::jsonb[])
+    AS input(write_id, entity_id, base, intent)
+ON CONFLICT (write_id, entity_id, base) DO NOTHING
+"#;
+
 /// PostgreSQL-backed pending temporal intent queue for one tenant.
 #[derive(Clone, Debug)]
 pub struct PostgresTemporalIntentStore {
@@ -36,26 +58,27 @@ impl PostgresTemporalIntentStore {
         }
         let mut ids = Vec::with_capacity(intents.len());
         let mut entity_ids = Vec::with_capacity(intents.len());
+        let mut bases = Vec::with_capacity(intents.len());
         let mut payloads = Vec::with_capacity(intents.len());
         for intent in intents {
-            ids.push(intent.id.as_uuid());
+            ids.push(intent.record.write_id().as_uuid());
             entity_ids.push(intent.entity_id.as_str());
+            bases.push(
+                intent
+                    .base
+                    .as_i32()
+                    .map_err(|error| TemporalError::internal(format!("temporal append intent base is out of range: {error}")))?,
+            );
             payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::internal(format!("failed to encode temporal append intent: {error}")))?);
         }
-        sqlx::query(
-            r#"
-            INSERT INTO temporal_append_intents (intent_id, entity_id, intent)
-            SELECT input.intent_id, input.entity_id, input.intent
-            FROM UNNEST($1::uuid[], $2::text[], $3::jsonb[])
-                AS input(intent_id, entity_id, intent)
-            "#,
-        )
-        .bind(&ids)
-        .bind(&entity_ids)
-        .bind(&payloads)
-        .execute(&mut **tx)
-        .await
-        .map_err(persistence)?;
+        sqlx::query(ENQUEUE_INTENTS_SQL)
+            .bind(&ids)
+            .bind(&entity_ids)
+            .bind(&bases)
+            .bind(&payloads)
+            .execute(&mut **tx)
+            .await
+            .map_err(persistence)?;
         Ok(())
     }
 
@@ -161,9 +184,9 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
     }
 
     async fn acknowledge(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<(), TemporalError> {
-        let result = sqlx::query("DELETE FROM temporal_append_intents WHERE sequence = $1 AND intent_id = $2 AND lease_owner = $3")
+        let result = sqlx::query("DELETE FROM temporal_append_intents WHERE sequence = $1 AND write_id = $2 AND lease_owner = $3")
             .bind(intent.sequence.get())
-            .bind(intent.intent.id.as_uuid())
+            .bind(intent.intent.record.write_id().as_uuid())
             .bind(owner.as_uuid())
             .execute(&self.pool)
             .await
@@ -180,13 +203,13 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             r#"
             UPDATE temporal_append_intents
             SET available_at = $1, last_error = $2, lease_owner = NULL, lease_until = NULL
-            WHERE sequence = $3 AND intent_id = $4 AND lease_owner = $5
+            WHERE sequence = $3 AND write_id = $4 AND lease_owner = $5
             "#,
         )
         .bind(retry.eligible_at)
         .bind(retry.summary)
         .bind(intent.sequence.get())
-        .bind(intent.intent.id.as_uuid())
+        .bind(intent.intent.record.write_id().as_uuid())
         .bind(owner.as_uuid())
         .execute(&self.pool)
         .await
@@ -202,4 +225,32 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
 /// Classify one anchor-store failure at the temporal port boundary.
 fn persistence(error: impl std::fmt::Display) -> TemporalError {
     TemporalError::persistence(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::intent_store::ENQUEUE_INTENTS_SQL;
+
+    #[test]
+    fn a_commit_replayed_under_its_original_identity_enqueues_no_second_intent_per_entity_and_base() {
+        assert!(ENQUEUE_INTENTS_SQL.contains("ON CONFLICT (write_id, entity_id, base) DO NOTHING"));
+    }
+
+    #[test]
+    fn the_deduplicating_key_names_the_write_the_entity_and_the_ordinal_base() {
+        assert!(ENQUEUE_INTENTS_SQL.contains("INSERT INTO temporal_append_intents (write_id, entity_id, base, intent)"));
+    }
+
+    /// A batch commit in `BatchSideEffectMode::Enqueue` mode writes an inline
+    /// tombstone intent for an entity under the commit's write identity, and
+    /// later replays that same entity's deferred side-effect job under the
+    /// same write identity, producing a second intent for the same entity
+    /// whose entries start at a different ordinal. Keying on `entity_id`
+    /// alone would collide the two and silently drop the second one; keying
+    /// on `base` as well must not.
+    #[test]
+    fn two_intents_for_the_same_write_and_entity_are_distinguished_by_their_ordinal_base() {
+        assert!(ENQUEUE_INTENTS_SQL.contains("input.write_id, input.entity_id, input.base, input.intent"));
+        assert!(!ENQUEUE_INTENTS_SQL.contains("ON CONFLICT (write_id, entity_id) DO NOTHING"));
+    }
 }

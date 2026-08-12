@@ -24,7 +24,7 @@ use andromeda_federation::config::FederationConfig;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_subscription::config::NotificationConfig;
 use andromeda_jsonld::config::JsonLdConfig;
-use andromeda_notification::outbox_config::OutboxConfig;
+use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_atomic_write::{
     committer::{EntityInsertMode, PostgresAtomicCommitter},
     config::{AtomicWriteConfig, BulkWriteMode},
@@ -84,7 +84,7 @@ struct TenantFactoryConfig {
     info: InfoConfig,
     jsonld: JsonLdConfig,
     notifications: NotificationConfig,
-    outbox: OutboxConfig,
+    notification_delivery: DeliveryConfig,
     postgresql_write: AtomicWriteConfig,
     snapshot: SnapshotConfig,
     spatial: SpatialConfig,
@@ -101,7 +101,7 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
             info: config.info.clone(),
             jsonld: config.jsonld.clone(),
             notifications: config.notifications.clone(),
-            outbox: config.outbox.clone(),
+            notification_delivery: config.notification_delivery.clone(),
             postgresql_write: config.postgresql_write.clone(),
             snapshot: config.snapshot.clone(),
             spatial: config.spatial.clone(),
@@ -161,16 +161,7 @@ async fn build_tenant_state(
     task_supervisor: TaskSupervisor,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
     let signals = TenantSignals::new(config.spatial.change_channel_capacity);
-    let storage = initialize_storage(
-        &config.database,
-        &config.tenancy,
-        &config.jsonld,
-        &config.spatial,
-        &config.postgresql_write,
-        db_url,
-        &tenant,
-    )
-    .await?;
+    let storage = initialize_storage(&config.database, &config.tenancy, &config.jsonld, &config.postgresql_write, db_url, &tenant).await?;
     let pool = storage.pool;
     let engine = storage.engine;
     let context_hit_flush = storage.context_hit_flush;
@@ -185,10 +176,7 @@ async fn build_tenant_state(
 
     let temporal_recorder = Arc::new(TemporalRecorder::new(Arc::clone(&temporal_repo)));
     let intent_store = Arc::new(PostgresTemporalIntentStore::new(&pool));
-    let temporal_sink = Arc::new(PostgresTemporalHistorySink::new(
-        Arc::clone(&temporal_repo),
-        storage.attribute_current_queue.clone(), // clone: the native committer and deferred sink share one projection producer.
-    ));
+    let temporal_sink = Arc::new(PostgresTemporalHistorySink::new(Arc::clone(&temporal_repo)));
     let TemporalIntentRegistration {
         publisher: intent_publisher,
         mutation_barrier,
@@ -215,18 +203,14 @@ async fn build_tenant_state(
         ),
     };
 
-    // Sole owner of the materializer producer handle: every write path reaches
-    // the projection through this complete atomic commit implementation.
+    // Every write path reaches the `current_attribute_values` projection
+    // through this complete atomic commit implementation, which writes it in
+    // the transaction that mutates the entity.
     let entity_insert_mode = match config.postgresql_write.bulk_mode {
         BulkWriteMode::Unnest => EntityInsertMode::Unnest,
         BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,
     };
-    let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
-        &pool,
-        history_mode,
-        entity_insert_mode,
-        storage.attribute_current_queue,
-    ));
+    let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(&pool, history_mode, entity_insert_mode, storage.attribute_names));
 
     let transports = construct_transports()?;
     let ConstructedServices { state, snapshot_preparation } = construct_services(
@@ -236,7 +220,7 @@ async fn build_tenant_state(
             .federation_config(&config.federation)
             .info_config(&config.info)
             .notification_config(&config.notifications)
-            .outbox_config(&config.outbox)
+            .delivery_config(&config.notification_delivery)
             .snapshot_config(&config.snapshot)
             .temporal_config(&config.temporal)
             .tenancy_config(&config.tenancy)
@@ -268,13 +252,13 @@ async fn build_tenant_state(
         TaskSupervisionInputs::builder()
             .entity_config(&config.entity)
             .info_config(&config.info)
-            .outbox_config(&config.outbox)
+            .delivery_config(&config.notification_delivery)
             .spatial_config(&config.spatial)
             .temporal_config(&config.temporal)
+            .temporal_repo(Arc::clone(&temporal_repo)) // clone: the retention sweep and the read stores share one repository.
             .pool(&pool)
             .tenant(tenant)
             .signals(signals)
-            .materializer(storage.materializer)
             .entity_policy(entity_policy)
             .subscription_policy(subscription_policy)
             .csource_subscription_policy(csource_subscription_policy)

@@ -1,6 +1,11 @@
 //! Error types for the context store crate.
 
-use crate::jsonld_context::mapper::ContextMapperError;
+use crate::{
+    dictionary_growth::DictionaryGrowthExceeded,
+    entity::types_present::EntityTypesMissing,
+    jsonld_context::mapper::ContextMapperError,
+    schema_contract::error::SchemaContractError,
+};
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::{attribute_name_lookup::AttributeNameLookupError, error::RenderError};
 
@@ -31,12 +36,23 @@ pub enum ContextStoreError {
     /// An attribute-name dictionary lookup failed.
     #[error("context store attribute lookup: {0}")]
     AttributeLookup(#[from] AttributeNameLookupError),
+    /// Creating the requested attribute names would take the tenant's
+    /// dictionary past its configured bound.
+    #[error("context store attribute dictionary: {0}")]
+    DictionaryGrowth(#[from] DictionaryGrowthExceeded),
+    /// An entity write carried no type, which clause 4.5.1 forbids and the
+    /// `entities` table refuses.
+    #[error("context store entity types: {0}")]
+    EntityTypes(#[from] EntityTypesMissing),
     /// A JSON-LD context row contained an invalid domain value.
     #[error("context store JSON-LD context row: {0}")]
     ContextMapper(#[from] ContextMapperError),
     /// A database migration failed.
     #[error("context store migration: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
+    /// A tenant database is not the schema this binary was built against.
+    #[error("context store schema contract: {0}")]
+    SchemaContract(#[from] SchemaContractError),
     /// An internal invariant was violated (malformed stored data, serialization
     /// failure, etc.).
     #[error("context store internal: {0}")]

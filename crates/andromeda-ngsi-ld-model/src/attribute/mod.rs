@@ -5,6 +5,7 @@ pub mod expansion;
 pub mod geo_property;
 pub mod inline_entity;
 pub mod instance;
+pub mod json_number;
 pub mod json_property;
 pub mod language_property;
 pub mod list_property;

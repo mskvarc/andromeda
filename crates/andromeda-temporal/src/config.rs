@@ -26,6 +26,12 @@ pub enum TemporalConfigError {
     /// Intent retry delay was configured as zero.
     #[error("temporal.intent_retry_secs must be at least 1")]
     ZeroIntentRetry,
+    /// A retention horizon was named but spans no time.
+    #[error("temporal.retention_horizon_days must be at least 1 when retention is enabled")]
+    ZeroRetentionHorizon,
+    /// Retention sweep cadence was configured as zero.
+    #[error("temporal.retention_sweep_interval_secs must be at least 1")]
+    ZeroRetentionSweepInterval,
 }
 
 /// How the PostgreSQL anchor lands temporal append consequences.
@@ -64,6 +70,17 @@ pub struct TemporalConfig {
     /// Base retry delay for a sink rejection.
     #[config(env = "ANDROMEDA_TEMPORAL_INTENT_RETRY_SECS", default = 2)]
     pub intent_retry_secs: u64,
+    /// Operator retention horizon in days, absent while retention is off.
+    ///
+    /// Retention ages temporal storage out and is not an NGSI-LD operation: the
+    /// specification defines deletion of a Temporal Evolution (clause 5.6.16)
+    /// and says nothing about storage an operator chooses not to keep. It is
+    /// therefore absent unless an operator names a horizon.
+    #[config(env = "ANDROMEDA_TEMPORAL_RETENTION_HORIZON_DAYS")]
+    pub retention_horizon_days: Option<u64>,
+    /// Cadence of the operator retention sweep.
+    #[config(env = "ANDROMEDA_TEMPORAL_RETENTION_SWEEP_INTERVAL_SECS", default = 3600)]
+    pub retention_sweep_interval_secs: u64,
 }
 
 impl TemporalConfig {
@@ -87,6 +104,12 @@ impl TemporalConfig {
         if self.intent_retry_secs == 0 {
             return Err(TemporalConfigError::ZeroIntentRetry);
         }
+        if let Some(0) = self.retention_horizon_days {
+            return Err(TemporalConfigError::ZeroRetentionHorizon);
+        }
+        if self.retention_sweep_interval_secs == 0 {
+            return Err(TemporalConfigError::ZeroRetentionSweepInterval);
+        }
         Ok(())
     }
 }
@@ -105,7 +128,42 @@ mod config_tests {
             intent_batch_size: 0,
             intent_lease_secs: 30,
             intent_retry_secs: 2,
+            retention_horizon_days: None,
+            retention_sweep_interval_secs: 3600,
         };
         assert_eq!(config.validate(), Err(TemporalConfigError::ZeroIntentBatchSize));
+    }
+
+    #[test]
+    fn retention_is_off_unless_an_operator_names_a_horizon() {
+        let config = TemporalConfig {
+            append_mode: TemporalAppendMode::Native,
+            default_last_n: 19,
+            expiration_check_interval_secs: 30,
+            intent_fallback_secs: 1,
+            intent_batch_size: 64,
+            intent_lease_secs: 30,
+            intent_retry_secs: 2,
+            retention_horizon_days: None,
+            retention_sweep_interval_secs: 3600,
+        };
+        assert_eq!(config.validate(), Ok(()));
+        assert_eq!(config.retention_horizon_days, None);
+    }
+
+    #[test]
+    fn a_retention_horizon_spanning_no_time_is_rejected() {
+        let config = TemporalConfig {
+            append_mode: TemporalAppendMode::Native,
+            default_last_n: 19,
+            expiration_check_interval_secs: 30,
+            intent_fallback_secs: 1,
+            intent_batch_size: 64,
+            intent_lease_secs: 30,
+            intent_retry_secs: 2,
+            retention_horizon_days: Some(0),
+            retention_sweep_interval_secs: 3600,
+        };
+        assert_eq!(config.validate(), Err(TemporalConfigError::ZeroRetentionHorizon));
     }
 }

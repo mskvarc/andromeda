@@ -2,4 +2,5 @@
 
 pub mod coverage;
 pub mod filter;
+pub mod projection;
 pub mod statement;

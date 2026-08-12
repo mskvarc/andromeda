@@ -11,7 +11,7 @@ use andromeda_context_commit::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    expanded::{instance_key::removed_attribute_instances, mutation::expiry::remove_expired_attribute_instances},
+    expanded::{mutation::expiry::remove_expired_attribute_instances, removed_instance::removed_attribute_instances},
     notification::NotificationTrigger,
 };
 use chrono::{DateTime, Utc};

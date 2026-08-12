@@ -15,16 +15,16 @@ use andromeda_postgresql_query::{
 /// the reference geometry to as EWKB.
 ///
 /// The default GeoProperty has a dedicated geography column; every other one is
-/// read from its `attribute_current` instance rows, the same projection the geo
-/// filter itself reads, so an ordering and a filter can never disagree about
-/// where a GeoProperty's geometry lives. Where a GeoProperty has several
+/// read from its `current_attribute_values` instance rows, the same projection
+/// the geo filter itself reads, so an ordering and a filter can never disagree
+/// about where a GeoProperty's geometry lives. Where a GeoProperty has several
 /// `datasetId` instances the ordering takes the smallest of their distances,
 /// which is the reading that agrees with clause 4.10 counting an entity as
 /// matching when any one instance does.
 ///
 /// `outer` names the `entities` row the ordering sorts, because both renderings
 /// are read against it: the dedicated column belongs to that row, and the
-/// instance subquery correlates back to its identifier.
+/// instance subquery correlates back to its surrogate key.
 ///
 /// Clause 4.23's `id` and `type` keywords carry no geometry at all, and neither
 /// does a GeoProperty the broker has never recorded, so a distance ordering on
@@ -42,7 +42,8 @@ pub fn geo_order_distance(target: &OrderTarget, attribute_names: &ResolvedAttrib
     }
 }
 
-/// Alias the correlated ordering subquery reads `attribute_current` under.
+/// Alias the correlated ordering subquery reads `current_attribute_values`
+/// under.
 ///
 /// Deliberately not the alias the geo predicate uses: a query that both filters
 /// and orders on GeoProperties nests the two subqueries in one statement.
@@ -85,7 +86,7 @@ mod tests {
     };
 
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";
-    const CUSTOM_GEOPROPERTY_ID: i16 = 42;
+    const CUSTOM_GEOPROPERTY_ID: i32 = 42;
 
     fn name(value: &str) -> AttributeName {
         value.parse().expect("valid attribute name")
@@ -107,8 +108,11 @@ mod tests {
     #[test]
     fn the_default_geoproperty_measures_from_its_dedicated_geography_column() {
         let sql = geo_order_distance(&attribute(LOCATION.as_str()), &ResolvedAttributeNames::default(), outer());
-        assert!(sql.contains("ST_Distance(\"location_geo\""), "{sql}");
-        assert!(!sql.contains("attribute_current"), "the default GeoProperty needs no instance lookup: {sql}");
+        assert!(sql.contains("ST_Distance(\"entities\".\"location_geo\""), "{sql}");
+        assert!(
+            !sql.contains("current_attribute_values"),
+            "the default GeoProperty needs no instance lookup: {sql}"
+        );
     }
 
     /// Clause 4.23 read together with clause 4.10: an ordering reads the same
@@ -117,19 +121,22 @@ mod tests {
     #[test]
     fn a_custom_geoproperty_measures_from_its_nearest_attribute_instance() {
         let sql = geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom(), outer());
-        assert!(sql.contains("FROM \"attribute_current\""), "{sql}");
+        assert!(sql.contains("FROM \"current_attribute_values\""), "{sql}");
         assert!(sql.contains("MIN(ST_Distance("), "the nearest instance decides: {sql}");
         assert!(sql.contains(&format!("\"attribute_name_id\" = {CUSTOM_GEOPROPERTY_ID}")), "{sql}");
-        assert!(sql.contains("\"geo_order\".\"entity_id\" = \"id\""), "correlated to the ordered row: {sql}");
+        assert!(
+            sql.contains("\"geo_order\".\"entity_key\" = \"entities\".\"entity_key\""),
+            "correlated to the ordered row: {sql}"
+        );
         assert!(!sql.contains("ST_GeomFromGeoJSON"), "the geometry is stored decoded: {sql}");
     }
 
     /// The correlation binds the outer relation it was handed rather than
-    /// whichever `id` column the enclosing statement happens to expose.
+    /// whichever `entity_key` column the enclosing statement happens to expose.
     #[test]
     fn the_ordering_subquery_correlates_through_the_outer_row_it_is_given() {
         let sql = geo_order_distance(&attribute(CUSTOM_GEOPROPERTY), &resolved_custom(), CorrelatedEntityRow::aliased("e"));
-        assert!(sql.contains("\"geo_order\".\"entity_id\" = \"e\".\"id\""), "{sql}");
+        assert!(sql.contains("\"geo_order\".\"entity_key\" = \"e\".\"entity_key\""), "{sql}");
         let default_sql = geo_order_distance(
             &attribute(LOCATION.as_str()),
             &ResolvedAttributeNames::default(),
@@ -164,7 +171,7 @@ mod tests {
     /// and no apostrophe in one can terminate a literal.
     #[test]
     fn no_geoproperty_iri_reaches_the_statement_text() {
-        let names = ResolvedAttributeNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameId::from(9_i16))]);
+        let names = ResolvedAttributeNames::from_pairs([(name("https://example.com/o'brien"), AttributeNameId::from(9_i32))]);
         let sql = geo_order_distance(&attribute("https://example.com/o'brien"), &names, outer());
         assert!(!sql.contains("brien"), "{sql}");
         pretty_assertions::assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");

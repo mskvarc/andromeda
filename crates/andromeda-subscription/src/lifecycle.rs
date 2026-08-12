@@ -214,8 +214,15 @@ where
     }
 
     /// Retrieve a subscription by its identifier.
+    ///
+    /// The store-assigned key is dropped here: every caller of this method
+    /// renders or edits the resource, and the resource is addressed by its URI.
     pub async fn get(&self, id: &Uri) -> Result<Subscription, SubscriptionError> {
-        self.repo.get(id).await?.ok_or_else(|| SubscriptionError::not_found(id))
+        self.repo
+            .get(id)
+            .await?
+            .map(|stored| stored.subscription)
+            .ok_or_else(|| SubscriptionError::not_found(id))
     }
 
     /// Retrieve a subscription and serialize it for an HTTP response.
@@ -249,7 +256,7 @@ where
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
 
-        let existing = self.repo.get(id).await?.ok_or_else(|| SubscriptionError::not_found(id))?;
+        let existing = self.get(id).await?;
         let existing_status = existing.lifecycle.status;
         let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?;
         let fields = merged.to_fields();

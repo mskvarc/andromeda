@@ -18,5 +18,9 @@ pub mod pushdown;
 pub mod read;
 /// The PostgreSQL entity store.
 pub mod repo;
+/// The clause 4.5.1 invariant that every stored entity carries at least one type.
+pub mod types_present;
 /// The statements that write the `entities` table.
 pub mod write;
+/// The identity a write statement hands back for each entity row it affected.
+pub mod written_entity;

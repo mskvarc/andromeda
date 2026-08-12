@@ -1,18 +1,27 @@
 //! Mutation and retrieval of individual temporal attribute instances.
+//!
+//! Clause 5.6.15 addresses one instance of one temporal attribute by its
+//! `instanceId`, and that identifier is stored in one of two columns: the bare
+//! UUID of a broker-minted identifier, or the verbatim text of one a client
+//! supplied. Every statement here is therefore written twice, once per column,
+//! so each reads the partial index that covers it instead of an `OR` the
+//! planner has to resolve with a scan.
 
 use crate::{
     attribute_instance::{collect_metadata, detect_attribute_type, extract_observed_at},
-    attribute_value::{HistoryValueColumns, extract_attribute_value},
+    attribute_value::{AttributeValue, HistoryValueColumns, extract_attribute_value},
     error::TemporalStoreError,
-    params::{HistoryValues, UpdateInstanceParams},
-    projection_repair::repair_attribute_current,
     repo::TemporalRepository,
+    unit_code_metadata::take_unit_code,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_family::InstanceFamily, instance_identity::InstanceIdentity, uri::Uri};
+use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
+use const_format::concatcp;
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::postgres::PgRow;
 
 impl TemporalRepository {
     /// Replace one expanded attribute instance through the typed PostgreSQL update path.
@@ -20,167 +29,329 @@ impl TemporalRepository {
         &self,
         entity_id: &Uri,
         attribute_name: &AttributeName,
-        instance_id: &InstanceId,
-        instance: &Value,
+        instance: &InstanceIdentity,
+        expanded: &Value,
     ) -> Result<(), TemporalStoreError> {
-        let (owned, observed_at) = build_update_instance_state(instance)?;
-        let params = build_update_instance_params(instance_id, entity_id, attribute_name, &owned, observed_at);
-        self.update_instance(params).await
+        let state = build_update_instance_state(expanded)?;
+        self.update_instance(entity_id, attribute_name, instance, &state).await
     }
 
-    /// Delete a specific attribute instance and repair its current projection.
-    pub(crate) async fn delete_instance(&self, instance_id: &InstanceId, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalStoreError> {
-        let mut tx = self.pool.begin().await?;
-        let deleted = sqlx::query(
-            r#"
-            DELETE FROM attribute_history
-            WHERE instance_id = $1
-            AND tea_id IN (
-                SELECT tea.id FROM temporal_entity_attributes tea
-                JOIN attribute_names an ON an.id = tea.attribute_name_id
-                WHERE tea.entity_id = $2 AND an.name = $3
-            )
-            RETURNING tea_id
-            "#,
-        )
-        .bind(instance_id.as_str())
-        .bind(entity_id.as_str())
-        .bind(attribute_name.as_str())
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(row) = deleted else {
-            return Err(TemporalStoreError::NotFound(format!("Attribute instance {instance_id} not found")));
+    /// Physically remove one named attribute instance from history.
+    ///
+    /// Clause 5.6.15 deletes the addressed instance itself rather than
+    /// recording that it ended, so the row is removed and no tombstone is
+    /// written: a tombstone would keep answering temporal queries for an
+    /// instance the client asked to have removed.
+    ///
+    /// Deliberate retention asymmetry: unlike whole-entity temporal deletion,
+    /// this single-instance path does not read the removed row's `write_id`
+    /// and does not release the write record it belongs to. Every other row
+    /// of that write (other instances, other attributes, current state,
+    /// notifications, side effects) may still exist, so this statement cannot
+    /// know from a single deleted row whether the write record it belonged to
+    /// has become unreferenced. Leaving the write record retained is the safe
+    /// direction: retention's own periodic sweep is what actually knows the
+    /// full set of referents and reaps a write record once none of them
+    /// remain, so retaining here costs one write record's worth of storage
+    /// until that sweep runs, whereas guessing wrong and releasing early would
+    /// corrupt replay identity for every sibling row still pointing at it.
+    pub(crate) async fn delete_instance(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalStoreError> {
+        let statement = match instance {
+            InstanceIdentity::Generated(uuid) => sqlx::query(DELETE_GENERATED_INSTANCE_SQL).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(DELETE_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
         };
-        let tea_id = row.try_get("tea_id")?;
-        repair_attribute_current(&mut tx, tea_id).await?;
-        tx.commit().await?;
+        let deleted = statement
+            .bind(entity_id.as_str())
+            .bind(attribute_name.as_str())
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        if deleted == 0 {
+            return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
+        }
         Ok(())
     }
 
-    /// Modify a specific attribute instance and repair its current projection.
-    pub(crate) async fn update_instance(&self, params: UpdateInstanceParams<'_>) -> Result<(), TemporalStoreError> {
-        let mut tx = self.pool.begin().await?;
-        let updated = sqlx::query(UPDATE_INSTANCE_SQL)
-            .bind(params.instance_id.as_str())
-            .bind(params.entity_id.as_str())
-            .bind(params.attribute_name.as_str())
-            .bind(params.values.value_number)
-            .bind(params.values.value_string)
-            .bind(params.values.value_bool)
-            .bind(geometry_bytes(params.values.value_geo)?)
-            .bind(params.values.value_object)
-            .bind(params.values.value_datetime)
-            .bind(params.values.value_uri.map(Uri::as_str))
-            .bind(params.observed_at)
-            .bind(params.values.metadata)
-            .fetch_optional(&mut *tx)
-            .await?;
-        let Some(row) = updated else {
-            return Err(TemporalStoreError::NotFound(format!("Attribute instance {} not found", params.instance_id)));
+    /// Modify one named attribute instance in place.
+    async fn update_instance(
+        &self,
+        entity_id: &Uri,
+        attribute_name: &AttributeName,
+        instance: &InstanceIdentity,
+        state: &UpdateInstanceState,
+    ) -> Result<(), TemporalStoreError> {
+        let statement = match instance {
+            InstanceIdentity::Generated(uuid) => sqlx::query(UPDATE_GENERATED_INSTANCE_SQL).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(UPDATE_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
         };
-        let tea_id = row.try_get("tea_id")?;
-        repair_attribute_current(&mut tx, tea_id).await?;
-        tx.commit().await?;
+        let updated = statement
+            .bind(entity_id.as_str())
+            .bind(attribute_name.as_str())
+            .bind(state.value_kind.code())
+            .bind(state.columns.value_number.as_deref())
+            .bind(state.columns.value_string.as_deref())
+            .bind(state.columns.value_bool)
+            .bind(geometry_bytes(state.columns.value_geo.as_ref())?)
+            .bind(state.columns.value_object.as_ref())
+            .bind(state.columns.value_datetime)
+            .bind(state.columns.value_uri.as_ref().map(Uri::as_str))
+            .bind(state.observed_at)
+            .bind(state.metadata.as_ref())
+            .bind(state.unit_code_id.map(UnitCodeId::get))
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        if updated == 0 {
+            return Err(TemporalStoreError::NotFound(instance_not_found(instance)));
+        }
         Ok(())
     }
 
     /// Fetch a single attribute instance for policy validation.
     pub(crate) async fn get_instance(
         &self,
-        instance_id: &InstanceId,
+        instance: &InstanceIdentity,
         entity_id: &Uri,
         attribute_name: &AttributeName,
-    ) -> Result<Option<sqlx::postgres::PgRow>, TemporalStoreError> {
-        Ok(sqlx::query(
-            r#"
-            SELECT ah.*, an.name AS attribute_name, tea.attribute_type, tea.value_type
-            FROM attribute_history ah
-            JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
-            JOIN attribute_names an ON an.id = tea.attribute_name_id
-            WHERE ah.instance_id = $1
-            AND tea.entity_id = $2 AND an.name = $3
-            "#,
-        )
-        .bind(instance_id.as_str())
-        .bind(entity_id.as_str())
-        .bind(attribute_name.as_str())
-        .fetch_optional(&self.pool)
-        .await?)
+    ) -> Result<Option<PgRow>, TemporalStoreError> {
+        let statement = match instance {
+            InstanceIdentity::Generated(uuid) => sqlx::query(SELECT_GENERATED_INSTANCE_SQL).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(SELECT_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
+        };
+        Ok(statement
+            .bind(entity_id.as_str())
+            .bind(attribute_name.as_str())
+            .fetch_optional(&self.pool)
+            .await?)
     }
+}
+
+/// Report an instance the addressed attribute does not hold.
+fn instance_not_found(instance: &InstanceIdentity) -> String {
+    format!("Attribute instance {} not found", instance.rendered(InstanceFamily::Attribute))
 }
 
 /// Owned update values kept alive while PostgreSQL binds borrow them.
-struct UpdateInstanceOwned {
+struct UpdateInstanceState {
     /// Typed history columns.
     columns: HistoryValueColumns,
-    /// Expanded instance metadata.
+    /// Expanded instance metadata, without the `unitCode` member.
     metadata: Option<Value>,
+    /// Catalog identity of the instance's `unitCode`, when it declares one.
+    unit_code_id: Option<UnitCodeId>,
+    /// The observation instant the modified instance declares, if any.
+    observed_at: Option<DateTime<Utc>>,
+    /// The value shape the stored row declares, which the history table
+    /// constrains to agree with the column the value lands in.
+    value_kind: ValueKind,
 }
 
 /// Decode one expanded instance into owned PostgreSQL update state.
-fn build_update_instance_state(instance: &Value) -> Result<(UpdateInstanceOwned, Option<DateTime<Utc>>), TemporalStoreError> {
-    let attribute_type = detect_attribute_type(instance);
-    let attribute_value = extract_attribute_value(instance, attribute_type)?;
-    let observed_at = extract_observed_at(instance)?;
-    let metadata = collect_metadata(instance);
-    Ok((
-        UpdateInstanceOwned {
-            columns: attribute_value.into_columns(),
-            metadata,
-        },
+fn build_update_instance_state(expanded: &Value) -> Result<UpdateInstanceState, TemporalStoreError> {
+    let attribute_type = detect_attribute_type(expanded);
+    let attribute_value = extract_attribute_value(expanded, attribute_type)?;
+    let value_kind = value_kind_of(&attribute_value);
+    let observed_at = extract_observed_at(expanded)?;
+    let mut metadata = collect_metadata(expanded);
+    let unit_code_id = take_unit_code(&mut metadata)?;
+    Ok(UpdateInstanceState {
+        columns: attribute_value.into_columns(),
+        metadata,
+        unit_code_id,
         observed_at,
-    ))
+        value_kind,
+    })
 }
 
-/// Borrow owned update state into the repository parameter structure.
-fn build_update_instance_params<'a>(
-    instance_id: &'a InstanceId,
-    entity_id: &'a Uri,
-    attribute_name: &'a AttributeName,
-    owner: &'a UpdateInstanceOwned,
-    observed_at: Option<DateTime<Utc>>,
-) -> UpdateInstanceParams<'a> {
-    UpdateInstanceParams {
-        instance_id,
-        entity_id,
-        attribute_name,
-        values: HistoryValues {
-            value_number: owner.columns.value_number,
-            value_string: owner.columns.value_string.as_deref(),
-            value_bool: owner.columns.value_bool,
-            value_geo: owner.columns.value_geo.as_ref(),
-            value_object: owner.columns.value_object.as_ref(),
-            value_datetime: owner.columns.value_datetime,
-            value_uri: owner.columns.value_uri.as_ref(),
-            metadata: owner.metadata.as_ref(),
-        },
-        observed_at,
+/// The stored value shape of a decoded instance value.
+///
+/// A modified instance always carries a value, so no input to this mapping is a
+/// [`ValueKind::Tombstone`]: that member is reserved for a row recording a
+/// deletion (clauses 4.5.7 and 4.5.8), which clause 5.6.15 cannot produce.
+const fn value_kind_of(value: &AttributeValue) -> ValueKind {
+    match value {
+        AttributeValue::Number(_) => ValueKind::Number,
+        AttributeValue::String(_) => ValueKind::String,
+        AttributeValue::Boolean(_) => ValueKind::Boolean,
+        AttributeValue::Geometry(_) => ValueKind::Geometry,
+        AttributeValue::Object(_) => ValueKind::Object,
+        AttributeValue::DateTime(_) => ValueKind::DateTime,
+        AttributeValue::Uri(_) => ValueKind::Uri,
     }
 }
 
-const UPDATE_INSTANCE_SQL: &str = r#"
-UPDATE attribute_history
-SET value_number = $4, value_string = $5, value_bool = $6,
-    value_geo = CASE WHEN $7 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($7)) ELSE NULL END,
-    value_object = $8, value_datetime = $9, value_uri = $10,
-    observed_at = $11, metadata = $12, modified_at = NOW()
-WHERE instance_id = $1
-AND tea_id IN (
-    SELECT tea.id FROM temporal_entity_attributes tea
-    JOIN attribute_names an ON an.id = tea.attribute_name_id
-    WHERE tea.entity_id = $2 AND an.name = $3
-)
-RETURNING tea_id
+/// The streams of one entity's attribute, whatever `datasetId` they carry.
+///
+/// An `instanceId` is unique across the attribute, so the dataset dimension is
+/// not part of the address clause 5.6.15 defines; every stream of the named
+/// attribute is a candidate and the instance predicate selects within them.
+const ATTRIBUTE_STREAMS_SUBQUERY: &str = r#"
+    SELECT s.id
+    FROM temporal_attribute_streams s
+    JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
+    JOIN attribute_names an ON an.id = s.attribute_name_id
+    WHERE te.id = $2 AND an.name = $3
 "#;
+
+const DELETE_GENERATED_INSTANCE_SQL: &str = concatcp!(
+    "DELETE FROM attribute_history WHERE generated_instance_uuid = $1 AND stream_id IN (",
+    ATTRIBUTE_STREAMS_SUBQUERY,
+    ")"
+);
+
+const DELETE_VERBATIM_INSTANCE_SQL: &str = concatcp!(
+    "DELETE FROM attribute_history WHERE verbatim_instance_id = $1 AND stream_id IN (",
+    ATTRIBUTE_STREAMS_SUBQUERY,
+    ")"
+);
+
+/// Value columns, declared shape, and the modification instant of one instance.
+///
+/// `modified_at` is the NGSI-LD `modifiedAt` axis (clause 4.8), which a
+/// successful modification advances; `recorded_at` is the operational instant
+/// the row was written and is never rewritten, so a modified row keeps sorting
+/// where the write that created it placed it.
+///
+/// `$5` is the value's decimal literal, cast to the column's arbitrary-precision
+/// type: a number that has no exact double is stored by a modification exactly
+/// as a creation stores it.
+const UPDATE_INSTANCE_ASSIGNMENTS: &str = r#"
+UPDATE attribute_history
+SET value_kind = $4,
+    value_number = $5::numeric,
+    value_string = $6,
+    value_bool = $7,
+    value_geo = CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END,
+    value_object = $9,
+    value_datetime = $10,
+    value_uri = $11,
+    observed_at = $12,
+    metadata = $13,
+    unit_code_id = $14,
+    modified_at = NOW()
+"#;
+
+const UPDATE_GENERATED_INSTANCE_SQL: &str = concatcp!(
+    UPDATE_INSTANCE_ASSIGNMENTS,
+    "WHERE generated_instance_uuid = $1 AND stream_id IN (",
+    ATTRIBUTE_STREAMS_SUBQUERY,
+    ")"
+);
+
+const UPDATE_VERBATIM_INSTANCE_SQL: &str = concatcp!(
+    UPDATE_INSTANCE_ASSIGNMENTS,
+    "WHERE verbatim_instance_id = $1 AND stream_id IN (",
+    ATTRIBUTE_STREAMS_SUBQUERY,
+    ")"
+);
+
+const SELECT_INSTANCE_COLUMNS: &str = r#"
+SELECT ah.recorded_at, ah.write_id, ah.write_ordinal, ah.stream_id,
+       ah.attribute_kind, ah.value_kind, ah.observed_at, ah.deleted_at
+FROM attribute_history ah
+"#;
+
+const SELECT_GENERATED_INSTANCE_SQL: &str = concatcp!(
+    SELECT_INSTANCE_COLUMNS,
+    "WHERE ah.generated_instance_uuid = $1 AND ah.stream_id IN (",
+    ATTRIBUTE_STREAMS_SUBQUERY,
+    ") LIMIT 1"
+);
+
+const SELECT_VERBATIM_INSTANCE_SQL: &str = concatcp!(
+    SELECT_INSTANCE_COLUMNS,
+    "WHERE ah.verbatim_instance_id = $1 AND ah.stream_id IN (",
+    ATTRIBUTE_STREAMS_SUBQUERY,
+    ") LIMIT 1"
+);
 
 #[cfg(test)]
 mod tests {
-    use crate::instance_mutation::UPDATE_INSTANCE_SQL;
+    use crate::{
+        attribute_value::AttributeValue,
+        instance_mutation::{
+            DELETE_GENERATED_INSTANCE_SQL,
+            DELETE_VERBATIM_INSTANCE_SQL,
+            SELECT_GENERATED_INSTANCE_SQL,
+            SELECT_VERBATIM_INSTANCE_SQL,
+            UPDATE_GENERATED_INSTANCE_SQL,
+            UPDATE_VERBATIM_INSTANCE_SQL,
+            value_kind_of,
+        },
+    };
+    use andromeda_ngsi_ld_geometry::geometry::Geometry;
+    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_postgresql_codes::value_kind::ValueKind;
 
     #[test]
-    fn update_returns_the_owning_temporal_entity_attribute() {
-        assert!(UPDATE_INSTANCE_SQL.contains("RETURNING tea_id"));
-        assert!(!UPDATE_INSTANCE_SQL.contains("RETURNING instance_id"));
-        assert!(UPDATE_INSTANCE_SQL.contains("modified_at = NOW()"));
+    fn each_statement_addresses_exactly_one_instance_identity_column() {
+        for statement in [DELETE_GENERATED_INSTANCE_SQL, UPDATE_GENERATED_INSTANCE_SQL, SELECT_GENERATED_INSTANCE_SQL] {
+            assert!(statement.contains("generated_instance_uuid = $1"));
+            assert!(!statement.contains("verbatim_instance_id"));
+        }
+        for statement in [DELETE_VERBATIM_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL, SELECT_VERBATIM_INSTANCE_SQL] {
+            assert!(statement.contains("verbatim_instance_id = $1"));
+            assert!(!statement.contains("generated_instance_uuid"));
+        }
+    }
+
+    #[test]
+    fn every_statement_is_confined_to_the_named_entity_and_attribute() {
+        for statement in [
+            DELETE_GENERATED_INSTANCE_SQL,
+            DELETE_VERBATIM_INSTANCE_SQL,
+            UPDATE_GENERATED_INSTANCE_SQL,
+            UPDATE_VERBATIM_INSTANCE_SQL,
+            SELECT_GENERATED_INSTANCE_SQL,
+            SELECT_VERBATIM_INSTANCE_SQL,
+        ] {
+            assert!(statement.contains("FROM temporal_attribute_streams s"));
+            assert!(statement.contains("WHERE te.id = $2 AND an.name = $3"));
+            assert!(!statement.contains("temporal_entity_attributes"));
+        }
+    }
+
+    #[test]
+    fn a_modification_advances_the_modification_axis_and_leaves_the_write_clock_alone() {
+        for statement in [UPDATE_GENERATED_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL] {
+            assert!(statement.contains("modified_at = NOW()"));
+            assert!(!statement.contains("recorded_at ="));
+            assert!(statement.contains("value_kind = $4"));
+        }
+    }
+
+    #[test]
+    fn a_deletion_removes_the_row_rather_than_recording_a_tombstone() {
+        for statement in [DELETE_GENERATED_INSTANCE_SQL, DELETE_VERBATIM_INSTANCE_SQL] {
+            assert!(statement.starts_with("DELETE FROM attribute_history"));
+            assert!(!statement.contains("deleted_at"));
+        }
+    }
+
+    /// The value column is `NUMERIC`, and the statement binds its decimal
+    /// literal: a cast through `double precision` would round every clause
+    /// 5.6.14 modification of an integer beyond 2^53.
+    #[test]
+    fn the_update_statement_binds_the_numeric_literal_without_a_double_hop() {
+        for statement in [UPDATE_GENERATED_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL] {
+            assert!(statement.contains("value_number = $5::numeric"), "{statement}");
+            assert!(!statement.contains("double precision"), "{statement}");
+        }
+    }
+
+    #[test]
+    fn every_decoded_value_shape_maps_to_its_own_stored_kind() {
+        let geometry = Geometry::from_geojson_value(&serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]}))
+            .map(|geometry| value_kind_of(&AttributeValue::Geometry(geometry)))
+            .map_err(|error| error.to_string());
+        assert_eq!(geometry, Ok(ValueKind::Geometry));
+        let kinds = [
+            value_kind_of(&AttributeValue::Number(JsonNumber::Signed(1))),
+            value_kind_of(&AttributeValue::String("text".to_owned())),
+            value_kind_of(&AttributeValue::Boolean(true)),
+            value_kind_of(&AttributeValue::Object(serde_json::json!({}))),
+        ];
+        assert_eq!(kinds, [ValueKind::Number, ValueKind::String, ValueKind::Boolean, ValueKind::Object]);
+        assert!(!kinds.contains(&ValueKind::Tombstone));
     }
 }

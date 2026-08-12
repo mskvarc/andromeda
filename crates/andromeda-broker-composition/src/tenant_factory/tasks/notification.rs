@@ -9,10 +9,10 @@ use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::{
     csource_interval::CsourceIntervalNotificationOperation,
     csource_processor::CsourceNotificationProcessor,
+    delivery_config::DeliveryConfig,
+    delivery_drain::NotificationDeliveryDrain,
     error::NotificationError,
     interval::IntervalNotificationOperation,
-    outbox_config::OutboxConfig,
-    outbox_drain::NotificationOutboxDrain,
     processor::NotificationProcessor,
 };
 use andromeda_registration::store::RegistrationStore;
@@ -216,6 +216,13 @@ where
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
+/// Convert a configured retention in seconds into a [`chrono::Duration`],
+/// naming the offending setting in the error rather than the raw number.
+fn retention_duration(seconds: u64, name: &'static str) -> Result<chrono::Duration, TenantAssemblyError> {
+    let seconds = i64::try_from(seconds).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    chrono::Duration::try_seconds(seconds).ok_or_else(|| TenantAssemblyError::invariant(format!("{name} is out of range")))
+}
+
 fn classify_notification_failure(error: NotificationError) -> TaskFailure {
     let summary = error.to_string();
     match error {
@@ -228,21 +235,21 @@ fn classify_notification_failure(error: NotificationError) -> TaskFailure {
     }
 }
 
-pub(super) fn register_notification_outbox(
+pub(super) fn register_notification_delivery(
     supervisor: &TaskSupervisor,
-    drain: Arc<NotificationOutboxDrain>,
-    config: &OutboxConfig,
+    drain: Arc<NotificationDeliveryDrain>,
+    config: &DeliveryConfig,
 ) -> Result<WakeHandle, TenantAssemblyError> {
     let fallback_duration = Duration::from_secs(config.poll_interval_secs.max(1));
     let fallback = DrainFallbackCadence::new(fallback_duration).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("notification-outbox-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("notification-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::TenantDegrading,
         RestartPolicy::transient(u32::MAX, fallback_duration, fallback_duration),
         ShutdownPolicy::new(fallback_duration),
     );
-    let operation = Arc::clone(&drain); // clone: delivery and cleanup executions share one stateless outbox operation.
+    let operation = Arc::clone(&drain); // clone: delivery and cleanup executions share one stateless delivery operation.
     let task = DrainTask::new(registration, fallback, move |execution| {
         let operation = Arc::clone(&operation); // clone: each delivery pass owns the policy operation while executing.
         async move {
@@ -260,12 +267,12 @@ pub(super) fn register_notification_outbox(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
 
     let cleanup_cadence = Duration::from_secs(config.cleanup_interval_secs.max(1));
-    let cleanup_after =
-        chrono::Duration::try_seconds(i64::try_from(config.cleanup_after_secs).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?)
-            .ok_or_else(|| TenantAssemblyError::invariant("notification outbox cleanup age is out of range"))?;
+    let cleanup_after = retention_duration(config.cleanup_after_secs, "notification delivery cleanup age")?;
+    let dead_letter_after = retention_duration(config.dead_letter_after_secs, "notification delivery dead-letter age")?;
+    let orphan_event_after = retention_duration(config.orphan_event_after_secs, "notification delivery orphan-event age")?;
     let schedule = PeriodicSchedule::new(cleanup_cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let name = TaskName::try_from("notification-outbox-cleanup").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("notification-delivery-cleanup").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let registration = TaskRegistration::new(
         name,
         TaskCriticality::Observed,
@@ -275,9 +282,17 @@ pub(super) fn register_notification_outbox(
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let drain = Arc::clone(&drain); // clone: each cleanup execution owns the policy operation while executing.
         async move {
-            let cutoff = DateTime::<Utc>::from(execution.cutoff()) - cleanup_after;
-            let purged = drain.purge_delivered(cutoff).await.map_err(classify_notification_failure)?;
-            tracing::debug!(purged, "notification outbox cleanup completed");
+            let now = DateTime::<Utc>::from(execution.cutoff());
+            let purged = drain.purge_delivered(now - cleanup_after).await.map_err(classify_notification_failure)?;
+            // Dead letters are reaped before the orphan pass so an event a
+            // dead-lettered delivery just released can be swept in the same
+            // tick once it also clears the orphan-event horizon.
+            let dead_lettered = drain.purge_exhausted(now - dead_letter_after).await.map_err(classify_notification_failure)?;
+            let orphaned = drain
+                .purge_orphan_events(now - orphan_event_after)
+                .await
+                .map_err(classify_notification_failure)?;
+            tracing::debug!(purged, dead_lettered, orphaned, "notification delivery cleanup completed");
             Ok(())
         }
     });

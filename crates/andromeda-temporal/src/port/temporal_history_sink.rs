@@ -3,19 +3,14 @@
 use crate::{append_intent::TemporalAppendIntent, error::TemporalError};
 use async_trait::async_trait;
 
-/// Result of one idempotent sink append.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TemporalSinkAppendOutcome {
-    /// The sink durably accepted the intent and its observations.
-    Appended,
-    /// The sink had already durably accepted the same intent identifier.
-    AlreadyPresent,
-}
-
 /// Appends complete intents atomically and idempotently by intent identifier.
 #[async_trait]
 pub trait TemporalHistorySink: Send + Sync {
-    /// Durably append one intent or confirm that it was already appended.
+    /// Durably append one intent's entries. Idempotency is row-level, on the
+    /// entries' own `ON CONFLICT ... DO NOTHING` constraints, so a replay of
+    /// the same intent reaches this call again and simply collides with the
+    /// rows the first attempt wrote rather than needing to be told the intent
+    /// was already accepted.
     #[must_use = "temporal sink appends must be awaited"]
-    async fn append(&self, intent: &TemporalAppendIntent) -> Result<TemporalSinkAppendOutcome, TemporalError>;
+    async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError>;
 }

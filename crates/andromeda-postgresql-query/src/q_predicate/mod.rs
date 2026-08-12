@@ -9,46 +9,56 @@
 //! index can serve it, so every filtered query degraded to a sequential scan
 //! over `entities`.
 //!
-//! Predicates now compile to an `EXISTS` probe against the `attribute_current`
-//! projection, whose typed partial indexes are keyed
+//! Predicates now compile to an `EXISTS` probe against the
+//! `current_attribute_values` projection, whose typed partial indexes are keyed
 //! `(attribute_name_id, value_*)`. The planner scans the typed index, fetches
-//! `entity_id` from the heap, and semi-joins back to the driving table — the
-//! access path migration 0025 was shaped for.
+//! `entity_key` from the heap, and semi-joins back to the driving table.
+//!
+//! Every probe correlates on `entity_key`, the surrogate the projection is keyed
+//! on, so a statement that reaches entities through an alias hands over that
+//! alias's `entity_key` column rather than the Entity URI.
 //!
 //! # Eligibility
 //!
-//! Not every predicate can use the projection. `attribute_current` stores one
-//! typed value per attribute instance; it does not store sub-attributes or the
-//! interior of compound values. So:
+//! Not every predicate can use the projection. `current_attribute_values` stores
+//! one typed value per attribute instance; it does not store sub-attributes or
+//! the interior of compound values. So:
 //!
 //! | Predicate shape | Compiles to |
 //! |---|---|
-//! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `attribute_current` |
-//! | bare existence | `EXISTS` on `temporal_entity_attributes`, tombstone-checked |
+//! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `current_attribute_values` |
+//! | bare existence | `EXISTS` on `current_attribute_values`, presence alone |
 //! | anything carrying a sub-attribute or value path | JSONB jsonpath fallback |
+//! | a numeric operand beyond 2^53 | JSONB jsonpath fallback |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
 //! The fallback keeps the previous semantics for the shapes the projection
 //! cannot answer. It is still unindexed; it is now the exception rather than
 //! the rule.
 //!
+//! # Deleted attributes
+//!
+//! No predicate tests for a stored deletion marker. The projection holds no
+//! tombstone — the tombstone value kind belongs to history — so an attribute
+//! deleted by clause 5.6.16 is an absent row, and row presence alone answers an
+//! existence test.
+//!
 //! # Linked-entity traversal
 //!
 //! The clause 4.9 `{}` axis (`rel{attr=="x"}`) compiles to one correlated
 //! `EXISTS` per hop. Each probe reads the Relationship's instances from
-//! `attribute_current`, joins `attribute_current.value_uri` to `entities.id` to
-//! reach the entity each instance names, and compiles the rest of the predicate
-//! against that entity — recursively, so a chain of hops nests a chain of
-//! probes. Aliases are suffixed by depth (`ac_ln1`/`le1`, `ac_ln2`/`le2`, …) so
-//! a nested probe cannot shadow its enclosing one.
+//! `current_attribute_values`, joins `value_uri` to `entities.id` to reach the
+//! entity each instance names, and compiles the rest of the predicate against
+//! that entity's `entity_key` — recursively, so a chain of hops nests a chain of
+//! probes. Aliases are suffixed by depth (`cav_ln1`/`le1`, `cav_ln2`/`le2`, …)
+//! so a nested probe cannot shadow its enclosing one.
 //!
-//! Two things fall out of reading the object from the projection rather than
-//! the payload: the probe stays on the `(attribute_name_id, value_uri)` index,
-//! and a deletion tombstone (`value_uri = 'urn:ngsi-ld:null'`) is excluded
-//! before the join rather than left to fail it. A hop's optional entity-type
-//! guard becomes a disjunction of membership tests against the linked entity's
-//! `types` column, and a Relationship name absent from `attribute_names`
-//! compiles to constant `FALSE` exactly as any other unknown name does.
+//! Reading the object from the projection rather than the payload keeps the
+//! probe on the `(attribute_name_id, value_uri)` index. A hop's optional
+//! entity-type guard becomes a disjunction of membership tests against the
+//! linked entity's `types` column, and a Relationship name absent from
+//! `attribute_names` compiles to constant `FALSE` exactly as any other unknown
+//! name does.
 //!
 //! # Multi-instance semantics
 //!

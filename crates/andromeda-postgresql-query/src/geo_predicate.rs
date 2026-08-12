@@ -9,7 +9,7 @@
 //! to `location`. The default one has dedicated PostGIS columns on `entities` and
 //! is read directly. Every other GeoProperty — `observationSpace` and
 //! `operationSpace` as much as a custom one — is read from the
-//! `attribute_current` projection, which holds one `value_geo` row per attribute
+//! `current_attribute_values` projection, which holds one `value_geo` row per attribute
 //! instance keyed by the `attribute_names` dictionary. Reading the instance rows
 //! rather than a single column is also what gives clause 4.10 its multi-instance
 //! rule: where a GeoProperty has several `datasetId` instances, one of them
@@ -42,8 +42,8 @@ pub enum GeometrySource<'a> {
     ///
     /// The default `location` reads the `location` / `location_geo` columns and
     /// is additionally guarded against expiry, which only the payload records.
-    /// Any other GeoProperty is reached through its `attribute_current` instance
-    /// rows, correlated back to this row's identifier.
+    /// Any other GeoProperty is reached through its `current_attribute_values`
+    /// instance rows, correlated back to this row's surrogate key.
     ///
     /// Clause 4.10: an Entity that conveys no instance of the target
     /// GeoProperty is non-matching.
@@ -184,7 +184,8 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names:
     }
 }
 
-/// Alias the correlated instance subquery reads `attribute_current` under.
+/// Alias the correlated instance subquery reads `current_attribute_values`
+/// under.
 ///
 /// Distinct enough not to collide with an alias the enclosing statement chose.
 const INSTANCE_ALIAS: &str = "geo_instance";
@@ -289,7 +290,7 @@ mod tests {
     /// A custom GeoProperty IRI and the dictionary key it is taken to resolve
     /// to, for the tests that render its instance subquery.
     const CUSTOM_GEOPROPERTY: &str = "https://example.com/customGeo";
-    const CUSTOM_GEOPROPERTY_ID: i16 = 42;
+    const CUSTOM_GEOPROPERTY_ID: i32 = 42;
 
     /// A dictionary in which the default `location` is deliberately absent: it
     /// is read from its own column and must never need resolving.
@@ -364,20 +365,23 @@ mod tests {
     }
 
     /// Clause 4.10: `geoproperty` names any GeoProperty of the entity. Every
-    /// one other than the default is stored as an `attribute_current` row rather
-    /// than a column of `entities`, so the relation is evaluated over those
-    /// instance rows, correlated back to the entity being filtered.
+    /// one other than the default is stored as a `current_attribute_values` row
+    /// rather than a column of `entities`, so the relation is evaluated over
+    /// those instance rows, correlated back to the entity being filtered.
     #[test]
     fn a_custom_geoproperty_is_read_from_its_attribute_instance_rows() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
-        assert!(sql.contains("EXISTS (SELECT 1 FROM \"attribute_current\""), "{sql}");
+        assert!(sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""), "{sql}");
         assert!(sql.contains("\"geo_instance\".\"value_geo\""), "{sql}");
         assert!(
             sql.contains(&format!("\"attribute_name_id\" = {CUSTOM_GEOPROPERTY_ID}")),
             "the dictionary key selects the attribute: {sql}"
         );
-        assert!(sql.contains("\"geo_instance\".\"entity_id\" = \"id\""), "correlated to the filtered row: {sql}");
+        assert!(
+            sql.contains("\"geo_instance\".\"entity_key\" = \"entities\".\"entity_key\""),
+            "correlated to the filtered row: {sql}"
+        );
         assert!(sql.contains("ST_Within"), "{sql}");
         assert!(sql.contains("ST_GeomFromEWKB"), "reference side still binds EWKB: {sql}");
         assert!(
@@ -397,7 +401,7 @@ mod tests {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
         assert!(
-            sql.contains("EXISTS (SELECT 1 FROM \"attribute_current\""),
+            sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""),
             "an existential, not an aggregate: {sql}"
         );
         assert!(!sql.contains("dataset_id"), "no instance is preferred over another: {sql}");
@@ -410,10 +414,10 @@ mod tests {
     #[test]
     fn a_spec_defined_geoproperty_takes_the_same_route_as_a_custom_one() {
         for iri in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"] {
-            let names = ResolvedAttributeNames::from_pairs([(name(iri), AttributeNameId::from(7_i16))]);
+            let names = ResolvedAttributeNames::from_pairs([(name(iri), AttributeNameId::from(7_i32))]);
             let geo = point_query(GeoRel::Within, iri);
             let sql = render(condition(&geo, entity_source(), &names).unwrap());
-            assert!(sql.contains("EXISTS (SELECT 1 FROM \"attribute_current\""), "{iri}: {sql}");
+            assert!(sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""), "{iri}: {sql}");
             assert!(sql.contains("\"attribute_name_id\" = 7"), "{iri}: {sql}");
         }
     }
@@ -425,7 +429,10 @@ mod tests {
         let geo = point_query(GeoRel::Within, LOCATION);
         let sql = render(condition(&geo, entity_source(), &resolved_none()).unwrap());
         assert!(sql.contains("\"location\""), "{sql}");
-        assert!(!sql.contains("attribute_current"), "the default GeoProperty needs no instance lookup: {sql}");
+        assert!(
+            !sql.contains("current_attribute_values"),
+            "the default GeoProperty needs no instance lookup: {sql}"
+        );
     }
 
     /// Clause 4.10: an Entity that does not convey the target GeoProperty is
@@ -465,7 +472,7 @@ mod tests {
             row: CorrelatedEntityRow::aliased("e"),
         };
         let sql = render(condition(&geo, source, &resolved_custom()).unwrap());
-        assert!(sql.contains("\"geo_instance\".\"entity_id\" = \"e\".\"id\""), "{sql}");
+        assert!(sql.contains("\"geo_instance\".\"entity_key\" = \"e\".\"entity_key\""), "{sql}");
     }
 
     // -- what a missing geometry means, per source (clauses 4.10, 5.10.2) -----
@@ -552,8 +559,8 @@ mod tests {
         // The only difference is the table qualification of the geometry column.
         assert_eq!(
             entity_sql
-                .replace("\"location_geo\"", "\"e\".\"location_geo\"")
-                .replace("\"payload\"", "\"e\".\"payload\""),
+                .replace("\"entities\".\"location_geo\"", "\"e\".\"location_geo\"")
+                .replace("\"entities\".\"payload\"", "\"e\".\"payload\""),
             temporal_sql
         );
     }

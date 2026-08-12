@@ -12,5 +12,3 @@ pub mod payload;
 mod port;
 /// The Postgres-backed queue repository.
 pub mod repo;
-/// Row shapes returned by the side-effect repository.
-pub mod rows;

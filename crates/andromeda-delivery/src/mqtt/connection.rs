@@ -150,7 +150,7 @@ impl MqttConnection {
     /// The disconnect is best-effort — a broker that has already gone answers
     /// nothing — and the abort is what guarantees the spawned event loop does
     /// not outlive the connection. Failing the pending acknowledgements resolves
-    /// their waiters to a retryable outcome so the outbox retransmits.
+    /// their waiters to a retryable outcome so the delivery queue retransmits.
     pub async fn close(&self) {
         self.client.disconnect().await;
         self.event_loop.abort();

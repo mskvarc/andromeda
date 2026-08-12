@@ -1,10 +1,13 @@
 //! [`TemporalMutator`] implementation for [`TemporalRepository`].
 //!
 //! Thin delegation layer: every method forwards to an existing
-//! `TemporalRepository` method, mapping errors at the boundary.
+//! `TemporalRepository` method, mapping errors at the boundary. Every question
+//! it answers is answered from the temporal catalogue, never from current
+//! state, because clause 5.6.6 leaves the Temporal Evolution standing when the
+//! entity itself is deleted.
 
-use crate::{params::DeleteScope, repo::TemporalRepository};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, uri::Uri};
+use crate::{repo::TemporalRepository, temporal_catalog_read::AttributeStreamScope};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_temporal::{
     error::TemporalError,
     port::mutator::{TemporalDeleteScope, TemporalMutator},
@@ -15,22 +18,22 @@ use serde_json::Value;
 #[async_trait]
 impl TemporalMutator for TemporalRepository {
     async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
-        self.tea_exists_for_entity(entity_id).await.map_err(TemporalError::from)
+        self.temporal_entity_exists(entity_id).await.map_err(TemporalError::from)
     }
 
     async fn attribute_exists(&self, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError> {
-        self.get_teas_for_entity_attr(entity_id, attribute_name)
-            .await
-            .map(|entries| !entries.is_empty())
-            .map_err(TemporalError::from)
+        self.attribute_stream_exists(entity_id, attribute_name).await.map_err(TemporalError::from)
     }
 
     async fn attribute_names_for_entity(&self, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError> {
-        self.get_attribute_names_for_entity(entity_id).await.map_err(TemporalError::from)
+        self.temporal_attribute_names(entity_id).await.map_err(TemporalError::from)
     }
 
     async fn delete_all_for_entity(&self, entity_id: &Uri) -> Result<u64, TemporalError> {
-        self.delete_teas_for_entity(entity_id).await.map_err(TemporalError::from)
+        self.delete_temporal_evolution(entity_id)
+            .await
+            .map(|deletion| deletion.streams)
+            .map_err(TemporalError::from)
     }
 
     async fn delete_attribute(
@@ -41,31 +44,33 @@ impl TemporalMutator for TemporalRepository {
         scope: TemporalDeleteScope,
     ) -> Result<u64, TemporalError> {
         let scope = match scope {
-            TemporalDeleteScope::All => DeleteScope::All,
-            TemporalDeleteScope::Single => DeleteScope::Single,
+            TemporalDeleteScope::All => AttributeStreamScope::All,
+            TemporalDeleteScope::Single => AttributeStreamScope::Single,
         };
-        self.delete_tea(entity_id, attribute_name, dataset_id, scope).await.map_err(TemporalError::from)
+        self.delete_attribute_streams(entity_id, attribute_name, dataset_id, scope)
+            .await
+            .map_err(TemporalError::from)
     }
 
-    async fn instance_exists(&self, instance_id: &InstanceId, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError> {
-        let row = TemporalRepository::get_instance(self, instance_id, entity_id, attribute_name).await?;
+    async fn instance_exists(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError> {
+        let row = TemporalRepository::get_instance(self, instance, entity_id, attribute_name).await?;
         Ok(row.is_some())
     }
 
     async fn update_instance(
         &self,
-        instance_id: &InstanceId,
+        instance: &InstanceIdentity,
         entity_id: &Uri,
         attribute_name: &AttributeName,
         expanded_instance: &Value,
     ) -> Result<(), TemporalError> {
-        self.update_attribute_instance(entity_id, attribute_name, instance_id, expanded_instance)
+        self.update_attribute_instance(entity_id, attribute_name, instance, expanded_instance)
             .await
             .map_err(TemporalError::from)
     }
 
-    async fn delete_instance(&self, instance_id: &InstanceId, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalError> {
-        TemporalRepository::delete_instance(self, instance_id, entity_id, attribute_name)
+    async fn delete_instance(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalError> {
+        TemporalRepository::delete_instance(self, instance, entity_id, attribute_name)
             .await
             .map_err(TemporalError::from)
     }

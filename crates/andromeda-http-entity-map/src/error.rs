@@ -35,6 +35,7 @@ impl EntityMapHttpClassify for EntityError {
                 ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string())
             }
             EntityError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
+            EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, self.to_string()),
             EntityError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
             EntityError::JsonLd(source) => classify_jsonld_error(source),
             EntityError::Query(source) => classify_query_error(source),

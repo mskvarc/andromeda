@@ -2,7 +2,7 @@
 //!
 //! Pure domain logic for determining whether an entity change event matches
 //! a compiled subscription. Used by the notification worker (event-driven
-//! delivery) and the subscription cache (outbox entry generation).
+//! delivery) and the subscription cache (notification-event generation).
 
 use crate::compiled::{CompiledCsrSubscription, CompiledSubscription};
 use andromeda_context_commit::change_event::ChangeEvent;
@@ -211,7 +211,7 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::SubscriptionError;
+    use crate::{error::SubscriptionError, subscription_key::SubscriptionKey};
     use andromeda_context_commit::change_event::ChangeEvent;
     use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_query::{
@@ -238,6 +238,7 @@ mod tests {
     fn make_sub() -> Result<CompiledSubscription, SubscriptionError> {
         Ok(CompiledSubscription {
             id: parse_fixture("urn:ngsi-ld:Subscription:test", "subscription URI")?,
+            key: SubscriptionKey::try_from(1).map_err(|error| SubscriptionError::internal(format!("invalid subscription key fixture: {error}")))?,
             status: SubscriptionStatus::Active,
             endpoint_uri: Url::parse("http://example.com/notify").map_err(|error| SubscriptionError::internal(format!("invalid endpoint fixture: {error}")))?,
             endpoint_accept: None,

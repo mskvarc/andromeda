@@ -13,6 +13,7 @@ mod linked_entity_forwarding;
 mod linked_resolution_failure_mapping;
 mod linked_traversal_parameters;
 pub mod outcome;
+mod retry_delay;
 mod routes;
 mod temporal_linked_forwarding;
 mod tenant_factory;

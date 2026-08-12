@@ -6,11 +6,14 @@ use crate::{
     port::history_reader::{AggregationPushdown, HistoryVisibility, TemporalHistoryOutcome, TemporalHistoryReader, TemporalReaderCapabilities},
     read::ensure_aggregation_supported,
 };
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 /// Reader that records any query invocation while refusing all aggregation.
 struct RefusingReader {
@@ -28,6 +31,11 @@ impl TemporalHistoryReader for RefusingReader {
     }
 
     async fn entity_exists(&self, _entity_id: &Uri) -> Result<bool, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        Err(TemporalError::internal("query must not execute"))
+    }
+
+    async fn entity_types(&self, _entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         Err(TemporalError::internal("query must not execute"))
     }

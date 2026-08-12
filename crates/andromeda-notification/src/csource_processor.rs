@@ -88,9 +88,12 @@ impl CsourceNotificationProcessor {
     pub async fn reload_cache(&self) -> Result<(), crate::error::NotificationError> {
         let subscriptions = self.sub_repo.list_active().await?;
         self.cache.clear();
-        for sub in subscriptions {
-            let compiled = compile_csource_subscription(&sub);
-            self.cache.insert(sub.id.clone(), Arc::new(compiled)); // clone: the map owns its key
+        // A context-source notification is delivered as the change is applied
+        // and never enqueues a delivery, so the surrogate key each stored
+        // subscription carries stays unused on this path.
+        for stored in subscriptions {
+            let compiled = compile_csource_subscription(&stored.subscription);
+            self.cache.insert(stored.subscription.id.clone(), Arc::new(compiled)); // clone: the map owns its key
         }
         Ok(())
     }
@@ -100,9 +103,9 @@ impl CsourceNotificationProcessor {
         match change {
             CsourceSubscriptionChange::Upserted(id) => {
                 match self.sub_repo.get(&id).await {
-                    Ok(Some(sub)) => {
-                        let compiled = if sub.lifecycle.status == SubscriptionStatus::Active {
-                            Some(Arc::new(compile_csource_subscription(&sub)))
+                    Ok(Some(stored)) => {
+                        let compiled = if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
+                            Some(Arc::new(compile_csource_subscription(&stored.subscription)))
                         } else {
                             None
                         };

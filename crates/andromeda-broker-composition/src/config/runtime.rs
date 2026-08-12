@@ -13,7 +13,7 @@ use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_stack::config::HttpStackConfig;
 use andromeda_http_subscription::config::NotificationConfig;
 use andromeda_jsonld::config::JsonLdConfig;
-use andromeda_notification::outbox_config::OutboxConfig;
+use andromeda_notification::delivery_config::DeliveryConfig;
 use andromeda_postgresql_atomic_write::config::AtomicWriteConfig;
 use andromeda_postgresql_context_store::config::DatabaseConfig;
 use andromeda_snapshot::config::SnapshotConfig;
@@ -74,9 +74,9 @@ pub struct RuntimeConfig {
     #[config(nested)]
     pub snapshot: SnapshotConfig,
 
-    /// Durable notification outbox configuration.
+    /// Durable notification event and delivery configuration.
     #[config(nested)]
-    pub outbox: OutboxConfig,
+    pub notification_delivery: DeliveryConfig,
 
     /// Streaming notification transport configuration.
     #[config(nested)]
@@ -220,7 +220,7 @@ mod tests {
     use andromeda_http_stack::config::{CorsMode, HttpFeatureMode, HttpStackConfig};
     use andromeda_http_subscription::config::{NotificationConfig, SseConfig, WsConfig};
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
-    use andromeda_notification::outbox_config::OutboxConfig;
+    use andromeda_notification::delivery_config::DeliveryConfig;
     use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
     use andromeda_postgresql_context_store::config::{DatabaseConfig, SynchronousCommit};
     use andromeda_snapshot::config::SnapshotConfig;
@@ -276,6 +276,8 @@ mod tests {
                 intent_batch_size: 64,
                 intent_lease_secs: 30,
                 intent_retry_secs: 2,
+                retention_horizon_days: None,
+                retention_sweep_interval_secs: 3600,
             },
             tenancy: TenancyConfig {
                 enabled: true,
@@ -309,14 +311,18 @@ mod tests {
                 bulk_mode: BulkWriteMode::Unnest,
             },
             snapshot: SnapshotConfig { preparation_concurrency: 4 },
-            outbox: OutboxConfig {
+            notification_delivery: DeliveryConfig {
                 enabled: false,
                 max_attempts: 5,
                 base_backoff_secs: 5,
                 poll_interval_secs: 1,
                 batch_size: 50,
+                lease_secs: 30,
+                error_max_chars: 1024,
                 cleanup_after_secs: 86400,
                 cleanup_interval_secs: 300,
+                dead_letter_after_secs: 604_800,
+                orphan_event_after_secs: 86400,
             },
             notifications: NotificationConfig {
                 sse: SseConfig {

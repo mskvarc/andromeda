@@ -1,12 +1,21 @@
 //! Semantic preparation of expanded history consequences for durable intents.
 
 use crate::{
-    append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalIntentId},
+    append_intent::{TemporalAppendEntry, TemporalAppendIntent},
     error::TemporalError,
+    scope_observation::ScopeObservation,
 };
-use andromeda_context_commit::history_record::HistoryRecord;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_id::InstanceId, scope::grammar::ScopeBuf, uri::Uri};
+use andromeda_context_commit::{history_record::HistoryRecord, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    attribute_type::AttributeType,
+    instance_family::InstanceFamily,
+    instance_identity::InstanceIdentity,
+    scope::grammar::ScopeBuf,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::{
+    attribute::json_number::JsonNumber,
     expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute, null_sentinel::instance_is_null_sentinel},
     temporal::{TemporalHistoryRow, TemporalValue},
 };
@@ -16,32 +25,40 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
 /// Prepare one typed intent from the history consequences of an atomic write.
-pub(crate) fn prepare(entity_id: &Uri, history: &[HistoryRecord], recorded_at: DateTime<Utc>) -> Result<Option<TemporalAppendIntent>, TemporalError> {
+///
+/// `record` and `base` are the commit's, not minted here: every entity a
+/// commit lands shares the commit's single write identity, and this intent's
+/// entries are numbered starting at `base` in the commit's one running
+/// ordinal counter rather than each entity restarting its own count at zero.
+pub(crate) fn prepare(
+    entity_id: &Uri,
+    history: &[HistoryRecord],
+    record: WriteRecord,
+    base: WriteOrdinal,
+) -> Result<Option<TemporalAppendIntent>, TemporalError> {
     if history.is_empty() {
         return Ok(None);
     }
-    let id = TemporalIntentId::mint();
+    let recorded_at = record.recorded_at();
     let mut entries = Vec::new();
     let mut selection_value = None;
-    for record in history {
-        match record {
+    for consequence in history {
+        match consequence {
             HistoryRecord::Observations(payload) => {
-                append_payload_entries(id, payload, recorded_at, &mut entries)?;
+                append_payload_entries(payload, recorded_at, &mut entries)?;
                 selection_value = Some(Value::clone(payload));
             }
-            HistoryRecord::Tombstone(key) => {
-                let ordinal = ordinal(entries.len())?;
-                entries.push(TemporalAppendEntry::Tombstone {
-                    attribute_name: key.attr.clone(),   // clone: the durable intent owns the instance identity.
-                    dataset_id: key.dataset_id.clone(), // clone: the durable intent owns the dataset identity.
-                    instance_id: generated_instance_id(id, ordinal, "attribute")?,
-                    recorded_at,
-                });
-            }
+            HistoryRecord::Tombstone(removed) => entries.push(TemporalAppendEntry::Tombstone {
+                attribute_name: removed.key.attr.clone(),   // clone: the durable intent owns the instance identity.
+                dataset_id: removed.key.dataset_id.clone(), // clone: the durable intent owns the dataset identity.
+                attribute_type: removed.attribute_type,
+                instance: InstanceIdentity::generate(),
+            }),
         }
     }
     Ok(Some(TemporalAppendIntent {
-        id,
+        record,
+        base,
         entity_id: entity_id.clone(), // clone: the durable intent owns the validated identifier.
         entries,
         selection_value,
@@ -49,12 +66,7 @@ pub(crate) fn prepare(entity_id: &Uri, history: &[HistoryRecord], recorded_at: D
 }
 
 /// Append neutral attribute and scope entries from one expanded entity payload.
-fn append_payload_entries(
-    intent_id: TemporalIntentId,
-    expanded: &Value,
-    recorded_at: DateTime<Utc>,
-    entries: &mut Vec<TemporalAppendEntry>,
-) -> Result<(), TemporalError> {
+fn append_payload_entries(expanded: &Value, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
     let object = match expanded {
         Value::Array(values) => values.first().and_then(Value::as_object),
         Value::Object(object) => Some(object),
@@ -74,7 +86,7 @@ fn append_payload_entries(
             continue;
         }
         if attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
-            append_scopes(intent_id, value, recorded_at, entries)?;
+            append_scopes(value, entries);
             continue;
         }
         let Some(instances) = value.as_array() else {
@@ -94,10 +106,10 @@ fn append_payload_entries(
             if let Some(observations) = temporal_observations(instance, attribute_type) {
                 for observation in observations {
                     let observation = merge_temporal_observation(instance_object, observation, attribute_type);
-                    append_observation(intent_id, &attribute_name, attribute_type, &observation, recorded_at, entries)?;
+                    append_observation(&attribute_name, attribute_type, &observation, recorded_at, entries)?;
                 }
             } else {
-                append_observation(intent_id, &attribute_name, attribute_type, instance, recorded_at, entries)?;
+                append_observation(&attribute_name, attribute_type, instance, recorded_at, entries)?;
             }
         }
     }
@@ -106,7 +118,6 @@ fn append_payload_entries(
 
 /// Append one expanded observation after its temporal envelope has been removed.
 fn append_observation(
-    intent_id: TemporalIntentId,
     attribute_name: &AttributeName,
     attribute_type: AttributeType,
     instance: &Value,
@@ -116,27 +127,29 @@ fn append_observation(
     let value = extract_temporal_value(instance, attribute_type)?;
     let dataset_id = extract_dataset_id(instance)?;
     let observed_at = extract_observed_at(instance)?;
-    let ordinal = ordinal(entries.len())?;
-    let (instance_id, client_supplied_instance_id) = extract_instance_id(instance)?.map_or_else(
-        || generated_instance_id(intent_id, ordinal, "attribute").map(|generated| (generated, false)),
-        |provided| Ok((provided, true)),
-    )?;
+    let instance_identity = extract_instance_id(instance)?.map_or_else(InstanceIdentity::generate, |provided| {
+        InstanceIdentity::from_uri(provided, InstanceFamily::Attribute)
+    });
     entries.push(TemporalAppendEntry::Observation {
         row: TemporalHistoryRow {
             attribute_name: attribute_name.clone(), // clone: each observation owns its attribute name.
             attribute_type,
             dataset_id,
             value,
+            // An `observedAt` the client did not declare stays absent: clause
+            // 5.2.21 makes it a Temporal Property of the observation, so
+            // substituting the write clock would invent one.
             observed_at,
-            time: observed_at.unwrap_or(recorded_at),
-            created_at: recorded_at,
-            modified_at: recorded_at,
-            instance_id,
+            recorded_at,
+            // Clause 4.8 has the broker assign `createdAt` and `modifiedAt`
+            // itself, and a newly appended instance is created and last
+            // modified at the instant the write was accepted.
+            created_at: Some(recorded_at),
+            modified_at: Some(recorded_at),
+            instance: instance_identity,
             metadata: collect_metadata(instance),
             partition_total: None,
         },
-        client_supplied_instance_id,
-        recorded_at,
     });
     Ok(())
 }
@@ -177,39 +190,31 @@ fn temporal_values_key(attribute_type: AttributeType) -> &'static str {
 }
 
 /// Append validated scope observations found in the expanded scope member.
-fn append_scopes(intent_id: TemporalIntentId, value: &Value, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
+///
+/// The scope grammar of clause 4.18 admits `urn:ngsi-ld:null` alongside the
+/// hierarchical paths and reserves it for a deleted scope, so that spelling
+/// records the end of the entity's scope rather than a path named after it.
+fn append_scopes(value: &Value, entries: &mut Vec<TemporalAppendEntry>) {
     let Some(scopes) = value.as_array() else {
-        return Ok(());
+        return;
     };
     for scope in scopes {
-        let Some(path) = scope
-            .as_object()
-            .and_then(|object| object.get("@value"))
-            .and_then(Value::as_str)
-            .and_then(|raw| ScopeBuf::new(raw.to_owned()).ok())
-        else {
+        let Some(raw) = scope.as_object().and_then(|object| object.get("@value")).and_then(Value::as_str) else {
             continue;
         };
-        let entry_ordinal = ordinal(entries.len())?;
+        let observation = if raw == expanded_properties::NULL_URI.as_str() {
+            ScopeObservation::Deleted
+        } else {
+            match ScopeBuf::new(raw.to_owned()) {
+                Ok(path) => ScopeObservation::Path(path),
+                Err(_) => continue,
+            }
+        };
         entries.push(TemporalAppendEntry::Scope {
-            path,
-            instance_id: generated_instance_id(intent_id, entry_ordinal, "scope")?,
-            recorded_at,
+            observation,
+            instance: InstanceIdentity::generate(),
         });
     }
-    Ok(())
-}
-
-/// Convert a vector position into the stable persisted intent ordinal.
-fn ordinal(position: usize) -> Result<u32, TemporalError> {
-    u32::try_from(position).map_err(|error| TemporalError::internal(format!("temporal intent has too many entries: {error}")))
-}
-
-/// Generate an instance identifier that is deterministic within an intent.
-fn generated_instance_id(intent_id: TemporalIntentId, ordinal: u32, family: &str) -> Result<InstanceId, TemporalError> {
-    format!("urn:ngsi-ld:{family}:instance:{intent_id}:{ordinal}")
-        .parse::<InstanceId>()
-        .map_err(|error| TemporalError::internal(format!("generated invalid temporal instance identifier: {error}")))
 }
 
 /// Return whether an expanded object declares an NGSI-LD attribute type.
@@ -266,7 +271,7 @@ fn extract_observed_at(instance: &Value) -> Result<Option<DateTime<Utc>>, Tempor
 }
 
 /// Decode the optional client-supplied expanded instance identifier.
-fn extract_instance_id(instance: &Value) -> Result<Option<InstanceId>, TemporalError> {
+fn extract_instance_id(instance: &Value) -> Result<Option<Uri>, TemporalError> {
     instance
         .get(expanded_properties::INSTANCE_ID.as_str())
         .and_then(Value::as_array)
@@ -274,7 +279,7 @@ fn extract_instance_id(instance: &Value) -> Result<Option<InstanceId>, TemporalE
         .and_then(|value| value.get("@id"))
         .and_then(Value::as_str)
         .map(|raw| {
-            raw.parse::<InstanceId>()
+            raw.parse::<Uri>()
                 .map_err(|error| TemporalError::validation(format!("invalid instanceId '{raw}': {error}")))
         })
         .transpose()
@@ -402,14 +407,33 @@ fn list_value(instance: &Value, key: &str, error: &'static str) -> Result<Tempor
 }
 
 /// Decode a ListRelationship object list.
+///
+/// Each member names a target Entity URI (clause 4.5.24), but which JSON-LD
+/// keyword carries it depends on the context the client wrote the Entity under.
+/// The normative core context defines `objectList` with `@container: "@list"`
+/// and no `@type: "@id"` coercion — unlike the singular `object` — so an
+/// `objectList` written under it expands to `@value` nodes, while a context that
+/// does coerce, and every document written in expanded form, gives `@id` nodes.
+/// Both spell the same target, so both are read; a member that spells neither is
+/// not a target at all and refuses the write rather than silently shortening the
+/// list.
 fn list_relationship_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let list = first_member(instance, expanded_properties::OBJECT_LIST.as_str())
         .and_then(|value| value.get("@list"))
         .and_then(Value::as_array)
         .ok_or_else(|| TemporalError::validation("ListRelationship missing objectList"))?;
-    Ok(TemporalValue::Object(Value::Array(
-        list.iter().filter_map(|value| value.get("@id").cloned()).collect(),
-    )))
+    let targets = list
+        .iter()
+        .map(|member| {
+            member
+                .get("@id")
+                .or_else(|| member.get("@value"))
+                .filter(|target| target.is_string())
+                .cloned()
+                .ok_or_else(|| TemporalError::validation("ListRelationship objectList member names no target URI"))
+        })
+        .collect::<Result<Vec<Value>, TemporalError>>()?;
+    Ok(TemporalValue::Object(Value::Array(targets)))
 }
 
 /// Decode a Property scalar, structured value, or typed date-time.
@@ -427,10 +451,12 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
             .map_err(|error| TemporalError::validation(format!("invalid datetime property '{raw}': {error}")));
     }
     match value {
-        Value::Number(number) => number
-            .as_f64()
+        // The number keeps the shape it was parsed in all the way to the
+        // arbitrary-precision storage column: flattening it to a double here
+        // would round an integer beyond 2^53 before anything could refuse it.
+        Value::Number(number) => JsonNumber::try_from(number)
             .map(TemporalValue::Number)
-            .ok_or_else(|| TemporalError::validation("Property number cannot be represented as f64")),
+            .map_err(|error| TemporalError::validation(format!("Property number cannot be carried: {error}"))),
         Value::String(text) => Ok(TemporalValue::String(text.clone())), // clone: the intent owns the text.
         Value::Bool(flag) => Ok(TemporalValue::Boolean(*flag)),
         Value::Array(_) | Value::Object(_) => Ok(TemporalValue::Object(Value::clone(value))), // clone: the intent owns the structured value.
@@ -446,11 +472,22 @@ fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
 #[cfg(test)]
 mod tests {
     use crate::{append_intent::TemporalAppendEntry, intent_preparation::prepare};
-    use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-    use chrono::{TimeZone, Utc};
+    use andromeda_context_commit::{
+        history_record::{HistoryRecord, tombstone},
+        write_id::WriteId,
+        write_ordinal::WriteOrdinal,
+        write_record::WriteRecord,
+    };
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use chrono::{DateTime, TimeZone, Utc};
     use serde_json::json;
     use std::sync::Arc;
+
+    /// Build a restored record so tests can hand `prepare` a fixed identity.
+    fn record(recorded_at: DateTime<Utc>) -> WriteRecord {
+        WriteRecord::restored(WriteId::mint(), recorded_at)
+    }
 
     #[test]
     fn null_sentinel_is_not_decoded_as_a_geoproperty_observation() {
@@ -465,10 +502,13 @@ mod tests {
                 "https://uri.etsi.org/ngsi-ld/datasetId": [{"@id": dataset_id}]
             }]
         }]));
-        let history = [HistoryRecord::Observations(payload), tombstone(&attribute_name, Some(&dataset_id))];
+        let history = [
+            HistoryRecord::Observations(payload),
+            tombstone(&attribute_name, Some(&dataset_id), AttributeType::GeoProperty),
+        ];
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &history, recorded_at)
+        let intent = prepare(&entity_id, &history, record(recorded_at), WriteOrdinal::at(0))
             .expect("null sentinel must not fail temporal preparation")
             .expect("the tombstone produces an intent");
 
@@ -505,7 +545,7 @@ mod tests {
         }]));
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], recorded_at)
+        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
             .expect("plural temporal values must be valid")
             .expect("observations produce an intent");
 
@@ -514,13 +554,13 @@ mod tests {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                TemporalAppendEntry::Observation { row, .. } => Some(row),
+                TemporalAppendEntry::Observation { row } => Some(row),
                 TemporalAppendEntry::Tombstone { .. } | TemporalAppendEntry::Scope { .. } => None,
             })
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(rows.len(), 2);
-        pretty_assertions::assert_eq!(rows[0].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(55.0));
-        pretty_assertions::assert_eq!(rows[1].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(61.0));
+        pretty_assertions::assert_eq!(rows[0].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(JsonNumber::Signed(55)));
+        pretty_assertions::assert_eq!(rows[1].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(JsonNumber::Signed(61)));
         assert!(rows.iter().all(|row| {
             row.dataset_id
                 .as_ref()
@@ -540,7 +580,7 @@ mod tests {
         }]));
         let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
 
-        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], recorded_at)
+        let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
             .expect("encoded relationship target must be valid")
             .expect("the relationship produces an intent");
 
@@ -554,5 +594,61 @@ mod tests {
                 ..
             } if uri.as_str() == "urn:ngsi-ld:Building:1"
         ));
+    }
+
+    /// Clause 4.5.24: every `objectList` member names a target Entity. The
+    /// normative core context coerces `object` to `@id` but leaves `objectList`
+    /// uncoerced, so the same list arrives as `@value` nodes under it and as
+    /// `@id` nodes under a coercing context. Both are the same list of targets.
+    #[test]
+    fn an_object_list_keeps_its_targets_however_the_context_expanded_them() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        for member in [json!({"@id": "urn:ngsi-ld:Part:1"}), json!({"@value": "urn:ngsi-ld:Part:1"})] {
+            let payload = Arc::new(json!([{
+                "@id": entity_id,
+                "https://example.com/parts": [{
+                    "@type": ["https://uri.etsi.org/ngsi-ld/ListRelationship"],
+                    "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [member]}]
+                }]
+            }]));
+
+            let intent = prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0))
+                .expect("an object list must be valid")
+                .expect("the list relationship produces an intent");
+
+            assert!(
+                matches!(
+                    &intent.entries[0],
+                    TemporalAppendEntry::Observation {
+                        row: andromeda_ngsi_ld_model::temporal::TemporalHistoryRow {
+                            value: andromeda_ngsi_ld_model::temporal::TemporalValue::Object(list),
+                            ..
+                        },
+                        ..
+                    } if list == &json!(["urn:ngsi-ld:Part:1"])
+                ),
+                "{:?}",
+                intent.entries[0]
+            );
+        }
+    }
+
+    /// A member that spells no target is a malformed list, not a shorter one:
+    /// silently dropping it would store a ListRelationship that names fewer
+    /// Entities than the client wrote.
+    #[test]
+    fn an_object_list_member_without_a_target_refuses_the_write() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let payload = Arc::new(json!([{
+            "@id": entity_id,
+            "https://example.com/parts": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/ListRelationship"],
+                "https://uri.etsi.org/ngsi-ld/hasObjectList": [{"@list": [{"@type": "urn:ngsi-ld:Part:1"}]}]
+            }]
+        }]));
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+
+        assert!(prepare(&entity_id, &[HistoryRecord::Observations(payload)], record(recorded_at), WriteOrdinal::at(0)).is_err());
     }
 }

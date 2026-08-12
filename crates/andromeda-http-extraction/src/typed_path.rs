@@ -32,7 +32,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::typed_path::TypedPath;
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_id::InstanceId, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use axum::{
         Router,
         body::{Body, to_bytes},
@@ -53,7 +53,7 @@ mod tests {
         attribute.to_string()
     }
 
-    async fn instance_value(TypedPath(instance): TypedPath<InstanceId>) -> String {
+    async fn instance_value(TypedPath(instance): TypedPath<Uri>) -> String {
         instance.to_string()
     }
 

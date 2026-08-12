@@ -14,6 +14,11 @@ pub fn classify_entity_error(error: &EntityError) -> ClassifiedReport {
         EntityError::AttributeNotFound { name } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, format!("Attribute {name} not found")),
         EntityError::MemberNotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
         EntityError::AlreadyExists { identifier } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, format!("Entity {identifier} already exists")),
+        // Clause 5.5.2 `Conflict`, not `InternalError`: nothing failed inside the
+        // broker and nothing about the submitted content is wrong, so the client
+        // is told the truth — the entity is contended and the identical request
+        // may be sent again.
+        EntityError::Contention { .. } => ClassifiedReport::public(NgsiLdErrorType::Conflict, error.to_string()),
         EntityError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
         EntityError::JsonLd(source) => classify_jsonld_error(source),
         EntityError::Query(source) => classify_query_error(source),
@@ -55,6 +60,26 @@ mod tests {
             pretty_assertions::assert_eq!(report.error_type(), expected, "wrong category for {error:?}");
             pretty_assertions::assert_eq!(report.classification().status_code(), expected.status_code());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn exhausted_write_contention_is_reported_as_a_retryable_conflict() -> Result<(), EntityError> {
+        let identifier = entity_id()?;
+        let attempts = 12;
+        let report = classify_entity_error(&EntityError::contention(&identifier, attempts));
+        pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::Conflict);
+        pretty_assertions::assert_eq!(report.classification().status_code(), NgsiLdErrorType::Conflict.status_code());
+        assert!(
+            report.detail().contains(identifier.as_str()),
+            "the detail hides which entity is contended: {}",
+            report.detail()
+        );
+        assert!(
+            report.detail().contains(&attempts.to_string()),
+            "the detail hides how hard the broker tried: {}",
+            report.detail()
+        );
         Ok(())
     }
 

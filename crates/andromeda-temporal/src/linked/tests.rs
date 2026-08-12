@@ -21,6 +21,7 @@ use crate::{
 };
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter},
     error::CommitError,
 };
@@ -29,12 +30,14 @@ use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngin
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
-    instance_id::InstanceId,
+    entity_type_name::EntityTypeName,
+    instance_identity::InstanceIdentity,
     temporal_format::TemporalFormat,
     time_rel::TimeRel,
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
+    attribute::json_number::JsonNumber,
     notification::SysAttrsSnapshot,
     temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
 };
@@ -273,12 +276,12 @@ impl StubBroker {
             attribute_name: "https://example.com/reading".parse::<AttributeName>().expect("valid attribute IRI"),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(1.0),
+            value: TemporalValue::Number(JsonNumber::Double(1.0)),
             observed_at: Some(instant),
-            time: instant,
-            created_at: instant,
-            modified_at: instant,
-            instance_id: InstanceId::from(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:reading"))),
+            recorded_at: instant,
+            created_at: Some(instant),
+            modified_at: Some(instant),
+            instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:reading"))),
             metadata: None,
             partition_total: None,
         };
@@ -289,10 +292,10 @@ impl StubBroker {
                 dataset_id: None,
                 value: TemporalValue::Uri(target.clone()), // clone: the row owns the object it names
                 observed_at: Some(instant),
-                time: instant,
-                created_at: instant,
-                modified_at: instant,
-                instance_id: InstanceId::from(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:{target}"))),
+                recorded_at: instant,
+                created_at: Some(instant),
+                modified_at: Some(instant),
+                instance: InstanceIdentity::Verbatim(uri(&format!("urn:ngsi-ld:Instance:{entity_id}:{target}"))),
                 metadata: None,
                 partition_total: None,
             }))
@@ -315,6 +318,14 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
         Ok(self.links.contains_key(entity_id))
+    }
+
+    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+        Ok(entity_ids
+            .iter()
+            .filter(|entity_id| self.links.contains_key(*entity_id))
+            .map(|entity_id| (entity_id.clone(), Vec::new())) // clone: the index owns its validated entity URI.
+            .collect())
     }
 
     async fn query_entity_ids(&self, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
@@ -408,13 +419,13 @@ impl TemporalMutator for StubBroker {
         Err(unsupported("delete_attribute"))
     }
 
-    async fn instance_exists(&self, _instance_id: &InstanceId, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
+    async fn instance_exists(&self, _instance: &InstanceIdentity, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
         Err(unsupported("instance_exists"))
     }
 
     async fn update_instance(
         &self,
-        _instance_id: &InstanceId,
+        _instance: &InstanceIdentity,
         _entity_id: &Uri,
         _attribute_name: &AttributeName,
         _payload: &Value,
@@ -422,7 +433,7 @@ impl TemporalMutator for StubBroker {
         Err(unsupported("update_instance"))
     }
 
-    async fn delete_instance(&self, _instance_id: &InstanceId, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<(), TemporalError> {
+    async fn delete_instance(&self, _instance: &InstanceIdentity, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<(), TemporalError> {
         Err(unsupported("delete_instance"))
     }
 }
@@ -432,6 +443,14 @@ impl ContextCommitter for StubBroker {
         Box::pin(async {
             Err(CommitError::Invariant {
                 detail: "commit is not exercised by the traversal harness".to_owned(),
+            })
+        })
+    }
+
+    fn commit_replayed(&self, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        Box::pin(async {
+            Err(CommitError::Invariant {
+                detail: "commit_replayed is not exercised by the traversal harness".to_owned(),
             })
         })
     }

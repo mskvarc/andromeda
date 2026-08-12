@@ -45,7 +45,7 @@ pub fn projected_attribute_names(q_expr: Option<&Expr>, geo: Option<&GeoQuery>, 
 ///
 /// Clause 4.10 defaults `geoproperty` to `location`, and the default is the one
 /// GeoProperty the broker stores in dedicated `entities` columns rather than in
-/// the `attribute_current` projection. Both the filter and the ordering read
+/// the `current_attribute_values` projection. Both the filter and the ordering read
 /// those columns directly, so resolving `location` would key a projection
 /// neither of them touches — and, worse, would make a plain `georel=near`
 /// query wait on the projection's read-your-writes barrier for writes its SQL
@@ -108,8 +108,8 @@ mod tests {
     }
 
     /// Clause 4.10's default GeoProperty is read from the dedicated `entities`
-    /// columns, so it keys no dictionary row and must not put a query that
-    /// touches nothing else through the projection barrier.
+    /// columns, so it keys no dictionary row and a query that touches nothing
+    /// else resolves no attribute name at all.
     #[test]
     fn a_geo_query_on_the_default_geoproperty_resolves_nothing() {
         let geo = geo_query(LOCATION.as_str());

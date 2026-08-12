@@ -20,6 +20,7 @@ pub mod port;
 mod read;
 /// The non-local half of Linked Entity resolution for the temporal API.
 pub mod remote_linked;
+pub mod scope_observation;
 pub mod service;
 mod write;
 

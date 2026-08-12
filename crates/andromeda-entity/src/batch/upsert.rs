@@ -20,7 +20,7 @@ use crate::{
     expanded_member::extract_attribute_keys,
     side_effect::BatchSideEffectMode,
 };
-use andromeda_context_commit::precondition::{Precondition, WRITE_ATTEMPTS};
+use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
@@ -105,6 +105,8 @@ impl EntityService {
                 errors.extend(retry);
                 break;
             }
+
+            self.wait_before_retry(attempt).await;
 
             let retry_ids: Vec<Uri> = retry.into_iter().map(|(id, _error)| id).collect();
             let snapshots = self.reader.get_snapshot_batch(&retry_ids).await?;

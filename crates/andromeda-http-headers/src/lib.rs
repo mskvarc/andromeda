@@ -26,6 +26,7 @@
 
 pub mod accept;
 pub mod geo_json_body;
+pub mod json_ld_accept;
 pub mod language;
 pub mod link;
 pub mod location;

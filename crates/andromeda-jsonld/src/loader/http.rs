@@ -21,8 +21,8 @@ use crate::{
     hit_counter::{HitCounter, HitDelta},
     loader::error::{LoaderError, LoaderErrorKind},
 };
+use andromeda_http_headers::json_ld_accept::JsonLdAccept;
 use headers::HeaderMapExt;
-use http::{HeaderName, HeaderValue};
 use iri_rs::{Iri, IriBuf};
 use jsonld::{LoadError, Loader, RemoteDocument};
 use jsonld_syntax::Parse;
@@ -38,30 +38,6 @@ use std::{
     time::Duration,
 };
 use tracing::{trace, warn};
-
-/// The lowercase `Accept` field name the context negotiation header is sent under.
-static ACCEPT: HeaderName = HeaderName::from_static("accept");
-
-/// The fixed negotiation set used for remote JSON-LD contexts.
-struct JsonLdAccept;
-
-impl headers::Header for JsonLdAccept {
-    fn name() -> &'static HeaderName {
-        &ACCEPT
-    }
-    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
-    where
-        I: Iterator<Item = &'i HeaderValue>,
-    {
-        let value = values.next().ok_or_else(headers::Error::invalid)?;
-        (value.as_bytes() == b"application/ld+json, application/json")
-            .then_some(Self)
-            .ok_or_else(headers::Error::invalid)
-    }
-    fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        values.extend(std::iter::once(HeaderValue::from_static("application/ld+json, application/json")));
-    }
-}
 
 /// A loaded context together with the backing-store ownership of its hit count.
 ///

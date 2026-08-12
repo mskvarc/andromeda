@@ -9,7 +9,9 @@ use crate::{
     bind::BindBuilder,
     column_reference::ColumnReference,
     ltree::{ltree_matches, pattern_to_lquery},
+    time_column::column_name,
 };
+use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{
     scope::{pattern::ScopePattern, query::ScopeQuery},
     temporal::window::TimeInterval,
@@ -29,10 +31,16 @@ pub enum ScopeTarget {
     /// A temporal query asks which entities were *in* a scope during the
     /// window, not which are in it now, so a row that has since left the scope
     /// still matches (clause 4.18).
+    ///
+    /// Scope history hangs off the temporal catalogue rather than off current
+    /// entity state, so the probe correlates on the surrogate
+    /// `temporal_entity_key` an entity keeps after clause 5.6.6 deletion.
     History {
-        /// The entity id the probe correlates against, named by its iden.
-        entity_id_column: ColumnReference,
-        /// The slice of the time axis the probe is bounded to.
+        /// The temporal entity key the probe correlates against, named by its iden.
+        entity_key_column: ColumnReference,
+        /// The Temporal Property the window is measured on (clause 5.2.21).
+        timeproperty: TimeProp,
+        /// The slice of that axis the probe is bounded to.
         interval: TimeInterval,
     },
 }
@@ -49,11 +57,12 @@ impl ScopeTarget {
         }
     }
 
-    /// The scope-history target correlating on the `(alias, column)` entity id,
-    /// bounded to `interval`.
-    pub fn history(entity_id_column: (impl IntoIden, impl IntoIden), interval: TimeInterval) -> ScopeTarget {
+    /// The scope-history target correlating on the `(alias, column)` temporal
+    /// entity key, bounded to `interval` on the `timeproperty` axis.
+    pub fn history(entity_key_column: (impl IntoIden, impl IntoIden), timeproperty: TimeProp, interval: TimeInterval) -> ScopeTarget {
         ScopeTarget::History {
-            entity_id_column: ColumnReference::qualified(entity_id_column.0, entity_id_column.1),
+            entity_key_column: ColumnReference::qualified(entity_key_column.0, entity_key_column.1),
+            timeproperty,
             interval,
         }
     }
@@ -83,35 +92,43 @@ fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr
     match target {
         // The reference is rendered from its iden here rather than stored quoted.
         ScopeTarget::CurrentPaths { column } => ltree_matches(SeaExpr::cust(column.render()), SeaExpr::val(lquery).into()),
-        ScopeTarget::History { entity_id_column, interval } => scope_history_exists(&lquery, &entity_id_column.render(), *interval),
+        ScopeTarget::History {
+            entity_key_column,
+            timeproperty,
+            interval,
+        } => scope_history_exists(&lquery, &entity_key_column.render(), *timeproperty, *interval),
     }
 }
 
 /// Generate an `EXISTS` subquery for a single scope pattern against
 /// `scope_history`.
-fn scope_history_exists(lquery: &str, entity_id_column: &str, interval: TimeInterval) -> SimpleExpr {
+fn scope_history_exists(lquery: &str, entity_key_column: &str, timeproperty: TimeProp, interval: TimeInterval) -> SimpleExpr {
     // The placeholders are local to this fragment; sea-query renumbers them
     // when the enclosing statement is rendered. `$1` is the lquery pattern the
     // EXISTS body probes with.
     let mut binds: BindBuilder<String> = BindBuilder::default();
     let lquery_marker = binds.bind(lquery.to_string());
     let mut time_conditions = Vec::new();
+    // The window is measured on the requested Temporal Property alone, exactly
+    // as an attribute-history window is (clauses 4.11 and 5.2.21): a scope
+    // observation carrying no instant on that axis takes no position on it.
+    let axis = column_name(timeproperty);
 
     match interval {
         TimeInterval::Unbounded => {}
         TimeInterval::Before(instant) => {
             let marker = binds.bind(instant.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"time\" < {marker}::timestamptz"));
+            time_conditions.push(format!("\"sh\".\"{axis}\" < {marker}::timestamptz"));
         }
         TimeInterval::After(instant) => {
             let marker = binds.bind(instant.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"time\" >= {marker}::timestamptz"));
+            time_conditions.push(format!("\"sh\".\"{axis}\" >= {marker}::timestamptz"));
         }
         TimeInterval::Between { from, to } => {
             let start = binds.bind(from.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"time\" >= {start}::timestamptz"));
+            time_conditions.push(format!("\"sh\".\"{axis}\" >= {start}::timestamptz"));
             let end = binds.bind(to.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"time\" < {end}::timestamptz"));
+            time_conditions.push(format!("\"sh\".\"{axis}\" < {end}::timestamptz"));
         }
     }
 
@@ -123,7 +140,7 @@ fn scope_history_exists(lquery: &str, entity_id_column: &str, interval: TimeInte
 
     SeaExpr::cust_with_values(
         format!(
-            "EXISTS (SELECT 1 FROM \"scope_history\" AS \"sh\" WHERE \"sh\".\"entity_id\" = {entity_id_column} AND \"sh\".\"scope_path\" ~ {lquery_marker}::lquery{time_clause})"
+            "EXISTS (SELECT 1 FROM \"scope_history\" AS \"sh\" WHERE \"sh\".\"temporal_entity_key\" = {entity_key_column} AND \"sh\".\"scope_path\" ~ {lquery_marker}::lquery{time_clause})"
         ),
         binds.into_values(),
     )
@@ -144,7 +161,7 @@ mod tests {
     }
 
     fn history(interval: TimeInterval) -> ScopeTarget {
-        ScopeTarget::history((Alias::new("tea"), Alias::new("entity_id")), interval)
+        ScopeTarget::history((Alias::new("e"), Alias::new("entity_key")), TimeProp::Observed, interval)
     }
 
     fn instant(raw: &str) -> chrono::DateTime<chrono::Utc> {
@@ -203,8 +220,40 @@ mod tests {
             to: instant("2024-06-01T00:00:00Z"),
         };
         let sql = render(condition(&scope("/A"), &history(interval)));
-        assert!(sql.contains("\"sh\".\"time\" >="), "{sql}");
-        assert!(sql.contains("\"sh\".\"time\" <"), "{sql}");
+        assert!(sql.contains("\"sh\".\"observed_at\" >="), "{sql}");
+        assert!(sql.contains("\"sh\".\"observed_at\" <"), "{sql}");
+    }
+
+    /// The rebuilt `scope_history` hangs off the temporal catalogue: it carries
+    /// `temporal_entity_key` and the four semantic axes, and no `entity_id` or
+    /// `time` column for the probe to reach for.
+    #[test]
+    fn scope_history_probes_the_columns_the_rebuilt_relation_declares() {
+        let sql = render(condition(&scope("/A"), &history(TimeInterval::Unbounded)));
+        assert!(sql.contains("\"sh\".\"temporal_entity_key\" = \"e\".\"entity_key\""), "{sql}");
+        assert!(!sql.contains("\"sh\".\"entity_id\""), "{sql}");
+        assert!(!sql.contains("\"sh\".\"time\""), "{sql}");
+    }
+
+    /// Clause 5.2.21: each `timeproperty` bounds the scope probe on its own
+    /// column, exactly as it bounds an attribute-history window.
+    #[test]
+    fn each_time_property_bounds_the_scope_probe_on_its_own_column() {
+        let expected = [
+            (TimeProp::Observed, "observed_at"),
+            (TimeProp::Created, "created_at"),
+            (TimeProp::Modified, "modified_at"),
+            (TimeProp::Deleted, "deleted_at"),
+        ];
+        for (timeproperty, column) in expected {
+            let target = ScopeTarget::history(
+                (Alias::new("e"), Alias::new("entity_key")),
+                timeproperty,
+                TimeInterval::After(instant("2024-01-01T00:00:00Z")),
+            );
+            let sql = render(condition(&scope("/A"), &target));
+            assert!(sql.contains(&format!("\"sh\".\"{column}\" >=")), "{sql}");
+        }
     }
 
     /// Both targets walk the same grammar, so a change to the precedence of

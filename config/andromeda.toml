@@ -58,13 +58,18 @@ bulk_mode = "unnest"
 [snapshot]
 preparation_concurrency = 4
 
-[outbox]
+[notification_delivery]
 enabled = false
 max_attempts = 5
 base_backoff_secs = 5
 poll_interval_secs = 1
 batch_size = 50
+lease_secs = 30
+error_max_chars = 1024
 cleanup_after_secs = 86400
+cleanup_interval_secs = 300
+dead_letter_after_secs = 604800
+orphan_event_after_secs = 86400
 
 [notifications.sse]
 channel_buffer_size = 64

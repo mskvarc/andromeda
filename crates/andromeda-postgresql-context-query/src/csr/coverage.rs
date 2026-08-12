@@ -10,7 +10,17 @@
 //! The `type` predicate is shared with the clause-5.9 discovery query, which
 //! asks the same "does any entry declare this type" question, so the two cannot
 //! drift on what a type registration means.
+//!
+//! Each predicate is a conjunction of two tests that decide the same question at
+//! different costs. The indexed preselect over the routing projection runs
+//! first over one row per information item per entity selector and discards
+//! registrations no unnesting could have matched; the
+//! `information` unnesting that follows stays the authority on what the
+//! registration actually covers. Because the preselect is a superset of the
+//! unnesting (see [`crate::csr::projection`]), conjoining it leaves the result
+//! set unchanged and only spares the unnesting the rows it would have rejected.
 
+use crate::csr::projection::{entity_id_candidate, entity_type_candidate};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriBuf;
 use sea_query::{Expr as SeaExpr, SimpleExpr};
@@ -21,14 +31,17 @@ use sea_query::{Expr as SeaExpr, SimpleExpr};
 /// list, places no type constraint and covers every type; otherwise at least
 /// one entry must declare the type. The type is the expanded entity-type IRI the
 /// query was compiled against.
+///
+/// The projection preselect narrows the candidates the unnesting has to read;
+/// the unnesting decides coverage.
 pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
-    SeaExpr::cust_with_values(
+    entity_type_candidate(entity_type).and(SeaExpr::cust_with_values(
         "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
          WHERE NOT jsonb_exists(info, 'entities') \
             OR info->'entities' = '[]'::jsonb \
             OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'type' = $1))",
         [entity_type.as_str().to_string()],
-    )
+    ))
 }
 
 /// Whether a registration's `information[].entities[]` covers `entity_id`.
@@ -40,8 +53,12 @@ pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
 /// ids its pattern admits, not every id — the trap a bare `NOT jsonb_exists(ent,
 /// 'id')` disjunct falls into, since an entry that carries an `idPattern` but no
 /// `id` would otherwise match every entity.
+///
+/// The projection preselect that runs first admits every pattern row without
+/// looking at the pattern, so the regular expression is evaluated exactly once,
+/// here, where the coverage decision is made.
 pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
-    SeaExpr::cust_with_values(
+    entity_id_candidate(entity_id).and(SeaExpr::cust_with_values(
         "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
          WHERE NOT jsonb_exists(info, 'entities') \
             OR info->'entities' = '[]'::jsonb \
@@ -50,7 +67,7 @@ pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
                 OR ent->>'id' = $1 \
                 OR (jsonb_exists(ent, 'idPattern') AND $1 ~ (ent->>'idPattern'))))",
         [entity_id.as_str().to_string()],
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -93,5 +110,18 @@ mod tests {
         assert!(sql.contains("ent->>'id' ="), "{sql}");
         assert!(sql.contains("jsonb_exists(ent, 'idPattern') AND"), "{sql}");
         assert!(sql.contains("~ (ent->>'idPattern')"), "the idPattern regex disjunct must be present: {sql}");
+    }
+
+    #[test]
+    fn both_coverage_predicates_preselect_against_the_routing_projection() {
+        // The projection semi-join narrows the candidates; the `information`
+        // unnesting that follows it still decides coverage.
+        for sql in [
+            render(entity_type_coverage(&iri("https://example.com/Vehicle"))),
+            render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1"))),
+        ] {
+            assert!(sql.contains("\"registration_information\""), "{sql}");
+            assert!(sql.contains("jsonb_array_elements(\"information\")"), "{sql}");
+        }
     }
 }

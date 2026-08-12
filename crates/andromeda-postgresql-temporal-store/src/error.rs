@@ -1,6 +1,10 @@
 //! Error types for the temporal store crate.
 
+use crate::unit_code_metadata::UnitCodeMetadataError;
+use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
+use andromeda_ngsi_ld_model::attribute::json_number::JsonNumberError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
+use andromeda_postgresql_temporal_query::aggregation::MixedUnitAggregation;
 use andromeda_temporal::error::TemporalError;
 
 /// Errors produced by a temporal store implementation.
@@ -29,6 +33,23 @@ pub enum TemporalStoreError {
     /// An extracted attribute value was invalid.
     #[error("temporal store validation: {0}")]
     Validation(String),
+    /// A numeric value could not be carried in the shape JSON gives it.
+    ///
+    /// The history value column is `NUMERIC` and takes the value's decimal
+    /// literal, so magnitude alone no longer refuses a write. What remains
+    /// refusable is a number JSON has no literal for and a stored literal that
+    /// reads back as none of the three shapes a JSON number can take.
+    #[error("temporal store numeric precision: {0}")]
+    NumericPrecision(#[from] JsonNumberError),
+    /// A DateTime attribute value could not be accepted at microsecond resolution.
+    #[error("temporal store timestamp precision: {0}")]
+    TimestampPrecision(#[from] NgsiLdDateTimeError),
+    /// The instance's `unitCode` member could not be moved to or from its column.
+    #[error("temporal store unit code: {0}")]
+    UnitCode(#[from] UnitCodeMetadataError),
+    /// The requested aggregate would have spanned more than one unit.
+    #[error("temporal store aggregation: {0}")]
+    MixedUnitAggregation(#[from] MixedUnitAggregation),
 }
 
 impl From<TemporalStoreError> for TemporalError {
@@ -36,6 +57,19 @@ impl From<TemporalStoreError> for TemporalError {
         match error {
             TemporalStoreError::NotFound(detail) => TemporalError::not_found(detail),
             TemporalStoreError::Validation(detail) => TemporalError::validation(detail),
+            // Both precision refusals are about the value the client sent, not
+            // about the store, so they surface as validation failures rather
+            // than as persistence faults.
+            TemporalStoreError::NumericPrecision(_) | TemporalStoreError::TimestampPrecision(_) => TemporalError::validation(error.to_string()),
+            // A unit the client sent is a request fault; an identity already in
+            // a row that the catalog no longer registers is catalog drift.
+            TemporalStoreError::UnitCode(detail) => match detail {
+                UnitCodeMetadataError::Malformed | UnitCodeMetadataError::Unregistered { .. } => TemporalError::validation(detail.to_string()),
+                UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_) => TemporalError::persistence(detail.to_string()),
+            },
+            // Which units the selected instances carry is a property of the
+            // request, so a mixed-unit aggregate is refused as client input.
+            TemporalStoreError::MixedUnitAggregation(_) => TemporalError::validation(error.to_string()),
             TemporalStoreError::Database(_)
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)

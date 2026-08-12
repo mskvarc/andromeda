@@ -167,9 +167,7 @@ impl EntityRepository {
         Ok(planned.outcome(ids, None))
     }
 
-    /// Resolve the attribute IRIs a compiled query reads by dictionary key, and
-    /// wait for the `attribute_current` projection to catch up if any of them
-    /// will be answered from it.
+    /// Resolve the attribute IRIs a compiled query reads by dictionary key.
     ///
     /// A clause 4.9 linked-entity traversal contributes more than one name per
     /// predicate: the Relationship each hop descends through is probed by
@@ -177,18 +175,16 @@ impl EntityRepository {
     /// the same collection walk. A geo-query and a distance ordering each
     /// contribute their target GeoProperty, which is read from the same
     /// projection (clauses 4.10 and 4.23).
+    ///
+    /// The lookup needs no barrier in front of it. Dictionary rows and the
+    /// projected values keyed on them are written in the entity's own
+    /// transaction, so a name that resolves to nothing is a name nothing has
+    /// ever written, not one written moments ago.
     async fn resolve_projected_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, ContextStoreError> {
         let names = projected_attribute_names(compiled.selection.q_expr.as_ref(), compiled.selection.geo.as_ref(), &compiled.ordering.terms);
         if names.is_empty() {
             return Ok(ResolvedAttributeNames::default());
         }
-        // The barrier is crossed before the dictionary is read, not after it
-        // resolved something: `attribute_names` rows are minted by the same
-        // projection worker, so a name looked up first would read as unknown
-        // for an attribute written moments ago and compile to constant `FALSE`
-        // (clause 4.10) or to a distance that measures from nothing (clause
-        // 4.23) — a read-your-writes violation rather than an empty answer.
-        self.attribute_current.wait_for_pending_writes().await;
         Ok(self.attribute_names.lookup(&names).await?)
     }
 

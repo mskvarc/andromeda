@@ -26,8 +26,10 @@ pub mod constant_string;
 pub mod context_source_pseudonym;
 pub mod date_time;
 pub mod entity_type_name;
-pub mod instance_id;
+pub mod instance_family;
+pub mod instance_identity;
 pub mod name;
+pub mod ngsi_ld_date_time;
 pub mod ngsi_ld_urn;
 pub mod reference;
 pub mod rfc3339;
@@ -36,6 +38,7 @@ pub mod temporal_format;
 pub mod tenant;
 pub mod time_prop;
 pub mod time_rel;
+pub mod unit_code_admission;
 pub mod uri;
 
 #[cfg(test)]

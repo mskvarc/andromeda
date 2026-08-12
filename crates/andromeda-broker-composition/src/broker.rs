@@ -188,7 +188,7 @@ fn report_startup(config: &RuntimeConfig) {
         host = %config.server.host,
         port = config.server.port,
         tenancy_enabled = config.tenancy.enabled,
-        outbox_enabled = config.outbox.enabled,
+        notification_delivery_enabled = config.notification_delivery.enabled,
         log_level = %config.observability.log_level,
         precedence = RuntimeConfig::precedence_summary(),
         "Starting Andromeda"

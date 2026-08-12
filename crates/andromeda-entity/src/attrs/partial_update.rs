@@ -10,9 +10,9 @@ use crate::{
 };
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, mutation::attribute::partial_update_attr},
+    expanded::{entity_member::extract_types, instance_key::attribute_instance_family, mutation::attribute::partial_update_attr},
     notification::NotificationTrigger,
 };
 use serde_json::Value;
@@ -60,7 +60,15 @@ impl EntityService {
                 let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
 
                 let (history, trigger) = if was_deleted {
-                    (vec![tombstone(&expanded_attr_name, dataset_id)], NotificationTrigger::AttributeDeleted)
+                    // The family comes from the payload the deletion superseded,
+                    // so the tombstone renders the null member that family
+                    // prescribes (clauses 4.5.7 and 4.5.8); clause 4.5.2 makes an
+                    // instance that declared none a Property.
+                    let attribute_type = attribute_instance_family(previous, &expanded_attr_name, dataset_id).unwrap_or(AttributeType::Property);
+                    (
+                        vec![tombstone(&expanded_attr_name, dataset_id, attribute_type)],
+                        NotificationTrigger::AttributeDeleted,
+                    )
                 } else {
                     (
                         vec![HistoryRecord::Observations(Arc::clone(&expanded))], // clone: Arc ref-count bump

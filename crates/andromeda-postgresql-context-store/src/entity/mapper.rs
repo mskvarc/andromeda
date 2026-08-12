@@ -7,13 +7,27 @@
 //! broker only ever writes valid values, so a parse failure is an internal
 //! fault rather than client input.
 
-use crate::error::ContextStoreError;
+use crate::{entity::written_entity::WrittenEntity, error::ContextStoreError};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_postgresql_codes::entity_key::EntityKey;
 use std::str::FromStr;
 
 /// Parse a stored entity identifier into a [`Uri`].
 pub fn stored_uri(raw: String) -> Result<Uri, ContextStoreError> {
     Uri::from_str(&raw).map_err(|error| ContextStoreError::Internal(format!("stored entity identifier is not a valid URI: {error}")))
+}
+
+/// Parse a stored surrogate key into an [`EntityKey`].
+pub fn stored_entity_key(raw: i64) -> Result<EntityKey, ContextStoreError> {
+    EntityKey::try_from(raw).map_err(|error| ContextStoreError::Internal(format!("stored entity key is not a valid surrogate key: {error}")))
+}
+
+/// Lift the identity pair a write statement returns into a [`WrittenEntity`].
+pub fn stored_written_entity(key: i64, id: String) -> Result<WrittenEntity, ContextStoreError> {
+    Ok(WrittenEntity {
+        key: stored_entity_key(key)?,
+        id: stored_uri(id)?,
+    })
 }
 
 /// Parse a stored entity type IRI into an [`EntityTypeName`].

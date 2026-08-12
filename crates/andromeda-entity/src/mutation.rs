@@ -14,7 +14,7 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
     entity_mutation::{EntityMutation, EntityRecord},
-    history_record::{HistoryRecord, mutation_history},
+    history_record::{HistoryRecord, deletion_history, mutation_history},
     precondition::Precondition,
     write_outcome::single,
 };
@@ -64,13 +64,14 @@ impl EntityService {
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
         let changed_attrs = extract_attribute_keys(&payload);
-        let outbox = self.build_outbox_entries(&entity.id, &types, NotificationTrigger::EntityCreated, &changed_attrs, Some(&payload), None);
+        let subscription_matches =
+            self.build_subscription_matches(&entity.id, &types, NotificationTrigger::EntityCreated, &changed_attrs, Some(&payload), None);
 
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
             .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump; the payload is also the change event's
             .history(vec![HistoryRecord::Observations(Arc::clone(&payload))]) // clone: Arc ref-count bump
-            .outbox(outbox)
+            .subscription_matches(subscription_matches)
             .precondition(Precondition::MustNotExist)
             .build();
 
@@ -130,9 +131,9 @@ impl EntityService {
                 let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&merged).into_iter().collect();
                 let deleted_attrs: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
-                let mut outbox = Vec::new();
+                let mut subscription_matches = Vec::new();
                 for deleted_attr in &deleted_attrs {
-                    outbox.extend(self.build_outbox_entries(
+                    subscription_matches.extend(self.build_subscription_matches(
                         &entity_uri,
                         &types,
                         NotificationTrigger::AttributeDeleted,
@@ -141,7 +142,7 @@ impl EntityService {
                         previous_attributes.as_ref(),
                     ));
                 }
-                outbox.extend(self.build_outbox_entries(
+                subscription_matches.extend(self.build_subscription_matches(
                     &entity_uri,
                     &types,
                     NotificationTrigger::EntityUpdated,
@@ -156,7 +157,7 @@ impl EntityService {
                     .entity_id(Arc::new(entity_uri.clone())) // clone: the computed write owns its validated identifier.
                     .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged)))) // clone: Arc ref-count bump
                     .history(history)
-                    .outbox(outbox)
+                    .subscription_matches(subscription_matches)
                     .build();
 
                 Ok((
@@ -227,12 +228,13 @@ impl EntityService {
             .commit_computed_write(&entity_uri, |previous| {
                 let types = extract_types(previous);
                 let history = mutation_history(&payload, previous, &payload);
-                let outbox = self.build_outbox_entries(&entity_uri, &types, NotificationTrigger::EntityUpdated, &changed_attrs, Some(&payload), None);
+                let subscription_matches =
+                    self.build_subscription_matches(&entity_uri, &types, NotificationTrigger::EntityUpdated, &changed_attrs, Some(&payload), None);
                 let write = AtomicWrite::builder()
                     .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump; the identifier outlives the attempt
                     .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump
                     .history(history)
-                    .outbox(outbox)
+                    .subscription_matches(subscription_matches)
                     .build();
                 Ok((write, types))
             })
@@ -272,9 +274,9 @@ impl EntityService {
 
         let attr_keys = extract_attribute_keys(&entity_snapshot);
 
-        let mut outbox = Vec::new();
+        let mut subscription_matches = Vec::new();
         if !attr_keys.is_empty() {
-            outbox.extend(self.build_outbox_entries(
+            subscription_matches.extend(self.build_subscription_matches(
                 &entity_uri,
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
@@ -283,7 +285,7 @@ impl EntityService {
                 Some(&entity_snapshot),
             ));
         }
-        outbox.extend(self.build_outbox_entries(
+        subscription_matches.extend(self.build_subscription_matches(
             &entity_uri,
             &entity_types,
             NotificationTrigger::EntityDeleted,
@@ -295,7 +297,11 @@ impl EntityService {
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(entity_uri.clone())) // clone: the delete write owns its validated identifier.
             .entity(EntityMutation::Delete)
-            .outbox(outbox)
+            // Clause 5.6.6 removes current state and leaves the Temporal
+            // Evolution standing, so every instance the entity still held is
+            // recorded as ended rather than being deleted with it.
+            .history(deletion_history(&entity_snapshot))
+            .subscription_matches(subscription_matches)
             .precondition(Precondition::MustExist)
             .build();
 
