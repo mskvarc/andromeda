@@ -154,10 +154,18 @@ where
     Box::pin(expand_query_path(path, expander))
 }
 
-/// Expand an attribute path — main attribute plus sub-attributes — to full IRIs.
+/// Expand an attribute path — main attribute, sub-attributes and compound-value
+/// member names — to full IRIs.
+///
+/// The member names of a compound value expand for the same reason the attribute
+/// name does: JSON-LD expansion of a structured Property value turns its members
+/// into IRI-keyed nodes, so `address[city]` addresses the expansion of `city`
+/// under the request `@context`, not the four letters the client typed. Leaving
+/// them compact addressed a member the stored payload does not carry.
 pub async fn expand_attr_path(mut path: AttrPath, expander: &impl TermExpander) -> Result<AttrPath, QueryError> {
     path.attr = expanded_attribute_name(&expander.expand_term(path.attr.as_str()).await?)?;
     path.sub_attrs = expand_all(&path.sub_attrs, expander).await?;
+    path.value_path = expand_all(&path.value_path, expander).await?;
     Ok(path)
 }
 
@@ -402,6 +410,51 @@ mod tests {
                 Scalar::Str("https://example.com/blue".to_string()),
             ])
         );
+    }
+
+    /// JSON-LD expansion of a structured Property value turns its members into
+    /// IRI-keyed nodes, so a compound-value member has to be expanded through the
+    /// same `@context` the attribute name is. Leaving it compact addressed a
+    /// member the stored payload does not carry.
+    #[tokio::test]
+    async fn a_compound_value_member_is_expanded_through_the_context() {
+        let expanded = expand_q_expression(Some("address[city]==\"Berlin\""), &PrefixExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        let path = path_of(&expanded);
+        assert_eq!(path.attr.as_str(), "https://example.com/address");
+        assert_eq!(
+            path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            vec!["https://example.com/city"]
+        );
+    }
+
+    #[tokio::test]
+    async fn every_member_of_a_nested_compound_path_is_expanded() {
+        let expanded = expand_q_expression(Some("sensor.rawdata[airquality.particulate]==40"), &PrefixExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        let path = path_of(&expanded);
+        assert_eq!(
+            path.sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            vec!["https://example.com/rawdata"]
+        );
+        assert_eq!(
+            path.value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+            vec!["https://example.com/airquality", "https://example.com/particulate"]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_expanded_compound_path_round_trips_through_the_serialisation() {
+        let expanded = expand_q_expression(Some("address[city]==\"Berlin\""), &PrefixExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        let reparsed = parser::parse(&serialize(&expanded)).expect("reparses");
+        assert_eq!(reparsed, expanded);
     }
 
     #[tokio::test]

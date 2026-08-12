@@ -52,7 +52,7 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
         // Clause 4.9: existence holds when the entity contains the target
         // element, whatever attribute family it belongs to.
         Predicate::Exists(path) => !resolve_targets(obj, path).is_empty(),
-        Predicate::Equality { path, membership, rhs } => resolve_targets(obj, path).iter().any(|target| eval_equality(&target.value, *membership, rhs)),
+        Predicate::Equality { path, membership, rhs } => resolve_targets(obj, path).iter().any(|target| eval_equality(target, *membership, rhs)),
         Predicate::Ordering { path, op, rhs } => resolve_targets(obj, path).iter().any(|target| {
             // Clause 4.9: an ordering comparison against a Relationship shall
             // not match — a URI has no `<`/`>` order the query can mean.
@@ -63,19 +63,32 @@ fn eval_predicate(pred: &Predicate, obj: &Map<String, Value>) -> bool {
         }),
         // Clause 4.9: a pattern operator applies only to a String target; a
         // non-String value is considered as not matching, so a number or
-        // boolean is never stringified into a match.
+        // boolean is never stringified into a match. A Relationship's object is
+        // excluded for the same reason the ordering operators exclude it — the
+        // standard requires a Relationship operand to non-match every operator
+        // other than equality and inequality — and a URI is string-shaped, so
+        // only its origin can rule it out.
         Predicate::MatchPattern { path, pattern } => resolve_targets(obj, path)
             .iter()
-            .filter_map(|target| target.value.as_str())
+            .filter_map(pattern_target)
             .any(|value| pattern.is_match(value)),
         // `notPatternOp` also requires the entity to *contain* the target
         // element (clause 4.9); an entity that lacks the attribute, or carries
         // only non-String values, does not match.
         Predicate::NotMatchPattern { path, pattern } => resolve_targets(obj, path)
             .iter()
-            .filter_map(|target| target.value.as_str())
+            .filter_map(pattern_target)
             .any(|value| !pattern.is_match(value)),
     }
+}
+
+/// The text a pattern operator may be applied to, or `None` when the target is
+/// not one (clause 4.9).
+fn pattern_target(target: &ResolvedTarget) -> Option<&str> {
+    if target.is_relationship {
+        return None;
+    }
+    target.value.as_str()
 }
 
 /// The expanded value members a `q` target can terminate at: the member IRI,
@@ -225,18 +238,84 @@ fn resolve_instance_value(instance: &Value, path: &AttrPath) -> Option<ResolvedT
         current = current.get(sub.as_str())?.as_array()?.first()?;
     }
 
-    let (raw, is_relationship) = terminal_value(current)?;
+    if path.value_path.is_empty() {
+        let (raw, is_relationship) = terminal_value(current)?;
+        // clone: the caller owns the resolved value, which outlives the borrow of `instance`
+        return Some(ResolvedTarget {
+            value: raw.clone(),
+            is_relationship,
+        });
+    }
+    resolve_compound_member(current, path)
+}
 
-    // Navigate compound value path (e.g. address[city]).
+/// Resolve a compound value path (`address[city]`) inside one attribute instance.
+///
+/// A compound value reaches this evaluator in either of two genuinely different
+/// JSON-LD shapes, and both are addressed by the same `q` path:
+///
+/// * A structured Property value is expanded by JSON-LD into IRI-keyed member
+///   nodes hanging off `hasValue`, so `city` is a member *hop* — `hasValue[0]`
+///   then the member's own array, then that node's `@value`. This is the shape a
+///   notification payload and a stored entity carry, and the one an earlier
+///   evaluator missed entirely: it read the terminal `@value` first and then
+///   indexed into it, which for this shape resolves nothing.
+/// * A JsonProperty's value, and a Property value that survived expansion as an
+///   opaque JSON object, sit *under* a single `@value` as raw JSON, where `city`
+///   is an ordinary object key. The NGSI-LD data model puts no constraint on
+///   those keys, so they are read verbatim.
+///
+/// The member hop is tried first, addressed by the term-expanded spelling
+/// (`path.value_path`): it is the shape term expansion produced the path for,
+/// and a raw JSON object cannot carry a member whose key is the expanded IRI
+/// without the client having written that IRI. The raw-JSON fallback then
+/// retries with the pre-expansion spelling (`path.value_path_compact`),
+/// because a JsonProperty's value — and a Property value that survived
+/// expansion as an opaque object — is never touched by JSON-LD expansion: its
+/// keys are exactly what the client wrote, not what the request `@context`
+/// expands them to.
+fn resolve_compound_member(instance: &Value, path: &AttrPath) -> Option<ResolvedTarget> {
+    if let Some(target) = resolve_member_hops(instance, &path.value_path) {
+        return Some(target);
+    }
+    let (raw, is_relationship) = terminal_value(instance)?;
     let mut value = raw;
-    for key in &path.value_path {
-        value = value.get(key)?;
+    for key in &path.value_path_compact {
+        value = value.get(key.as_str())?;
     }
     // clone: the caller owns the resolved value, which outlives the borrow of `instance`
     Some(ResolvedTarget {
         value: value.clone(),
         is_relationship,
     })
+}
+
+/// Walk expanded member nodes from an attribute instance down to a leaf `@value`.
+///
+/// Each hop is `node[<member IRI>][0]`, mirroring the jsonpath the SQL fallback
+/// emits, and the leaf is read by [`terminal_value`] so a member that is itself
+/// an NGSI-LD node resolves the same way the attribute's own value does.
+fn resolve_member_hops(instance: &Value, value_path: &[AttributeName]) -> Option<ResolvedTarget> {
+    let mut current = first_family_value(instance)?;
+    for member in value_path {
+        current = current.get(member.as_str())?.as_array()?.first()?;
+    }
+    let raw = current.get("@value")?;
+    // clone: the caller owns the resolved value, which outlives the borrow of `instance`
+    Some(ResolvedTarget {
+        value: raw.clone(),
+        is_relationship: false,
+    })
+}
+
+/// The first value node of whichever family member an attribute instance carries.
+///
+/// This is the node a compound value's members hang off, one level above the
+/// `@value` [`terminal_value`] reads.
+fn first_family_value(instance: &Value) -> Option<&Value> {
+    value_members()
+        .into_iter()
+        .find_map(|(member, _, _)| instance.get(member).and_then(Value::as_array).and_then(|values| values.first()))
 }
 
 /// Read an instance node down to the value its attribute family carries, and
@@ -273,19 +352,27 @@ fn terminal_value(node: &Value) -> Option<(&Value, bool)> {
 ///
 /// "Outside" is the exact complement of "within" — for a range as for a value
 /// list — so a target incomparable with the bounds is outside the range, not
-/// neither in nor out.
-fn eval_equality(entity_val: &Value, membership: SetMembership, rhs: &CompareValue) -> bool {
+/// neither in nor out. The exception is a Range target that is a Relationship
+/// object: clause 4.9 forbids the ordering operators against a Relationship in
+/// either direction, and a range is two ordering comparisons, so neither
+/// membership polarity holds — "outside" is not a match here either, mirroring
+/// the Ordering predicate arm above and the SQL compiler (`projection.rs`),
+/// which routes `<`/`>`/`<=`/`>=` away from `value_uri` for both range halves.
+fn eval_equality(target: &ResolvedTarget, membership: SetMembership, rhs: &CompareValue) -> bool {
     match rhs {
-        CompareValue::Scalar(scalar) => eval_cmp_scalar(entity_val, membership.as_cmp_op(), scalar),
+        CompareValue::Scalar(scalar) => eval_cmp_scalar(&target.value, membership.as_cmp_op(), scalar),
         CompareValue::Range { min, max } => {
-            let within = eval_cmp_scalar(entity_val, CmpOp::GreaterEq, min) && eval_cmp_scalar(entity_val, CmpOp::LessEq, max);
+            if target.is_relationship {
+                return false;
+            }
+            let within = eval_cmp_scalar(&target.value, CmpOp::GreaterEq, min) && eval_cmp_scalar(&target.value, CmpOp::LessEq, max);
             match membership {
                 SetMembership::Within => within,
                 SetMembership::Outside => !within,
             }
         }
         CompareValue::ValueList(values) => {
-            let any_match = values.iter().any(|v| eval_cmp_scalar(entity_val, CmpOp::Equal, v));
+            let any_match = values.iter().any(|v| eval_cmp_scalar(&target.value, CmpOp::Equal, v));
             match membership {
                 SetMembership::Within => any_match,
                 SetMembership::Outside => !any_match,
@@ -405,7 +492,12 @@ fn entity_value_to_string(val: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::parser::parse;
+    use crate::{
+        error::QueryError,
+        filter::{expansion::expand_q_expression, parser::parse},
+        term_expander::TermExpander,
+    };
+    use iri_rs::IriBuf;
 
     fn vehicle_entity() -> Value {
         serde_json::json!([{
@@ -587,6 +679,122 @@ mod tests {
         assert!(!evaluate(&expr, &vehicle_entity()));
     }
 
+    /// A structured Property value expanded by JSON-LD, which is the shape a
+    /// notification payload and a stored entity carry: the members are IRI-keyed
+    /// nodes hanging off `hasValue`, not keys inside one `@value`. An evaluator
+    /// that read the terminal `@value` first and then indexed into it resolved
+    /// nothing here, so a subscription filtering on a compound member never
+    /// matched.
+    fn entity_with_expanded_compound_value() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            "@type": ["https://example.com/Building"],
+            "https://example.com/address": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "https://example.com/city": [{"@value": "Berlin"}],
+                    "https://example.com/country": [{"@value": "DE"}]
+                }]
+            }],
+            "https://example.com/sensor": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "https://example.com/airquality": [{
+                        "https://example.com/particulate": [{"@value": 40}]
+                    }]
+                }]
+            }]
+        }])
+    }
+
+    #[test]
+    fn a_compound_member_of_an_expanded_value_is_reached_through_its_member_node() {
+        let entity = entity_with_expanded_compound_value();
+        assert!(evaluate(
+            &parse("\"https://example.com/address\"[\"https://example.com/city\"]==\"Berlin\"").unwrap(),
+            &entity
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/address\"[\"https://example.com/city\"]==\"Paris\"").unwrap(),
+            &entity
+        ));
+    }
+
+    #[test]
+    fn a_nested_compound_member_is_reached_through_one_hop_per_member() {
+        let entity = entity_with_expanded_compound_value();
+        assert!(evaluate(
+            &parse("\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]==40").unwrap(),
+            &entity
+        ));
+        assert!(evaluate(
+            &parse("\"https://example.com/sensor\"[\"https://example.com/airquality\".\"https://example.com/particulate\"]>30").unwrap(),
+            &entity
+        ));
+    }
+
+    #[test]
+    fn a_compound_member_the_value_does_not_carry_resolves_no_target() {
+        let entity = entity_with_expanded_compound_value();
+        assert!(!evaluate(
+            &parse("\"https://example.com/address\"[\"https://example.com/postcode\"]==\"10115\"").unwrap(),
+            &entity
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/address\"[\"https://example.com/postcode\"]").unwrap(),
+            &entity
+        ));
+    }
+
+    /// An expander that prefixes every term, standing in for a request
+    /// `@context` without needing a JSON-LD engine.
+    struct PrefixExpander;
+
+    impl TermExpander for PrefixExpander {
+        async fn expand_term(&self, term: &str) -> Result<IriBuf, QueryError> {
+            Ok(IriBuf::new(format!("https://example.com/{term}")).expect("valid IRI"))
+        }
+
+        async fn expand_type(&self, term: &str) -> Result<IriBuf, QueryError> {
+            Ok(IriBuf::new(format!("https://example.com/types/{term}")).expect("valid IRI"))
+        }
+    }
+
+    /// A JsonProperty, whose value is raw JSON that JSON-LD expansion never
+    /// touches: `hasJSON`'s `@value` holds the object exactly as the client
+    /// wrote it, keys included.
+    fn entity_with_json_property() -> Value {
+        serde_json::json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            "@type": ["https://example.com/Building"],
+            "https://example.com/myJson": [{
+                "https://uri.etsi.org/ngsi-ld/hasJSON": [{
+                    "@value": {"city": "Berlin"}
+                }]
+            }]
+        }])
+    }
+
+    /// The defect a term-expanded `value_path` reintroduced: `resolve_member_hops`
+    /// cannot walk into a JsonProperty's raw `@value` object (it carries no
+    /// IRI-keyed member nodes to hop through), so a compound `q` over one has to
+    /// fall back to the raw-JSON walk — and that walk has to use the key the
+    /// client wrote, not the IRI the path was expanded to. `eval_compound_value_path`
+    /// above parses without ever calling `expand_q_expression`, so it cannot
+    /// exercise this: `path.value_path` there is already the compact spelling.
+    #[tokio::test]
+    async fn a_json_property_compound_member_is_still_reached_after_the_path_is_expanded() {
+        let expanded = expand_q_expression(Some("myJson[city]==\"Berlin\""), &PrefixExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        assert!(evaluate(&expanded, &entity_with_json_property()));
+
+        let non_matching = expand_q_expression(Some("myJson[city]==\"Paris\""), &PrefixExpander)
+            .await
+            .expect("expands")
+            .expect("present");
+        assert!(!evaluate(&non_matching, &entity_with_json_property()));
+    }
+
     /// Two `datasetId`-partitioned instances of the same attribute.
     fn multi_instance_entity() -> Value {
         serde_json::json!([{
@@ -699,12 +907,38 @@ mod tests {
     }
 
     #[test]
+    fn a_pattern_operator_does_not_match_a_relationship_object() {
+        // Clause 4.9 requires a Relationship operand to non-match every operator
+        // other than equality and inequality. A URI is string-shaped, so only its
+        // origin rules it out — and `notPatternOp` must not turn the exclusion
+        // into a match either.
+        assert!(!evaluate(&parse("\"https://example.com/owner\"~=\"urn:.*\"").unwrap(), &rich_entity()));
+        assert!(!evaluate(&parse("\"https://example.com/owner\"!~=\"^nothing\"").unwrap(), &rich_entity()));
+    }
+
+    #[test]
     fn an_ordering_comparison_against_a_relationship_does_not_match() {
         // Clause 4.9: `>`/`<`/`>=`/`<=` against a Relationship shall not match,
         // but equality against its object still does.
         assert!(!evaluate(&parse("\"https://example.com/owner\">\"a\"").unwrap(), &rich_entity()));
         assert!(evaluate(
             &parse("\"https://example.com/owner\"==\"urn:ngsi-ld:Person:42\"").unwrap(),
+            &rich_entity()
+        ));
+    }
+
+    #[test]
+    fn a_range_comparison_against_a_relationship_does_not_match_in_either_polarity() {
+        // Clause 4.9: a range is two ordering comparisons, and ordering shall
+        // not match a Relationship object in either direction — so neither
+        // `==` (within) nor `!=` (outside) holds, mirroring `projection.rs`'s
+        // `a_string_range_bound_keeps_relationship_objects_out_of_its_ordering_halves`.
+        assert!(!evaluate(
+            &parse("\"https://example.com/owner\"==\"urn:a\"..\"urn:z\"").unwrap(),
+            &rich_entity()
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/owner\"!=\"urn:a\"..\"urn:z\"").unwrap(),
             &rich_entity()
         ));
     }

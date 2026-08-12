@@ -7,7 +7,13 @@
 
 use crate::error::TemporalStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, ngsi_ld_date_time::NgsiLdDateTime, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_type::AttributeType,
+    ngsi_ld_date::NgsiLdDate,
+    ngsi_ld_date_time::NgsiLdDateTime,
+    ngsi_ld_time::NgsiLdTime,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, expanded::geo_property::expanded_geo_node_to_geometry};
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use chrono::{DateTime, Utc};
@@ -189,10 +195,10 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
             if let Some(value) = has_value.get("@value") {
                 let type_hint = has_value.get("@type").and_then(|t| t.as_str());
 
-                if (type_hint == Some(expanded_classes::DATE_TIME.as_str()) || type_hint == Some(expanded_properties::XSD_DATETIME.as_str()))
-                    && let Some(s) = value.as_str()
+                if let Some(text) = value.as_str()
+                    && let Some(typed) = temporal_attribute_value(type_hint, text)
                 {
-                    return Ok(AttributeValue::DateTime(s.parse::<NgsiLdDateTime>()?));
+                    return typed;
                 }
 
                 match value {
@@ -214,9 +220,74 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
     }
 }
 
+/// Decode a Property value the client typed as one of the three clause 4.6.3
+/// temporal forms, or `None` when the declared type is not one of them.
+///
+/// A `DateTime` reaches its own column. A `Time` and a `Date` reach the string
+/// column, and are stored in the canonical rendering their type defines rather
+/// than verbatim: clause 4.6.3 admits many spellings of one `Time`, clause 4.9
+/// orders `Time` and `Date` values chronologically, and byte-wise order over the
+/// string column is chronological order only for a fixed-width canonical form.
+fn temporal_attribute_value(type_hint: Option<&str>, raw: &str) -> Option<Result<AttributeValue, TemporalStoreError>> {
+    let hint = type_hint?;
+    if hint == expanded_classes::DATE_TIME.as_str() || hint == expanded_properties::XSD_DATETIME.as_str() {
+        return Some(raw.parse::<NgsiLdDateTime>().map(AttributeValue::DateTime).map_err(TemporalStoreError::from));
+    }
+    if hint == expanded_classes::TIME.as_str() {
+        return Some(
+            raw.parse::<NgsiLdTime>()
+                .map(|time| AttributeValue::String(time.to_string()))
+                .map_err(|error| TemporalStoreError::Validation(format!("invalid Time property '{raw}': {error}"))),
+        );
+    }
+    if hint == expanded_classes::DATE.as_str() {
+        return Some(
+            raw.parse::<NgsiLdDate>()
+                .map(|date| AttributeValue::String(date.to_string()))
+                .map_err(|error| TemporalStoreError::Validation(format!("invalid Date property '{raw}': {error}"))),
+        );
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One expanded Property instance carrying a typed literal value.
+    fn typed_property(type_iri: &str, value: &str) -> Value {
+        serde_json::json!({
+            expanded_properties::VALUE.as_str(): [{"@value": value, "@type": type_iri}]
+        })
+    }
+
+    #[test]
+    fn a_time_typed_property_is_canonicalised_before_it_reaches_the_string_column() {
+        // Clause 4.6.3 admits any offset; the string column orders byte-wise, so
+        // only one fixed-width UTC rendering may be stored.
+        let columns = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), "13:00:00+01:00"), AttributeType::Property)
+            .expect("a Time property")
+            .into_columns();
+        pretty_assertions::assert_eq!(columns.value_string.as_deref(), Some("12:00:00.000000Z"));
+    }
+
+    #[test]
+    fn a_time_typed_property_that_is_not_a_full_time_is_refused() {
+        let error = extract_attribute_value(&typed_property(expanded_classes::TIME.as_str(), "12:00:00"), AttributeType::Property)
+            .expect_err("RFC 3339 full-time requires an offset");
+        assert!(matches!(error, TemporalStoreError::Validation(_)), "got {error:?}");
+    }
+
+    #[test]
+    fn a_date_typed_property_is_validated_before_it_reaches_the_string_column() {
+        let columns = extract_attribute_value(&typed_property(expanded_classes::DATE.as_str(), "2026-04-12"), AttributeType::Property)
+            .expect("a Date property")
+            .into_columns();
+        pretty_assertions::assert_eq!(columns.value_string.as_deref(), Some("2026-04-12"));
+        let error = extract_attribute_value(&typed_property(expanded_classes::DATE.as_str(), "2026-4-2"), AttributeType::Property)
+            .expect_err("an unpadded spelling would not sort chronologically");
+        assert!(matches!(error, TemporalStoreError::Validation(_)), "got {error:?}");
+    }
 
     #[test]
     fn a_datetime_typed_property_lands_in_the_datetime_column() {

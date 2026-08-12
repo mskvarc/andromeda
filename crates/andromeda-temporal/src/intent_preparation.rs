@@ -11,6 +11,8 @@ use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     instance_family::InstanceFamily,
     instance_identity::InstanceIdentity,
+    ngsi_ld_date::NgsiLdDate,
+    ngsi_ld_time::NgsiLdTime,
     scope::grammar::ScopeBuf,
     uri::Uri,
 };
@@ -436,19 +438,17 @@ fn list_relationship_value(instance: &Value) -> Result<TemporalValue, TemporalEr
     Ok(TemporalValue::Object(Value::Array(targets)))
 }
 
-/// Decode a Property scalar, structured value, or typed date-time.
+/// Decode a Property scalar, structured value, or typed temporal literal.
 fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
     let value_node = first_member(instance, expanded_properties::VALUE.as_str()).ok_or_else(|| TemporalError::validation("Property missing value"))?;
     let Some(value) = value_node.get("@value") else {
         return Ok(TemporalValue::Object(Value::clone(value_node))); // clone: the intent owns the expanded node.
     };
     let type_hint = value_node.get("@type").and_then(Value::as_str);
-    if (type_hint == Some(expanded_classes::DATE_TIME.as_str()) || type_hint == Some(expanded_properties::XSD_DATETIME.as_str()))
-        && let Some(raw) = value.as_str()
+    if let Some(raw) = value.as_str()
+        && let Some(typed) = temporal_property_value(type_hint, raw)
     {
-        return DateTime::parse_from_rfc3339(raw)
-            .map(|timestamp| TemporalValue::DateTime(timestamp.with_timezone(&Utc)))
-            .map_err(|error| TemporalError::validation(format!("invalid datetime property '{raw}': {error}")));
+        return typed;
     }
     match value {
         // The number keeps the shape it was parsed in all the way to the
@@ -462,6 +462,43 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
         Value::Array(_) | Value::Object(_) => Ok(TemporalValue::Object(Value::clone(value))), // clone: the intent owns the structured value.
         Value::Null => Ok(TemporalValue::String("null".to_owned())),
     }
+}
+
+/// Decode a Property value the client typed as one of the three clause 4.6.3
+/// temporal forms, or `None` when the declared type is not one of them.
+///
+/// Each form is parsed rather than taken verbatim, and the two that are stored as
+/// text are stored in the canonical rendering their type defines. Clause 4.6.3
+/// admits many spellings of one `Time` — any offset, any fractional width — and
+/// clause 4.9 orders `Time` values chronologically; the string column those values
+/// land in orders them byte-wise, so only a fixed-width UTC rendering makes the
+/// two orders the same. `Date` is validated for the same reason: its canonical
+/// `YYYY-MM-DD` form already sorts chronologically, and a lenient spelling would
+/// not.
+fn temporal_property_value(type_hint: Option<&str>, raw: &str) -> Option<Result<TemporalValue, TemporalError>> {
+    let hint = type_hint?;
+    if hint == expanded_classes::DATE_TIME.as_str() || hint == expanded_properties::XSD_DATETIME.as_str() {
+        return Some(
+            DateTime::parse_from_rfc3339(raw)
+                .map(|timestamp| TemporalValue::DateTime(timestamp.with_timezone(&Utc)))
+                .map_err(|error| TemporalError::validation(format!("invalid datetime property '{raw}': {error}"))),
+        );
+    }
+    if hint == expanded_classes::TIME.as_str() {
+        return Some(
+            raw.parse::<NgsiLdTime>()
+                .map(|time| TemporalValue::String(time.to_string()))
+                .map_err(|error| TemporalError::validation(format!("invalid Time property '{raw}': {error}"))),
+        );
+    }
+    if hint == expanded_classes::DATE.as_str() {
+        return Some(
+            raw.parse::<NgsiLdDate>()
+                .map(|date| TemporalValue::String(date.to_string()))
+                .map_err(|error| TemporalError::validation(format!("invalid Date property '{raw}': {error}"))),
+        );
+    }
+    None
 }
 
 /// Borrow the first value of one expanded array member.

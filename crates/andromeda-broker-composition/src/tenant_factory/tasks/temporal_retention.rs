@@ -91,7 +91,7 @@ fn classify_retention_failure(error: TemporalStoreError) -> TaskFailure {
     let summary = error.to_string();
     match error {
         TemporalStoreError::Database(_) | TemporalStoreError::AttributeLookup(_) => TaskFailure::transient(summary),
-        TemporalStoreError::Decode(_) | TemporalStoreError::Encoding(_) | TemporalStoreError::MixedUnitAggregation(_) | TemporalStoreError::UnitCode(_) => {
+        TemporalStoreError::Decode(_) | TemporalStoreError::Encoding(_) | TemporalStoreError::MixedAggregationGroup(_) | TemporalStoreError::UnitCode(_) => {
             TaskFailure::invariant_violation(summary)
         }
         TemporalStoreError::Validation(_)

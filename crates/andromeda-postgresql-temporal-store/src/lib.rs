@@ -12,6 +12,8 @@
 
 #![deny(missing_docs)]
 
+/// Decoding `PgRow` into the backend-neutral aggregation row and its group span.
+pub(crate) mod aggregation_row_decode;
 /// One row of the rebuilt `attribute_history` hypertable.
 pub mod attribute_history_row;
 /// The value one attribute-history row carries, and the column it occupies.
@@ -54,6 +56,8 @@ pub mod scope_history_value;
 pub mod scope_history_write;
 /// The NGSI-LD time axes a stored temporal row carries besides its write clock.
 pub mod semantic_time_axes;
+/// The JSON number a stored `NUMERIC` column names.
+pub(crate) mod stored_decimal;
 /// Splitting one stored instance identity across its two history columns.
 pub mod stored_instance_columns;
 /// Reading and pruning the temporal catalogue.

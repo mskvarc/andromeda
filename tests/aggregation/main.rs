@@ -310,9 +310,13 @@ async fn min_on_boolean_property() {
     let id = uid("bool-min");
     create(&client, &boolean_entity(&id, "isActive", BOOL_OBS)).await;
 
+    // Clause 4.5.19.1 admits only the counting methods for a Boolean value, so
+    // the extremum is Andromeda's own extension: the observations are ordered
+    // by counting false as 0 and true as 1, and the answer is the observation
+    // that ordering picked, not the number that ordered it.
     let body = get_aggregated(&client, &id, "min", None).await;
-    let val = body["isActive"]["min"][0][0].as_f64().expect("min should be number");
-    pretty_assertions::assert_eq!(val, 0.0, "min of [true, false, true] should be 0 (false)");
+    let val = body["isActive"]["min"][0][0].as_bool().expect("min of a boolean should be a boolean");
+    assert!(!val, "min of [true, false, true] should be false");
 
     delete(&client, &id).await;
 }
@@ -324,8 +328,8 @@ async fn max_on_boolean_property() {
     create(&client, &boolean_entity(&id, "isActive", BOOL_OBS)).await;
 
     let body = get_aggregated(&client, &id, "max", None).await;
-    let val = body["isActive"]["max"][0][0].as_f64().expect("max should be number");
-    pretty_assertions::assert_eq!(val, 1.0, "max of [true, false, true] should be 1 (true)");
+    let val = body["isActive"]["max"][0][0].as_bool().expect("max of a boolean should be a boolean");
+    assert!(val, "max of [true, false, true] should be true");
 
     delete(&client, &id).await;
 }

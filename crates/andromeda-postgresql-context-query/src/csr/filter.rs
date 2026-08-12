@@ -11,7 +11,7 @@ use andromeda_ngsi_ld_query::filter::{
 };
 use andromeda_postgresql_query::{
     error::RenderError,
-    jsonb::comparison_operand,
+    jsonb::comparison_sql,
     literal::escape_single_quoted,
     operator::{comparison, pattern_match, present_and},
 };
@@ -73,19 +73,32 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 
 /// Build a SQL expression that extracts the value of a CSR property from
 /// `additional_properties`, unwrapping the `Property` value wrapper at each
-/// level.
+/// sub-attribute level and then stepping into any compound value members.
 ///
-/// Each level references the prior expression exactly once, aliased inside a
-/// scalar subquery. Inlining the `CASE` directly embedded the prior expression
-/// three times per level, so the SQL grew as `~3^depth` — a handful of
-/// sub-attributes produced a statement megabytes wide. The subquery makes the
-/// growth linear in the sub-attribute depth (which the `q` parser also bounds).
+/// Each sub-attribute level references the prior expression exactly once,
+/// aliased inside a scalar subquery. Inlining the `CASE` directly embedded the
+/// prior expression three times per level, so the SQL grew as `~3^depth` — a
+/// handful of sub-attributes produced a statement megabytes wide. The subquery
+/// makes the growth linear in the sub-attribute depth (which the `q` parser
+/// also bounds).
+///
+/// `value_path` is stepped afterwards, and without `unwrap_property`: a
+/// compound member (`address[city]`) is an ordinary JSON object key inside the
+/// already-unwrapped value, not a `Property` node in its own right, so wrapping
+/// it in the same `CASE` would test a `type` member the member's own value
+/// never carries. An earlier renderer dropped `value_path` here entirely,
+/// comparing the whole compound value's JSON text instead of the addressed
+/// member.
 fn csr_value_extract(path: &AttrPath) -> String {
     let mut json_path = unwrap_property(&format!("\"additional_properties\"->'{}'", escape_single_quoted(path.attr.as_str())));
 
     for sub in &path.sub_attrs {
         let stepped = format!("({json_path})->'{}'", escape_single_quoted(sub.as_str()));
         json_path = unwrap_property(&stepped);
+    }
+
+    for member in &path.value_path {
+        json_path = format!("({json_path})->'{}'", escape_single_quoted(member.as_str()));
     }
 
     json_path
@@ -103,9 +116,20 @@ fn unwrap_property(expr: &str) -> String {
 /// Build the present-guarded SQL and its bind for a single-scalar comparison
 /// against `additional_properties`.
 fn csr_scalar_comparison(extract: &str, scalar: &Scalar, op: CmpOp) -> (String, String) {
-    let (cast, value) = comparison_operand(scalar);
-    let value_sql = format!("(({extract}) #>> '{{}}'){cast} {op_str} $1{cast}", op_str = comparison(op));
-    (present_and(&format!("({extract}) IS NOT NULL"), &value_sql), value)
+    let lifted = comparison_sql(scalar, &stored_text(extract), "$1");
+    let value_sql = format!(
+        "{stored} {op_str} {operand}",
+        stored = lifted.stored,
+        op_str = comparison(op),
+        operand = lifted.operand
+    );
+    (present_and(&format!("({extract}) IS NOT NULL"), &value_sql), lifted.value)
+}
+
+/// The text form of one extracted registration property, which is the side
+/// [`comparison_sql`] lifts.
+fn stored_text(extract: &str) -> String {
+    format!("({extract}) #>> '{{}}'")
 }
 
 /// Compile an equality predicate (`==`/`!=`) against `additional_properties`.
@@ -118,24 +142,36 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
             Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
         }
         CompareValue::Range { min, max } => {
-            let (cast, min_val) = comparison_operand(min);
-            let (_, max_val) = comparison_operand(max);
+            let stored = stored_text(&extract);
+            let lower = comparison_sql(min, &stored, "$1");
+            let upper = comparison_sql(max, &stored, "$2");
             let value_sql = match membership {
-                SetMembership::Within => format!("(({extract}) #>> '{{}}'){cast} >= $1{cast} AND (({extract}) #>> '{{}}'){cast} <= $2{cast}"),
-                SetMembership::Outside => format!("((({extract}) #>> '{{}}'){cast} < $1{cast} OR (({extract}) #>> '{{}}'){cast} > $2{cast})"),
+                SetMembership::Within => format!(
+                    "{stored} >= {lower_operand} AND {stored} <= {upper_operand}",
+                    stored = lower.stored,
+                    lower_operand = lower.operand,
+                    upper_operand = upper.operand
+                ),
+                SetMembership::Outside => format!(
+                    "({stored} < {lower_operand} OR {stored} > {upper_operand})",
+                    stored = lower.stored,
+                    lower_operand = lower.operand,
+                    upper_operand = upper.operand
+                ),
             };
             Condition::all().add(SeaExpr::cust_with_values(
                 present_and(&format!("({extract}) IS NOT NULL"), &value_sql),
-                [min_val, max_val],
+                [lower.value, upper.value],
             ))
         }
         CompareValue::ValueList(values) => {
+            let stored = stored_text(&extract);
             let mut parts = Vec::with_capacity(values.len());
             let mut bind_values = Vec::with_capacity(values.len());
             for (i, v) in values.iter().enumerate() {
-                let (cast, val) = comparison_operand(v);
-                parts.push(format!("(({extract}) #>> '{{}}'){cast} = ${idx}{cast}", idx = i + 1));
-                bind_values.push(val);
+                let lifted = comparison_sql(v, &stored, &format!("${idx}", idx = i + 1));
+                parts.push(format!("{stored} = {operand}", stored = lifted.stored, operand = lifted.operand));
+                bind_values.push(lifted.value);
             }
             let joined = parts.join(" OR ");
             let value_sql = match membership {
@@ -246,6 +282,22 @@ mod tests {
         assert!(sql.contains("#>> '{}'"), "{sql}");
         assert!(!sql.contains(")::text "), "{sql}");
         assert!(sql.contains(" ~ "), "{sql}");
+    }
+
+    /// A compound value's member is a JSON object key inside the unwrapped
+    /// value, so it must be stepped without going through `unwrap_property` —
+    /// otherwise the whole compound value's serialized JSON is compared instead
+    /// of the addressed member, and `q=info[city]==Berlin` never matches.
+    #[test]
+    fn a_compound_value_path_steps_into_the_member_without_wrapping_it_as_a_property() {
+        let sql = render("\"https://example.com/address\"[city]==\"Berlin\"");
+        // The member step (`->'city'`) is applied right after the sub-attribute
+        // extraction's closing parentheses, outside the `unwrap_property` CASE —
+        // once for the presence test, once for the comparison — not inside it,
+        // which would test a `type` member `city`'s own value never carries.
+        assert!(sql.contains("))->'city') IS NOT NULL"), "{sql}");
+        assert!(sql.contains("))->'city') #>> '{}') = 'Berlin'"), "{sql}");
+        assert_eq!(sql.matches("->'city'").count(), 2, "{sql}");
     }
 
     /// The same rule for `!=` over a range and over a value list, which had the

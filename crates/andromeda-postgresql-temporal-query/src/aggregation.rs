@@ -1,15 +1,23 @@
 //! Aggregated temporal values: `time_bucket` windows and the aggregate
 //! expressions of clause 4.5.19.
 //!
-//! An aggregate is also a statement about a unit. Clause 4.5.2 lets every
-//! Property instance carry its own `unitCode`, and nothing in the
-//! specification says what the mean of a kilogram and a pound is; Andromeda
-//! never converts (`docs/unit-handling.md`), so the query groups on the unit
-//! identity and a target left spanning several units is refused rather than
-//! answered with a number nobody can interpret.
+//! Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
+//! period, so the statement groups on exactly those three and on nothing else.
+//! Adding a fourth column to the group key would answer one period with two
+//! entries whenever the rows underneath it disagreed about that column, which
+//! is a shape the aggregated representation has no place to put.
+//!
+//! What the rows disagreed about is still a fact the reader needs. An aggregate
+//! is also a statement about a unit — clause 4.5.2 lets every Property instance
+//! carry its own `unitCode`, and nothing in the specification says what the mean
+//! of a kilogram and a pound is, while Andromeda never converts
+//! (`docs/unit-handling.md`). The unit identity and the two registry codes are
+//! therefore projected as their own extrema over the group, and
+//! [`crate::aggregation_group`] decides from that span whether the group is
+//! answerable at all.
 
 use crate::history::HISTORY_JOINS;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::{
     bind::{BindBuilder, BindValue},
@@ -17,13 +25,7 @@ use andromeda_postgresql_query::{
     error::RenderError,
     time_column::{history_column, history_column_for_alias},
 };
-use andromeda_unit_catalog::unit_code_id::UnitCodeId;
-use chrono::{DateTime, Utc};
-use std::{
-    borrow::Cow,
-    collections::{HashMap, hash_map::Entry},
-};
-use thiserror::Error;
+use std::borrow::Cow;
 
 /// Unified numeric expression for type-aware aggregation (NGSI-LD 4.5.19.1).
 ///
@@ -50,29 +52,43 @@ const NUMERIC_EXPR: &str = r#"COALESCE(
 /// evolution says there is none.
 const TOMBSTONE_EXCLUSION: &str = r#""ah"."value_kind" <> 0"#;
 
-/// The kind an aggregated group is rendered under (clause 4.5.19).
+/// The persisted attribute family of an observation (clause 5.2.4).
 ///
-/// Grouped as well as projected: the kind lives on the row rather than in the
-/// catalogue, so an attribute whose type changed within the window aggregates
-/// as one group per kind rather than as a single group rendered under whichever
-/// kind the plan happened to surface.
+/// Projected as its own extrema rather than grouped on: the family lives on the
+/// row rather than in the catalogue, so an attribute whose type changed within
+/// a period is one period whose rows disagree, not two periods.
 const ATTRIBUTE_KIND_COLUMN: &str = r#""ah"."attribute_kind""#;
 
 /// The persisted unit identity of an observation (clause 4.5.2 `unitCode`).
 ///
-/// Part of every aggregation group key: an aggregate whose inputs were
-/// recorded in different units is not computed, and grouping is what keeps the
-/// database from computing one anyway.
+/// Projected as its own extrema, plus whether any row carried no unit at all:
+/// `MIN` and `MAX` skip nulls, so the two bounds alone cannot tell an
+/// all-annotated group from one that mixed annotated and unannotated rows.
 const UNIT_CODE_COLUMN: &str = r#""ah"."unit_code_id""#;
 
-/// The value kind an aggregated group's observations were recorded under.
+/// The value shape an aggregated group's observations were recorded under.
 ///
-/// Grouped as well as projected, for the same reason as the attribute kind:
-/// `min` and `max` are taken from the typed column the kind names, so a group
-/// spanning two value kinds would have to pick one of two equally valid
-/// extrema. Grouping on the kind makes each group's extremum unambiguous and
-/// lets the reader select the column the values actually live in.
+/// Projected as its own extrema: `min` and `max` are read from the typed column
+/// the shape names, so the reader needs the shape the group's rows share and
+/// needs to be told when they share none.
 const VALUE_KIND_COLUMN: &str = r#""ah"."value_kind""#;
+
+/// The span of registry codes and unit identities one aggregation group covered.
+///
+/// Every entry is an aggregate over the group rather than a group key, which is
+/// what keeps the group key at the attribute, dataset and period clause 4.5.19
+/// names.
+fn group_span_columns() -> String {
+    format!(
+        r#"MIN({ATTRIBUTE_KIND_COLUMN}) AS attribute_kind_lowest,
+    MAX({ATTRIBUTE_KIND_COLUMN}) AS attribute_kind_highest,
+    MIN({VALUE_KIND_COLUMN}) AS value_kind_lowest,
+    MAX({VALUE_KIND_COLUMN}) AS value_kind_highest,
+    MIN({UNIT_CODE_COLUMN}) AS unit_code_id_lowest,
+    MAX({UNIT_CODE_COLUMN}) AS unit_code_id_highest,
+    BOOL_OR({UNIT_CODE_COLUMN} IS NULL) AS any_unitless"#
+    )
+}
 
 /// Build aggregation query SQL with time_bucket.
 pub fn build_aggregation_query_sql(
@@ -116,12 +132,12 @@ pub fn build_aggregation_query_sql(
                 "{} AS bucket_start,\n    {} + {}::interval AS bucket_end",
                 bucket_expr, bucket_expr, period_marker
             ),
-            format!("\"an\".\"name\", bucket_start, {UNIT_CODE_COLUMN}"),
+            "\"an\".\"name\", \"s\".\"dataset_id\", bucket_start".to_string(),
         )
     } else {
         (
             "NULL::timestamptz AS bucket_start, NULL::timestamptz AS bucket_end".to_string(),
-            format!("\"an\".\"name\", {UNIT_CODE_COLUMN}"),
+            "\"an\".\"name\", \"s\".\"dataset_id\"".to_string(),
         )
     };
 
@@ -171,19 +187,22 @@ pub fn build_aggregation_query_sql(
         agg_exprs.join(",\n    ")
     };
 
+    // Clause 4.5.19: one aggregate value per attribute, `datasetId` and period,
+    // so the group key is those three and nothing else. A period is a bucket
+    // and an absent period is the whole range, which is one bucket rather than
+    // no grouping at all.
     let group_by = if period.is_some() {
-        format!("\"an\".\"name\", {ATTRIBUTE_KIND_COLUMN}, {VALUE_KIND_COLUMN}, \"s\".\"dataset_id\", {UNIT_CODE_COLUMN}, bucket_start")
+        "\"an\".\"name\", \"s\".\"dataset_id\", bucket_start"
     } else {
-        format!("\"an\".\"name\", {ATTRIBUTE_KIND_COLUMN}, {VALUE_KIND_COLUMN}, \"s\".\"dataset_id\", {UNIT_CODE_COLUMN}")
+        "\"an\".\"name\", \"s\".\"dataset_id\""
     };
+    let span_columns = group_span_columns();
 
     let sql = format!(
         r#"SELECT
     "an"."name" AS attribute_name,
-    {ATTRIBUTE_KIND_COLUMN} AS attribute_kind,
-    {VALUE_KIND_COLUMN} AS value_kind,
     "s"."dataset_id",
-    {UNIT_CODE_COLUMN} AS unit_code_id,
+    {span_columns},
     {group_expr},
     {agg_select}
 {HISTORY_JOINS}{origin_join}
@@ -197,114 +216,6 @@ ORDER BY {order_expr}"#
         count_sql: None,
         bind_values: binds.into_values(),
     })
-}
-
-/// Whether an aggregate's result depends on the unit of the values it read.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UnitSensitivity {
-    /// The result is itself a quantity, expressed in the unit of its inputs.
-    Sensitive,
-    /// The result counts instances, so which unit each one carries is irrelevant.
-    Insensitive,
-}
-
-/// Classify an aggregation method of clause 4.5.19 by whether its result carries a unit.
-pub const fn unit_sensitivity(method: AggrMethod) -> UnitSensitivity {
-    match method {
-        AggrMethod::Avg | AggrMethod::Min | AggrMethod::Max | AggrMethod::Sum | AggrMethod::SumSq | AggrMethod::StdDev => UnitSensitivity::Sensitive,
-        AggrMethod::TotalCount | AggrMethod::DistinctCount => UnitSensitivity::Insensitive,
-    }
-}
-
-/// The key one aggregate is reported under, with the unit deliberately left out.
-///
-/// The query groups on the unit as well, so two groups that share a target and
-/// differ in unit are exactly the case clause 4.5.19 leaves undefined.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct AggregationTarget {
-    /// Expanded name of the aggregated attribute.
-    pub attribute_name: AttributeName,
-    /// `datasetId` of the aggregated instances (clause 4.5.4), absent for the default instance.
-    pub dataset_id: Option<Uri>,
-    /// Start of the `time_bucket` window, absent when the whole range is one bucket.
-    pub bucket_start: Option<DateTime<Utc>>,
-}
-
-/// A unit-sensitive aggregate would have had to span more than one unit.
-///
-/// Recommendation 20 carries conversion factors only informatively and NGSI-LD
-/// asks no broker to apply them, so the aggregate is refused rather than
-/// computed over values that do not share a scale.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum MixedUnitAggregation {
-    /// Two different unit codes were recorded for one aggregation target.
-    #[error("attribute '{attribute_name}' aggregates over unit codes {first} and {second}, which the broker does not convert between")]
-    ConflictingUnits {
-        /// Expanded name of the aggregated attribute.
-        attribute_name: AttributeName,
-        /// The unit first observed for the target.
-        first: UnitCodeId,
-        /// The unit that contradicted it.
-        second: UnitCodeId,
-    },
-    /// Values with a unit and values without one were recorded for one aggregation target.
-    #[error("attribute '{attribute_name}' aggregates over values carrying unit code {present} and values carrying no unit at all")]
-    UnitAndUnitless {
-        /// Expanded name of the aggregated attribute.
-        attribute_name: AttributeName,
-        /// The unit the annotated values carried.
-        present: UnitCodeId,
-    },
-}
-
-/// Refuse an aggregated result set whose unit-sensitive aggregates span several units.
-///
-/// `groups` is the query's output keyed as it was grouped: one entry per
-/// target and unit. Methods that only count are unaffected, so a request made
-/// up entirely of `totalCount` and `distinctCount` — including the empty
-/// method list, which counts by default — is answered over mixed units
-/// unchanged.
-pub fn ensure_single_unit_per_target<'a, Groups>(groups: Groups, methods: &[AggrMethod]) -> Result<(), MixedUnitAggregation>
-where
-    Groups: IntoIterator<Item = (&'a AggregationTarget, Option<UnitCodeId>)>,
-{
-    if !methods
-        .iter()
-        .copied()
-        .map(unit_sensitivity)
-        .any(|sensitivity| sensitivity == UnitSensitivity::Sensitive)
-    {
-        return Ok(());
-    }
-
-    let mut seen: HashMap<&AggregationTarget, Option<UnitCodeId>> = HashMap::new();
-    for (target, unit) in groups {
-        match seen.entry(target) {
-            Entry::Vacant(slot) => {
-                slot.insert(unit);
-            }
-            // The error names the attribute, so it owns a copy of a name the
-            // caller keeps: the borrow ends with the result set.
-            Entry::Occupied(slot) => match (*slot.get(), unit) {
-                (Some(first), Some(second)) if first != second => {
-                    return Err(MixedUnitAggregation::ConflictingUnits {
-                        attribute_name: target.attribute_name.clone(),
-                        first,
-                        second,
-                    });
-                }
-                (Some(present), None) | (None, Some(present)) => {
-                    return Err(MixedUnitAggregation::UnitAndUnitless {
-                        attribute_name: target.attribute_name.clone(),
-                        present,
-                    });
-                }
-                (Some(_), Some(_)) | (None, None) => {}
-            },
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -375,17 +286,77 @@ mod tests {
         assert!(built.sql.contains("\"ah\".\"value_kind\" <> 0"), "{}", built.sql);
     }
 
-    /// The kind is a fact of the row, so it is grouped and rendered from the
-    /// hypertable rather than read back from the stream catalogue.
+    /// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
+    /// period. A fourth group column would answer one period with one entry per
+    /// value the rows happened to disagree on, so the key holds those three and
+    /// no others.
     #[test]
-    fn the_aggregated_group_carries_the_attribute_kind_of_its_rows() {
+    fn the_group_key_is_the_attribute_the_dataset_and_the_period_alone() {
+        let bucketed = aggregated(vec![AggrMethod::Avg], Some("PT1H"));
+        let built = build_aggregation_query_sql(&bucketed, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
+        let group_by = built.sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
+        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\", bucket_start", "{}", built.sql);
+
+        let whole_range = aggregated(vec![AggrMethod::Avg], None);
+        let built = build_aggregation_query_sql(&whole_range, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
+        let group_by = built.sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+        let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
+        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\"", "{}", built.sql);
+    }
+
+    /// The unit, the attribute family and the value shape all used to key the
+    /// group, which silently split a period whenever one of them flipped inside
+    /// it. None of them may appear in the key again.
+    #[test]
+    fn no_unit_or_registry_code_keys_the_group() {
+        for period in [Some("PT1H"), None] {
+            let compiled = aggregated(vec![AggrMethod::Avg, AggrMethod::Min, AggrMethod::TotalCount], period);
+            let built = build_aggregation_query_sql(&compiled, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
+            let group_by = built.sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
+            for column in ["unit_code_id", "value_kind", "attribute_kind"] {
+                assert!(!group_by.contains(column), "{column} still keys the group: {}", built.sql);
+            }
+        }
+    }
+
+    /// The family is a fact of the row rather than of the mutable catalogue, so
+    /// it is read from the hypertable — as the span of the group's rows, since
+    /// it no longer keys them.
+    #[test]
+    fn the_attribute_family_and_value_shape_are_projected_as_the_span_of_the_group() {
         let compiled = aggregated(vec![AggrMethod::Avg], Some("PT1H"));
         let built = build_aggregation_query_sql(&compiled, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
-        assert!(built.sql.contains("\"ah\".\"attribute_kind\" AS attribute_kind"), "{}", built.sql);
-        let group_by = built.sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-        assert!(group_by.contains("\"ah\".\"attribute_kind\""), "{}", built.sql);
+        for projection in [
+            "MIN(\"ah\".\"attribute_kind\") AS attribute_kind_lowest",
+            "MAX(\"ah\".\"attribute_kind\") AS attribute_kind_highest",
+            "MIN(\"ah\".\"value_kind\") AS value_kind_lowest",
+            "MAX(\"ah\".\"value_kind\") AS value_kind_highest",
+        ] {
+            assert!(built.sql.contains(projection), "{projection} missing: {}", built.sql);
+        }
         assert!(!built.sql.contains("attribute_type"), "{}", built.sql);
         assert!(!built.sql.contains("value_type"), "{}", built.sql);
+    }
+
+    /// Clause 4.5.2 attaches a `unitCode` to the instance, not to the attribute,
+    /// so two instances of one attribute may differ in unit. `MIN` and `MAX`
+    /// skip nulls, so the bounds alone cannot separate an all-annotated group
+    /// from one that also held unannotated rows, and the null test is projected
+    /// beside them.
+    #[test]
+    fn the_unit_span_carries_both_bounds_and_whether_any_row_carried_no_unit() {
+        for period in [Some("PT1H"), None] {
+            let compiled = aggregated(vec![AggrMethod::Avg], period);
+            let built = build_aggregation_query_sql(&compiled, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
+            for projection in [
+                "MIN(\"ah\".\"unit_code_id\") AS unit_code_id_lowest",
+                "MAX(\"ah\".\"unit_code_id\") AS unit_code_id_highest",
+                "BOOL_OR(\"ah\".\"unit_code_id\" IS NULL) AS any_unitless",
+            ] {
+                assert!(built.sql.contains(projection), "{projection} missing: {}", built.sql);
+            }
+        }
     }
 
     /// An exact decimal stays exact: the aggregate reads the `NUMERIC` value
@@ -418,120 +389,15 @@ mod tests {
         assert!(built.sql.contains("agg_total_count"), "{}", built.sql);
     }
 
-    /// Clause 4.5.2 attaches a `unitCode` to the instance, not to the
-    /// attribute, so two instances of one attribute may differ in unit. The
-    /// aggregate is therefore computed per unit rather than across units.
+    /// The renderer emits one triple per row, so the rows of one attribute and
+    /// dataset have to arrive in period order rather than in whatever order the
+    /// plan produced them.
     #[test]
-    fn every_aggregate_is_grouped_by_the_unit_its_values_were_recorded_in() {
-        for period in [Some("PT1H"), None] {
-            let compiled = aggregated(vec![AggrMethod::Avg], period);
-            let built = build_aggregation_query_sql(&compiled, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
-            assert!(built.sql.contains("\"ah\".\"unit_code_id\" AS unit_code_id"), "{}", built.sql);
-            let group_by = built.sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-            assert!(group_by.contains("\"ah\".\"unit_code_id\""), "{}", built.sql);
-        }
-    }
-
-    fn target(name: &str) -> AggregationTarget {
-        AggregationTarget {
-            attribute_name: name.parse::<AttributeName>().expect("valid attribute name"),
-            dataset_id: None,
-            bucket_start: None,
-        }
-    }
-
-    fn unit(id: i16) -> Option<UnitCodeId> {
-        Some(UnitCodeId::try_from(id).expect("a registered unit identity"))
-    }
-
-    #[test]
-    fn an_aggregate_over_one_unit_is_accepted_unchanged() {
-        let temperature = target("https://uri.etsi.org/ngsi-ld/default-context/temperature");
-        let groups = vec![(&temperature, unit(367)), (&temperature, unit(367))];
-        pretty_assertions::assert_eq!(ensure_single_unit_per_target(groups, &[AggrMethod::Avg]), Ok(()));
-    }
-
-    #[test]
-    fn an_aggregate_spanning_two_units_is_refused() {
-        let name = "https://uri.etsi.org/ngsi-ld/default-context/weight";
-        let weight = target(name);
-        let groups = vec![(&weight, unit(1121)), (&weight, unit(1407))];
-        let expected = MixedUnitAggregation::ConflictingUnits {
-            attribute_name: name.parse::<AttributeName>().expect("valid attribute name"),
-            first: UnitCodeId::try_from(1121_i16).expect("a registered unit identity"),
-            second: UnitCodeId::try_from(1407_i16).expect("a registered unit identity"),
-        };
-        pretty_assertions::assert_eq!(ensure_single_unit_per_target(groups, &[AggrMethod::Avg]), Err(expected));
-    }
-
-    #[test]
-    fn an_aggregate_mixing_annotated_and_unannotated_values_is_refused() {
-        let name = "https://uri.etsi.org/ngsi-ld/default-context/weight";
-        let weight = target(name);
-        let groups = vec![(&weight, unit(1121)), (&weight, None)];
-        let expected = MixedUnitAggregation::UnitAndUnitless {
-            attribute_name: name.parse::<AttributeName>().expect("valid attribute name"),
-            present: UnitCodeId::try_from(1121_i16).expect("a registered unit identity"),
-        };
-        pretty_assertions::assert_eq!(ensure_single_unit_per_target(groups, &[AggrMethod::Sum]), Err(expected));
-    }
-
-    #[test]
-    fn an_attribute_that_carries_no_unit_aggregates_normally() {
-        let occupancy = target("https://uri.etsi.org/ngsi-ld/default-context/occupancy");
-        let groups = vec![(&occupancy, None), (&occupancy, None)];
-        pretty_assertions::assert_eq!(ensure_single_unit_per_target(groups, &[AggrMethod::Avg, AggrMethod::StdDev]), Ok(()));
-    }
-
-    /// Counting instances says nothing about the scale they were measured on,
-    /// so a count over mixed units is well defined and stays answerable.
-    #[test]
-    fn counting_aggregates_survive_mixed_units() {
-        let weight = target("https://uri.etsi.org/ngsi-ld/default-context/weight");
-        let groups = vec![(&weight, unit(1121)), (&weight, unit(1407))];
-        pretty_assertions::assert_eq!(
-            ensure_single_unit_per_target(groups.clone(), &[AggrMethod::TotalCount, AggrMethod::DistinctCount]),
-            Ok(())
-        );
-        pretty_assertions::assert_eq!(ensure_single_unit_per_target(groups, &[]), Ok(()));
-    }
-
-    #[test]
-    fn two_targets_may_each_hold_their_own_unit() {
-        let weight = target("https://uri.etsi.org/ngsi-ld/default-context/weight");
-        let length = target("https://uri.etsi.org/ngsi-ld/default-context/length");
-        let groups = vec![(&weight, unit(1121)), (&length, unit(1407))];
-        pretty_assertions::assert_eq!(ensure_single_unit_per_target(groups, &[AggrMethod::Max]), Ok(()));
-    }
-
-    #[test]
-    fn every_aggregation_method_is_classified_as_carrying_a_unit_or_not() {
-        for method in [
-            AggrMethod::Avg,
-            AggrMethod::Min,
-            AggrMethod::Max,
-            AggrMethod::Sum,
-            AggrMethod::SumSq,
-            AggrMethod::StdDev,
-        ] {
-            pretty_assertions::assert_eq!(unit_sensitivity(method), UnitSensitivity::Sensitive, "{method}");
-        }
-        for method in [AggrMethod::TotalCount, AggrMethod::DistinctCount] {
-            pretty_assertions::assert_eq!(unit_sensitivity(method), UnitSensitivity::Insensitive, "{method}");
-        }
-    }
-
-    /// The reader picks the typed `min`/`max` column from the value kind, so
-    /// the kind has to survive the aggregation as a projected group column.
-    #[test]
-    fn the_aggregated_group_carries_the_value_kind_its_extrema_are_typed_by() {
-        for period in [Some("PT1H"), None] {
-            let compiled = aggregated(vec![AggrMethod::Min, AggrMethod::Max], period);
-            let built = build_aggregation_query_sql(&compiled, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
-            assert!(built.sql.contains("\"ah\".\"value_kind\" AS value_kind"), "{}", built.sql);
-            let group_by = built.sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
-            assert!(group_by.contains("\"ah\".\"value_kind\""), "{}", built.sql);
-        }
+    fn the_rows_arrive_ordered_by_attribute_dataset_and_period() {
+        let compiled = aggregated(vec![AggrMethod::Avg], Some("PT1H"));
+        let built = build_aggregation_query_sql(&compiled, "\"te\".\"id\" = $1", BindBuilder::default()).unwrap();
+        let order_by = built.sql.split("ORDER BY").nth(1).expect("an ORDER BY clause").trim();
+        pretty_assertions::assert_eq!(order_by, "\"an\".\"name\", \"s\".\"dataset_id\", bucket_start", "{}", built.sql);
     }
 
     #[test]

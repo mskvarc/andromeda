@@ -139,7 +139,7 @@ fn write_attr_path(buf: &mut String, path: &AttrPath) {
             if i > 0 {
                 buf.push('.');
             }
-            write_ident(buf, vp);
+            write_ident(buf, vp.as_str());
         }
         buf.push(']');
     }

@@ -1239,6 +1239,7 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
+ "andromeda-postgresql-codes",
  "andromeda-postgresql-query",
  "andromeda-unit-catalog",
  "chrono",

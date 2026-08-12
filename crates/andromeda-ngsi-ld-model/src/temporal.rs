@@ -116,18 +116,34 @@ impl TemporalHistoryRow {
     }
 }
 
-/// Typed minimum or maximum aggregation value.
+/// Typed minimum or maximum aggregation value (clause 4.5.19).
+///
+/// The extremum is reported in the family the observations were recorded in,
+/// never in the one the backend happened to compute it through: a boolean
+/// aggregated as zero and one comes back a boolean, because `true` is what was
+/// observed and `1` is only how it was counted.
 #[derive(Debug, Clone, PartialEq)]
 pub enum AggregationMinMax {
-    /// Numeric minimum or maximum.
-    Number(f64),
+    /// Numeric minimum or maximum, in the exact shape the stored value has.
+    Number(JsonNumber),
     /// Lexicographic minimum or maximum.
     String(String),
+    /// Boolean minimum or maximum.
+    Boolean(bool),
     /// Temporal minimum or maximum.
     DateTime(DateTime<Utc>),
 }
 
 /// One backend-neutral aggregation bucket for one temporal attribute.
+///
+/// Clause 4.5.19 gives one aggregate value per attribute, `datasetId` and
+/// period, so one of these is one period of one attribute instance and nothing
+/// finer.
+///
+/// The arithmetic aggregates are carried as [`JsonNumber`] rather than as
+/// doubles: a backend computes them over an exact decimal column, and widening
+/// the result to binary floating point here would report a sum or an extremum
+/// that was never observed (`docs/exact-numeric-representation.md`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemporalAggregationRow {
     /// Expanded attribute IRI.
@@ -141,17 +157,17 @@ pub struct TemporalAggregationRow {
     /// End of the aggregation bucket.
     pub bucket_end: Option<DateTime<Utc>>,
     /// Arithmetic mean.
-    pub avg: Option<f64>,
+    pub avg: Option<JsonNumber>,
     /// Typed minimum.
     pub min: Option<AggregationMinMax>,
     /// Typed maximum.
     pub max: Option<AggregationMinMax>,
     /// Sum.
-    pub sum: Option<f64>,
+    pub sum: Option<JsonNumber>,
     /// Sum of squares.
-    pub sumsq: Option<f64>,
+    pub sumsq: Option<JsonNumber>,
     /// Standard deviation.
-    pub stddev: Option<f64>,
+    pub stddev: Option<JsonNumber>,
     /// Number of observations.
     pub total_count: Option<i64>,
     /// Number of distinct values.

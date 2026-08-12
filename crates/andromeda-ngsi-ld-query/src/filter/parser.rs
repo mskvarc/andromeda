@@ -372,19 +372,24 @@ impl<'a> Parser<'a> {
                 self.advance();
                 match_all_languages = true;
             } else {
-                value_path.push(self.parse_ident()?.to_string());
+                value_path.push(self.parse_attribute_name()?);
                 while self.peek() == Some(&Token::Dot) {
                     self.advance();
-                    value_path.push(self.parse_ident()?.to_string());
+                    value_path.push(self.parse_attribute_name()?);
                 }
             }
             self.expect(&Token::RBracket)?;
         }
 
+        // clone: `value_path_compact` starts as the same terms as `value_path`
+        // and stays that way until expansion overwrites `value_path` alone, so
+        // each field needs its own owned copy of the freshly parsed names.
+        let value_path_compact = value_path.clone();
         Ok(AttrPath {
             attr,
             sub_attrs,
             value_path,
+            value_path_compact,
             match_all_languages,
         })
     }
@@ -488,9 +493,6 @@ impl<'a> Parser<'a> {
     }
 
     /// Consume an identifier, quoted or bare.
-    ///
-    /// Used directly only for compound value keys, which the NGSI-LD data model
-    /// does not constrain.
     fn parse_ident(&mut self) -> Result<&'a str, QueryError> {
         match self.advance() {
             Some(Token::Ident(s) | Token::QuotedStr(s)) => Ok(s.as_str()),
@@ -787,7 +789,7 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "address");
-                pretty_assertions::assert_eq!(path.terminal().value_path, vec!["city"]);
+                pretty_assertions::assert_eq!(path.terminal().value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["city"]);
             }
             other => unreachable!("expected Equality, got {other:?}"),
         }
@@ -800,7 +802,10 @@ mod tests {
             Expr::Pred(Predicate::Equality { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "sensor");
                 pretty_assertions::assert_eq!(path.terminal().sub_attrs.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["rawdata"]);
-                pretty_assertions::assert_eq!(path.terminal().value_path, vec!["airquality", "particulate"]);
+                pretty_assertions::assert_eq!(
+                    path.terminal().value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(),
+                    vec!["airquality", "particulate"]
+                );
             }
             other => unreachable!("expected Equality, got {other:?}"),
         }

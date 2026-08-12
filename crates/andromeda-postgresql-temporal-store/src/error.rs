@@ -4,7 +4,7 @@ use crate::unit_code_metadata::UnitCodeMetadataError;
 use andromeda_ngsi_ld_lexicon::ngsi_ld_date_time::NgsiLdDateTimeError;
 use andromeda_ngsi_ld_model::attribute::json_number::JsonNumberError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
-use andromeda_postgresql_temporal_query::aggregation::MixedUnitAggregation;
+use andromeda_postgresql_temporal_query::aggregation_group::MixedAggregationGroup;
 use andromeda_temporal::error::TemporalError;
 
 /// Errors produced by a temporal store implementation.
@@ -47,9 +47,9 @@ pub enum TemporalStoreError {
     /// The instance's `unitCode` member could not be moved to or from its column.
     #[error("temporal store unit code: {0}")]
     UnitCode(#[from] UnitCodeMetadataError),
-    /// The requested aggregate would have spanned more than one unit.
+    /// The requested aggregate would have spanned inputs that do not share a meaning.
     #[error("temporal store aggregation: {0}")]
-    MixedUnitAggregation(#[from] MixedUnitAggregation),
+    MixedAggregationGroup(#[from] MixedAggregationGroup),
 }
 
 impl From<TemporalStoreError> for TemporalError {
@@ -67,9 +67,10 @@ impl From<TemporalStoreError> for TemporalError {
                 UnitCodeMetadataError::Malformed | UnitCodeMetadataError::Unregistered { .. } => TemporalError::validation(detail.to_string()),
                 UnitCodeMetadataError::UnknownIdentity { .. } | UnitCodeMetadataError::Catalog(_) => TemporalError::persistence(detail.to_string()),
             },
-            // Which units the selected instances carry is a property of the
-            // request, so a mixed-unit aggregate is refused as client input.
-            TemporalStoreError::MixedUnitAggregation(_) => TemporalError::validation(error.to_string()),
+            // Which units, families and value shapes the selected instances
+            // carry is a property of the request, so an aggregate spanning
+            // several of them is refused as client input.
+            TemporalStoreError::MixedAggregationGroup(_) => TemporalError::validation(error.to_string()),
             TemporalStoreError::Database(_)
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)

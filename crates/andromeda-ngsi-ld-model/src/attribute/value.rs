@@ -2,11 +2,7 @@
 
 use crate::attribute::expansion::serde_json_value_to_json_value;
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
-use andromeda_ngsi_ld_lexicon::{
-    date_time::{NgsiLdDate, NgsiLdTime},
-    rfc3339::whole_seconds,
-    uri::Uri,
-};
+use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime, rfc3339::whole_seconds, uri::Uri};
 use chrono::{DateTime, Utc};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -73,12 +69,16 @@ impl<'de> Deserialize<'de> for NgsiLdValue {
             if let Ok(datetime) = DateTime::parse_from_rfc3339(string) {
                 return Ok(NgsiLdValue::DateTime(datetime.with_timezone(&Utc)));
             }
-            if let Ok(date) = string.parse::<NgsiLdDate>() {
-                return Ok(NgsiLdValue::Date(date));
-            }
-            if let Ok(time) = string.parse::<NgsiLdTime>() {
-                return Ok(NgsiLdValue::Time(time));
-            }
+            // `Date` and `Time` are deliberately not sniffed here, unlike
+            // `DateTime` above. `NgsiLdTime` canonicalises through `Display`
+            // (clause 4.6.3 admits any offset and fractional width, and it
+            // re-renders to one fixed form), so sniffing it would rewrite an
+            // untyped string Property value the client wrote no differently
+            // from `"12:00:00Z"` into `"12:00:00.000000Z"` — a value change
+            // with no `@type: Time` anywhere to justify it. The two write
+            // paths that mean `Date`/`Time` say so explicitly through
+            // `valueType`/`@type`, which reaches these variants without going
+            // through this sniffing ladder at all.
         }
         Ok(NgsiLdValue::Json(value))
     }
@@ -90,8 +90,10 @@ impl<V: JsonValue> ToJsonValue<V> for NgsiLdValue {
             NgsiLdValue::Json(value) => serde_json_value_to_json_value::<V>(value),
             NgsiLdValue::Uri(uri) => V::string(uri.as_ref()),
             NgsiLdValue::DateTime(dt) => V::from_string(whole_seconds(*dt)),
-            NgsiLdValue::Date(d) => V::string(d.as_str()),
-            NgsiLdValue::Time(t) => V::string(t.as_str()),
+            // Both render in the canonical clause 4.6.3 form their types define,
+            // which is the same text they are stored and compared as.
+            NgsiLdValue::Date(d) => V::from_string(d.to_string()),
+            NgsiLdValue::Time(t) => V::from_string(t.to_string()),
             NgsiLdValue::Geometry(g) => g.to_json_value(),
         }
     }

@@ -40,6 +40,7 @@ pub mod projected_attribute_names;
 pub mod q_predicate;
 pub mod schema;
 pub mod scope_predicate;
+pub mod temporal_operand;
 pub mod time_column;
 pub mod type_predicate;
 pub mod value_binding;

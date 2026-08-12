@@ -10,32 +10,67 @@ use iri_rs::IriBuf;
 /// Example: `address[city].streetName` would have `attr = "address"`,
 /// `sub_attrs = ["city"]`, `value_path = ["streetName"]`.
 ///
-/// `attr` and `sub_attrs` are [`AttributeName`]s, which accept a compact short
-/// name, a prefixed name or an expanded IRI. That is exactly the range this AST
-/// spans: a freshly parsed filter carries whatever the client wrote, and an
-/// expanded one carries IRIs.
+/// `attr`, `sub_attrs` and `value_path` are all [`AttributeName`]s, which accept
+/// a compact short name, a prefixed name or an expanded IRI. That is exactly the
+/// range this AST spans: a freshly parsed filter carries whatever the client
+/// wrote, and an expanded one carries IRIs.
 ///
 /// This type models the two *local* traversal axes: `.` sub-attributes and `[]`
 /// compound-value navigation. The third clause 4.9 axis, the `{}` linked-entity
 /// traversal, crosses an entity boundary and is modelled one level up by
 /// [`QueryPath::Linked`], whose terminal segment is an `AttrPath` again.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AttrPath {
     /// The top-level attribute name (compact or expanded IRI).
     pub attr: AttributeName,
     /// Sub-attribute names for navigating nested attributes.
     pub sub_attrs: Vec<AttributeName>,
-    /// Keys for navigating into compound values.
+    /// Member names for navigating into compound values.
     ///
-    /// Deliberately untyped: these are object keys inside an attribute's value,
-    /// which the NGSI-LD data model does not constrain at all. They are
-    /// genuinely free-form JSON keys, not names of anything the broker models.
-    pub value_path: Vec<String>,
+    /// Typed as [`AttributeName`], not as free-form JSON keys, because that is
+    /// what they address. JSON-LD expansion turns the members of a structured
+    /// Property value into IRI-keyed nodes exactly as it turns attribute names
+    /// into IRIs, so a member name arrives compact and must be expanded through
+    /// the request `@context` before it can address anything the broker stored.
+    /// A path treating them as opaque keys addressed `city` in a payload that
+    /// holds `https://uri.etsi.org/ngsi-ld/default-context/city`, and matched
+    /// nothing.
+    pub value_path: Vec<AttributeName>,
+    /// The pre-expansion spelling of each `value_path` member, same length and
+    /// order.
+    ///
+    /// A compound value reaches the evaluator in two genuinely different
+    /// shapes (see `eval::resolve_compound_member`): a structured Property
+    /// value, whose members JSON-LD expansion turns into IRI-keyed nodes, and
+    /// a JsonProperty's (or an opaque Property's) raw JSON object, whose keys
+    /// are never touched by expansion because they sit inside an opaque value,
+    /// not the JSON-LD graph. Term-expanding `value_path` addresses the first
+    /// shape; this field keeps what the client actually wrote so the second
+    /// shape stays addressable too. Left equal to `value_path` until
+    /// `expand_attr_path` overwrites `value_path` alone.
+    pub value_path_compact: Vec<AttributeName>,
     /// Whether the path carried the `[*]` language-suppression marker, which
     /// matches a LanguageProperty against every language's value rather than
     /// against the one the `lang` parameter would otherwise pick (clause 4.9).
     pub match_all_languages: bool,
 }
+
+// Hand-written because the field to compare is chosen, not all of them:
+// `value_path_compact` is a retry spelling carried alongside `value_path` for
+// raw-JSON member resolution, not part of what a path addresses — two paths
+// that reach the same location are equal regardless of which retry spelling
+// they carry. The sanctioned derive for a skipped field is `educe`, and a
+// proc-macro dependency in this crate is not worth one skipped field.
+impl PartialEq for AttrPath {
+    fn eq(&self, other: &AttrPath) -> bool {
+        self.attr == other.attr
+            && self.sub_attrs == other.sub_attrs
+            && self.value_path == other.value_path
+            && self.match_all_languages == other.match_all_languages
+    }
+}
+
+impl Eq for AttrPath {}
 
 impl AttrPath {
     /// Build a path addressing an attribute's own value, with no sub-attribute
@@ -45,6 +80,7 @@ impl AttrPath {
             attr,
             sub_attrs: Vec::new(),
             value_path: Vec::new(),
+            value_path_compact: Vec::new(),
             match_all_languages: false,
         }
     }

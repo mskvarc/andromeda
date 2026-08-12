@@ -14,6 +14,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod aggregation;
+pub mod aggregation_group;
 pub mod history;
 pub mod schema;
 pub mod stage1;
@@ -23,6 +24,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-query",
+        "andromeda-postgresql-codes",
         "andromeda-postgresql-query",
         "andromeda-unit-catalog",
     ],

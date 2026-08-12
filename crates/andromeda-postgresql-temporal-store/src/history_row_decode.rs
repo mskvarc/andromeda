@@ -1,10 +1,12 @@
 //! Decoding `sqlx::postgres::PgRow` into the backend-neutral
-//! [`TemporalHistoryRow`] and [`TemporalAggregationRow`] types declared by the
-//! temporal store port.
+//! [`TemporalHistoryRow`] type declared by the temporal store port.
 //!
 //! Every column probe, code decode, EWKB-to-GeoJSON conversion and instance
 //! identity reassembly lives here so that neither the service layer nor the
-//! renderers ever import `sqlx`.
+//! renderers ever import `sqlx`. The readers for the catalogue columns an
+//! `attribute_history` row carries — its attribute name, its `datasetId`, its
+//! unit identity — are shared with [`crate::aggregation_row_decode`], whose rows
+//! project those same columns.
 //!
 //! Nothing in this module guesses. The rebuilt history table records which
 //! typed column holds a row's value, so the value is read from that column and
@@ -13,20 +15,20 @@
 //! later release must be reported as unreadable instead of being silently
 //! reinterpreted.
 
-use crate::{attribute_kind_code::attribute_type_of, error::TemporalStoreError, unit_code_metadata::restore_unit_code};
+use crate::{attribute_kind_code::attribute_type_of, error::TemporalStoreError, stored_decimal::json_number_of, unit_code_metadata::restore_unit_code};
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_model::{
     attribute::json_number::JsonNumber,
-    temporal::{AggregationMinMax, TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
+    temporal::{TemporalHistoryRow, TemporalValue},
 };
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use serde_json::{Number, Value};
+use serde_json::Value;
 use sqlx::{Row, postgres::PgRow, types::BigDecimal};
 use uuid::Uuid;
 
@@ -35,7 +37,7 @@ pub(crate) fn decode_history_row(row: &PgRow) -> Result<TemporalHistoryObservati
     let attribute_kind = decode_attribute_kind(row)?;
     let value = decode_value(row)?;
     let mut metadata: Option<Value> = row.try_get("metadata").unwrap_or(None);
-    restore_unit_code(&mut metadata, decode_unit_code_id(row)?)?;
+    restore_unit_code(&mut metadata, decode_unit_code_id(row, "unit_code_id")?)?;
 
     let temporal_row = TemporalHistoryRow {
         attribute_name: decode_attribute_name(row)?,
@@ -69,14 +71,14 @@ fn decode_attribute_kind(row: &PgRow) -> Result<AttributeKind, TemporalStoreErro
 }
 
 /// Read the row's expanded attribute IRI.
-fn decode_attribute_name(row: &PgRow) -> Result<AttributeName, TemporalStoreError> {
+pub(crate) fn decode_attribute_name(row: &PgRow) -> Result<AttributeName, TemporalStoreError> {
     let raw: String = row.try_get("attribute_name").map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
     raw.parse::<AttributeName>()
         .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute name '{raw}': {error}")))
 }
 
 /// Read the stream's multi-attribute discriminator.
-fn decode_dataset_id(row: &PgRow) -> Result<Option<Uri>, TemporalStoreError> {
+pub(crate) fn decode_dataset_id(row: &PgRow) -> Result<Option<Uri>, TemporalStoreError> {
     row.try_get::<Option<String>, _>("dataset_id")
         .map_err(|error| TemporalStoreError::Decode(error.to_string()))?
         .map(|raw| {
@@ -144,10 +146,10 @@ fn nullable_instant(row: &PgRow, column: &str) -> Result<Option<DateTime<Utc>>, 
 /// A stored value outside the range the catalog assigns fails the decode: it
 /// cannot name a registration, so rendering the instance without its unit would
 /// silently change what the value means.
-pub(crate) fn decode_unit_code_id(row: &PgRow) -> Result<Option<UnitCodeId>, TemporalStoreError> {
-    row.try_get::<Option<i16>, _>("unit_code_id")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.unit_code_id: {error}")))?
-        .map(|stored| UnitCodeId::try_from(stored).map_err(|error| TemporalStoreError::Decode(format!("attribute_history.unit_code_id {stored}: {error}"))))
+pub(crate) fn decode_unit_code_id(row: &PgRow, column: &str) -> Result<Option<UnitCodeId>, TemporalStoreError> {
+    row.try_get::<Option<i16>, _>(column)
+        .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.{column}: {error}")))?
+        .map(|stored| UnitCodeId::try_from(stored).map_err(|error| TemporalStoreError::Decode(format!("attribute_history.{column} {stored}: {error}"))))
         .transpose()
 }
 
@@ -177,7 +179,7 @@ fn decode_value(row: &PgRow) -> Result<TemporalValue, TemporalStoreError> {
 }
 
 /// Read the column the row's value kind declared, which must be populated.
-fn required_column<'r, T>(row: &'r PgRow, column: &str) -> Result<T, TemporalStoreError>
+pub(crate) fn required_column<'r, T>(row: &'r PgRow, column: &str) -> Result<T, TemporalStoreError>
 where
     T: sqlx::Decode<'r, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
 {
@@ -194,10 +196,7 @@ where
 /// rather than as the double nearest to it.
 fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
     let stored: BigDecimal = required_column(row, "value_number")?;
-    let literal = stored.to_string();
-    let number: Number =
-        serde_json::from_str(&literal).map_err(|error| TemporalStoreError::Decode(format!("attribute_history.value_number '{literal}': {error}")))?;
-    Ok(JsonNumber::try_from(&number)?)
+    json_number_of(&stored, "attribute_history.value_number")
 }
 
 /// Read the geometry column, which the query layer selects as EWKB.
@@ -208,40 +207,4 @@ fn decode_geometry(row: &PgRow) -> Result<Value, TemporalStoreError> {
         .map_err(|error| TemporalStoreError::Decode(format!("EWKB decode: {error}")))?
         .to_geojson();
     serde_json::to_value(&geometry).map_err(|error| TemporalStoreError::Decode(format!("GeoJSON serialize: {error}")))
-}
-
-/// Decode one aggregation row into a [`TemporalAggregationRow`].
-pub(crate) fn decode_aggregation_row(row: &PgRow) -> Result<TemporalAggregationRow, TemporalStoreError> {
-    let value_kind_raw: i16 = row
-        .try_get("value_kind")
-        .map_err(|error| TemporalStoreError::Decode(format!("invalid aggregation value_kind: {error}")))?;
-    let value_kind = ValueKind::try_from(value_kind_raw).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
-
-    Ok(TemporalAggregationRow {
-        attribute_name: decode_attribute_name(row)?,
-        attribute_type: attribute_type_of(decode_attribute_kind(row)?),
-        dataset_id: decode_dataset_id(row)?,
-        bucket_start: row.try_get("bucket_start").ok(),
-        bucket_end: row.try_get("bucket_end").ok(),
-        avg: row.try_get("agg_avg").ok(),
-        min: decode_agg_min_max(row, value_kind, "agg_min", "agg_min_str", "agg_min_dt"),
-        max: decode_agg_min_max(row, value_kind, "agg_max", "agg_max_str", "agg_max_dt"),
-        sum: row.try_get("agg_sum").ok(),
-        sumsq: row.try_get("agg_sumsq").ok(),
-        stddev: row.try_get("agg_stddev").ok(),
-        total_count: row.try_get("agg_total_count").ok(),
-        distinct_count: row.try_get("agg_distinct_count").ok(),
-    })
-}
-
-/// Decode a typed min/max aggregation column into [`AggregationMinMax`].
-fn decode_agg_min_max(row: &PgRow, value_kind: ValueKind, num_col: &str, str_col: &str, dt_col: &str) -> Option<AggregationMinMax> {
-    match value_kind {
-        ValueKind::String => row.try_get::<String, _>(str_col).ok().map(AggregationMinMax::String),
-        ValueKind::DateTime => row.try_get::<DateTime<Utc>, _>(dt_col).ok().map(AggregationMinMax::DateTime),
-        ValueKind::Number | ValueKind::Boolean | ValueKind::Object => row.try_get::<f64, _>(num_col).ok().map(AggregationMinMax::Number),
-        // A geometry has no ordering, a URI is aggregated by count alone, and a
-        // tombstone carries nothing to take an extremum of.
-        ValueKind::Geometry | ValueKind::Uri | ValueKind::Tombstone => None,
-    }
 }

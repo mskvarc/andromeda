@@ -15,6 +15,7 @@ use crate::{
     },
     schema::CurrentAttributeValues,
 };
+use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::{
     filter::{
         expression::Expr,
@@ -298,11 +299,14 @@ fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilte
 /// * booleans in `value_bool`,
 /// * date-times in `value_datetime`,
 /// * strings in `value_string` for Properties and single-valued
-///   VocabProperties, and in `value_uri` for Relationship objects — clause 4.9
-///   makes a Relationship's object a legal comparison target, so a string
-///   comparison has to consider both,
+///   VocabProperties, and — under the equality operators only — in `value_uri`
+///   for Relationship objects, which is what [`relationship_object_is_comparable`]
+///   decides,
 /// * plain dates and times in `value_string`, because only full
-///   `DateTime`-typed values are projected to `value_datetime`.
+///   `DateTime`-typed values are projected to `value_datetime`. Both are stored
+///   in the one canonical, fixed-width form their clause 4.6.3 types define, so
+///   byte-wise order over the column is chronological order and an ordering
+///   comparison against the bound canonical text is a temporal comparison.
 fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue>) -> String {
     let operator = comparison(op);
     match scalar {
@@ -324,21 +328,74 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue
         }
         Scalar::Str(value) => {
             let string_placeholder = binds.bind(value.as_str());
-            let uri_placeholder = binds.bind(value.as_str());
             let string_column = probe_column(CurrentAttributeValues::ValueString);
-            let uri_column = probe_column(CurrentAttributeValues::ValueUri);
-            format!("({string_column} {operator} {string_placeholder} OR {uri_column} {operator} {uri_placeholder})")
+            let string_test = format!("{string_column} {operator} {string_placeholder}");
+            match relationship_object_is_comparable(op) {
+                RelationshipObjects::Comparable => {
+                    let uri_placeholder = binds.bind(value.as_str());
+                    let uri_column = probe_column(CurrentAttributeValues::ValueUri);
+                    format!("({string_test} OR {uri_column} {operator} {uri_placeholder})")
+                }
+                RelationshipObjects::NonMatching => format!("({string_test})"),
+            }
         }
         Scalar::DateTime(value) => {
             let placeholder = binds.bind(*value);
             let column = probe_column(CurrentAttributeValues::ValueDatetime);
             format!("{column} {operator} {placeholder}")
         }
-        Scalar::Date(_) | Scalar::Time(_) => {
-            let placeholder = binds.bind(scalar.literal_text());
+        Scalar::Date(value) => {
+            let placeholder = binds.bind(NgsiLdDate::from(*value).to_string());
             let column = probe_column(CurrentAttributeValues::ValueString);
             format!("{column} {operator} {placeholder}")
         }
+        // The operand is rendered in the same canonical form the write path
+        // stores, rather than in the clause 4.9 serialisation the client wrote:
+        // `12:00:00+01:00` and `11:00:00Z` are one time of day, and only the
+        // canonical text of both compares against the stored column.
+        Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
+            Ok(canonical) => {
+                let placeholder = binds.bind(canonical.to_string());
+                let column = probe_column(CurrentAttributeValues::ValueString);
+                format!("{column} {operator} {placeholder}")
+            }
+            // A time of day with no canonical form is one no write path could
+            // have stored, so nothing can compare equal to it.
+            Err(_) => "FALSE".to_string(),
+        },
+    }
+}
+
+/// Whether a Relationship's object is a comparison target under one operator.
+///
+/// `current_attribute_values.value_uri` holds Relationship objects and nothing
+/// else, so probing it is exactly the decision of whether the predicate may
+/// match a Relationship.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelationshipObjects {
+    /// The operator admits a Relationship's object as a comparison target.
+    Comparable,
+    /// Clause 4.9 requires a Relationship operand to non-match this operator.
+    NonMatching,
+}
+
+/// Clause 4.9: a Relationship (and a ListRelationship) operand shall non-match
+/// every operator other than equality and inequality.
+///
+/// A URI names a resource; it carries no order a `<` or `>` could mean, and the
+/// pattern operators are defined over String targets. Probing `value_uri` under
+/// an ordering operator therefore made `owner>"a"` select entities the standard
+/// requires it to reject.
+///
+/// Known gap, left deliberately: a ListRelationship's objects are projected into
+/// `value_object` as a JSON array, not into `value_uri`, so equality against one
+/// of its members is not answered by this probe at all. Clause 4.9 admits it, and
+/// closing it needs a containment predicate over `value_object` that the
+/// projection carries no index for; it is a separate change from this gating.
+const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {
+    match op {
+        CmpOp::Equal | CmpOp::Unequal => RelationshipObjects::Comparable,
+        CmpOp::Greater | CmpOp::GreaterEq | CmpOp::Less | CmpOp::LessEq => RelationshipObjects::NonMatching,
     }
 }
 
@@ -354,12 +411,18 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue
 /// existence test in `NOT (...)`, which matched entities that simply lacked the
 /// attribute.
 ///
+/// Only `value_string` is tested. Clause 4.9 requires a Relationship operand to
+/// non-match every operator other than equality and inequality, and the pattern
+/// operators are defined over String targets — so a Relationship's object, which
+/// is the whole content of `value_uri`, is never a pattern target. Probing it
+/// made `owner~="urn:Person:.*"` select entities the standard requires it to
+/// reject.
+///
 /// The `gin_trgm_ops` trigram index `idx_cav_string_trgm` can accelerate POSIX
 /// `~` (since PostgreSQL 9.3) whenever the pattern yields extractable trigrams
 /// — `urn:ngsi-ld:.*` does, an anchored `^A.*` does not. Either way the probe
 /// is narrowed by the `attribute_name_id` prefix of `idx_cav_attr_string`
-/// before any regex is evaluated. The `value_uri` disjunct has no trigram index
-/// of its own; it is evaluated over the rows that prefix already selected.
+/// before any regex is evaluated.
 fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
     if !is_projection_eligible(path) {
         return fallback_pattern(path, pattern, polarity, target);
@@ -374,14 +437,8 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
     let attr = binds.bind(id.get());
     let operator = pattern_match(polarity);
     let string_placeholder = binds.bind(pattern.as_str());
-    let uri_placeholder = binds.bind(pattern.as_str());
-    // A pattern must also test a Relationship's object, held in `value_uri`,
-    // exactly as the comparison path does (clause 4.9): a URI is a string, so
-    // `owner~="urn:Person:.*"` matches. Only one column is non-null per
-    // instance, so the OR holds for `~=` and `!~=` alike.
     let string_column = probe_column(CurrentAttributeValues::ValueString);
-    let uri_column = probe_column(CurrentAttributeValues::ValueUri);
-    let value_sql = format!("({string_column} {operator} {string_placeholder} OR {uri_column} {operator} {uri_placeholder})");
+    let value_sql = format!("({string_column} {operator} {string_placeholder})");
     Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
 }
 
@@ -472,19 +529,73 @@ mod tests {
     }
 
     #[test]
-    fn a_pattern_covers_property_values_and_relationship_objects() {
-        // Clause 4.9: a URI is a String, so `~=` over a Relationship's object
-        // matches; the pattern must test `value_uri` as the comparison does.
+    fn a_pattern_does_not_reach_relationship_objects() {
+        // Clause 4.9 requires a Relationship operand to non-match every operator
+        // other than equality and inequality, and the pattern operators are
+        // defined over String targets. `value_uri` holds Relationship objects and
+        // nothing else, so a pattern must not probe it.
         let (sql, _) = render("\"https://example.com/brandName\"~=\"Merc.*\"");
         assert!(sql.contains("\"cav\".\"value_string\" ~"), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_uri\" ~"), "a pattern must also test relationship objects: {sql}");
+        assert!(!sql.contains("value_uri"), "a pattern must not test relationship objects: {sql}");
     }
 
     #[test]
-    fn string_comparison_covers_property_values_and_relationship_objects() {
-        let (sql, _) = render("\"https://example.com/brandName\"==\"Mercedes\"");
-        assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
-        assert!(sql.contains("\"cav\".\"value_uri\" ="), "relationship objects are legal targets: {sql}");
+    fn a_negated_pattern_does_not_reach_relationship_objects_either() {
+        let (sql, _) = render("\"https://example.com/brandName\"!~=\"Merc.*\"");
+        assert!(sql.contains("\"cav\".\"value_string\" !~"), "{sql}");
+        assert!(!sql.contains("value_uri"), "{sql}");
+    }
+
+    #[test]
+    fn equality_covers_property_values_and_relationship_objects() {
+        for expression in [
+            "\"https://example.com/brandName\"==\"Mercedes\"",
+            "\"https://example.com/brandName\"!=\"Mercedes\"",
+        ] {
+            let (sql, _) = render(expression);
+            assert!(sql.contains("\"cav\".\"value_string\" "), "{expression}: {sql}");
+            assert!(
+                sql.contains("\"cav\".\"value_uri\" "),
+                "{expression}: relationship objects are legal equality targets: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordering_comparison_does_not_reach_relationship_objects() {
+        // Clause 4.9: a Relationship operand shall non-match every operator other
+        // than equality and inequality. A URI carries no order a `<` could mean.
+        for expression in [
+            "\"https://example.com/brandName\">\"Mercedes\"",
+            "\"https://example.com/brandName\">=\"Mercedes\"",
+            "\"https://example.com/brandName\"<\"Mercedes\"",
+            "\"https://example.com/brandName\"<=\"Mercedes\"",
+        ] {
+            let (sql, _) = render(expression);
+            assert!(sql.contains("\"cav\".\"value_string\" "), "{expression}: {sql}");
+            assert!(!sql.contains("value_uri"), "{expression}: {sql}");
+        }
+    }
+
+    #[test]
+    fn a_string_range_bound_keeps_relationship_objects_out_of_its_ordering_halves() {
+        // A range compiles to two ordering comparisons, so it inherits the
+        // clause 4.9 gating rather than restating it.
+        let (sql, _) = render("\"https://example.com/brandName\"==\"a\"..\"z\"");
+        assert!(!sql.contains("value_uri"), "{sql}");
+    }
+
+    #[test]
+    fn a_value_list_still_covers_relationship_objects_in_both_polarities() {
+        // Every arm of a value list is an equality comparison (clause 4.9
+        // Table 4.9-1), so each one may match a Relationship's object.
+        for expression in [
+            "\"https://example.com/color\"==\"red\",\"blue\"",
+            "\"https://example.com/color\"!=\"red\",\"blue\"",
+        ] {
+            let (sql, _) = render(expression);
+            assert_eq!(sql.matches("value_uri").count(), 2, "{expression}: one per list member: {sql}");
+        }
     }
 
     #[test]
@@ -525,6 +636,30 @@ mod tests {
         let (sql, _) = render("\"https://example.com/d\"==2024-01-01");
         assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
         assert!(!sql.contains("value_datetime"), "only full date-times reach value_datetime: {sql}");
+    }
+
+    #[test]
+    fn a_time_operand_binds_the_canonical_form_the_write_path_stores() {
+        // Clause 4.6.3 admits any offset and any fractional width, and the write
+        // path stores one canonical rendering of them. The probe has to bind that
+        // same rendering or an offset-bearing operand matches nothing.
+        let (_, binds) = render("\"https://example.com/d\"==\"13:00:00+01:00\"");
+        assert!(
+            binds.iter().any(|bind| matches!(bind, BindValue::String(text) if text == "12:00:00.000000Z")),
+            "{binds:?}"
+        );
+    }
+
+    #[test]
+    fn a_time_ordering_comparison_binds_the_canonical_form_too() {
+        // The stored column is byte-wise collated, so the comparison is
+        // chronological exactly because both sides are the fixed-width form.
+        let (sql, binds) = render("\"https://example.com/d\">\"09:30:00.5Z\"");
+        assert!(sql.contains("\"cav\".\"value_string\" >"), "{sql}");
+        assert!(
+            binds.iter().any(|bind| matches!(bind, BindValue::String(text) if text == "09:30:00.500000Z")),
+            "{binds:?}"
+        );
     }
 
     #[test]
