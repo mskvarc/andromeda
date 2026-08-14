@@ -3,8 +3,6 @@
 
 use crate::{
     attribute_name_id::AttributeNameId,
-    bind::BindBuilder,
-    column_reference::{qualified, quoted},
     error::RenderError,
     operator::{comparison, pattern_match},
     q_predicate::{
@@ -13,7 +11,6 @@ use crate::{
         target::QFilterTarget,
         traversal::LinkedHop,
     },
-    schema::CurrentAttributeValues,
 };
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::{
@@ -24,6 +21,11 @@ use andromeda_ngsi_ld_query::{
         scalar::{CompareValue, Scalar},
     },
     pattern::Pattern,
+};
+use andromeda_postgresql_schema::current::CurrentAttributeValues;
+use andromeda_postgresql_seaquery::{
+    bind::BindBuilder,
+    column_reference::{qualified, quoted},
 };
 use sea_query::{Alias, Condition, Expr as SeaExpr, Value as SeaValue};
 
@@ -445,11 +447,9 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        bind::{BindValue, sea_values_to_bind_values},
-        schema::Entities,
-    };
     use andromeda_ngsi_ld_query::filter::parser;
+    use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_seaquery::bind::{BindValue, sea_values_to_bind_values};
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     const SPEED: &str = "https://example.com/speed";

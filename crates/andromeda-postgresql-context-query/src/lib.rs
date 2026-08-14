@@ -5,7 +5,7 @@
 //! it are queried. This crate assembles those two `SELECT` statements from the
 //! fragments `andromeda-postgresql-query` renders, and does nothing else: it
 //! opens no connection, holds no pool, and returns a
-//! [`BuiltQuery`](andromeda_postgresql_query::built::BuiltQuery) for the store
+//! [`BuiltQuery`](andromeda_postgresql_seaquery::built::BuiltQuery) for the store
 //! to bind and execute.
 
 #![deny(missing_docs)]
@@ -26,6 +26,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-schema",
+        "andromeda-postgresql-seaquery",
     ],
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-geometry",

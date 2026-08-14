@@ -9,13 +9,13 @@
 use sea_query::{DynIden, Iden, IntoIden};
 
 /// Quote one identifier: `"name"`.
-pub(crate) fn quoted(identifier: &dyn Iden) -> String {
+pub fn quoted(identifier: &dyn Iden) -> String {
     let name = identifier.to_string();
     format!("\"{name}\"")
 }
 
 /// Quote a `relation.column` reference: `"relation"."column"`.
-pub(crate) fn qualified(relation: &dyn Iden, column: &dyn Iden) -> String {
+pub fn qualified(relation: &dyn Iden, column: &dyn Iden) -> String {
     let relation = relation.to_string();
     let column = column.to_string();
     format!("\"{relation}\".\"{column}\"")
@@ -59,25 +59,25 @@ impl ColumnReference {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{E, Entities};
+    use sea_query::Alias;
 
     #[test]
     fn one_identifier_is_double_quoted() {
-        assert_eq!(quoted(&Entities::Payload), "\"payload\"");
+        assert_eq!(quoted(&Alias::new("payload")), "\"payload\"");
     }
 
     #[test]
     fn a_qualified_reference_quotes_both_halves() {
-        assert_eq!(qualified(&E, &Entities::Id), "\"e\".\"id\"");
+        assert_eq!(qualified(&Alias::new("e"), &Alias::new("id")), "\"e\".\"id\"");
     }
 
     #[test]
     fn a_bare_column_reference_renders_the_single_quoted_column() {
-        assert_eq!(ColumnReference::bare(Entities::Payload).render(), "\"payload\"");
+        assert_eq!(ColumnReference::bare(Alias::new("payload")).render(), "\"payload\"");
     }
 
     #[test]
     fn a_qualified_column_reference_renders_both_halves() {
-        assert_eq!(ColumnReference::qualified(E, Entities::Id).render(), "\"e\".\"id\"");
+        assert_eq!(ColumnReference::qualified(Alias::new("e"), Alias::new("id")).render(), "\"e\".\"id\"");
     }
 }

@@ -17,17 +17,20 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties::VALUE;
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
     attribute_instance_correlation::CorrelatedEntityRow,
-    bind::sea_values_to_bind_values,
-    built::BuiltQuery,
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
-    jsonb::{attribute_value_jsonpath, escape_jsonpath, jsonb_key_exists},
-    operator::regex_match,
+    jsonb::attribute_value_jsonpath,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
-    schema::Entities,
     scope_predicate::{ScopeTarget, condition as scope_condition},
     type_predicate::{TypesColumn, condition as type_condition},
+};
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::{
+    bind::sea_values_to_bind_values,
+    built::BuiltQuery,
+    jsonb::{escape_jsonpath, jsonb_key_exists},
+    operator::regex_match,
 };
 use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, Func, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 
@@ -274,7 +277,8 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, bind::BindValue};
+    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_seaquery::bind::BindValue;
     use iri_rs::IriBuf;
 
     fn ids(raw: &[&str]) -> Vec<Uri> {

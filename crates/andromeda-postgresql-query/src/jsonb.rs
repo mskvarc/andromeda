@@ -1,15 +1,12 @@
-//! JSONB access: key existence, jsonpath construction, and the two escapes a
-//! jsonpath needs on its way into a statement.
+//! The NGSI-LD-aware JSONB constructions: lifting a `q` comparison into a
+//! comparable domain, and building the jsonpath that reaches a stored value.
 
-use crate::{
-    literal::escape_single_quoted,
-    temporal_operand::{stored_date_time, stored_time},
-};
+use crate::temporal_operand::{stored_date_time, stored_time};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime};
 use andromeda_ngsi_ld_query::filter::scalar::Scalar;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::OBJECT;
+use andromeda_postgresql_seaquery::jsonb::escape_jsonpath_key;
 use chrono::SecondsFormat;
-use sea_query::{Expr, SimpleExpr};
 
 /// Both sides of one payload comparison, lifted into the domain the operand's
 /// kind is ordered in.
@@ -88,26 +85,6 @@ pub fn comparison_sql(scalar: &Scalar, stored_text: &str, placeholder: &str) -> 
     }
 }
 
-/// JSONB: `col ? key` - tests if JSONB object contains key.
-pub fn jsonb_key_exists(col: SimpleExpr, key: SimpleExpr) -> SimpleExpr {
-    Expr::cust_with_exprs("$1 ? $2", [col, key])
-}
-
-/// Escape one jsonpath object key, which the path itself double-quotes.
-pub fn escape_jsonpath_key(key: &str) -> String {
-    key.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-/// Escape a jsonpath for embedding in a single-quoted SQL literal.
-///
-/// Applied unconditionally by every builder that interpolates a jsonpath into
-/// `'…'`. An attribute IRI containing an apostrophe would otherwise terminate
-/// the literal early; `geoproperty` and `orderBy` both carry request-supplied
-/// IRIs, and an absolute IRI passes JSON-LD expansion unchanged.
-pub fn escape_jsonpath(jsonpath: &str) -> String {
-    escape_single_quoted(jsonpath)
-}
-
 /// Build the jsonpath that reaches an attribute's value inside the expanded
 /// payload: `$[0]."<attr>"[0]."<sub>"…[0]."<terminal>"[0]."<member>"[*]…."@value"`.
 ///
@@ -150,14 +127,6 @@ pub fn attribute_value_jsonpath(attr_iri: &str, sub_attrs: &[&str], value_path: 
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::filter::scalar::{parse_date, parse_date_time, parse_time};
-    use sea_query::{PostgresQueryBuilder, Query};
-
-    #[test]
-    fn jsonb_key_exists_uses_the_containment_operator() {
-        let expr = jsonb_key_exists(Expr::cust("\"payload\"->0"), Expr::val("speed").into());
-        let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
-        assert!(sql.contains(" ? "), "{sql}");
-    }
 
     #[test]
     fn a_number_is_lifted_to_numeric_on_both_sides_so_it_is_not_ordered_as_text() {
@@ -278,15 +247,5 @@ mod tests {
             attribute_value_jsonpath("https://example.com/owner", &[], &[CITY], OBJECT.as_str()),
             format!("$[0].\"https://example.com/owner\"[0].\"https://uri.etsi.org/ngsi-ld/hasObject\"[0].\"{CITY}\"[*].\"@value\"")
         );
-    }
-
-    #[test]
-    fn a_jsonpath_key_escapes_backslashes_and_double_quotes() {
-        assert_eq!(escape_jsonpath_key("a\\b\"c"), "a\\\\b\\\"c");
-    }
-
-    #[test]
-    fn a_jsonpath_literal_doubles_apostrophes() {
-        assert_eq!(escape_jsonpath("$[0].\"o'brien\""), "$[0].\"o''brien\"");
     }
 }

@@ -139,7 +139,7 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<Uri>, SnapshotError> {
         let built = build_match_query(filter);
-        let query = andromeda_postgresql_query::bind_values!(sqlx::query(&built.sql), &built.bind_values);
+        let query = andromeda_postgresql_seaquery::bind_values!(sqlx::query(&built.sql), &built.bind_values);
         let rows = query.fetch_all(self.pool()).await.map_err(persistence_error)?;
         let mut ids = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -384,13 +384,13 @@ async fn query_snapshot_table(params: &SnapshotQueryParams<'_>) -> Result<(Vec<V
         return Err(SnapshotError::internal("snapshot listing query must carry a count statement"));
     };
 
-    let count_row = andromeda_postgresql_query::bind_values!(sqlx::query(count_sql), &built.bind_values)
+    let count_row = andromeda_postgresql_seaquery::bind_values!(sqlx::query(count_sql), &built.bind_values)
         .fetch_one(params.pool)
         .await
         .map_err(persistence_error)?;
     let total: i64 = count_row.try_get("cnt").map_err(persistence_error)?;
 
-    let rows = andromeda_postgresql_query::bind_values!(sqlx::query(&built.sql), &built.bind_values)
+    let rows = andromeda_postgresql_seaquery::bind_values!(sqlx::query(&built.sql), &built.bind_values)
         .fetch_all(params.pool)
         .await
         .map_err(persistence_error)?;
@@ -448,7 +448,7 @@ async fn batch_insert_snapshot_rows(
 /// Retrieve one prepared snapshot row by snapshot and entity identifiers.
 async fn get_snapshot_row(pool: &PgPool, table: &str, data_column: &str, snapshot_id: &Uri, entity_id: &Uri) -> Result<Option<Value>, SnapshotError> {
     let built = build_get_row_query(Alias::new(table), Alias::new(data_column), snapshot_id, entity_id);
-    let row = andromeda_postgresql_query::bind_values!(sqlx::query(&built.sql), &built.bind_values)
+    let row = andromeda_postgresql_seaquery::bind_values!(sqlx::query(&built.sql), &built.bind_values)
         .fetch_optional(pool)
         .await
         .map_err(persistence_error)?;

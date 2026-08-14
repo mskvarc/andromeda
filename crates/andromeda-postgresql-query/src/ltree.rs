@@ -2,7 +2,6 @@
 
 use andromeda_ngsi_ld_lexicon::scope::grammar::Scope;
 use andromeda_ngsi_ld_query::scope::pattern::{ScopePattern, ScopeSegment};
-use sea_query::{Expr, SimpleExpr};
 
 /// Convert an NGSI-LD scope path to PostgreSQL ltree format for storage.
 ///
@@ -46,15 +45,9 @@ pub fn pattern_to_lquery(pattern: &ScopePattern) -> String {
     lquery
 }
 
-/// ltree: `col ~ lquery` - tests if ltree matches lquery pattern.
-pub fn ltree_matches(col: SimpleExpr, lquery: SimpleExpr) -> SimpleExpr {
-    Expr::cust_with_exprs("$1 ~ $2::lquery", [col, lquery])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_query::{PostgresQueryBuilder, Query};
 
     fn lquery(raw: &str) -> String {
         pattern_to_lquery(&ScopePattern::parse(raw).expect("valid pattern"))
@@ -121,12 +114,5 @@ mod tests {
         // Clause 4.18: every scope is absolute, so the leading `/` carries no
         // information and both spellings are the same path.
         assert_eq!(ltree("Madrid"), ltree("/Madrid"));
-    }
-
-    #[test]
-    fn ltree_matches_uses_lquery_cast() {
-        let expr = ltree_matches(Expr::col("scope_paths").into(), Expr::val("A.B.*").into());
-        let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
-        assert!(sql.contains("::lquery"), "{sql}");
     }
 }

@@ -66,6 +66,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-seaquery",
         "andromeda-registration",
         "andromeda-snapshot",
         "andromeda-spatial-index",

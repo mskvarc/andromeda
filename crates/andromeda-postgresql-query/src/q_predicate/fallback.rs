@@ -8,8 +8,8 @@
 //! path exactly lands here as well. This path is unindexed by construction.
 
 use crate::{
-    jsonb::{attribute_value_jsonpath, comparison_sql, escape_jsonpath},
-    operator::{comparison, pattern_match, present_and},
+    jsonb::{attribute_value_jsonpath, comparison_sql},
+    operator::{comparison, pattern_match},
     q_predicate::target::QFilterTarget,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -22,6 +22,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{OBJECT, VALUE};
+use andromeda_postgresql_seaquery::{jsonb::escape_jsonpath, operator::present_and};
 use sea_query::{Condition, Expr as SeaExpr, Value as SeaValue};
 
 /// Compile an existence predicate that carries a sub-path.
@@ -180,9 +181,9 @@ mod tests {
     use crate::{
         attribute_name_id::AttributeNameId,
         q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile},
-        schema::Entities,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar};
+    use andromeda_postgresql_schema::current::Entities;
     use sea_query::{PostgresQueryBuilder, Query};
 
     const SPEED: &str = "https://example.com/speed";

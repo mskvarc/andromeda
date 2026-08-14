@@ -12,6 +12,8 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-schema.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 andromeda-unit-catalog.workspace = true
 chrono = { version = "0.4.44", features = ["serde"] }
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }

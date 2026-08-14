@@ -10,7 +10,7 @@
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
-use andromeda_postgresql_query::{
+use andromeda_postgresql_seaquery::{
     bind::{BindBuilder, BindValue},
     built::BuiltQuery,
 };

@@ -18,13 +18,22 @@
 use crate::{
     attribute_instance_correlation::{CorrelatedEntityRow, geometry_instances_of, instance_geometry_column},
     error::RenderError,
-    postgis::{st_contains, st_disjoint, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_ewkb},
     q_predicate::attribute_names::ResolvedAttributeNames,
 };
 use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_query::{error::QueryError, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{EXPIRES_AT, LOCATION};
 use andromeda_postgresql_encoding::ewkb::encode;
+use andromeda_postgresql_seaquery::postgis::{
+    st_contains,
+    st_disjoint,
+    st_dwithin,
+    st_equals,
+    st_intersects,
+    st_overlaps,
+    st_within,
+    validated_geom_from_ewkb,
+};
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// What a geo predicate is filtering, which fixes both where it reads the
@@ -239,9 +248,10 @@ fn location_expiry_guard(quoted_payload_col: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{attribute_name_id::AttributeNameId, schema::Entities};
+    use crate::attribute_name_id::AttributeNameId;
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use andromeda_postgresql_schema::current::Entities;
     use sea_query::{PostgresQueryBuilder, Query, Value, Values};
 
     fn name(value: &str) -> AttributeName {

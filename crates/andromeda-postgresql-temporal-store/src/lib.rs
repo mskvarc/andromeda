@@ -96,6 +96,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-query",
         "andromeda-temporal",
         "andromeda-unit-catalog",

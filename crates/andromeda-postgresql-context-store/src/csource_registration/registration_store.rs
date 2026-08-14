@@ -288,13 +288,13 @@ impl RegistrationStore for PostgresRegistrationStore {
     async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<RegistrationPage, RegistrationError> {
         let built = csr_sql::build_csr_query(compiled).map_err(persistence_error)?;
         let total = if let Some(ref count_sql) = built.count_sql {
-            let count_query = andromeda_postgresql_query::bind_values!(sqlx::query_as::<_, (i64,)>(count_sql), &built.bind_values);
+            let count_query = andromeda_postgresql_seaquery::bind_values!(sqlx::query_as::<_, (i64,)>(count_sql), &built.bind_values);
             let (total,) = count_query.fetch_one(&self.pool).await.map_err(persistence_error)?;
             total
         } else {
             0
         };
-        let main_query = andromeda_postgresql_query::bind_values!(sqlx::query(&built.sql), &built.bind_values);
+        let main_query = andromeda_postgresql_seaquery::bind_values!(sqlx::query(&built.sql), &built.bind_values);
         let rows = main_query.fetch_all(&self.pool).await.map_err(persistence_error)?;
         let csrs = rows
             .iter()

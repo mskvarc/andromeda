@@ -5,17 +5,13 @@
 //! bounded by the query's time window, and the boolean structure between the
 //! two is identical.
 
-use crate::{
-    bind::BindBuilder,
-    column_reference::ColumnReference,
-    ltree::{ltree_matches, pattern_to_lquery},
-    time_column::column_name,
-};
+use crate::{ltree::pattern_to_lquery, time_column::column_name};
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{
     scope::{pattern::ScopePattern, query::ScopeQuery},
     temporal::window::TimeInterval,
 };
+use andromeda_postgresql_seaquery::{bind::BindBuilder, column_reference::ColumnReference, ltree::ltree_matches};
 use sea_query::{Condition, Expr as SeaExpr, IntoIden, SimpleExpr};
 
 /// Which relation a scope predicate is evaluated against.
@@ -149,7 +145,7 @@ fn scope_history_exists(lquery: &str, entity_key_column: &str, timeproperty: Tim
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::Entities;
+    use andromeda_postgresql_schema::current::Entities;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     fn scope(raw: &str) -> ScopeQuery {

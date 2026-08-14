@@ -20,10 +20,12 @@ use crate::history::HISTORY_JOINS;
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_query::{
-    bind::{BindBuilder, BindValue},
-    built::BuiltQuery,
     error::RenderError,
     time_column::{history_column, history_column_for_alias},
+};
+use andromeda_postgresql_seaquery::{
+    bind::{BindBuilder, BindValue},
+    built::BuiltQuery,
 };
 use std::borrow::Cow;
 

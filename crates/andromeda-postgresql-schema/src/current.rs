@@ -1,12 +1,8 @@
-//! The relations both port groups read current entity state from.
+//! The relations that hold current entity state.
 //!
-//! Only the current-state grain lives here - the `entities` row and the
-//! `current_attribute_values` projection of its attributes. Those are the
-//! relations a context statement and a temporal statement both name, so they
-//! are the ones whose spelling has to be agreed below them. Relations that
-//! belong to a single port group are declared by the crate that assembles that
-//! group's statements, which is what stops a backend replacing one group from
-//! inheriting the other's schema.
+//! The `entities` row and the `current_attribute_values` projection of its
+//! attributes are the current-state grain a context statement and a temporal
+//! statement both read, together with the `e` alias they read it under.
 
 use sea_query::Iden;
 
@@ -73,18 +69,17 @@ pub enum CurrentAttributeValues {
     ValueUri,
 }
 
-/// Alias `e` for entities table.
+/// Alias `e` for the entities table.
+///
+/// Shared by the context type predicate and the temporal stage-1 statement,
+/// which both read the entities row under this alias.
 #[derive(Iden, Clone, Copy)]
 #[iden = "e"]
 pub struct E;
 
-/// The text of the [`E`] alias, for the statement fragments that are written as
-/// raw SQL rather than built through sea-query and so cannot use the [`Iden`].
-pub const E_ALIAS: &str = "e";
-
 #[cfg(test)]
 mod tests {
-    use crate::schema::{CurrentAttributeValues, E, Entities};
+    use crate::current::{CurrentAttributeValues, E, Entities};
     use sea_query::Iden;
 
     #[test]

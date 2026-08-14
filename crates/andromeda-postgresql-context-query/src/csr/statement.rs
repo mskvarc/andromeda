@@ -8,90 +8,14 @@ use crate::csr::{
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, temporal::window::TimeInterval};
 use andromeda_postgresql_query::{
-    bind::sea_values_to_bind_values,
-    built::BuiltQuery,
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
     q_predicate::attribute_names::ResolvedAttributeNames,
 };
-use sea_query::{Condition, Expr as SeaExpr, Iden, Order, PostgresQueryBuilder, Query};
-
-/// The `context_source_registrations` relation and its columns.
-///
-/// Named through an [`Iden`] enum rather than hand-quoted strings, mirroring the
-/// `Entities` schema enum: a column rename moves every reference with it, and a
-/// typo becomes a compile error instead of a query that silently selects
-/// nothing. The three geometry columns and the two enum columns still project
-/// through a cast sea-query cannot express — `ST_AsGeoJSON(...)::JSONB` and
-/// `::text` — but even those name their column and their output alias through
-/// this enum.
-#[derive(Iden, Clone, Copy)]
-enum Csr {
-    /// The `context_source_registrations` table.
-    #[iden = "context_source_registrations"]
-    Table,
-    /// Primary key: the registration's URI identifier.
-    Id,
-    /// The registration type discriminator.
-    Type,
-    /// Human-readable registration name.
-    RegistrationName,
-    /// Free-text description.
-    Description,
-    /// The `information` array of registered entity/attribute coverage.
-    Information,
-    /// Owning tenant.
-    Tenant,
-    /// The `observationInterval` temporal bounds.
-    ObservationInterval,
-    /// The `managementInterval` temporal bounds.
-    ManagementInterval,
-    /// PostGIS geometry of the registration `location`.
-    Location,
-    /// PostGIS geometry of the `observationSpace`.
-    ObservationSpace,
-    /// PostGIS geometry of the `operationSpace`.
-    OperationSpace,
-    /// Expiry instant, after which the registration is gone.
-    ExpiresAt,
-    /// The context source endpoint URI.
-    Endpoint,
-    /// The endpoint's `accept` media type.
-    Accept,
-    /// The forwarding mode enum.
-    Mode,
-    /// The operations the source serves.
-    Operations,
-    /// The registration's scope paths.
-    Scope,
-    /// The refresh rate the source advertises.
-    RefreshRate,
-    /// Management endpoint metadata.
-    Management,
-    /// The `contextSourceInfo` key-value pairs.
-    ContextSourceInfo,
-    /// The registration's JSON-LD context.
-    JsonldContext,
-    /// The context source alias.
-    ContextSourceAlias,
-    /// The forwarding status enum.
-    Status,
-    /// Count of notifications sent.
-    TimesSent,
-    /// Count of notification failures.
-    TimesFailed,
-    /// Instant of the last successful contact.
-    LastSuccess,
-    /// Instant of the last failed contact.
-    LastFailure,
-    /// Creation instant (clause 4.8 system attribute).
-    CreatedAt,
-    /// Last-modification instant (clause 4.8 system attribute).
-    ModifiedAt,
-    /// The `additionalProperties` JSONB bag of unmodelled members.
-    AdditionalProperties,
-}
+use andromeda_postgresql_schema::csr::Csr;
+use andromeda_postgresql_seaquery::{bind::sea_values_to_bind_values, built::BuiltQuery};
+use sea_query::{Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
 
 /// Builds a parameterized SQL query to discover Context Source Registrations.
 ///

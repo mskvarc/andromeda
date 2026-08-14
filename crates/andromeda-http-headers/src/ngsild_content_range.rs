@@ -67,7 +67,7 @@ impl FromStr for NgsiLdContentRange {
         let (start, end) = range.split_once("Z-").ok_or(())?;
         let start = format!("{start}Z");
         let start = DateTime::parse_from_rfc3339(&start).map_err(|_| ())?.with_timezone(&Utc);
-        let end = DateTime::parse_from_rfc3339(&end).map_err(|_| ())?.with_timezone(&Utc);
+        let end = DateTime::parse_from_rfc3339(end).map_err(|_| ())?.with_timezone(&Utc);
         let total = if total == "*" { None } else { Some(total.parse().map_err(|_| ())?) };
         Ok(Self::new(start, end, total))
     }

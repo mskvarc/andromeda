@@ -25,6 +25,7 @@ andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 andromeda-registration.workspace = true
 andromeda-snapshot.workspace = true
 andromeda-spatial-index.workspace = true

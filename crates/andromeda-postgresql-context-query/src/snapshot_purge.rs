@@ -2,7 +2,7 @@
 //! (clauses 5.16.7 and 6.36.3.2).
 
 use andromeda_ngsi_ld_model::snapshot_filter::{Conjunction, SnapshotField, SnapshotOp, SnapshotPurgeFilter, SnapshotValue};
-use andromeda_postgresql_query::{
+use andromeda_postgresql_seaquery::{
     bind::{BindBuilder, BindValue},
     built::BuiltQuery,
 };

@@ -12,9 +12,9 @@ use andromeda_ngsi_ld_query::filter::{
 use andromeda_postgresql_query::{
     error::RenderError,
     jsonb::comparison_sql,
-    literal::escape_single_quoted,
-    operator::{comparison, pattern_match, present_and},
+    operator::{comparison, pattern_match},
 };
+use andromeda_postgresql_seaquery::{literal::escape_single_quoted, operator::present_and};
 use sea_query::{Condition, Expr as SeaExpr};
 
 /// Compile a parsed `q` expression against `additional_properties`.
@@ -200,8 +200,8 @@ mod tests {
     use andromeda_postgresql_query::{
         attribute_name_id::AttributeNameId,
         q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile, target::QFilterTarget},
-        schema::Entities,
     };
+    use andromeda_postgresql_schema::current::Entities;
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query};
 
     fn render(q: &str) -> String {

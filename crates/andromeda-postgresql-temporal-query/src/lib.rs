@@ -15,8 +15,8 @@
 
 pub mod aggregation;
 pub mod aggregation_group;
+pub mod alias;
 pub mod history;
-pub mod schema;
 pub mod stage1;
 
 #[cfg(test)]
@@ -26,6 +26,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-schema",
+        "andromeda-postgresql-seaquery",
         "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [

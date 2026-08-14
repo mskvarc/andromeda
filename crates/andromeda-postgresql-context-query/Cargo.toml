@@ -14,6 +14,8 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-schema.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 sea-query = { version = "0.32.7", features = ["backend-postgres", "with-chrono"] }
 

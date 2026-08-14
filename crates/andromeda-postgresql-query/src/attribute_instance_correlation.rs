@@ -9,10 +9,8 @@
 //! about which rows a GeoProperty lives in would silently order by a geometry
 //! they did not filter on.
 
-use crate::{
-    attribute_name_id::AttributeNameId,
-    schema::{CurrentAttributeValues, Entities},
-};
+use crate::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
 use sea_query::Iden;
 
 /// The name an unaliased `entities` row is qualified by.

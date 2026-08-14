@@ -1,0 +1,16 @@
+[package]
+name = "andromeda-postgresql-seaquery"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono = "0.4.44"
+sea-query = { version = "0.32.7", features = ["backend-postgres", "with-chrono"] }
+thiserror = "2.0.18"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true

@@ -15,14 +15,13 @@
 //! *which row* is being asked about rather than *what is asked* of it — the two
 //! change for unrelated reasons.
 
-use crate::{
-    attribute_name_id::AttributeNameId,
+use crate::{attribute_name_id::AttributeNameId, q_predicate::target::QFilterTarget};
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
+use andromeda_postgresql_seaquery::{
     column_reference::{qualified, quoted},
     operator::array_contains,
-    q_predicate::target::QFilterTarget,
-    schema::{CurrentAttributeValues, Entities},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use sea_query::{Alias, Condition, Expr as SeaExpr, SimpleExpr};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe

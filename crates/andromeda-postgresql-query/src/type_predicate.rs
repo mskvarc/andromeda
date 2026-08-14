@@ -5,11 +5,9 @@
 //! renders to `AND` / `OR` around them. The only thing that varies between
 //! callers is which relation the column is read from.
 
-use crate::{
-    operator::array_contains,
-    schema::{E, Entities},
-};
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+use andromeda_postgresql_schema::current::{E, Entities};
+use andromeda_postgresql_seaquery::operator::array_contains;
 use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// Which relation's `types` column a rendering reads.

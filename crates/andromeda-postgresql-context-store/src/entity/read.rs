@@ -9,7 +9,8 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_context_query::entity as entity_sql;
-use andromeda_postgresql_query::{bind::BindValue, projected_attribute_names::projected_attribute_names, q_predicate::attribute_names::ResolvedAttributeNames};
+use andromeda_postgresql_query::{projected_attribute_names::projected_attribute_names, q_predicate::attribute_names::ResolvedAttributeNames};
+use andromeda_postgresql_seaquery::bind::BindValue;
 use serde_json::Value;
 use sqlx::Row;
 use std::collections::HashMap;
@@ -160,7 +161,7 @@ impl EntityRepository {
 
         tracing::debug!("Built IDs SQL: {} with binds: {:?}", built.sql, built.bind_values);
 
-        let query = andromeda_postgresql_query::bind_values!(sqlx::query(&built.sql), &built.bind_values);
+        let query = andromeda_postgresql_seaquery::bind_values!(sqlx::query(&built.sql), &built.bind_values);
 
         let rows = query.fetch_all(&self.pool).await?;
         let ids: Vec<Uri> = rows.iter().map(|row| stored_uri(row.get("id"))).collect::<Result<_, _>>()?;
@@ -190,7 +191,7 @@ impl EntityRepository {
 
     /// Run a dynamic query and extract payloads, optionally reading the total count from the first row.
     async fn execute_dynamic_query(&self, sql: &str, binds: &[BindValue<'_>], read_total_count: bool) -> Result<(Vec<Value>, Option<i64>), ContextStoreError> {
-        let query = andromeda_postgresql_query::bind_values!(sqlx::query(sql), binds);
+        let query = andromeda_postgresql_seaquery::bind_values!(sqlx::query(sql), binds);
 
         let rows = query.fetch_all(&self.pool).await?;
         let mut row_iter = rows.into_iter();
@@ -217,7 +218,7 @@ impl EntityRepository {
 
     /// Run a standalone count query.
     async fn execute_count_query(&self, sql: &str, binds: &[BindValue<'_>]) -> Result<i64, ContextStoreError> {
-        let query = andromeda_postgresql_query::bind_values!(sqlx::query_scalar(sql), binds);
+        let query = andromeda_postgresql_seaquery::bind_values!(sqlx::query_scalar(sql), binds);
 
         let count: i64 = query.fetch_one(&self.pool).await?;
         Ok(count)

@@ -9,7 +9,7 @@
 //! what makes "no current state" mean "matches no current-state filter" rather
 //! than "history disappears".
 
-use crate::schema::{Ah, An, AttributeHistory, AttributeNames, CE_ALIAS, Ce, EntityIdColumn, S, TemporalAttributeStreams, TemporalEntities};
+use crate::alias::{Ah, An, CE_ALIAS, Ce, EntityIdColumn, S};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     entity_selection::EntitySelector,
@@ -18,18 +18,19 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_query::{
     attribute_instance_correlation::CorrelatedEntityRow,
-    bind::sea_values_to_bind_values,
-    built::BuiltQuery,
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
-    operator::regex_match,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
-    schema::{E, Entities},
     scope_predicate::{ScopeTarget, condition as scope_condition},
     time_column::history_column,
     type_predicate::{TypesColumn, condition as type_condition},
 };
+use andromeda_postgresql_schema::{
+    current::{E, Entities},
+    temporal::{AttributeHistory, AttributeNames, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{bind::sea_values_to_bind_values, built::BuiltQuery, operator::regex_match};
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, Func, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
 
@@ -255,7 +256,8 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, bind::BindValue};
+    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_seaquery::bind::BindValue;
     use chrono::{DateTime, Utc};
 
     fn instant(raw: &str) -> DateTime<Utc> {

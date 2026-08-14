@@ -1,0 +1,15 @@
+[package]
+name = "andromeda-postgresql-schema"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sea-query = { version = "0.32.7", features = ["backend-postgres", "with-chrono"] }
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"

@@ -16,10 +16,12 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
-    bind::{BindBuilder, BindValue},
-    built::BuiltQuery,
     error::RenderError,
     time_column::{history_column, unprefixed_column},
+};
+use andromeda_postgresql_seaquery::{
+    bind::{BindBuilder, BindValue},
+    built::BuiltQuery,
 };
 use std::borrow::Cow;
 

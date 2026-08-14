@@ -4,11 +4,14 @@
 //! 009 v1.9.1 defines; this crate says how each of them is written in
 //! PostgreSQL. A `q` filter becomes a probe against the
 //! `current_attribute_values` projection, a `georel` becomes a PostGIS
-//! predicate, a `scopeQ` becomes an
-//! `lquery` match, a type selection becomes a predicate over the `types` array
-//! — plus the primitives those renderings are built from: typed bind values,
-//! schema identifiers, jsonpath and literal escaping, and the two operators
-//! sea-query has no native constructor for.
+//! predicate, a `scopeQ` becomes an `lquery` match, a type selection becomes a
+//! predicate over the `types` array.
+//!
+//! The primitives those renderings are built from live below the NGSI-LD line:
+//! the dialect vocabulary (PostGIS/ltree/jsonb operators, casts, bind, quoting)
+//! is `andromeda-postgresql-seaquery`, and the physical relation identifiers are
+//! `andromeda-postgresql-schema`. This crate holds only the translation of the
+//! query languages onto them.
 //!
 //! Everything here is a fragment. Assembling fragments into a statement is the
 //! job of the crate that owns the statement:
@@ -16,33 +19,23 @@
 //! source registrations, `andromeda-postgresql-temporal-query` for an entity's
 //! temporal evolution. Both port groups render the same fragments, which is why
 //! the fragments are here and not in either of them.
-//!
-//! `sqlx` stays out: a rendered statement leaves as a [`built::BuiltQuery`],
-//! and the store binds its [`bind::BindValue`]s.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod attribute_instance_correlation;
 pub mod attribute_name_id;
-pub mod bind;
-pub mod built;
-pub mod column_reference;
 pub mod error;
 pub mod geo_predicate;
 pub mod jsonb;
-pub mod literal;
 pub mod ltree;
 pub mod operator;
-pub mod postgis;
 pub mod projected_attribute_names;
 pub mod q_predicate;
-pub mod schema;
 pub mod scope_predicate;
 pub mod temporal_operand;
 pub mod time_column;
 pub mod type_predicate;
-pub mod value_binding;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
@@ -52,6 +45,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-postgresql-encoding",
+        "andromeda-postgresql-schema",
+        "andromeda-postgresql-seaquery",
         "andromeda-unit-catalog",
     ],
     allow_workspace_dev_dependencies: [

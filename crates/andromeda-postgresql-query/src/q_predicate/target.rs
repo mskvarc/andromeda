@@ -1,6 +1,7 @@
 //! The two column references a compiled `q` predicate is attached through.
 
-use crate::{column_reference::ColumnReference, schema::Entities};
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::column_reference::ColumnReference;
 use sea_query::IntoIden;
 
 /// Where a compiled `q` predicate reads the row it is filtering.

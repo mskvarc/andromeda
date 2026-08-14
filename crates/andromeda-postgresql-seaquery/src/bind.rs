@@ -1,9 +1,17 @@
 //! Typed bind values and the conversion from sea-query's erased values.
 
-use crate::error::RenderError;
 use chrono::{DateTime, Utc};
 use sea_query::{Value, Values};
 use std::borrow::Cow;
+
+/// A sea-query value had no typed [`BindValue`] counterpart, so binding it would
+/// have changed the comparison semantics of the predicate.
+///
+/// The one failure this crate raises: every other value maps to a native column
+/// type, and a value that did not would silently be rendered as text.
+#[derive(Debug, thiserror::Error)]
+#[error("unexpected sea-query value in bind conversion: {0}")]
+pub struct BindConversionError(pub String);
 
 /// A typed bind value for parameterized SQL queries.
 ///
@@ -86,7 +94,7 @@ impl<V> BindBuilder<V> {
 /// Shared by every SQL builder so the mapping stays consistent: a value bound
 /// as a float in one builder and as text in another would silently change the
 /// comparison semantics of the generated predicate.
-pub fn sea_values_to_bind_values(values: Values) -> Result<Vec<BindValue<'static>>, RenderError> {
+pub fn sea_values_to_bind_values(values: Values) -> Result<Vec<BindValue<'static>>, BindConversionError> {
     values
         .0
         .into_iter()
@@ -108,7 +116,7 @@ pub fn sea_values_to_bind_values(values: Values) -> Result<Vec<BindValue<'static
             Value::Float(Some(f)) => Ok(BindValue::F64(f64::from(f))),
             Value::ChronoDateTimeUtc(Some(dt)) => Ok(BindValue::Timestamp(*dt)),
             Value::Bytes(Some(b)) => Ok(BindValue::Bytes(Cow::Owned(*b))),
-            other => Err(RenderError::BindConversion(format!("{other:?}"))),
+            other => Err(BindConversionError(format!("{other:?}"))),
         })
         .collect()
 }

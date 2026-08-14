@@ -55,7 +55,7 @@ impl ResponseContext {
     /// response `@context`; always emitting it as a JSON-LD array, including the
     /// single-context case, is Andromeda's chosen uniform shape rather than a
     /// spec mandate, so it is never collapsed to a bare string.
-    pub fn take_body_value(&mut self) -> Option<Value> {
+    pub const fn take_body_value(&mut self) -> Option<Value> {
         self.body_value.take()
     }
 }

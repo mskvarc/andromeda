@@ -53,6 +53,8 @@ andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-conte
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
+andromeda-postgresql-schema = { path = "crates/andromeda-postgresql-schema" }
+andromeda-postgresql-seaquery = { path = "crates/andromeda-postgresql-seaquery" }
 andromeda-postgresql-temporal-query = { path = "crates/andromeda-postgresql-temporal-query" }
 andromeda-postgresql-temporal-store = { path = "crates/andromeda-postgresql-temporal-store" }
 andromeda-registration = { path = "crates/andromeda-registration" }

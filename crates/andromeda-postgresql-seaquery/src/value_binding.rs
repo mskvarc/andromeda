@@ -20,15 +20,15 @@ macro_rules! bind_values {
         let mut q = $query;
         for bind in $binds {
             q = match bind {
-                ::andromeda_postgresql_query::bind::BindValue::String(s) => q.bind(s.as_ref()),
-                ::andromeda_postgresql_query::bind::BindValue::StringVec(v) => q.bind(v.as_ref()),
-                ::andromeda_postgresql_query::bind::BindValue::I64(i) => q.bind(*i),
-                ::andromeda_postgresql_query::bind::BindValue::I32(i) => q.bind(*i),
-                ::andromeda_postgresql_query::bind::BindValue::I16(i) => q.bind(*i),
-                ::andromeda_postgresql_query::bind::BindValue::F64(f) => q.bind(*f),
-                ::andromeda_postgresql_query::bind::BindValue::Bool(b) => q.bind(*b),
-                ::andromeda_postgresql_query::bind::BindValue::Timestamp(t) => q.bind(*t),
-                ::andromeda_postgresql_query::bind::BindValue::Bytes(b) => q.bind(b.as_ref()),
+                ::andromeda_postgresql_seaquery::bind::BindValue::String(s) => q.bind(s.as_ref()),
+                ::andromeda_postgresql_seaquery::bind::BindValue::StringVec(v) => q.bind(v.as_ref()),
+                ::andromeda_postgresql_seaquery::bind::BindValue::I64(i) => q.bind(*i),
+                ::andromeda_postgresql_seaquery::bind::BindValue::I32(i) => q.bind(*i),
+                ::andromeda_postgresql_seaquery::bind::BindValue::I16(i) => q.bind(*i),
+                ::andromeda_postgresql_seaquery::bind::BindValue::F64(f) => q.bind(*f),
+                ::andromeda_postgresql_seaquery::bind::BindValue::Bool(b) => q.bind(*b),
+                ::andromeda_postgresql_seaquery::bind::BindValue::Timestamp(t) => q.bind(*t),
+                ::andromeda_postgresql_seaquery::bind::BindValue::Bytes(b) => q.bind(b.as_ref()),
             };
         }
         q

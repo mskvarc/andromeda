@@ -19,6 +19,7 @@ andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 andromeda-temporal.workspace = true
 andromeda-unit-catalog.workspace = true
