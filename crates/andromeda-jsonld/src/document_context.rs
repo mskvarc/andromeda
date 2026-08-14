@@ -10,7 +10,7 @@
 
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::is_ngsi_ld_core_context_url,
     error::JsonLdError,
 };
 use iri_rs::Iri;
@@ -22,16 +22,6 @@ use std::collections::HashSet;
 /// Answers `None` when the combination is empty, which is the only case in
 /// which a document ends up with no `@context` at all.
 pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
-    resolve_context_value_with_broker_context(document_context, spec, true)
-}
-
-/// Resolve a context for public response rendering without the private broker vocabulary.
-pub fn resolve_public_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
-    resolve_context_value_with_broker_context(document_context, spec, false)
-}
-
-/// Combine contexts while selecting whether broker-only terms may be exposed.
-fn resolve_context_value_with_broker_context(document_context: Option<&Value>, spec: &ContextSpec, include_broker_context: bool) -> Option<Value> {
     let mut combined = extract_context_items(document_context);
     if let Some(body_context) = spec.body_context() {
         combined.extend(extract_context_items(Some(body_context)));
@@ -43,21 +33,18 @@ fn resolve_context_value_with_broker_context(document_context: Option<&Value>, s
     // an `@context`.
     combined.extend(spec.link_contexts().iter().map(|url| Value::String(url.as_str().to_owned())));
     let mut combined = dedupe_contexts(combined);
-    if !include_broker_context {
-        combined.retain(|value| value.as_str() != Some(ANDROMEDA_CORE_CONTEXT_URL.as_str()));
-    }
 
     match spec.core_policy() {
         CoreContextPolicy::Only => return Some(Value::Array(vec![Value::String(spec.effective_core_url().to_string())])),
         CoreContextPolicy::Omit => {}
         CoreContextPolicy::Append => {
             retain_non_core(&mut combined);
-            append_core(&mut combined, spec, include_broker_context);
+            append_core(&mut combined, spec);
         }
         CoreContextPolicy::AppendIfNoExplicit => {
             retain_non_core(&mut combined);
             if combined.is_empty() {
-                append_core(&mut combined, spec, include_broker_context);
+                append_core(&mut combined, spec);
             }
         }
     }
@@ -106,20 +93,13 @@ fn with_resolved_context(mut object: Map<String, Value>, spec: &ContextSpec) -> 
     object
 }
 
-/// Drop every core-context reference so the canonical pair can be appended.
+/// Drop every core-context reference so the canonical one can be appended.
 fn retain_non_core(contexts: &mut Vec<Value>) {
-    contexts.retain(|value| {
-        !value
-            .as_str()
-            .is_some_and(|url| Iri::parse(url).is_ok_and(is_ngsi_ld_core_context_url) || ANDROMEDA_CORE_CONTEXT_URL == url)
-    });
+    contexts.retain(|value| !value.as_str().is_some_and(|url| Iri::parse(url).is_ok_and(is_ngsi_ld_core_context_url)));
 }
 
-/// Append Andromeda's context and then the core one, in that order.
-fn append_core(contexts: &mut Vec<Value>, spec: &ContextSpec, include_broker_context: bool) {
-    if include_broker_context {
-        contexts.push(Value::String(ANDROMEDA_CORE_CONTEXT_URL.to_string()));
-    }
+/// Append the core context.
+fn append_core(contexts: &mut Vec<Value>, spec: &ContextSpec) {
     contexts.push(Value::String(spec.effective_core_url().to_string()));
 }
 
@@ -157,8 +137,8 @@ fn dedupe_contexts(contexts: Vec<Value>) -> Vec<Value> {
 mod tests {
     use crate::{
         context_spec::ContextSpec,
-        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
-        document_context::{apply_context, resolve_context_value, resolve_public_context_value},
+        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
+        document_context::{apply_context, resolve_context_value},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriRefBuf;
@@ -170,32 +150,18 @@ mod tests {
     }
 
     #[test]
-    fn the_document_context_comes_first_and_the_core_contexts_last() {
+    fn the_document_context_comes_first_and_the_core_context_last() {
         let spec = ContextSpec::from_links(vec![iri_ref("https://example.com/a")]);
         let document_context = json!(["https://example.com/doc", "https://example.com/a"]);
 
         let resolved = resolve_context_value(Some(&document_context), &spec).expect("a context value");
 
-        pretty_assertions::assert_eq!(
-            resolved,
-            json!([
-                "https://example.com/doc",
-                "https://example.com/a",
-                ANDROMEDA_CORE_CONTEXT_URL,
-                NGSI_LD_CORE_CONTEXT_URL
-            ])
-        );
+        pretty_assertions::assert_eq!(resolved, json!(["https://example.com/doc", "https://example.com/a", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn a_document_with_no_context_of_its_own_gets_the_core_contexts() {
+    fn a_document_with_no_context_of_its_own_gets_the_core_context() {
         let resolved = resolve_context_value(None, &ContextSpec::none()).expect("a context value");
-        pretty_assertions::assert_eq!(resolved, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
-    }
-
-    #[test]
-    fn a_public_document_with_no_context_of_its_own_gets_only_the_standard_core_context() {
-        let resolved = resolve_public_context_value(None, &ContextSpec::none()).expect("a context value");
         pretty_assertions::assert_eq!(resolved, json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
@@ -205,22 +171,16 @@ mod tests {
 
         let resolved = resolve_context_value(Some(&document_context), &ContextSpec::none()).expect("a context value");
 
-        pretty_assertions::assert_eq!(
-            resolved,
-            json!(["https://example.com/compound.jsonld", ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL])
-        );
+        pretty_assertions::assert_eq!(resolved, json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn a_body_context_is_kept_and_the_core_contexts_still_come_last() {
+    fn a_body_context_is_kept_and_the_core_context_still_comes_last() {
         let spec = ContextSpec::none().with_body_context(Some(json!("https://example.com/compound.jsonld")));
 
         let resolved = resolve_context_value(None, &spec).expect("a context value");
 
-        pretty_assertions::assert_eq!(
-            resolved,
-            json!(["https://example.com/compound.jsonld", ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL])
-        );
+        pretty_assertions::assert_eq!(resolved, json!(["https://example.com/compound.jsonld", NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]

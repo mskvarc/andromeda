@@ -1,9 +1,11 @@
 //! Link relation types (RFC 8288 section 2.1).
 
-use andromeda_ngsi_ld_vocabulary::expanded::properties::JSONLD_CONTEXT_REL;
-use iri_rs::IriRefBuf;
+use iri_rs::{Iri, IriRefBuf, iri};
 use std::{fmt, str::FromStr};
 use thiserror::Error;
+
+/// The JSON-LD context relation URI (JSON-LD 1.1 section 3.7).
+const JSONLD_CONTEXT_REL: Iri<&'static str> = iri!("http://www.w3.org/ns/json-ld#context");
 
 /// A link relation type.
 ///

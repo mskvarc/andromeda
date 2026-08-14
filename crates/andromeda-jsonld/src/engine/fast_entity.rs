@@ -8,7 +8,7 @@
 //! not certain of answers `None` and the caller falls back.
 
 use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, same_core_context_document},
+    core_context::same_core_context_document,
     engine::{fast_attribute::expand_attribute, term_map::BatchTermMap},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::{classes, properties};
@@ -113,10 +113,10 @@ fn names_core_contexts_only(context: &Value, effective_core_url: Iri<&str>) -> b
     }
 }
 
-/// Whether a URL names Andromeda's own context, or a core context that resolves
-/// to the same document the deployment pinned.
+/// Whether a URL names a core context that resolves to the same document the
+/// deployment pinned.
 fn is_effective_core_context(url: &str, effective_core_url: Iri<&str>) -> bool {
-    ANDROMEDA_CORE_CONTEXT_URL == url || Iri::parse(url).is_ok_and(|url| same_core_context_document(url, effective_core_url))
+    Iri::parse(url).is_ok_and(|url| same_core_context_document(url, effective_core_url))
 }
 
 /// Expand `scope`, which clause 4.18 allows to be one path or several.

@@ -14,7 +14,7 @@
 
 use crate::{
     context_spec::{ContextSpec, CoreContextPolicy},
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
+    core_context::is_ngsi_ld_core_context_url,
     engine::{
         context_url::{is_absolute_iri, is_full_iri},
         core_term_semantics::core_term_semantics,
@@ -214,7 +214,7 @@ pub(crate) async fn build_batch_term_map(
             eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
             continue;
         };
-        if is_ngsi_ld_core_context_url(url.as_ref()) || ANDROMEDA_CORE_CONTEXT_URL == url.as_str() {
+        if is_ngsi_ld_core_context_url(url.as_ref()) {
             continue;
         }
         match cache.get_or_load(loader, &url).await {
@@ -233,7 +233,7 @@ pub(crate) async fn build_batch_term_map(
                         eligibility = FastpathEligibility::Ineligible(IneligibilityReason::ContextUnavailable);
                         break;
                     };
-                    if is_ngsi_ld_core_context_url(url.as_ref()) || ANDROMEDA_CORE_CONTEXT_URL == url.as_str() {
+                    if is_ngsi_ld_core_context_url(url.as_ref()) {
                         continue;
                     }
                     match cache.get_or_load(loader, &url).await {
@@ -444,7 +444,10 @@ mod tests {
 
         let document = json!({ "id": "urn:ngsi-ld:Device:imported", "type": "X", "mySpeed": { "type": "Property", "value": 42 } });
         let expanded = engine.expand(document, &spec).await.expect("the processor expands imported contexts");
-        assert!(expanded[0].get("http://ex.com/speed").is_some(), "the imported term must expand through the processor");
+        assert!(
+            expanded[0].get("http://ex.com/speed").is_some(),
+            "the imported term must expand through the processor"
+        );
 
         fs::remove_file(nested_path).expect("the nested context is removable");
         fs::remove_file(outer_path).expect("the outer context is removable");

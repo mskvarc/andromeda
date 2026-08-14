@@ -582,8 +582,13 @@ mod tests {
 
     #[test]
     fn pick_or_omit_with_attrs_is_rejected() {
-        for query in ["timerel=after&timeAt=2024-01-01T00:00:00Z&pick=speed&attrs=fuelLevel", "timerel=after&timeAt=2024-01-01T00:00:00Z&omit=speed&attrs=fuelLevel"] {
-            let err = params_from_query(query).validate(false).expect_err("projection and attrs are mutually exclusive");
+        for query in [
+            "timerel=after&timeAt=2024-01-01T00:00:00Z&pick=speed&attrs=fuelLevel",
+            "timerel=after&timeAt=2024-01-01T00:00:00Z&omit=speed&attrs=fuelLevel",
+        ] {
+            let err = params_from_query(query)
+                .validate(false)
+                .expect_err("projection and attrs are mutually exclusive");
             assert!(matches!(err, ParameterError::PickOmitWithAttrs));
         }
     }

@@ -16,16 +16,7 @@ use std::str::FromStr;
 /// Clause 4.5.2.3 conciseness applies to sub-attributes; these members are part
 /// of the attribute itself, so they survive unchanged rather than being walked
 /// into.
-const ATTRIBUTE_METADATA: &[&str] = &[
-    "observedAt",
-    "datasetId",
-    "collate",
-    "unitCode",
-    "createdAt",
-    "modifiedAt",
-    "expiresAt",
-    "instanceId",
-];
+const ATTRIBUTE_METADATA: &[&str] = &["observedAt", "datasetId", "unitCode", "createdAt", "modifiedAt", "expiresAt", "instanceId"];
 
 /// Convert a normalized rendered entity value into concise form (NGSI-LD clause 4.5.2.3).
 ///

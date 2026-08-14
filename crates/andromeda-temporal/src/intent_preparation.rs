@@ -23,7 +23,10 @@ use andromeda_ngsi_ld_model::{
     temporal::{TemporalHistoryRow, TemporalValue},
 };
 use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::{
+    NULL_URI,
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+};
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 
@@ -205,7 +208,7 @@ fn append_scopes(value: &Value, entries: &mut Vec<TemporalAppendEntry>) {
         let Some(raw) = scope.as_object().and_then(|object| object.get("@value")).and_then(Value::as_str) else {
             continue;
         };
-        let observation = if raw == expanded_properties::NULL_URI.as_str() {
+        let observation = if raw == NULL_URI.as_str() {
             ScopeObservation::Deleted
         } else {
             match ScopeBuf::new(raw.to_owned()) {
@@ -488,7 +491,7 @@ fn property_value(instance: &Value) -> Result<TemporalValue, TemporalError> {
 /// `observedAt`.
 fn temporal_property_value(type_hint: Option<&str>, raw: &str) -> Option<Result<TemporalValue, TemporalError>> {
     let hint = type_hint?;
-    if hint == expanded_classes::DATE_TIME.as_str() || hint == expanded_properties::XSD_DATETIME.as_str() {
+    if hint == expanded_classes::DATE_TIME.as_str() {
         return Some(
             raw.parse::<NgsiLdDateTime>()
                 .map(NgsiLdDateTime::get)

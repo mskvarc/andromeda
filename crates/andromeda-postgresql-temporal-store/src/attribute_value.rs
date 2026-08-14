@@ -230,7 +230,7 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
 /// string column is chronological order only for a fixed-width canonical form.
 fn temporal_attribute_value(type_hint: Option<&str>, raw: &str) -> Option<Result<AttributeValue, TemporalStoreError>> {
     let hint = type_hint?;
-    if hint == expanded_classes::DATE_TIME.as_str() || hint == expanded_properties::XSD_DATETIME.as_str() {
+    if hint == expanded_classes::DATE_TIME.as_str() {
         return Some(raw.parse::<NgsiLdDateTime>().map(AttributeValue::DateTime).map_err(TemporalStoreError::from));
     }
     if hint == expanded_classes::TIME.as_str() {

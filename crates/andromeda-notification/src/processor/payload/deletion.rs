@@ -1,7 +1,10 @@
 //! Deleted attribute and instance materialization.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::whole_seconds, uri::Uri};
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::{
+    NULL_URI,
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -31,10 +34,10 @@ pub(super) fn nullify_entity_attributes(entity: &mut Value) {
 pub(super) fn nullify_attribute_instance(instance: &mut Value) {
     let Some(obj) = instance.as_object_mut() else { return };
 
-    let null_value = serde_json::json!([{"@value": expanded_properties::NULL_URI}]);
-    let null_object = serde_json::json!([{"@id": expanded_properties::NULL_URI}]);
-    let null_json = serde_json::json!([{"@value": expanded_properties::NULL_URI, "@type": "@json"}]);
-    let null_vocab = serde_json::json!([{"@id": expanded_properties::NULL_URI}]);
+    let null_value = serde_json::json!([{"@value": NULL_URI}]);
+    let null_object = serde_json::json!([{"@id": NULL_URI}]);
+    let null_json = serde_json::json!([{"@value": NULL_URI, "@type": "@json"}]);
+    let null_vocab = serde_json::json!([{"@id": NULL_URI}]);
 
     if obj.contains_key(expanded_properties::OBJECT.as_str()) {
         obj.insert(expanded_properties::OBJECT.as_str().to_string(), null_object);
@@ -63,9 +66,9 @@ pub(super) fn fix_null_language_maps(entity: &mut Value) {
                     None
                 }
             })
-            == Some(expanded_properties::NULL_URI.as_str());
+            == Some(NULL_URI.as_str());
         if is_null_lang_map && let Some(attr) = value.as_object_mut() {
-            attr.insert("languageMap".to_string(), Value::String(expanded_properties::NULL_URI.as_str().to_string()));
+            attr.insert("languageMap".to_string(), Value::String(NULL_URI.as_str().to_string()));
         }
     }
 }

@@ -1,6 +1,6 @@
 //! Recognition of the NGSI-LD null sentinel used to delete members in a patch.
 
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use andromeda_ngsi_ld_vocabulary::{NULL_IRI, NULL_URI, expanded::properties};
 use serde_json::Value;
 
 /// Returns `true` when an expanded first-level member is the bare NGSI-LD Null.
@@ -13,7 +13,7 @@ pub fn member_is_null_sentinel(instance: &Value) -> bool {
         .as_object()
         .and_then(|object| object.get("@value").or_else(|| object.get("@id")))
         .and_then(Value::as_str)
-        .is_some_and(|value| value == properties::NULL_URI.as_str() || value == properties::NULL_IRI.as_str())
+        .is_some_and(|value| value == NULL_URI.as_str() || value == NULL_IRI.as_str())
 }
 
 /// Returns `true` if the expanded attribute instance is a deletion sentinel
@@ -31,7 +31,7 @@ pub fn instance_is_null_sentinel(instance: &Value) -> bool {
             .and_then(|v| v.as_object())
             .and_then(|o| o.get(value_key))
             .and_then(|v| v.as_str())
-            .is_some_and(|s| s == properties::NULL_URI.as_str() || s == properties::NULL_IRI.as_str())
+            .is_some_and(|s| s == NULL_URI.as_str() || s == NULL_IRI.as_str())
     };
 
     check_value_null(properties::VALUE.as_str(), "@value")

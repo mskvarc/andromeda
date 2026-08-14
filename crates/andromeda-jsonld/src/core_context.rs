@@ -73,15 +73,6 @@ pub const NGSI_LD_CORE_CONTEXT_MAP: [(Iri<&'static str>, &str); 8] = [
     (NGSI_LD_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V19),
 ];
 
-/// Andromeda broker-specific context URL.
-///
-/// Maps Andromeda-internal vocabulary terms (e.g. `collate`) to their full IRIs.
-/// Always included alongside the ETSI core context during compaction so that
-/// broker-generated metadata compacts to short names.
-pub const ANDROMEDA_CORE_CONTEXT_URL: Iri<&'static str> = iri!("https://andromeda.internal/context/andromeda-core-context.jsonld");
-/// Andromeda broker-specific context embedded payload.
-pub const ANDROMEDA_CORE_CONTEXT: &str = include_str!("context/andromeda-core-context.jsonld");
-
 /// Returns `true` if `url` matches any known NGSI-LD core context version.
 pub fn is_ngsi_ld_core_context_url(url: Iri<&str>) -> bool {
     NGSI_LD_CORE_CONTEXT_URL_LIST.iter().any(|candidate| candidate == &url)

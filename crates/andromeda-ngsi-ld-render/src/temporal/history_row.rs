@@ -7,7 +7,10 @@ use andromeda_ngsi_ld_model::{
     temporal::{TemporalHistoryRow, TemporalValue},
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use andromeda_ngsi_ld_vocabulary::{
+    NULL_URI,
+    expanded::{classes as expanded_classes, properties as expanded_properties},
+};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 
@@ -36,9 +39,9 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
         // language-map convention the expansion engine writes and reads, since
         // `@none` is not a well-formed language tag (JSON-LD 1.1 clause 9.5).
         if row.attribute_type == AttributeType::Relationship {
-            instance.insert(value_key.to_string(), json!([{"@id": expanded_properties::NULL_URI.as_str()}]));
+            instance.insert(value_key.to_string(), json!([{"@id": NULL_URI.as_str()}]));
         } else {
-            instance.insert(value_key.to_string(), json!([{"@value": expanded_properties::NULL_URI.as_str()}]));
+            instance.insert(value_key.to_string(), json!([{"@value": NULL_URI.as_str()}]));
         }
         instance.insert(
             expanded_properties::DELETED_AT.as_str().to_string(),
@@ -163,7 +166,7 @@ mod tests {
         temporal::{TemporalHistoryRow, TemporalValue},
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties as expanded_properties};
     use chrono::{DateTime, TimeZone, Utc};
     use serde_json::{Value, json};
     use uuid::Uuid;
@@ -208,7 +211,7 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             member(&rendered, AttributeType::Property.value_key_str()),
-            Some(&json!([{"@value": expanded_properties::NULL_URI.as_str()}]))
+            Some(&json!([{"@value": NULL_URI.as_str()}]))
         );
         pretty_assertions::assert_eq!(
             member(&rendered, expanded_properties::DELETED_AT.as_str()),
@@ -268,7 +271,7 @@ mod tests {
     #[test]
     fn a_tombstone_renders_the_null_member_of_the_family_the_instance_belonged_to() {
         let deleted_at = instant(1_700_000_300);
-        let null_uri = expanded_properties::NULL_URI.as_str();
+        let null_uri = NULL_URI.as_str();
         let families = [
             (AttributeType::Relationship, json!([{"@id": null_uri}])),
             (AttributeType::Property, json!([{"@value": null_uri}])),

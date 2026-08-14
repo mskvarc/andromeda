@@ -158,7 +158,6 @@ fn context_agrees(object: &Map<String, Value>, handle: &BatchContextHandle) -> b
 mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
-        core_context::ANDROMEDA_CORE_CONTEXT_URL,
         engine::{processor::JsonLdEngine, term_map::BatchTermMap},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
@@ -192,7 +191,7 @@ mod tests {
         for spec in [
             ContextSpec::none(),
             ContextSpec::core_only(),
-            ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str()), iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str())]),
+            ContextSpec::from_links(vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]),
         ] {
             assert!(
                 engine.batch_context_handle(&spec).await.fast_eligible(),

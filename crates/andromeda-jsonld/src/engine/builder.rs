@@ -1,20 +1,14 @@
 //! Configuring an engine and registering what it can resolve offline.
 //!
-//! Building an engine registers every released NGSI-LD core context, the
-//! Andromeda context, the one companion context the v1.9 core artefact still
-//! references, and whatever the operator preloaded from disk. After that the
-//! engine resolves the entire specification without a network.
+//! Building an engine registers every released NGSI-LD core context, the one
+//! companion context the v1.9 core artefact still references, and whatever the
+//! operator preloaded from disk. After that the engine resolves the entire
+//! specification without a network.
 
 use crate::{
     context_cache::ContextCache,
     context_registry::ContextRegistry,
-    core_context::{
-        ANDROMEDA_CORE_CONTEXT,
-        ANDROMEDA_CORE_CONTEXT_URL,
-        NGSI_LD_CORE_CONTEXT_URL_LIST,
-        embedded_core_context as embedded_core_context_payload,
-        is_ngsi_ld_core_context_url,
-    },
+    core_context::{NGSI_LD_CORE_CONTEXT_URL_LIST, embedded_core_context as embedded_core_context_payload, is_ngsi_ld_core_context_url},
     engine::{options::RemoteContextFetch, processor::JsonLdEngine, term_lookup::TermCache, term_map::vocabulary::CoreVocabulary},
     error::JsonLdError,
     hit_counter::HitCounter,
@@ -163,10 +157,6 @@ impl JsonLdEngineBuilder {
         for url in NGSI_LD_CORE_CONTEXT_URL_LIST {
             self.registry.register(IriBuf::from(url), parse_core_context(url)?);
         }
-        self.registry.register(
-            IriBuf::from(ANDROMEDA_CORE_CONTEXT_URL),
-            parse_embedded(ANDROMEDA_CORE_CONTEXT, ANDROMEDA_CORE_CONTEXT_URL.as_ref())?,
-        );
         self.registry.register(
             IriBuf::from(DATA_INTEGRITY_CONTEXT_URL),
             parse_embedded(DATA_INTEGRITY_STUB, DATA_INTEGRITY_CONTEXT_URL.as_ref())?,

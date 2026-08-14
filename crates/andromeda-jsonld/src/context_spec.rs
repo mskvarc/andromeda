@@ -7,10 +7,7 @@
 //! core context joins them; resolving it into a `@context` value is
 //! [`crate::document_context`].
 
-use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
-    document_context::{resolve_context_value, resolve_public_context_value},
-};
+use crate::{core_context::is_ngsi_ld_core_context_url, document_context::resolve_context_value};
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf, IriRefBuf};
 use serde_json::Value;
@@ -132,16 +129,6 @@ impl ContextSpec {
         resolve_context_value(None, self)
     }
 
-    /// The public response `@context` value for this spec.
-    ///
-    /// The broker-specific context is an expansion/compaction implementation
-    /// detail. Clause 6.3.6 requires a response to carry an `@context`; omitting
-    /// the private Andromeda context, which a client cannot use, is Andromeda's
-    /// own choice rather than a rule stated by the clause.
-    pub fn to_public_context_value(&self) -> Option<Value> {
-        resolve_public_context_value(None, self)
-    }
-
     /// The ordered context URLs a response carries in `Link` headers.
     ///
     /// Core-context aliases the request supplied are dropped and re-appended
@@ -158,7 +145,7 @@ impl ContextSpec {
         let mut seen = HashSet::new();
 
         for url in &self.link_contexts {
-            if should_strip_core && (url.as_iri().is_some_and(is_ngsi_ld_core_context_url) || ANDROMEDA_CORE_CONTEXT_URL == url.as_str()) {
+            if should_strip_core && url.as_iri().is_some_and(is_ngsi_ld_core_context_url) {
                 continue;
             }
             if seen.insert(url.clone()) {
@@ -175,11 +162,6 @@ impl ContextSpec {
         };
 
         if should_append_core {
-            let andromeda_url = core_context_iri_ref(ANDROMEDA_CORE_CONTEXT_URL);
-            if seen.insert(andromeda_url.clone()) {
-                // clone: the set keeps a copy, the list keeps a copy
-                urls.push(andromeda_url);
-            }
             let core_url = core_context_iri_ref(NGSI_LD_CORE_CONTEXT_URL);
             if seen.insert(core_url.clone()) {
                 // clone: the set keeps a copy, the list keeps a copy
@@ -187,14 +169,6 @@ impl ContextSpec {
             }
         }
 
-        urls
-    }
-
-    /// The public response context links for this spec.
-    pub fn to_public_link_headers(&self) -> Vec<IriRefBuf> {
-        let presentation = self.for_presentation();
-        let mut urls = presentation.to_link_headers();
-        urls.retain(|url| ANDROMEDA_CORE_CONTEXT_URL != url.as_str());
         urls
     }
 }
@@ -218,7 +192,7 @@ impl Default for ContextSpec {
 mod tests {
     use crate::{
         context_spec::{ContextSpec, CoreContextPolicy},
-        core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
+        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriRefBuf;
@@ -230,21 +204,17 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_spec_resolves_to_the_andromeda_and_core_contexts() {
+    fn an_empty_spec_resolves_to_the_core_context() {
         let context = ContextSpec::none().to_context_value().expect("a context value");
-        pretty_assertions::assert_eq!(context, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
+        pretty_assertions::assert_eq!(context, json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]
-    fn link_headers_carry_the_request_context_first_and_the_core_contexts_last() {
+    fn link_headers_carry_the_request_context_first_and_the_core_context_last() {
         let links = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).to_link_headers();
         pretty_assertions::assert_eq!(
             links,
-            vec![
-                iri_ref("https://example.com/context.jsonld"),
-                iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str()),
-                iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str()),
-            ]
+            vec![iri_ref("https://example.com/context.jsonld"), iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]
         );
     }
 
@@ -271,32 +241,16 @@ mod tests {
 
         pretty_assertions::assert_eq!(
             links,
-            vec![
-                iri_ref("https://example.com/context.jsonld"),
-                iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str()),
-                iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str()),
-            ]
+            vec![iri_ref("https://example.com/context.jsonld"), iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]
         );
     }
 
     #[test]
     fn a_presentation_spec_names_the_core_context_only_when_the_request_named_none() {
         let bare = ContextSpec::none().for_presentation();
-        pretty_assertions::assert_eq!(
-            bare.to_link_headers(),
-            vec![iri_ref(ANDROMEDA_CORE_CONTEXT_URL.as_str()), iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]
-        );
+        pretty_assertions::assert_eq!(bare.to_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]);
 
         let explicit = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).for_presentation();
         pretty_assertions::assert_eq!(explicit.to_link_headers(), vec![iri_ref("https://example.com/context.jsonld")]);
-    }
-
-    #[test]
-    fn public_presentation_never_advertises_the_private_broker_context() {
-        let spec = ContextSpec::none();
-        let context = spec.to_public_context_value().expect("a public context");
-
-        assert!(!context.to_string().contains("andromeda.internal"));
-        pretty_assertions::assert_eq!(spec.to_public_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]);
     }
 }

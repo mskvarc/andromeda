@@ -137,21 +137,6 @@ mod tests {
     }
 
     #[test]
-    fn preserves_collate_on_normalized() {
-        let value = json!({
-            "id": "urn:x", "type": "T",
-            "name": {
-                "type": "Property",
-                "value": "Tower",
-                "collate": {"type": "Property", "value": "tower"}
-            }
-        });
-        let result = render(value, None, ResponseFormat::Normalized);
-        pretty_assertions::assert_eq!(result["name"]["collate"]["value"], "tower");
-        pretty_assertions::assert_eq!(result["name"]["value"], "Tower");
-    }
-
-    #[test]
     fn filters_attrs() {
         let value = json!({"id": "urn:x", "type": "T", "name": {"type": "Property", "value": "x"}, "temp": {"type": "Property", "value": 25}});
         let attrs = ["name".parse().expect("attribute name")];

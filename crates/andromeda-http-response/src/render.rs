@@ -38,7 +38,7 @@ pub struct RenderingPreferences {
 /// a different set in its body.
 pub fn response_context(context: &ContextSpec) -> ResponseContext {
     let presentation = context.for_presentation();
-    ResponseContext::new(presentation.to_public_context_value(), presentation.to_public_link_headers())
+    ResponseContext::new(presentation.to_context_value(), presentation.to_link_headers())
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@
 //! version always reads that version's declarations.
 
 use crate::{
-    core_context::{ANDROMEDA_CORE_CONTEXT, embedded_core_context},
+    core_context::embedded_core_context,
     engine::term_map::coercion::{TermCoercion, TermContainer},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::classes;
@@ -55,16 +55,12 @@ pub(crate) fn core_term_semantics(core_url: &IriBuf) -> Arc<SemanticsTable> {
     table
 }
 
-/// Parse the embedded core and Andromeda context documents into a table.
-///
-/// The Andromeda extension context is folded in unconditionally: its terms
-/// join every deployment's vocabulary regardless of the core version.
+/// Parse the embedded core context document into a table.
 fn derive_semantics(core_url: &IriBuf) -> SemanticsTable {
     let mut table = HashMap::new();
     if let Some(core_document) = embedded_core_context(core_url.as_ref()) {
         accumulate_document(core_document, &mut table);
     }
-    accumulate_document(ANDROMEDA_CORE_CONTEXT, &mut table);
     table
 }
 

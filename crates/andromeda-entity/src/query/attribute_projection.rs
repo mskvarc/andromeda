@@ -230,7 +230,10 @@ mod tests {
     fn a_pick_matching_no_attribute_or_structural_member_empties_the_entity() {
         let entity = entity_with_scope();
         let projection = Projection {
-            pick: vec![ProjectionTerm::Attribute { iri: iri("https://example.com/name"), linked: Vec::new() }],
+            pick: vec![ProjectionTerm::Attribute {
+                iri: iri("https://example.com/name"),
+                linked: Vec::new(),
+            }],
             omit: Vec::new(),
         };
 
@@ -241,7 +244,10 @@ mod tests {
     #[test]
     fn a_pick_naming_a_structural_member_keeps_the_entity() {
         let entity = entity_with_scope();
-        let projection = Projection { pick: vec![ProjectionTerm::Id], omit: Vec::new() };
+        let projection = Projection {
+            pick: vec![ProjectionTerm::Id],
+            omit: Vec::new(),
+        };
 
         assert!(!projects_to_empty(&entity, &projection));
     }
@@ -251,7 +257,10 @@ mod tests {
     fn a_pick_leaving_a_surviving_attribute_keeps_the_entity() {
         let entity = entity_with_name();
         let projection = Projection {
-            pick: vec![ProjectionTerm::Attribute { iri: iri("https://example.com/name"), linked: Vec::new() }],
+            pick: vec![ProjectionTerm::Attribute {
+                iri: iri("https://example.com/name"),
+                linked: Vec::new(),
+            }],
             omit: Vec::new(),
         };
 
@@ -262,7 +271,10 @@ mod tests {
     #[test]
     fn an_omit_never_empties_the_entity() {
         let entity = entity_with_scope();
-        let projection = Projection { pick: Vec::new(), omit: vec![ProjectionTerm::Scope] };
+        let projection = Projection {
+            pick: Vec::new(),
+            omit: vec![ProjectionTerm::Scope],
+        };
 
         assert!(!projects_to_empty(&entity, &projection));
     }
