@@ -1,10 +1,10 @@
-//! Terms of the `attrs`, `pick` and `omit` selection lists (clause 6.3.15).
+//! Terms of the `attrs`, `pick` and `omit` selection lists (clause 4.21).
 
 use iri_rs::IriBuf;
 
 /// One member of an attribute selection list.
 ///
-/// Clause 6.3.15 lets `pick` and `omit` name three structural members of the
+/// Clause 4.21 lets `pick` and `omit` name three structural members of the
 /// representation alongside attributes. Those three are JSON keys of the
 /// NGSI-LD representation itself, not attributes, so they have no IRI to expand
 /// to and the renderer treats each of them differently from an attribute. The
@@ -31,11 +31,11 @@ pub enum ProjectionTerm {
 }
 
 impl ProjectionTerm {
-    /// The `id` keyword of clause 6.3.15.
+    /// The `id` keyword of clause 4.21.
     pub const ID_KEYWORD: &'static str = "id";
-    /// The `type` keyword of clause 6.3.15.
+    /// The `type` keyword of clause 4.21.
     pub const TYPE_KEYWORD: &'static str = "type";
-    /// The `scope` keyword of clause 6.3.15.
+    /// The `scope` keyword of clause 4.21.
     pub const SCOPE_KEYWORD: &'static str = "scope";
 
     /// Whether this term names the attribute an entity keys as `key` and whose
@@ -53,7 +53,7 @@ impl ProjectionTerm {
 
     /// The clause 4.21 linked-entity sub-projection carried by this term.
     ///
-    /// Empty for the clause 6.3.15 keywords and for an attribute term that
+    /// Empty for the clause 4.21 keywords and for an attribute term that
     /// selects no linked entity.
     pub fn linked_terms(&self) -> &[ProjectionTerm] {
         match self {
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn a_keyword_term_never_names_an_attribute() {
-        // Clause 6.3.15: these select structural members of the
+        // Clause 4.21: these select structural members of the
         // representation, so they cannot select an attribute of the same name.
         for term in [ProjectionTerm::Id, ProjectionTerm::Type, ProjectionTerm::Scope] {
             assert!(!term.matches_attribute("id", &iri("https://example.com/id")), "{term:?}");

@@ -27,7 +27,7 @@ impl ContextRegistry {
     ///
     /// A redundant embedded Core @context reference is dropped at registration
     /// (see [`without_embedded_core_context`]), so the broker's authoritative
-    /// Core — appended last per clause 5.5.7 — stays the single occurrence and a
+    /// Core — appended last per clause 4.4 — stays the single occurrence and a
     /// registered user context that redefines a core term resolves to the Core's
     /// definition rather than failing.
     pub fn register(&self, url: IriBuf, value: jsonld_syntax::Value) {

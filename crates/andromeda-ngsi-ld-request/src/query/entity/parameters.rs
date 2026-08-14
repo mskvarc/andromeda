@@ -38,7 +38,7 @@ use std::num::NonZeroU32;
 
 /// Raw HTTP query parameters for entity queries, deserialized from the request URL.
 ///
-/// Corresponds to the query parameters defined in NGSI-LD 6.3.5 (Query Entities)
+/// Corresponds to the query parameters defined in NGSI-LD 5.7.2 (Query Entities)
 /// and related operations. All values are in their raw (compact) form before
 /// context expansion.
 #[derive(Debug, Deserialize)]
@@ -86,10 +86,10 @@ pub struct EntityQueryParameters {
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(rename = "local")]
     pub local: Option<bool>,
-    /// Members the response is narrowed to (clause 6.3.15 `pick`).
+    /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<RawProjectionTerm>>,
-    /// Members the response drops (clause 6.3.15 `omit`).
+    /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
     /// Typed ordering semantics shared by GET and POST query bindings.
@@ -116,7 +116,7 @@ pub struct EntityQueryParameters {
     /// The representation the response uses (clause 4.5.1 `format`).
     #[serde(default, deserialize_with = "deserialize_option_response_format")]
     pub format: Option<ResponseFormat>,
-    /// How linked entities reach the response (clause 4.5.21 `join`).
+    /// How linked entities reach the response (clause 4.5.23 `join`).
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
@@ -135,7 +135,7 @@ pub struct EntityQueryParameters {
     /// Whether attributes split across Context Sources are merged after forwarding (`splitEntities`).
     #[serde(rename = "splitEntities")]
     pub split_entities: Option<bool>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.8 `geometryProperty`).
+    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Context Source Filter expression (S6.4.3.2) for filtering which CSRs
@@ -353,6 +353,14 @@ mod tests {
         let err = p.validate().expect_err("expected mutual exclusivity error");
         assert!(matches!(err, ParameterError::PickOmitExclusive));
         assert!(err.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn pick_or_omit_with_attrs_is_rejected() {
+        for query in ["type=Vehicle&pick=speed&attrs=fuelLevel", "type=Vehicle&omit=speed&attrs=fuelLevel"] {
+            let err = params_from_query(query).validate().expect_err("projection and attrs are mutually exclusive");
+            assert!(matches!(err, ParameterError::PickOmitWithAttrs));
+        }
     }
 
     /// Clause 5.7.2.4: a query whose `pick` nests into a Linked Entity without

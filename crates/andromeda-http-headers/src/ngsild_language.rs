@@ -9,7 +9,7 @@
 //! comma-separated BCP 47 language ranges with optional quality values.
 //!
 //! This is an Andromeda-specific header that behaves identically to the
-//! `lang` query parameter (NGSI-LD clause 6.3.5) but transmitted as a
+//! `lang` query parameter (NGSI-LD clause 4.15) but transmitted as a
 //! request header instead of a query parameter.
 
 use crate::language::{LanguageFilter, LanguageRange};

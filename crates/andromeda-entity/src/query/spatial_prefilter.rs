@@ -46,7 +46,7 @@ impl EntityQueryService {
         };
         // The index is keyed by a single (type, geoproperty) pair, so it can
         // accelerate a query with exactly one selector. A union of selectors
-        // (clause 5.2.11) is handed to the store to evaluate in full.
+        // (clause 5.2.33) is handed to the store to evaluate in full.
         let [selector] = compiled.selection.selectors.as_slice() else {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         };

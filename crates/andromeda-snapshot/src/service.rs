@@ -215,19 +215,19 @@ impl SnapshotService {
     }
 
     /// Return `(entity_count, attribute_names)` for a type within a snapshot,
-    /// or `None` if the type is absent (clause 5.7.6).
+    /// or `None` if the type is absent (clause 5.7.7).
     pub async fn snapshot_type_info(&self, snapshot_id: &Uri, type_name: &EntityTypeName) -> Result<Option<SnapshotTypeInfo>, SnapshotError> {
         self.repo.snapshot_type_info(snapshot_id, type_name).await
     }
 
     /// Return distinct attribute names present across a snapshot's frozen
-    /// entities (clause 5.7.7).
+    /// entities (clause 5.7.8).
     pub async fn snapshot_attributes(&self, snapshot_id: &Uri) -> Result<Vec<AttributeName>, SnapshotError> {
         self.repo.snapshot_distinct_attributes(snapshot_id).await
     }
 
     /// Return `(entity_count, type_names)` for an attribute within a snapshot,
-    /// or `None` if the attribute is absent (clause 5.7.8).
+    /// or `None` if the attribute is absent (clause 5.7.10).
     pub async fn snapshot_attribute_info(&self, snapshot_id: &Uri, attr_name: &AttributeName) -> Result<Option<SnapshotAttributeInfo>, SnapshotError> {
         self.repo.snapshot_attribute_info(snapshot_id, attr_name).await
     }

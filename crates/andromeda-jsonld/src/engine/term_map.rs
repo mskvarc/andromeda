@@ -159,7 +159,7 @@ fn builtin_prefix(prefix: &str) -> Option<&'static Iri<&'static str>> {
 /// Build the term table for one [`ContextSpec`].
 ///
 /// `default_core_url` is the released core context this engine expands a
-/// versionless reference against (clause 4.3.6.8); the coercion, container and
+/// versionless reference against (clause 4.4); the coercion, container and
 /// scoped-context flags below are read from that version's document, so two
 /// engines pinned to different versions build different tables.
 pub(crate) async fn build_batch_term_map(
@@ -172,7 +172,7 @@ pub(crate) async fn build_batch_term_map(
     // The IRI of every core term comes from the compile-time table the vocab
     // macro derived from the core context; its coercion, container and
     // scoped-context flag come from the same context document, parsed for the
-    // version this deployment pinned (clause 4.3.6.8). Both halves are read
+    // version this deployment pinned (clause 4.4). Both halves are read
     // from the context rather than restated, so the fastpath cannot drift from
     // what the processor does.
     let core_url = default_core_url;
@@ -423,6 +423,31 @@ mod tests {
 
         assert_canonically_equal(&fast, &slow);
         fs::remove_file(path).expect("the temporary context is removable");
+    }
+
+    #[tokio::test]
+    async fn a_context_document_importing_another_context_uses_the_processor_path() {
+        let (nested_path, nested_url) = preloaded_context("nested-context", r#"{"@context":{"mySpeed":"http://ex.com/speed"}}"#);
+        let (outer_path, outer_url) = preloaded_context("outer-context", &format!(r#"{{"@context":["{}"]}}"#, nested_url));
+        let mut preloads = HashMap::new();
+        preloads.insert(nested_url.clone(), nested_path.clone());
+        preloads.insert(outer_url.clone(), outer_path.clone());
+        let engine = JsonLdEngine::builder()
+            .allow_remote(false)
+            .preload_contexts(preloads)
+            .build()
+            .expect("engine builds");
+
+        let spec = body_spec(Value::String(outer_url.to_string()));
+        let handle = engine.batch_context_handle(&spec).await;
+        assert!(!handle.fast_eligible(), "an imported context must not use an incomplete term table");
+
+        let document = json!({ "id": "urn:ngsi-ld:Device:imported", "type": "X", "mySpeed": { "type": "Property", "value": 42 } });
+        let expanded = engine.expand(document, &spec).await.expect("the processor expands imported contexts");
+        assert!(expanded[0].get("http://ex.com/speed").is_some(), "the imported term must expand through the processor");
+
+        fs::remove_file(nested_path).expect("the nested context is removable");
+        fs::remove_file(outer_path).expect("the outer context is removable");
     }
 
     #[tokio::test]

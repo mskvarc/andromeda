@@ -22,7 +22,7 @@ async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn 
 }
 
 #[tokio::test]
-async fn malformed_json_is_bad_request_data_with_the_exact_instance() -> Result<(), Box<dyn std::error::Error>> {
+async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(), Box<dyn std::error::Error>> {
     let request = Request::builder()
         .uri("/ngsi-ld/v1/entities")
         .header(CONTENT_TYPE, "application/json")
@@ -31,9 +31,9 @@ async fn malformed_json_is_bad_request_data_with_the_exact_instance() -> Result<
         Err(rejection) => rejection,
         Ok(_) => return Err("malformed JSON was accepted".into()),
     };
-    assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }));
+    assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
     let body = rejection_body(rejection).await?;
-    pretty_assertions::assert_eq!(body["type"], NgsiLdErrorType::BadRequestData.type_iri().as_str());
+    pretty_assertions::assert_eq!(body["type"], NgsiLdErrorType::InvalidRequest.type_iri().as_str());
     pretty_assertions::assert_eq!(body["instance"], "/ngsi-ld/v1/entities");
     Ok(())
 }

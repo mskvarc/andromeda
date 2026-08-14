@@ -72,7 +72,7 @@ const MAX_LIMIT: u32 = 1000;
 #[macro_export]
 macro_rules! impl_shared_query_params {
     ($ty:ty { id: $id:ident, attrs: $attrs:ident,
-              /// Members the response is narrowed to (clause 6.3.15 `pick`).
+              /// Members the response is narrowed to (clause 4.21 `pick`).
               pick: $($pick:ident)?, omit: $($omit:ident)?,
               /// Dataset instances to select, comma-separated (`datasetId`).
               dataset_id: $($ds:ident)?, limit: $lim:ident, offset: $off:ident }) => {

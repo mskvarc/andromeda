@@ -126,7 +126,7 @@ async fn update_remove_mandatory_property_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    pretty_assertions::assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
 
     cleanup_registration(&c, &id).await;
 }
@@ -145,7 +145,7 @@ async fn update_malformed_json_returns_400() {
     let raw = csr_invalid_json_string();
     let (status, body) = update_registration_raw(&c, &id, raw.as_bytes(), "application/json").await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
+    pretty_assertions::assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
     assert!(body["title"].is_string(), "response should contain title");
 
     cleanup_registration(&c, &id).await;

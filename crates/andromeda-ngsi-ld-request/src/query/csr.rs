@@ -29,7 +29,7 @@ use serde::Deserialize;
 
 /// Raw HTTP query parameters for Context Source Registration discovery.
 ///
-/// Corresponds to the query parameters defined in NGSI-LD 6.3.14 (Discover CSRs).
+/// Corresponds to the query parameters defined in NGSI-LD 5.10.2 (Discover CSRs).
 /// All values are in their raw (compact) form before context expansion.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

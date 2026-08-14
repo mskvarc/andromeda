@@ -167,7 +167,7 @@ mod tests {
         }
     }
 
-    /// Clause 5.5.9: a temporal body the commit refused is invalid input, so
+    /// Clause 5.5.6: a temporal body the commit refused is invalid input, so
     /// the client learns what to change instead of being told to retry. The
     /// policy conversion is what carries the refusal out of the commit port.
     #[test]

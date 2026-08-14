@@ -49,7 +49,7 @@ pub struct EntitySelector {
     /// Exact entity id to match.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<Uri>,
-    /// Regular expression the entity id must match (clause 4.5.6).
+    /// Regular expression the entity id must match (clause 5.2.33).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id_pattern: Option<Pattern>,
     /// Type selection expression the entity's types must satisfy (required).
@@ -156,7 +156,7 @@ pub struct SubscriptionSelection {
 }
 
 /// The query expressions that narrow a subscription's matches further
-/// (ETSI GS CIM 009 clauses 4.9, 4.10, 4.13, 4.18 and 5.2.21).
+/// (ETSI GS CIM 009 clauses 4.9, 4.10, 4.19 and 5.2.21).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 #[builder(field_defaults(default))]
@@ -171,10 +171,10 @@ pub struct SubscriptionFilters {
     /// Geo-spatial query expression (clause 5.2.13).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geo_q: Option<Value>,
-    /// Scope query expression (clause 4.18).
+    /// Scope query expression (clause 4.19).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope_q: Option<ScopeQuery>,
-    /// Context source filter expression (clause 4.13), which is a `q` filter
+    /// Context source filter expression (clause 4.9), which is a `q` filter
     /// over a registration's own properties.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub csf: Option<Expr>,

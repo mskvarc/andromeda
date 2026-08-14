@@ -17,10 +17,10 @@ use url::form_urlencoded;
 /// `depth` counts the traversal levels still to resolve, the fetched entity's
 /// own level included, so the remote broker is asked to join one level less
 /// than that. When nothing is left beyond the entity itself the retrieval
-/// carries no `join` at all — clause 4.5.23 admits only a positive `joinLevel`,
+/// carries no `join` at all — the clause 4.5.23 joinLevel query parameter admits only a positive value,
 /// and a zero-hop join is the absence of one.
 ///
-/// `visited` becomes `containedBy`: clause 4.5.23 names it as the entities the
+/// `visited` becomes `containedBy`: the clause 4.5.23 containedBy query parameter names it as the entities the
 /// requester already holds, which the remote broker must not send back. An
 /// empty list is omitted rather than sent empty.
 pub(crate) fn append_traversal(serializer: &mut form_urlencoded::Serializer<'_, String>, depth: NonZeroU32, visited: &[Uri]) {

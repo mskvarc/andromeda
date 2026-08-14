@@ -119,7 +119,7 @@ mod tests {
 
     /// Three levels left means the fetched entity plus two more hops, so the
     /// remote broker is asked for `joinLevel=2`, and the already-walked ids
-    /// travel as `containedBy` (clause 4.5.23).
+    /// travel as `containedBy` (the clause 4.5.23 containedBy query parameter).
     #[test]
     fn the_forwarded_retrieval_joins_one_level_less_than_the_depth_that_remains() {
         let visited = [uri("urn:ngsi-ld:Building:1"), uri("urn:ngsi-ld:Building:2")];
@@ -151,7 +151,8 @@ mod tests {
         );
     }
 
-    /// The last level asks for the entity alone: clause 4.5.23 has no zero-hop
+    /// The last level asks for the entity alone: the clause 4.5.23 joinLevel
+    /// query parameter has no zero-hop
     /// join, so the forwarded retrieval carries no `join` parameter.
     #[test]
     fn the_last_level_forwards_a_plain_retrieval() {

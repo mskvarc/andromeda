@@ -150,7 +150,7 @@ mod attribute_name_csv {
     }
 }
 
-/// Serde support for the `pick` / `omit` clause 6.3.15 member.
+/// Serde support for the `pick` / `omit` clause 4.21 member.
 ///
 /// Clause 5.2.23 defines `pick` and `omit` as `String[]`, each member a
 /// clause 4.21 projection-language string that may itself carry a `,`

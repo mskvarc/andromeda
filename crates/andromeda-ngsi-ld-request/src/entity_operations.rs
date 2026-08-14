@@ -47,22 +47,22 @@ pub struct PostQueryParams {
     /// Clause-4.15 natural-language selection preferences.
     #[serde(default, deserialize_with = "deserialize_optional_language_filter")]
     pub lang: Option<LanguageFilter>,
-    /// How linked entities reach the response (clause 4.5.21 `join`).
+    /// How linked entities reach the response (clause 4.5.23 `join`).
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
     pub join_level: Option<NonZeroU32>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.8 `geometryProperty`).
+    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Dataset instances to select, comma-separated (`datasetId`).
     #[serde(rename = "datasetId")]
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
     pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// Members the response is narrowed to (clause 6.3.15 `pick`).
+    /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<RawProjectionTerm>>,
-    /// Members the response drops (clause 6.3.15 `omit`).
+    /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).

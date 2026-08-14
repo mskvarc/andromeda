@@ -1,7 +1,8 @@
 //! Clause 5.13.3.5 access counting, off the expansion path.
 //!
-//! The clause requires a broker to maintain a `numberOfHits` per hosted
-//! context; it does not require the count to be durable at the moment of
+//! The clause permits a broker to maintain a `numberOfHits` per hosted context
+//! (`numberOfHits` is optional per clause 5.13.3.5); it does not require the
+//! count to be durable at the moment of
 //! access. Every expansion bumping a shared row would serialise the whole
 //! ingestion path on it, so hits accumulate here as per-URL atomics and a
 //! background task folds each cycle's deltas into one bulk update.

@@ -1,4 +1,4 @@
-//! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 to 5.3.4).
+//! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 and 5.3.4).
 
 use crate::key_value_pair::KeyValuePair;
 use andromeda_ngsi_ld_lexicon::{

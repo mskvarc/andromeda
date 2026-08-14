@@ -108,7 +108,7 @@ pub struct CompiledSubscription {
     pub dataset_id: Option<Vec<Uri>>,
     /// Linked-entity join mode requested for notification data.
     pub notification_join: Option<JoinMode>,
-    /// Maximum linked-entity join depth (clause 4.5.23 `joinLevel`), which
+    /// Maximum linked-entity join depth (the clause 4.5.23 joinLevel query parameter), which
     /// the spec bounds only by being a positive integer.
     pub notification_join_level: NonZeroU32,
     /// Parsed context-source filter expression.

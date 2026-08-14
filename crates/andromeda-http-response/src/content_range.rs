@@ -40,5 +40,5 @@ pub fn build_content_range(
 
     let start = start.parse().ok()?;
     let end = end.parse().ok()?;
-    NgsiLdContentRange::new(start, end, size.parse().ok())
+    Some(NgsiLdContentRange::new(start, end, size.parse().ok()))
 }

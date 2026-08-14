@@ -120,6 +120,8 @@ pub async fn query(
         }
     }
 
+    params.validate(true).with_instance(&uri)?;
+
     let is_local = params.is_local();
     let entity_map_requested = params.entity_map.unwrap_or(false);
     let split_entities = params.split_entities.unwrap_or(false) && !is_local;
@@ -239,14 +241,12 @@ pub async fn query(
     // traversal. The join runs after forwarding and after the deferred
     // `splitEntities` filtering, so the roots it walks are the ones the client
     // will actually be shown.
-    // Clause 5.5.9 counts the matches the query returned, which the linked
+    // Clause 6.3.13 counts the matches the query returned, which the linked
     // entities are not: they accompany the result set rather than belonging to
     // it. Counting before the flat join appends is what keeps `count` and the
     // 206 decision about the roots alone. The join also resolves before
     // EntityMap creation so a requested map can include the linked ids
     // (spec 5.5.14, 5.7.4.4).
-    let returned = entities.len();
-
     let (forwarding_warnings, linked_ids) = match RetrievingJoin::from_mode(params.join) {
         Some(join) => {
             let applied = apply_temporal_join(service, join, &mut entities, &linked_candidates, &params, &context, forwarding_warnings)
@@ -295,11 +295,8 @@ pub async fn query(
     let mut response = NgsiLdCollectionResponse::ok(rendered).with_status(status).with_warnings(forwarding_warnings);
     if let Some(count) = total_count {
         response = response.with_total_count(count as usize);
-        if (count as usize) > returned {
-            response = response.with_status(StatusCode::PARTIAL_CONTENT);
-        }
     }
-    if any_truncated {
+    if any_truncated && range.is_some() {
         response = response.with_status(StatusCode::PARTIAL_CONTENT);
     }
     if let Some(range) = range

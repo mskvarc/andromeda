@@ -1,4 +1,4 @@
-//! Compiling raw `pick` / `omit` terms into the clause 6.3.15 projection, for
+//! Compiling raw `pick` / `omit` terms into the clause 4.21 projection, for
 //! the read path that has no compiled query to take one from.
 //!
 //! An entity query expands its projection as part of compiling the whole
@@ -74,14 +74,14 @@ mod tests {
 
     /// A request naming neither `pick` nor `omit` restricts nothing, and the
     /// absence has to stay distinguishable from an empty projection so the
-    /// renderer does not apply the clause 6.3.15 structural rule to it.
+    /// renderer does not apply the clause 4.21 structural rule to it.
     #[tokio::test]
     async fn a_request_naming_neither_term_list_compiles_to_no_projection() {
         let compiled = service().compile_projection(None, None, &context()).await.expect("compiles");
         assert!(compiled.is_none());
     }
 
-    /// Clause 6.3.15 and clause 4.21: attribute terms expand through the
+    /// Clause 4.21: attribute terms expand through the
     /// context, structural keywords stay keywords, and a nested
     /// sub-projection expands with its parent.
     #[tokio::test]
@@ -111,7 +111,7 @@ mod tests {
     }
 
     /// An `omit`-only request compiles to a projection whose `pick` is empty,
-    /// which clause 6.3.15 reads as "every member except those omitted".
+    /// which clause 4.21 reads as "every member except those omitted".
     #[tokio::test]
     async fn an_omit_only_request_compiles_to_an_empty_pick() {
         let omit = [raw("temperature", Vec::new())];

@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use serde::Deserialize;
 
 /// Query parameters for `DELETE /entities/{id}/attrs/{attrId}` and its temporal
-/// counterpart (clauses 5.6.5 and 5.6.15).
+/// counterpart (clauses 5.6.5 and 5.6.13).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteAttrParams {

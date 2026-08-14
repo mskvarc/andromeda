@@ -20,7 +20,7 @@ pub mod linked_entity;
 /// Deriving the nested projection that applies to each linked entity
 /// (clause 4.21).
 pub(crate) mod linked_projection;
-/// Compiling raw `pick`/`omit` terms into the clause 6.3.15 projection.
+/// Compiling raw `pick`/`omit` terms into the clause 4.21 projection.
 pub mod projection_compilation;
 /// Refusing a query the store cannot narrow at all.
 pub mod pushdown_refusal;
@@ -32,7 +32,7 @@ pub mod residual;
 pub mod residual_conformance;
 /// The read operations themselves.
 pub mod retrieval;
-/// Compiling a query's entity selectors (clause 5.2.11) against the context.
+/// Compiling a query's entity selectors (clause 5.2.33) against the context.
 pub mod selector_compilation;
 /// The service the read-path unit tests are built on.
 #[cfg(test)]

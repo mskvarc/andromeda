@@ -99,7 +99,7 @@ pub fn embedded_core_context(url: Iri<&str>) -> Option<&'static str> {
 /// The versionless alias and the versioned URL of the same release map to one
 /// payload, so they are the same context; two different releases are not. This
 /// is what the fastpath needs to decide whether an entity's inline core
-/// reference agrees with the version the deployment pinned (clause 4.3.6.8):
+/// reference agrees with the version the deployment pinned (clause 4.4):
 /// only when it does may the fastpath's version-specific term table speak for
 /// it. Payloads are compared by pointer, as each URL maps to one interned
 /// `&'static str`.

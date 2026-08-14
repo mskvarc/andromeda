@@ -119,7 +119,7 @@ impl TemporalService {
     ///
     /// # Ordering
     ///
-    /// Clause 6.4.3.2 requires the linked entities to accompany the roots but
+    /// Clause 4.5.23.3 requires the linked entities to accompany the roots but
     /// does not fix their order. Andromeda fixes it, so that the same request
     /// against the same data always renders the same body: the map's
     /// first-encounter order *is* the append order, and within one level this
@@ -201,7 +201,7 @@ impl TemporalService {
         //
         // This reads `root_candidates` rather than `rendered`: `rendered` may
         // have been projected to `temporalValues` or `aggregatedValues`
-        // (clause 4.5.5, 4.5.19), which collapse an attribute's instances into
+        // (clause 4.5.8, 4.5.19), which collapse an attribute's instances into
         // a value array and erase the `object` / `objectList` members a
         // per-attribute walk would need. `root_candidates` was read off the
         // roots' normalized form before that erasure -- the same reason the
@@ -398,7 +398,7 @@ async fn fetch_remote_candidate(
 /// Which Linked Entities a rendered temporal representation names.
 pub mod candidates;
 
-/// Applying the root request's clause 6.3.15 nested projection to resolved
+/// Applying the root request's clause 4.21 nested projection to resolved
 /// Linked Entities.
 mod projection;
 

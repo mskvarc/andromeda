@@ -2,7 +2,7 @@
 //!
 //! ETSI GS CIM 009 v1.9.1 defines a request two ways: as query parameters on a
 //! `GET` (clause 6.3), and as a JSON body on the `POST` equivalents (clauses
-//! 5.7.2, 6.4.3.2, 6.34.3.2). They are the same request, and the body form is
+//! 5.7.2, 6.23, 6.34.3.2). They are the same request, and the body form is
 //! defined by conversion into the parameter form, so both live here together
 //! with the conversion between them.
 //!
@@ -12,9 +12,9 @@
 //! forwarding client build a request for another broker out of the same types
 //! the server reads one with.
 //!
-//! `deny_unknown_fields` is on every parameter struct deliberately: clause
-//! 6.3.1 has a broker reject a request it does not fully understand, and a
-//! silently ignored `?limitt=1000` is a wrong answer rather than a slow one.
+//! `deny_unknown_fields` is on every parameter struct deliberately: Andromeda
+//! validates requests strictly and rejects one it does not fully understand, so
+//! a silently ignored `?limitt=1000` is a wrong answer rather than a slow one.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]

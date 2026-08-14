@@ -33,7 +33,7 @@ pub struct CompiledTemporalQuery {
     #[builder(default = Pagination::DEFAULT)]
     pub pagination: Pagination,
     /// Which members of a matching entity's temporal representation reach the
-    /// response (clause 6.3.15 `pick` / `omit`).
+    /// response (clause 4.21 `pick` / `omit`).
     #[builder(default)]
     pub projection: Projection,
 }

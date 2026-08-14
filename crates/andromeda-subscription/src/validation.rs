@@ -39,7 +39,8 @@ pub fn validate_create_payload(payload: &Value) -> Result<(), SubscriptionError>
         }
     }
 
-    // Per spec 5.11.2 / 5.8.2, expiresAt must be in the future at creation time.
+    // Per spec 5.8.1.4 (and 5.11.2, which delegates to it for CSR subscriptions),
+    // expiresAt must be in the future at creation time.
     if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str()) {
         // Format validation is handled by validate_common_fields; only check future here.
         if let Ok(expires_at) = chrono::DateTime::parse_from_rfc3339(expires_at_val)
@@ -74,7 +75,8 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
         return Err(SubscriptionError::validation("type must be 'Subscription'"));
     }
 
-    // expiresAt format validation (but not future check — that's create-only per spec 5.11.2)
+    // expiresAt format validation only. The future check is applied separately by each
+    // caller (create per 5.8.1.4; entity-subscription update per 5.8.2.4), not here.
     if let Some(expires_at_val) = payload.get("expiresAt").and_then(|v| v.as_str())
         && chrono::DateTime::parse_from_rfc3339(expires_at_val).is_err()
     {
@@ -109,7 +111,7 @@ pub fn validate_common_fields(payload: &Value) -> Result<(), SubscriptionError> 
             ));
         }
         // Clause 4.9's `{}` axis addresses an attribute of a *linked* entity,
-        // and clause 5.8.1 evaluates a subscription's filter against the entity
+        // and clause 5.8.6 evaluates a subscription's filter against the entity
         // data carried by the change that triggered it. That data holds the
         // Relationship's object URI, not the entity it names, so a traversal
         // resolves nothing and the subscription could never fire. Accepting one
@@ -329,7 +331,7 @@ mod tests {
     }
 
     /// Clause 4.9 defines the `{}` axis over an entity's linked entities, and
-    /// clause 5.8.1 matches a subscription against the notification's entity
+    /// clause 5.8.6 matches a subscription against the notification's entity
     /// data alone. The broker has no store-backed matcher, so a subscription
     /// carrying a traversal filter would be accepted and could never fire.
     /// Rejecting it at validation is the honest answer, and it covers updates as

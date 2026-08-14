@@ -15,7 +15,7 @@
 //! that reads them, not here. This enum carries only what one of these grammars
 //! can itself reject.
 //!
-//! Mapping onto the ETSI CIM 009 clause 5.6.3 error types lives with the
+//! Mapping onto the ETSI CIM 009 clause 5.5.2 error types lives with the
 //! broker's transport-facing error type, not here: structurally malformed
 //! inputs become `MalformedRequest`, semantically invalid data becomes
 //! `QueryValidation`, and the few faults no client could have caused become
@@ -152,7 +152,7 @@ pub enum QueryError {
         /// Zero-based byte offset where a name was expected.
         position: usize,
     },
-    /// A clause 6.3.15 keyword (`id`, `type`, `scope`) carried a clause 4.21
+    /// A projection keyword (`id`, `type`, `scope`) carried a clause 4.21
     /// `{...}` linked-entity sub-projection.
     ///
     /// `LinkedEntityTerm` only ever follows `AttrName` in the grammar; the
@@ -249,7 +249,7 @@ pub enum QueryError {
     IcuCollation(#[from] IcuCollationError),
 
     // -----------------------------------------------------------------------
-    // Parameter values the languages above parse themselves (clause 5.6.3)
+    // Parameter values the query and projection languages above parse themselves (clauses 4.9 and 4.21)
     // -----------------------------------------------------------------------
     /// An `id` value could not be parsed as a URI.
     #[error("Invalid id value: '{0}'")]

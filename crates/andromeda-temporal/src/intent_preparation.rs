@@ -416,7 +416,7 @@ fn list_value(instance: &Value, key: &str, error: &'static str) -> Result<Tempor
 
 /// Decode a ListRelationship object list.
 ///
-/// Each member names a target Entity URI (clause 4.5.24), but which JSON-LD
+/// Each member names a target Entity URI (clause 4.5.22), but which JSON-LD
 /// keyword carries it depends on the context the client wrote the Entity under.
 /// The normative core context defines `objectList` with `@container: "@list"`
 /// and no `@type: "@id"` coercion — unlike the singular `object` — so an
@@ -645,7 +645,7 @@ mod tests {
         ));
     }
 
-    /// Clause 4.5.24: every `objectList` member names a target Entity. The
+    /// Clause 4.5.22: every `objectList` member names a target Entity. The
     /// normative core context coerces `object` to `@id` but leaves `objectList`
     /// uncoerced, so the same list arrives as `@value` nodes under it and as
     /// `@id` nodes under a coercing context. Both are the same list of targets.

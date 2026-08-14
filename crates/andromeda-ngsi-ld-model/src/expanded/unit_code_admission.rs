@@ -1,7 +1,7 @@
 //! Whether an expanded attribute instance's declared family admits the `unitCode` member it carries.
 //!
-//! Clauses 4.5.3 (Relationship), 4.5.18 (LanguageProperty), 4.5.20
-//! (VocabProperty) and 4.5.24 (JsonProperty) each state that `unitCode` shall
+//! Clauses 4.5.18 (LanguageProperty), 4.5.20 (VocabProperty) and 4.5.24
+//! (JsonProperty) each state that `unitCode` shall
 //! never be present, and a ListRelationship is a list of relationship targets
 //! under the same rule. Every write path that constructs a durable
 //! consequence from expanded JSON-LD — the Core Entity envelope, the Temporal

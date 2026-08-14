@@ -63,7 +63,7 @@ pub struct JsonLdEngineBuilder {
     /// Contexts to read from disk at build time, by URL.
     preload_contexts: Option<HashMap<Url, PathBuf>>,
     /// The released core context a versionless reference expands against
-    /// (clause 4.3.6.8), or `None` for the versionless core context.
+    /// (clause 4.4), or `None` for the versionless core context.
     default_core_url: Option<IriBuf>,
 }
 
@@ -472,7 +472,7 @@ mod tests {
     fn two_engines_carry_their_own_core_context_pin_independently() {
         // The pin lives on the engine, not a process global: two engines built
         // with different pins keep them both, where the removed `OnceLock` let
-        // the first setter win for the whole process (clause 4.3.6.8).
+        // the first setter win for the whole process (clause 4.4).
         let older = JsonLdEngine::builder()
             .allow_remote(false)
             .default_core_url(IriBuf::new(NGSI_LD_CORE_CONTEXT_V16_URL.to_string()).expect("valid core URL"))

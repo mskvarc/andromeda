@@ -1,5 +1,5 @@
 //! Attribute selection on the response: the `attrs`, `pick` and `omit`
-//! parameters (clause 6.3.15), and the `drop` / `keep` purge modes of the
+//! parameters (clause 4.21), and the `drop` / `keep` purge modes of the
 //! delete-by-query operation (clause 5.6.21).
 
 pub mod attribute_iri_index;

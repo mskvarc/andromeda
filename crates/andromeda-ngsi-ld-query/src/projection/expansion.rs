@@ -21,7 +21,7 @@ pub async fn expand_attrs<S: AsRef<str>>(raw: &[S], expander: &impl TermExpander
     Ok(expanded)
 }
 
-/// Expand a `pick` / `omit` term list (clause 6.3.15), keeping the keywords
+/// Expand a `pick` / `omit` term list (clause 4.21), keeping the keywords
 /// `id`, `type` and `scope` as written and recursing into each term's clause
 /// 4.21 linked-entity sub-projection.
 pub async fn expand_projection_terms(raw: &[RawProjectionTerm], expander: &impl TermExpander) -> Result<Vec<ProjectionTerm>, QueryError> {
@@ -51,7 +51,7 @@ fn expand_projection_terms_inner<'a, E: TermExpander>(
 /// it is an attribute term.
 async fn expand_one_term<E: TermExpander>(term: &RawProjectionTerm, expander: &E) -> Result<ProjectionTerm, QueryError> {
     match term.name.as_str() {
-        // Clause 6.3.15: these name structural members of the representation,
+        // Clause 4.21: these name structural members of the representation,
         // not attributes, so they have no IRI to expand to and no linked
         // entity to project — `LinkedEntityTerm` only ever follows `AttrName`.
         ProjectionTerm::ID_KEYWORD => keyword_term(term, ProjectionTerm::Id),
@@ -118,7 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_projection_term_of_id_type_or_scope_is_not_expanded() {
-        // Clause 6.3.15: `id`, `type` and `scope` name structural members of the
+        // Clause 4.21: `id`, `type` and `scope` name structural members of the
         // representation, not attributes, so they have no IRI to expand to.
         let raw = [leaf("id"), leaf("type"), leaf("scope"), leaf("speed")];
         let expanded = expand_projection_terms(&raw, &PrefixExpander).await.expect("expands");
@@ -159,7 +159,7 @@ mod tests {
     }
 
     /// Nested keyword terms (e.g. `observation{id,type}`) expand to the
-    /// clause 6.3.15 keyword variants, not to attribute terms.
+    /// clause 4.21 keyword variants, not to attribute terms.
     #[tokio::test]
     async fn nested_keywords_expand_to_the_keyword_variants() {
         let raw = [RawProjectionTerm {

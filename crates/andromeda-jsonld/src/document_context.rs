@@ -22,36 +22,50 @@ use std::collections::HashSet;
 /// Answers `None` when the combination is empty, which is the only case in
 /// which a document ends up with no `@context` at all.
 pub fn resolve_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
+    resolve_context_value_with_broker_context(document_context, spec, true)
+}
+
+/// Resolve a context for public response rendering without the private broker vocabulary.
+pub fn resolve_public_context_value(document_context: Option<&Value>, spec: &ContextSpec) -> Option<Value> {
+    resolve_context_value_with_broker_context(document_context, spec, false)
+}
+
+/// Combine contexts while selecting whether broker-only terms may be exposed.
+fn resolve_context_value_with_broker_context(document_context: Option<&Value>, spec: &ContextSpec, include_broker_context: bool) -> Option<Value> {
     let mut combined = extract_context_items(document_context);
     if let Some(body_context) = spec.body_context() {
         combined.extend(extract_context_items(Some(body_context)));
     }
-    // Document context first, then the Link header's: clause 5.5.7 gives the
-    // header the last word among the request's own contexts. Each typed context
-    // URL is written as the JSON-LD document string it becomes in an `@context`.
+    // Document context first, then the Link header's. Under clause 6.3.5 a body
+    // `@context` and a Link header context are mutually exclusive by
+    // Content-Type, so there is no header-vs-body precedence to resolve. Each
+    // typed context URL is written as the JSON-LD document string it becomes in
+    // an `@context`.
     combined.extend(spec.link_contexts().iter().map(|url| Value::String(url.as_str().to_owned())));
     let mut combined = dedupe_contexts(combined);
+    if !include_broker_context {
+        combined.retain(|value| value.as_str() != Some(ANDROMEDA_CORE_CONTEXT_URL.as_str()));
+    }
 
     match spec.core_policy() {
-        CoreContextPolicy::Only => return Some(Value::String(spec.effective_core_url().to_string())),
+        CoreContextPolicy::Only => return Some(Value::Array(vec![Value::String(spec.effective_core_url().to_string())])),
         CoreContextPolicy::Omit => {}
         CoreContextPolicy::Append => {
             retain_non_core(&mut combined);
-            append_core(&mut combined, spec);
+            append_core(&mut combined, spec, include_broker_context);
         }
         CoreContextPolicy::AppendIfNoExplicit => {
             retain_non_core(&mut combined);
             if combined.is_empty() {
-                append_core(&mut combined, spec);
+                append_core(&mut combined, spec, include_broker_context);
             }
         }
     }
 
-    match combined.len() {
-        0 => None,
-        1 => combined.pop(),
-        _more => Some(Value::Array(combined)),
-    }
+    // A response `@context` is required by clause 6.3.6. Emitting it always as a
+    // JSON-LD array, even when a single context resolves, is Andromeda's chosen
+    // uniform shape rather than a spec mandate, so a client always parses one shape.
+    if combined.is_empty() { None } else { Some(Value::Array(combined)) }
 }
 
 /// Write the resolved `@context` onto a document, or remove it when the spec
@@ -102,8 +116,10 @@ fn retain_non_core(contexts: &mut Vec<Value>) {
 }
 
 /// Append Andromeda's context and then the core one, in that order.
-fn append_core(contexts: &mut Vec<Value>, spec: &ContextSpec) {
-    contexts.push(Value::String(ANDROMEDA_CORE_CONTEXT_URL.to_string()));
+fn append_core(contexts: &mut Vec<Value>, spec: &ContextSpec, include_broker_context: bool) {
+    if include_broker_context {
+        contexts.push(Value::String(ANDROMEDA_CORE_CONTEXT_URL.to_string()));
+    }
     contexts.push(Value::String(spec.effective_core_url().to_string()));
 }
 
@@ -142,7 +158,7 @@ mod tests {
     use crate::{
         context_spec::ContextSpec,
         core_context::{ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_V16_URL},
-        document_context::{apply_context, resolve_context_value},
+        document_context::{apply_context, resolve_context_value, resolve_public_context_value},
     };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use iri_rs::IriRefBuf;
@@ -175,6 +191,12 @@ mod tests {
     fn a_document_with_no_context_of_its_own_gets_the_core_contexts() {
         let resolved = resolve_context_value(None, &ContextSpec::none()).expect("a context value");
         pretty_assertions::assert_eq!(resolved, json!([ANDROMEDA_CORE_CONTEXT_URL, NGSI_LD_CORE_CONTEXT_URL]));
+    }
+
+    #[test]
+    fn a_public_document_with_no_context_of_its_own_gets_only_the_standard_core_context() {
+        let resolved = resolve_public_context_value(None, &ContextSpec::none()).expect("a context value");
+        pretty_assertions::assert_eq!(resolved, json!([NGSI_LD_CORE_CONTEXT_URL]));
     }
 
     #[test]

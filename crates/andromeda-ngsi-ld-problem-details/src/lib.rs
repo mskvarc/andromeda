@@ -1,8 +1,9 @@
 //! How an NGSI-LD broker reports a failure.
 //!
-//! ETSI GS CIM 009 v1.9.1 clause 5.5.2 fixes twelve error categories, each with
-//! a canonical type IRI, an HTTP status and a title, and clauses 5.2.16 and
-//! 6.17 give batch operations a per-entity result shape built from the same
+//! ETSI GS CIM 009 v1.9.1 clause 5.5.2 defines the twelve error types, each with
+//! a canonical type IRI; clause 6.3.2 assigns each an HTTP status and clause
+//! 5.5.3 its title. Clause 5.2.16 gives batch operations a per-entity result
+//! shape built from the same
 //! categories. Both are wire contracts: a client reads them, a Context Source
 //! writes them, and a broker forwarding an operation has to parse one back.
 //!

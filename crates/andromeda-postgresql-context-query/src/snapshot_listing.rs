@@ -1,5 +1,5 @@
 //! The statements that list the entities a materialised snapshot holds
-//! (clauses 5.16.5 and 6.36.3.1).
+//! (clause 5.16, Snapshot Functionality).
 //!
 //! A sibling of [`snapshot_purge`](crate::snapshot_purge): both assemble a
 //! snapshot statement in the [`BindBuilder`]/[`BuiltQuery`] style rather than

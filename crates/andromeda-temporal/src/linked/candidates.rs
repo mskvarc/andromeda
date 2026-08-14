@@ -50,7 +50,7 @@ pub struct TemporalLinkedCandidate {
     /// later.
     ///
     /// Two different Relationships can name the same target -- `relA{a}` and
-    /// a bare `relB` both pointing at the same id, say -- and clause 6.3.15's
+    /// a bare `relB` both pointing at the same id, say -- and clause 4.21's
     /// union rule has to see every one of them to decide whether the target
     /// renders narrowed or in full, so every naming attribute is kept, not
     /// only the first. A key that could not be parsed as an attribute name

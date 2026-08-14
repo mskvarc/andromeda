@@ -213,11 +213,11 @@ where
         // this extractor (single entities, small batches). The output is a
         // standard `serde_json::Value`, so downstream code is unchanged.
         let mut value: serde_json::Value =
-            sonic_rs::from_slice(&bytes).map_err(|error| ExtractorRejection::bad_request_data(format!("Invalid JSON: {error}"), uri.clone()))?;
+            sonic_rs::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
         if value.as_array().is_some_and(|a| a.is_empty()) {
-            return Err(ExtractorRejection::invalid_request(
+            return Err(ExtractorRejection::bad_request_data(
                 "Invalid JSON: expected object, got empty array",
                 uri.clone(),
             ));
@@ -319,6 +319,18 @@ mod tests {
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::InvalidRequest { .. })));
+    }
+
+    #[tokio::test]
+    async fn rejects_valid_empty_array_as_bad_request_data() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from("[]"))
+            .unwrap();
+
+        let result = JsonLd::<Value>::from_request(req, &()).await;
+        assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
     }
 
     #[tokio::test]

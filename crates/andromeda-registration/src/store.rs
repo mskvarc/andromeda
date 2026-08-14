@@ -262,7 +262,7 @@ impl RegistrationMutation {
     }
 }
 
-/// Storing context source registrations (clause 5.10).
+/// Storing context source registrations (clause 5.9).
 ///
 /// Implementations own two representations of the same facts: the registration
 /// payload, which is the authority for every response body, and the routing
@@ -355,7 +355,7 @@ pub trait RegistrationStore: Send + Sync + 'static {
         Self: 'async_trait;
 
     /// Registrations that may serve an entity type and/or identifier, excluding
-    /// expired ones (clause 5.10.2).
+    /// expired ones (clause 5.9.2.4).
     ///
     /// This is the discovery preselect and the sole reader of the routing
     /// projection. The result is a superset: callers evaluate the full typed

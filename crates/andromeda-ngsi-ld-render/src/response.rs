@@ -7,7 +7,7 @@
 //! 1. percent-decoding of the URIs a Relationship points at,
 //! 2. version adaptation for a client that asked for an older spec version
 //!    (`Prefer: ngsi-ld=<version>`, clause 4.3.6.8),
-//! 3. `@context` injection for a body that carries it (clause 5.5.7), and
+//! 3. `@context` injection for a body that carries it (clause 6.3.6), and
 //! 4. the GeoJSON Feature or FeatureCollection envelope (clause 4.5.16).
 //!
 //! Which of them run is a function of the media type and the payload shape,

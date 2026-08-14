@@ -1,4 +1,4 @@
-//! The media type an NGSI-LD response is serialised as (clause 6.3.3).
+//! The media type an NGSI-LD response is serialised as (clause 6.3.4).
 //!
 //! Distinct from [`ResponseFormat`](andromeda_ngsi_ld_representation::response_format::ResponseFormat),
 //! which names the clause 4.5.1 rendering of an entity. The two are chosen
@@ -23,7 +23,7 @@ pub const APPLICATION_GEO_JSON: MediaType<'static> = MediaType::from_parts(names
 
 /// The media type an NGSI-LD response body carries.
 ///
-/// Per ETSI GS CIM 009 clause 6.3.3, the choice also decides where the
+/// Per ETSI GS CIM 009 clause 6.3.4, the choice also decides where the
 /// `@context` goes: `application/ld+json` carries it in the body, the other two
 /// carry it in a `Link` header.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -33,7 +33,7 @@ pub enum ResponseMediaType {
     Json,
     /// `application/ld+json` -- `@context` included in the body as a URL reference.
     JsonLd,
-    /// `application/geo+json` -- GeoJSON `FeatureCollection` format (clause 6.3.8).
+    /// `application/geo+json` -- GeoJSON `FeatureCollection` format (clause 6.3.15).
     GeoJson,
 }
 
@@ -52,7 +52,7 @@ impl ResponseMediaType {
     /// request body types, not response types, and must not negotiate as JSON.
     pub fn from_media_type(media_type: &MediaType<'_>) -> Option<ResponseMediaType> {
         if media_type.ty == names::_STAR && media_type.subty == names::_STAR {
-            // A client that will take anything gets the clause 6.3.3 default.
+            // A client that will take anything gets the clause 6.3.4 default.
             return Some(ResponseMediaType::Json);
         }
         if media_type.ty != names::APPLICATION {
@@ -129,7 +129,7 @@ impl headers::Header for ResponseMediaType {
 
 /// Whether an endpoint may answer with GeoJSON.
 ///
-/// Clause 6.3.8 defines the GeoJSON representation for entity resources only;
+/// Clause 6.3.15 defines the GeoJSON representation for entity resources only;
 /// the temporal, subscription and registration resources have no GeoJSON form,
 /// so their endpoints answer `406` rather than negotiating one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

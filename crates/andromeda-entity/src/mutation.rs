@@ -1,5 +1,5 @@
 //! Whole-entity writes: create, merge, replace and delete (clauses 5.6.1,
-//! 5.6.2, 5.6.3 and 5.6.6).
+//! 5.6.17, 5.6.18 and 5.6.6).
 //!
 //! Attribute-level mutations live in `attrs.rs`; batch forms live in `batch/`.
 
@@ -30,7 +30,7 @@ use chrono::Utc;
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 
-/// What one clause 5.6.2 merge produced, beyond the write itself.
+/// What one clause 5.6.17 merge produced, beyond the write itself.
 ///
 /// Read off the attempt that actually landed: the merge runs again whenever a
 /// concurrent writer supersedes an attempt, and the notification must describe
@@ -97,7 +97,7 @@ impl EntityService {
         Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
     }
 
-    /// Merge a partial update into an existing entity (NGSI-LD 5.6.2).
+    /// Merge a partial update into an existing entity (NGSI-LD 5.6.17).
     ///
     /// The merge is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
@@ -196,7 +196,7 @@ impl EntityService {
         Ok(())
     }
 
-    /// Replace an entire entity with the given payload (NGSI-LD 5.6.3).
+    /// Replace an entire entity with the given payload (NGSI-LD 5.6.18).
     ///
     /// The replacement drops every attribute it omits, so each dropped instance
     /// needs a tombstone, and that diff is only meaningful against the payload

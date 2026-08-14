@@ -1,7 +1,7 @@
-//! Applying the clause 6.3.15 structural-member rule to a rendered value.
+//! Applying the clause 4.21 structural-member rule to a rendered value.
 //!
 //! `pick` and `omit` may name `id`, `type` and `scope` as keywords alongside
-//! attributes (clause 6.3.15). Read literally, a non-empty `pick` keeps one
+//! attributes (clause 4.21). Read literally, a non-empty `pick` keeps one
 //! of these three members only when it is explicitly listed, and a non-empty
 //! `omit` drops whichever of the three it lists. `@context` is a JSON-LD
 //! transport concern, never a structural member, and this rule never touches
@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_query::projection::{compiled::Projection, term::Projection
 use serde_json::Value;
 
 /// Keep or drop the `id`, `type` and `scope` keys of a rendered entity value
-/// according to the clause 6.3.15 structural-member rule.
+/// according to the clause 4.21 structural-member rule.
 ///
 /// A non-object value (should not occur for an entity rendering) is left
 /// untouched rather than treated as an error, since pruning has nothing to
@@ -62,7 +62,7 @@ mod tests {
         IriBuf::new(value.to_string()).expect("valid IRI")
     }
 
-    /// Clause 6.3.15, literal reading: a non-empty `pick` naming only `id`
+    /// Clause 4.21, literal reading: a non-empty `pick` naming only `id`
     /// keeps `id` and drops every other structural member and attribute.
     #[test]
     fn pick_of_id_keeps_only_id() {
@@ -79,7 +79,7 @@ mod tests {
         assert!(value.get("scope").is_none());
     }
 
-    /// Clause 6.3.15: `omit` removes the structural members it lists.
+    /// Clause 4.21: `omit` removes the structural members it lists.
     #[test]
     fn omit_of_scope_removes_scope() {
         let mut value = json!({"id": "urn:x", "type": "T", "scope": "/Madrid"});
@@ -95,7 +95,7 @@ mod tests {
         assert!(value.get("scope").is_none());
     }
 
-    /// Clause 6.3.15: `omit` removes `type` when it is listed.
+    /// Clause 4.21: `omit` removes `type` when it is listed.
     #[test]
     fn omit_of_type_removes_type() {
         let mut value = json!({"id": "urn:x", "type": "T"});
@@ -110,7 +110,7 @@ mod tests {
         assert!(value.get("type").is_none());
     }
 
-    /// Clause 6.3.15, literal reading: a non-empty `pick` that names only an
+    /// Clause 4.21, literal reading: a non-empty `pick` that names only an
     /// attribute leaves `id` and `type` out, since neither keyword was listed.
     #[test]
     fn pick_of_an_attribute_leaves_id_and_type_out() {

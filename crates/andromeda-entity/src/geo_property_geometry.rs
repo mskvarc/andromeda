@@ -11,7 +11,7 @@
 //! then silently skip on every subsequent read.
 //!
 //! Every GeoProperty is checked, not only `location`, `observationSpace` and
-//! `operationSpace`: clause 4.5.4 lets any attribute be a GeoProperty, and one
+//! `operationSpace`: clause 4.7.1 lets any attribute be a GeoProperty, and one
 //! the broker cannot read is no more usable for being user-defined.
 //!
 //! A GeometryCollection is refused for a second, independent reason: clause
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn a_custom_geo_property_with_four_ordinates_is_rejected_and_named_by_its_iri() {
-        // Clause 4.5.4 lets any attribute be a GeoProperty; the three
+        // Clause 4.7.1 lets any attribute be a GeoProperty; the three
         // well-known ones are not a closed list.
         let entity = entity_with_literal(SITE, json!({"type": "Point", "coordinates": [1.0, 2.0, 3.0, 4.0]}));
         let error = validate_geo_property_geometries(&entity).expect_err("a user-defined GeoProperty is validated too");

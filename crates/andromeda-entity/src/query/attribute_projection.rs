@@ -1,5 +1,5 @@
 //! Filtering an entity's attributes down to what the client asked for
-//! (clause 6.3.15 `pick` and `omit`, clause 5.7.2 `attrs`).
+//! (clause 4.21 `pick` and `omit`, clause 5.7.2 `attrs`).
 
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -24,7 +24,15 @@ impl EntityQueryService {
             }
 
             self.project_entity(&mut entity, &query.projection, context).await?;
-            projected.push(entity);
+            // A `pick` reduces an entity to only its listed members (clause
+            // 6.5.7). When it names only attributes the entity lacks and no
+            // structural keyword, nothing survives; consistent with the `attrs`
+            // rule that an entity having none of the requested attributes is not
+            // returned (a 404 on single retrieval), such an entity is dropped
+            // from a query result rather than emitted as an empty object.
+            if !projects_to_empty(&entity, &query.projection) {
+                projected.push(entity);
+            }
         }
 
         Ok(projected)
@@ -33,7 +41,7 @@ impl EntityQueryService {
     /// Apply one compiled `pick`/`omit` projection to a single entity.
     ///
     /// The attribute members the projection excludes are removed, and the
-    /// clause 6.3.15 structural rule is applied to `scope`. `id` and `type`
+    /// clause 4.21 structural rule is applied to `scope`. `id` and `type`
     /// are members of the *rendered* representation, not of the typed
     /// [`Entity`], so their half of the rule belongs to the renderer.
     ///
@@ -97,7 +105,22 @@ impl EntityQueryService {
     }
 }
 
-/// Apply the clause 6.3.15 structural-member rule to `scope`: with a
+/// Whether a `pick` projection has emptied an entity so completely that it
+/// renders as `{}` and must be dropped from a query result set.
+///
+/// Only `pick` can strip an entity's structural members (clause 4.21), so
+/// only `pick` can empty it: when it names none of `id`, `type` or `scope` and
+/// the entity has no surviving attribute, nothing would render. An `omit` or
+/// `attrs` selection always leaves `id` and `type`, so it never empties.
+fn projects_to_empty(entity: &Entity, projection: &Projection) -> bool {
+    !projection.pick.is_empty()
+        && entity.attrs.is_empty()
+        && !projection.pick.contains(&ProjectionTerm::Id)
+        && !projection.pick.contains(&ProjectionTerm::Type)
+        && !projection.pick.contains(&ProjectionTerm::Scope)
+}
+
+/// Apply the clause 4.21 structural-member rule to `scope`: with a
 /// non-empty `pick`, `scope` survives only when [`ProjectionTerm::Scope`] is
 /// explicitly listed; a non-empty `omit` drops `scope` when it lists
 /// [`ProjectionTerm::Scope`]. `id` and `type` are members of the *rendered*
@@ -127,7 +150,7 @@ mod tests {
         .expect("entity")
     }
 
-    /// Clause 6.3.15: `omit` removes listed structural members, and `scope`
+    /// Clause 4.21: `omit` removes listed structural members, and `scope`
     /// is one of the three keywords `pick`/`omit` may name.
     #[test]
     fn omit_of_scope_removes_scope_from_the_typed_entity() {
@@ -142,7 +165,7 @@ mod tests {
         assert!(entity.scope.is_none());
     }
 
-    /// Clause 6.3.15, literal reading: with a non-empty `pick`, a structural
+    /// Clause 4.21, literal reading: with a non-empty `pick`, a structural
     /// member survives only when it is explicitly listed by keyword, so a
     /// `pick` that names only an attribute drops `scope`.
     #[test]
@@ -161,7 +184,7 @@ mod tests {
         assert!(entity.scope.is_none());
     }
 
-    /// Clause 6.3.15: `scope` survives a non-empty `pick` when the pick list
+    /// Clause 4.21: `scope` survives a non-empty `pick` when the pick list
     /// explicitly names the `scope` keyword.
     #[test]
     fn a_pick_naming_scope_keeps_scope() {
@@ -189,5 +212,58 @@ mod tests {
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
+    fn entity_with_name() -> Entity {
+        serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:Building:1",
+            "type": "Building",
+            "name": {"type": "Property", "value": "Eiffel Tower"}
+        }))
+        .expect("entity")
+    }
+
+    /// Clause 5.7.2: a `pick` naming only an attribute the entity does not
+    /// carry, and no structural keyword, empties the rendered entity, so it
+    /// drops out of the result set.
+    #[test]
+    fn a_pick_matching_no_attribute_or_structural_member_empties_the_entity() {
+        let entity = entity_with_scope();
+        let projection = Projection {
+            pick: vec![ProjectionTerm::Attribute { iri: iri("https://example.com/name"), linked: Vec::new() }],
+            omit: Vec::new(),
+        };
+
+        assert!(projects_to_empty(&entity, &projection));
+    }
+
+    /// A `pick` naming a structural keyword keeps the entity: `id` still renders.
+    #[test]
+    fn a_pick_naming_a_structural_member_keeps_the_entity() {
+        let entity = entity_with_scope();
+        let projection = Projection { pick: vec![ProjectionTerm::Id], omit: Vec::new() };
+
+        assert!(!projects_to_empty(&entity, &projection));
+    }
+
+    /// A surviving attribute keeps the entity in the result set.
+    #[test]
+    fn a_pick_leaving_a_surviving_attribute_keeps_the_entity() {
+        let entity = entity_with_name();
+        let projection = Projection {
+            pick: vec![ProjectionTerm::Attribute { iri: iri("https://example.com/name"), linked: Vec::new() }],
+            omit: Vec::new(),
+        };
+
+        assert!(!projects_to_empty(&entity, &projection));
+    }
+
+    /// `omit` always leaves `id` and `type`, so it never empties an entity.
+    #[test]
+    fn an_omit_never_empties_the_entity() {
+        let entity = entity_with_scope();
+        let projection = Projection { pick: Vec::new(), omit: vec![ProjectionTerm::Scope] };
+
+        assert!(!projects_to_empty(&entity, &projection));
     }
 }

@@ -144,7 +144,7 @@ pub fn parse_batch_entities(
     let items = match value {
         Value::Array(arr) if arr.is_empty() => {
             return Err(public_error(
-                NgsiLdErrorType::InvalidRequest,
+                NgsiLdErrorType::BadRequestData,
                 "Request body must contain a non-empty array of entities",
                 uri,
             ));
@@ -152,7 +152,7 @@ pub fn parse_batch_entities(
         Value::Array(arr) => arr,
         _ => {
             return Err(public_error(
-                NgsiLdErrorType::InvalidRequest,
+                NgsiLdErrorType::BadRequestData,
                 "Request body must be a JSON array of entities",
                 uri,
             ));

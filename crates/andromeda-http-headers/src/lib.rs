@@ -13,7 +13,7 @@
 //! [`ResponseMediaType`](media_type::ResponseMediaType) is what `Accept`
 //! negotiates and `Content-Type` reports, and a
 //! [`LanguageFilter`](language::LanguageFilter) is the `Accept-Language`
-//! grammar that clause 6.3.5 also permits as a query parameter. Splitting the
+//! grammar that clause 4.15 also permits as a query parameter. Splitting the
 //! token from its value would put one clause in two crates.
 //!
 //! Nothing here is an axum type. Every `headers::Header` impl is on a local

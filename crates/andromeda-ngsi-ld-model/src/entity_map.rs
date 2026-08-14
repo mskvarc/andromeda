@@ -35,7 +35,7 @@ pub struct EntityMap {
     /// Maps held by context sources that contributed to the same query.
     ///
     /// Keyed by the identifier of the contributing context source, as it
-    /// appears in the registration that named it (clause 4.6.2).
+    /// appears in the registration that named it (clause 5.2.39).
     #[builder(default)]
     pub linked_maps: IndexMap<Uri, Uri>,
 }

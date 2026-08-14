@@ -3,7 +3,7 @@
 //! A store that declined a predicate returns the rows its remaining predicates
 //! admitted, plus the predicates it left behind. The clause 5.7.2 answer is the
 //! intersection, so the caller evaluates the remainder in memory and only then
-//! takes the clause 5.5.6 window.
+//! takes the clause 5.5.9 window.
 
 use crate::{
     error::EntityError,
@@ -57,7 +57,7 @@ pub(super) fn finish_page(outcome: QueryOutcome<Value>, pagination: Pagination) 
     }
 }
 
-/// Take the clause 5.5.6 window over rows that have already passed the
+/// Take the clause 5.5.9 window over rows that have already passed the
 /// residual, counting the survivors first.
 ///
 /// Clause 6.3.13 counts matching entities rather than returned ones, so the
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn a_deferred_page_is_windowed_after_the_residual_runs() {
-        // Clause 5.5.6: the window is over matching entities, and only three of
+        // Clause 5.5.9: the window is over matching entities, and only three of
         // the five match once the residual has run.
         let outcome = QueryOutcome {
             rows: five(),
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn a_deferred_offset_past_the_surviving_set_returns_no_rows_and_still_counts() {
-        // Clause 5.5.6: an offset beyond the result set is an empty page, not
+        // Clause 5.5.9: an offset beyond the result set is an empty page, not
         // an error, and clause 6.3.13's count is unaffected by it.
         let outcome = QueryOutcome {
             rows: five(),

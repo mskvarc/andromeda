@@ -10,7 +10,7 @@
 //! the temporal join in `andromeda-temporal`'s `crate::linked` resolves each
 //! Linked Entity exactly once regardless of how many roots, attributes or
 //! instances named it, so there is exactly one narrowing to compute and apply
-//! per identifier -- the clause 6.3.15 union rule the non-temporal API's
+//! per identifier -- the clause 4.21 union rule the non-temporal API's
 //! `join=flat` applies, and the only rule the temporal API needs.
 
 use andromeda_ngsi_ld_query::projection::{attribute_iri_index::AttributeIriIndex, compiled::Projection, matching::matching_term, term::ProjectionTerm};
@@ -29,7 +29,7 @@ const PRESERVED_MEMBERS: [&str; 3] = ["id", "type", "@context"];
 /// Narrow a resolved Linked Entity's temporal representation to the nested
 /// `pick` / `omit` sub-projection that applies to it.
 ///
-/// `scope` is governed by the clause 6.3.15 structural keyword, not by an
+/// `scope` is governed by the clause 4.21 structural keyword, not by an
 /// attribute term: a non-empty nested `pick` keeps it only when the nested
 /// terms name the `scope` keyword, and a non-empty nested `omit` drops it
 /// when they do.
@@ -66,7 +66,7 @@ pub fn narrow_linked_temporal_entity(value: &mut Value, projection: &Projection,
 }
 
 /// Whether `scope` survives a nested projection, following the same clause
-/// 6.3.15 structural rule the root rendering and the non-temporal API's
+/// 4.21 structural rule the root rendering and the non-temporal API's
 /// nested projection both apply.
 fn keeps_scope(projection: &Projection) -> bool {
     if !projection.pick.is_empty() && !projection.pick.contains(&ProjectionTerm::Scope) {

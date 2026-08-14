@@ -54,7 +54,8 @@ pub(crate) async fn get(
     let incoming_via = protocol.incoming_via;
 
     // Validate the representation parameters before entity lookup so an invalid
-    // `format` or `options` returns 400, not 404 (clause 4.5.1).
+    // `format` or `options` returns 400, not 404 (clause 5.5.4 general
+    // NGSI-LD request-parameter validation).
     params.validate().with_entity_instance(&uri)?;
 
     // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
@@ -85,7 +86,7 @@ pub(crate) async fn get(
     }
 
     let sys_attrs = params.options.unwrap_or_default().sys_attrs;
-    // Clause 6.3.15 governs the single-entity retrieval exactly as it governs
+    // Clause 4.21 governs the single-entity retrieval exactly as it governs
     // a query: the compiled projection narrows the retrieved entity and, when
     // its terms carry clause 4.21 sub-projections, the entities the join
     // reaches from it.

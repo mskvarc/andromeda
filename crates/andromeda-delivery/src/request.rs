@@ -107,7 +107,7 @@ impl NotificationDelivery<'_> {
 
 /// The media type a notification body is serialised as.
 ///
-/// Clause 5.2.15 leaves `accept` optional and clause 6.3.3 makes
+/// Clause 5.2.15 leaves `accept` optional and clause 6.3.4 makes
 /// `application/json` the default; an `accept` naming something this broker
 /// does not render falls back to the same default rather than failing the
 /// delivery, because the subscription was accepted with that value and
@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn each_media_type_clause_6_3_3_defines_is_recognised_from_the_accept_member() {
+    fn each_media_type_clause_6_3_4_defines_is_recognised_from_the_accept_member() {
         pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/json"))), ResponseMediaType::Json);
         pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/ld+json"))), ResponseMediaType::JsonLd);
         pretty_assertions::assert_eq!(notification_media_type(Some(&media("application/geo+json"))), ResponseMediaType::GeoJson);

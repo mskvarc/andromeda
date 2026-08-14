@@ -53,8 +53,12 @@ pub enum ParameterError {
     #[error("drop and keep parameters are mutually exclusive")]
     DropKeepExclusive,
     /// `pick` and `omit` were both provided on a query.
-    #[error("pick and omit are mutually exclusive (clause 6.3.15)")]
+    #[error("pick and omit are mutually exclusive (clause 4.21)")]
     PickOmitExclusive,
+    /// The legacy `attrs` selector was combined with the clause-4.21
+    /// projection selectors. They are alternative ways to shape a response.
+    #[error("pick/omit and attrs are mutually exclusive")]
+    PickOmitWithAttrs,
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
     #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them (clause 5.7.2.4)")]

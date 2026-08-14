@@ -40,7 +40,7 @@ pub enum TemporalError {
     ///
     /// A commit that refused the submitted content never reaches this variant:
     /// [`From<CommitError>`] turns that refusal into [`TemporalError::Validation`],
-    /// which is what clause 5.5.9 reports as `BadRequestData`.
+    /// which is what clause 5.5.6 reports as `BadRequestData`.
     #[error(transparent)]
     Commit(CommitError),
     /// A persistence adapter could not complete the operation.
@@ -66,7 +66,7 @@ pub enum TemporalError {
 /// Manual rather than `#[from]`: the conversion classifies instead of wrapping.
 /// The commit port reports a refused submission separately from its own faults,
 /// and collapsing both into one variant would answer an unusable request with
-/// `InternalError` and invite the client to retry it forever (clause 5.5.9).
+/// `InternalError` and invite the client to retry it forever (clause 5.5.6).
 impl From<CommitError> for TemporalError {
     fn from(error: CommitError) -> TemporalError {
         match error {

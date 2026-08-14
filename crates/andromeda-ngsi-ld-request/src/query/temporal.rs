@@ -117,7 +117,7 @@ where
 
 /// Raw HTTP query parameters for temporal entity queries.
 ///
-/// Corresponds to the query parameters defined in NGSI-LD 6.3.10 (Query Temporal
+/// Corresponds to the query parameters defined in NGSI-LD 5.7.4 (Query Temporal
 /// Evolution of Entities) and 5.7.3 (Retrieve Temporal Representation of an Entity).
 /// All values are in their raw (compact) form before context expansion.
 #[derive(Debug, Default, Deserialize)]
@@ -196,10 +196,10 @@ pub struct TemporalQueryParameters {
     pub ordering: OrderingParameters,
 
     // --- Projection ---
-    /// Members the response is narrowed to (clause 6.3.15 `pick`).
+    /// Members the response is narrowed to (clause 4.21 `pick`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<RawProjectionTerm>>,
-    /// Members the response drops (clause 6.3.15 `omit`).
+    /// Members the response drops (clause 4.21 `omit`).
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
 
@@ -313,12 +313,15 @@ impl TemporalQueryParameters {
     /// - For single-entity GET (require_temporal=false): timerel and timeAt are optional (both or neither).
     pub fn validate(&self, require_temporal: bool) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
-        // Clause 6.3.15: pick and omit select opposite ends of the same
+        // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than a
         // request the broker can merge. The temporal API inherits the rule
         // unchanged.
         if self.pick.is_some() && self.omit.is_some() {
             return Err(ParameterError::PickOmitExclusive);
+        }
+        if (self.pick.is_some() || self.omit.is_some()) && self.attrs.is_some() {
+            return Err(ParameterError::PickOmitWithAttrs);
         }
         // Clauses 5.7.3.4 and 5.7.4.4 admit no Linked Entity retrieval on the
         // temporal operations at all, raising an error where projection
@@ -437,11 +440,14 @@ impl TryFrom<Query> for TemporalQueryParameters {
             json_keys: query.json_keys,
         };
         validate_attrs(parameters.attrs.as_deref())?;
-        // Clause 6.3.15 governs the POST body's projection exactly as it
+        // Clause 4.21 governs the POST body's projection exactly as it
         // governs the query string's, so the body cannot smuggle both members
         // past the rule the GET binding enforces.
         if parameters.pick.is_some() && parameters.omit.is_some() {
             return Err(ParameterError::PickOmitExclusive);
+        }
+        if (parameters.pick.is_some() || parameters.omit.is_some()) && parameters.attrs.is_some() {
+            return Err(ParameterError::PickOmitWithAttrs);
         }
         Ok(parameters)
     }
@@ -561,7 +567,7 @@ mod tests {
         assert!(p.omit.is_none());
     }
 
-    /// Clause 6.3.15: `pick` and `omit` name opposite ends of one projection.
+    /// Clause 4.21: `pick` and `omit` name opposite ends of one projection.
     /// A temporal query carrying both is contradictory, and is rejected with
     /// the same error the entity query raises.
     #[test]
@@ -574,7 +580,15 @@ mod tests {
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
-    /// The same rule governs the POST body's projection: clause 6.3.15 is a
+    #[test]
+    fn pick_or_omit_with_attrs_is_rejected() {
+        for query in ["timerel=after&timeAt=2024-01-01T00:00:00Z&pick=speed&attrs=fuelLevel", "timerel=after&timeAt=2024-01-01T00:00:00Z&omit=speed&attrs=fuelLevel"] {
+            let err = params_from_query(query).validate(false).expect_err("projection and attrs are mutually exclusive");
+            assert!(matches!(err, ParameterError::PickOmitWithAttrs));
+        }
+    }
+
+    /// The same rule governs the POST body's projection: clause 4.21 is a
     /// property of the projection, not of the binding that carried it.
     #[test]
     fn a_canonical_temporal_query_naming_pick_and_omit_is_rejected() {

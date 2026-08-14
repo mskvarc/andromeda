@@ -409,8 +409,9 @@ fn strip_ngsild_prefix(value: &mut Value) {
 }
 
 /// Ensure specified fields are always arrays in compacted output.
-/// JSON-LD compaction collapses single-element arrays to scalars, but the
-/// NGSI-LD spec requires certain fields to always be arrays.
+/// JSON-LD compaction collapses single-element arrays to scalars, but several
+/// NGSI-LD discovery members are defined as `String[]` (e.g. `attributeTypes`,
+/// `typeNames`; clauses 5.2.24 to 5.2.28) and must stay arrays.
 fn ensure_array_fields(value: &mut Value, fields: &[&str]) {
     match value {
         Value::Object(obj) => {

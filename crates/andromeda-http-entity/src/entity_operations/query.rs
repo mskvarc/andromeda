@@ -134,7 +134,7 @@ pub(crate) async fn query(
         }
     };
 
-    // Clause 6.3.15: the request's `pick`/`omit` govern both the matching
+    // Clause 4.21: the request's `pick`/`omit` govern both the matching
     // entities' structural members and, through their clause 4.21 nested
     // terms, the entities the traversal reaches. Both read it off the
     // compilation the query already ran.

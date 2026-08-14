@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 /// How one temporal instance identifier is held between storage and rendering.
 ///
-/// Clause 4.5.7 lets a client supply its own `instanceId` and requires the
-/// broker to hand that identifier back unchanged, while the broker mints one
+/// Clause 4.5.7 says a system should maintain an `instanceId`: a client may
+/// supply its own and the broker should keep it, while the broker mints one
 /// for every instance a client did not name. Holding both as text would lose
 /// the fact that the far more common broker-minted case is a UUID, and would
 /// repeat the URN prefix on every history row, so the two populations are held

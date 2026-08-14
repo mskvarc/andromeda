@@ -25,8 +25,12 @@ pub struct NgsiLdContentRange {
 
 impl NgsiLdContentRange {
     /// Create a temporal range with an optional total count.
-    pub fn new(start: DateTime<Utc>, end: DateTime<Utc>, total: Option<u64>) -> Option<Self> {
-        (start <= end).then_some(Self { start, end, total })
+    ///
+    /// A backwards `lastN` page legitimately has a range start later than its
+    /// range end (ETSI GS CIM 009 clause 6.3.10), so chronological ordering is
+    /// not a validity condition for this header.
+    pub const fn new(start: DateTime<Utc>, end: DateTime<Utc>, total: Option<u64>) -> Self {
+        Self { start, end, total }
     }
 
     /// Start of the temporal range.
@@ -61,11 +65,11 @@ impl FromStr for NgsiLdContentRange {
         let spec = value.strip_prefix("date-time ").ok_or(())?;
         let (range, total) = spec.rsplit_once('/').ok_or(())?;
         let (start, end) = range.split_once("Z-").ok_or(())?;
-        let end = format!("Z{end}");
-        let start = DateTime::parse_from_rfc3339(start).map_err(|_| ())?.with_timezone(&Utc);
+        let start = format!("{start}Z");
+        let start = DateTime::parse_from_rfc3339(&start).map_err(|_| ())?.with_timezone(&Utc);
         let end = DateTime::parse_from_rfc3339(&end).map_err(|_| ())?.with_timezone(&Utc);
         let total = if total == "*" { None } else { Some(total.parse().map_err(|_| ())?) };
-        Self::new(start, end, total).ok_or(())
+        Ok(Self::new(start, end, total))
     }
 }
 
@@ -89,5 +93,20 @@ impl headers::Header for NgsiLdContentRange {
         if let Ok(value) = HeaderValue::from_str(&self.to_string()) {
             values.extend(std::iter::once(value));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NgsiLdContentRange;
+    use std::str::FromStr;
+
+    #[test]
+    fn backwards_last_n_range_accepts_a_later_start_than_end() {
+        let range = NgsiLdContentRange::from_str("date-time 2021-01-01T01:01:00Z-2020-01-01T20:00:00Z/20").expect("valid backwards temporal range");
+
+        assert_eq!(range.start().to_rfc3339(), "2021-01-01T01:01:00+00:00");
+        assert_eq!(range.end().to_rfc3339(), "2020-01-01T20:00:00+00:00");
+        assert_eq!(range.total(), Some(20));
     }
 }

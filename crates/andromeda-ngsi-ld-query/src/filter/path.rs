@@ -165,7 +165,7 @@ impl QueryPath {
 
 /// Read an expanded IRI as the attribute name that addresses it.
 ///
-/// Term expansion yields an absolute IRI, which the clause 5.2.4 name grammar
+/// Term expansion yields an absolute IRI, which the clause 4.6.2 name grammar
 /// accepts, so the failure path only opens if a context produced something an
 /// attribute cannot be keyed by.
 pub fn expanded_attribute_name(iri: &IriBuf) -> Result<AttributeName, QueryError> {

@@ -1,5 +1,5 @@
 //! The result of a batch operation, and the per-entity errors in it
-//! (clauses 5.2.16 and 6.17).
+//! (clause 5.2.16).
 
 use crate::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -14,7 +14,7 @@ use serde::{
 };
 use std::fmt;
 
-/// The outcome of a batch operation (clause 6.17).
+/// The outcome of a batch operation (clause 5.2.16).
 ///
 /// A batch answers per entity, so a partial failure is the normal case rather
 /// than an exception: the identifiers that succeeded and the ones that did not

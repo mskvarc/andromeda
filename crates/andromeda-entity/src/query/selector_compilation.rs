@@ -1,4 +1,4 @@
-//! Compiling a query's entity selectors (clause 5.2.11) against the context.
+//! Compiling a query's entity selectors (clause 5.2.33) against the context.
 //!
 //! Shared by the entity and temporal query paths so the two cannot compile a
 //! selection differently: a POST `entities[]` body is a union of independent

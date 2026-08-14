@@ -1,7 +1,7 @@
 //! Language negotiation over BCP 47 ranges (clause 5.7.2.5).
 //!
 //! The same value reaches a request two ways -- the `lang` query parameter of
-//! clause 6.3.5 and the `NGSILD-Language` header -- and both spell it with the
+//! clause 4.15 and the `NGSILD-Language` header -- and both spell it with the
 //! `Accept-Language` syntax of RFC 7231 section 5.3.5, so the grammar is owned
 //! here rather than by either carrier.
 
@@ -112,8 +112,8 @@ impl LanguageRange {
     /// Whether this range names a primary language only, with no script,
     /// region or variant subtags.
     ///
-    /// Guards prefix matching: clause 5.7.2.5 has `fr` prefix-match `fr-CA`,
-    /// but not `fr-CA` prefix-match `fr-CA-variant`.
+    /// Guards prefix matching: RFC 4647 basic filtering has `fr` prefix-match
+    /// `fr-CA`, but not `fr-CA` prefix-match `fr-CA-variant`.
     pub fn is_basic_range(&self) -> bool {
         match self {
             LanguageRange::Wildcard => true,
@@ -150,7 +150,7 @@ impl LanguageFilter {
         }
     }
 
-    /// Parse a comma-separated preference list (clause 6.3.5).
+    /// Parse a comma-separated preference list (clause 4.15).
     ///
     /// # Errors
     ///

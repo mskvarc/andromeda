@@ -20,7 +20,7 @@ pub enum CommitError {
     /// (clause 4.5.1), a `unitCode` outside the closed UN/CEFACT list
     /// (clause 4.5.2), an attribute instance missing the member its type
     /// requires — as opposed to a fault of the broker. The distinction is the
-    /// difference between `BadRequestData` and `InternalError` in clause 5.5.9,
+    /// difference between `BadRequestData` and `InternalError` in clause 5.5.2,
     /// so it belongs on the commit port rather than in the message text.
     #[error("atomic context commit refused the submission: {detail}")]
     Submission {

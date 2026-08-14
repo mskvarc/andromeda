@@ -11,9 +11,10 @@ use thiserror::Error;
 /// other registered name or extension URI is carried verbatim in
 /// [`ExtRelType`](RelationType::ExtRelType).
 ///
-/// Named variants, all from the clause 6.3.10 pagination links:
-/// [`Next`](RelationType::Next), [`Prev`](RelationType::Prev),
-/// [`First`](RelationType::First), [`Last`](RelationType::Last).
+/// Named variants for pagination links: clause 6.3.10 defines
+/// [`Next`](RelationType::Next) and [`Prev`](RelationType::Prev);
+/// [`First`](RelationType::First) and [`Last`](RelationType::Last) are
+/// additional links Andromeda emits, not defined by that clause.
 ///
 /// The JSON-LD context relation (`http://www.w3.org/ns/json-ld#context`) is an
 /// extension URI, so it is an `ExtRelType` rather than a variant of its own.
@@ -23,9 +24,9 @@ pub enum RelationType {
     Next,
     /// `prev` -- previous page in a paginated result (clause 6.3.10).
     Prev,
-    /// `first` -- first page in a paginated result (clause 6.3.10).
+    /// `first` -- first page in a paginated result.
     First,
-    /// `last` -- last page in a paginated result (clause 6.3.10).
+    /// `last` -- last page in a paginated result.
     Last,
     /// Any other relation type: a registered name or an extension URI.
     ExtRelType(IriRefBuf),

@@ -97,7 +97,15 @@ fn parse_user_context_into(value: &Value, table: &mut UserTermTable) {
                 _term => parse_term_declaration(key, declaration, table),
             });
         }
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+        // A loaded context document may wrap its declarations in another
+        // remote context URL (for example a suite context that imports the
+        // test vocabulary and the core context). The fast path has no base
+        // URL or recursive loader here, so treating that URL as an empty table
+        // silently expands the entity's terms under the default vocabulary.
+        // Demote such documents to the full JSON-LD processor instead of
+        // producing a different expansion.
+        Value::String(_) => table.has_unsupported_feature = true,
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
 }
 

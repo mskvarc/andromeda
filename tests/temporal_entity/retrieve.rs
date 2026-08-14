@@ -527,23 +527,15 @@ async fn temporal_retrieve_pagination_basic_returns_206() {
     assert_eq!(status, StatusCode::CREATED);
 
     let (status, body, headers) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
-    // 206 Partial Content expected for large temporal responses
-    assert!(
-        status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT,
-        "pagination test should return 200 or 206"
-    );
-
-    if status == StatusCode::PARTIAL_CONTENT
-        && let Some((unit, _, _, _)) = parse_content_range(&headers)
-    {
-        assert_eq!(unit, "date-time");
-    }
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT, "pagination must return 206");
+    let (unit, _, _, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "date-time");
     assert!(body.get("speed").is_some());
 }
 
 #[tokio::test]
 #[serial]
-async fn temporal_retrieve_pagination_last_n_returns_206() {
+async fn temporal_retrieve_pagination_last_n_returns_206_with_content_range() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_02");
@@ -553,20 +545,16 @@ async fn temporal_retrieve_pagination_last_n_returns_206() {
     assert_eq!(status, StatusCode::CREATED);
 
     let (status, body, headers) = get_temporal_entity(&c, &id, "lastN=20", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
-    assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
-
-    if status == StatusCode::PARTIAL_CONTENT
-        && let Some((unit, _, _, size)) = parse_content_range(&headers)
-    {
-        assert_eq!(unit, "date-time");
-        assert_eq!(size, "20");
-    }
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT, "partial lastN result must return 206");
+    let (unit, _, _, size) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "date-time");
+    assert_eq!(size, "20");
     assert!(body.get("speed").is_some());
 }
 
 #[tokio::test]
 #[serial]
-async fn temporal_retrieve_pagination_last_n_before_returns_206() {
+async fn temporal_retrieve_pagination_last_n_before_returns_206_with_content_range() {
     let _serialized_environment = clean_database().await;
     let c = client();
     let id = unique_id("urn:ngsi-ld:Vehicle:retrieve_020_13_03");
@@ -583,14 +571,11 @@ async fn temporal_retrieve_pagination_last_n_before_returns_206() {
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
-    assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
-
-    if status == StatusCode::PARTIAL_CONTENT
-        && let Some((unit, range_start, _, _)) = parse_content_range(&headers)
-    {
-        assert_eq!(unit, "date-time");
-        assert_eq!(range_start, "2021-01-01T01:01:00Z");
-    }
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT, "partial bounded lastN result must return 206");
+    let (unit, range_start, _, size) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "date-time");
+    assert_eq!(range_start, "2021-01-01T01:01:00Z");
+    assert_eq!(size, "20");
     assert!(body.get("speed").is_some());
 }
 
@@ -613,16 +598,12 @@ async fn temporal_retrieve_pagination_after_returns_206() {
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
-    assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
-
-    if status == StatusCode::PARTIAL_CONTENT
-        && let Some((unit, range_start, range_end, _)) = parse_content_range(&headers)
-    {
-        assert_eq!(unit, "date-time");
-        let mrt = get_most_recent_timestamp(&body, "").unwrap_or_default();
-        assert_eq!(range_start, "2019-01-01T01:01:00Z");
-        assert_eq!(range_end, mrt);
-    }
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT, "temporal pagination must return 206");
+    let (unit, range_start, range_end, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "date-time");
+    let mrt = get_most_recent_timestamp(&body, "").unwrap_or_default();
+    assert_eq!(range_start, "2019-01-01T01:01:00Z");
+    assert_eq!(range_end, mrt);
     assert!(body.get("speed").is_some());
 }
 
@@ -645,16 +626,12 @@ async fn temporal_retrieve_pagination_temporal_values_after_returns_206() {
         Some(TEST_SUITE_CONTEXT),
     )
     .await;
-    assert!(status == StatusCode::OK || status == StatusCode::PARTIAL_CONTENT);
-
-    if status == StatusCode::PARTIAL_CONTENT
-        && let Some((unit, range_start, range_end, _)) = parse_content_range(&headers)
-    {
-        assert_eq!(unit, "date-time");
-        let mrt = get_most_recent_timestamp(&body, "temporalValues").unwrap_or_default();
-        assert_eq!(range_start, "2019-01-01T01:01:00Z");
-        assert_eq!(range_end, mrt);
-    }
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT, "temporalValues pagination must return 206");
+    let (unit, range_start, range_end, _) = parse_content_range(&headers).expect("partial temporal response must include Content-Range");
+    assert_eq!(unit, "date-time");
+    let mrt = get_most_recent_timestamp(&body, "temporalValues").unwrap_or_default();
+    assert_eq!(range_start, "2019-01-01T01:01:00Z");
+    assert_eq!(range_end, mrt);
     assert!(body.get("speed").is_some());
 }
 

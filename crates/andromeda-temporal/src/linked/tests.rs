@@ -773,7 +773,7 @@ async fn a_remote_brokers_extra_entities_are_neither_re_fetched_nor_expanded() {
     pretty_assertions::assert_eq!(source.calls().iter().map(|call| call.id.as_str()).collect::<Vec<_>>(), vec!["urn:ngsi-ld:T:B"]);
 }
 
-/// Clause 4.5.5 collapses attribute instances into value arrays, which erases
+/// Clause 4.5.8 collapses attribute instances into value arrays, which erases
 /// the `object` members a join follows. The seed carries what the roots named,
 /// read off the normalized form before that projection, so a flat join over
 /// `temporalValues` still resolves — where walking the projected root alone
@@ -802,7 +802,7 @@ async fn a_seed_resolves_links_the_projected_roots_no_longer_carry() {
 }
 
 /// Clause 4.21 nested narrowing must not depend on the roots' *final*
-/// rendering: `temporalValues` (clause 4.5.5) collapses an attribute's
+/// rendering: `temporalValues` (clause 4.5.8) collapses an attribute's
 /// instances into a value array, erasing the `object` member a walk over the
 /// rendered root would need to associate a nested sub-projection with an
 /// identifier. The nested projection is instead read off the candidate's

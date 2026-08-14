@@ -1,4 +1,4 @@
-//! Temporal values renderer (NGSI-LD clause 4.5.5).
+//! Temporal values renderer (NGSI-LD clause 4.5.8).
 //!
 //! [`TemporalValuesRenderer`] transforms a compacted temporal entity into the
 //! `temporalValues` simplified representation.
@@ -20,7 +20,7 @@ pub enum TemporalValuesError {
 }
 
 /// Transforms a compacted temporal entity into `temporalValues` form
-/// (NGSI-LD clause 4.5.5).
+/// (NGSI-LD clause 4.5.8).
 ///
 /// Each attribute is collapsed into `[value, observedAt]` pairs grouped by
 /// dataset ID. Reserved entity-level keys (`id`, `type`, `@context`,
@@ -37,7 +37,7 @@ impl TemporalValuesRenderer {
         TemporalValuesRenderer { payload }
     }
 
-    /// Collapse each attribute into the clause 4.5.5 `temporalValues` pairs.
+    /// Collapse each attribute into the clause 4.5.8 `temporalValues` pairs.
     ///
     /// Returns an error when a compacted typed member is malformed.
     pub fn render(self) -> Result<Value, TemporalValuesError> {

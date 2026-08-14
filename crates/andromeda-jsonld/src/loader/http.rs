@@ -6,7 +6,8 @@
 //! remote-fetch success.
 //!
 //! Access accounting is deliberately not part of that path. Clause 5.13.3.5
-//! requires a `numberOfHits` counter but does not require it to be durable per
+//! permits a `numberOfHits` counter (numberOfHits is optional per clause
+//! 5.13.3.5) but does not require it to be durable per
 //! access, so a hit bumps an in-process
 //! [`crate::hit_counter::HitCounter`] and a background flush folds
 //! the deltas into the store — otherwise every expansion would serialise on

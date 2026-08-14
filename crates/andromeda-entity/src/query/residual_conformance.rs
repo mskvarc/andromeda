@@ -68,7 +68,7 @@ mod tests {
             geo_property_instance_geometries(entity, geo.geoproperty.as_str()).any(|subject| matches(&geo.georel, &subject, &geo.geometry))
         });
         let scope_holds = selection.scope_q.as_ref().is_none_or(|scope_q| scope_q.matches(&extract_scopes(entity)));
-        // Clause 5.2.11 union of selectors: an unconstrained union admits every
+        // Clause 5.2.33 union of selectors: an unconstrained union admits every
         // entity, otherwise any one selector's id and type must both hold.
         let selectors_hold = !selection.selectors_constrain()
             || selection.selectors.iter().any(|selector| {
@@ -89,7 +89,7 @@ mod tests {
     /// uses, expressed against the public policy API: ask the profile what it
     /// cannot apply, strip that from the query it runs, and hand it back. A
     /// store that leaves a residual takes no window either, because a window over
-    /// rows a later filter will thin is wrong (clause 5.5.6).
+    /// rows a later filter will thin is wrong (clause 5.5.9).
     struct ProfiledEntityStore {
         entities: Vec<Value>,
         profile: StorageProfile,
@@ -304,7 +304,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_deferred_window_lands_on_the_same_page_the_store_would_have_returned() {
-        // Clause 5.5.6: the window is over matching entities, so it must be
+        // Clause 5.5.9: the window is over matching entities, so it must be
         // taken after the residual rather than before it.
         for (limit, offset) in [(1, 0), (1, 1), (2, 0), (2, 1), (10, 0), (10, 5)] {
             let expected = service(StorageProfile::POSTGIS_LTREE)

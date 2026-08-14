@@ -1,9 +1,9 @@
 //! Where a response's `@context` goes, and what it says.
 //!
-//! Clause 5.5.7 gives the JSON-LD `@context` of a response two carriers: an
+//! Clause 6.3.6 gives the JSON-LD `@context` of a response two carriers: an
 //! `application/ld+json` body holds it as a member, and an `application/json`
 //! body cannot, so it is advertised through `Link` headers instead (clause
-//! 6.3.5). Which carrier applies is decided by the media type and, for GeoJSON,
+//! 6.3.6). Which carrier applies is decided by the media type and, for GeoJSON,
 //! by the `Prefer: body=` token — so the renderer decides it, and both
 //! spellings have to be ready before it does.
 //!
@@ -18,7 +18,7 @@ use serde_json::Value;
 /// Where the JSON-LD `@context` appears in a response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextLocation {
-    /// Advertised through `Link` headers (clause 6.3.5).
+    /// Advertised through `Link` headers (clause 6.3.6).
     LinkHeader,
     /// Embedded in the JSON body.
     Body,
@@ -51,14 +51,12 @@ impl ResponseContext {
 
     /// Take the body value, formatted for embedding.
     ///
-    /// A single context stays a string rather than becoming a one-element
-    /// array: both are valid JSON-LD, but clients compare the member as a
-    /// string often enough that the array form breaks them.
+    /// The value is embedded exactly as resolved. Clause 6.3.6 requires the
+    /// response `@context`; always emitting it as a JSON-LD array, including the
+    /// single-context case, is Andromeda's chosen uniform shape rather than a
+    /// spec mandate, so it is never collapsed to a bare string.
     pub fn take_body_value(&mut self) -> Option<Value> {
-        match self.body_value.take() {
-            Some(Value::Array(mut items)) if items.len() == 1 => Some(items.swap_remove(0)),
-            other => other,
-        }
+        self.body_value.take()
     }
 }
 
@@ -74,9 +72,9 @@ mod tests {
     }
 
     #[test]
-    fn a_single_context_is_embedded_as_a_string_not_a_one_element_array() {
+    fn a_single_context_is_embedded_as_a_one_element_array() {
         let mut context = ResponseContext::new(Some(json!(["https://example.com/a"])), Vec::new());
-        pretty_assertions::assert_eq!(context.take_body_value(), Some(json!("https://example.com/a")));
+        pretty_assertions::assert_eq!(context.take_body_value(), Some(json!(["https://example.com/a"])));
     }
 
     #[test]

@@ -46,7 +46,15 @@ where
 /// reliable for distinguishing unsupported parameters (`InvalidRequest`) from
 /// invalid parameter values (`BadRequestData`).
 pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::http::Uri) -> ExtractorRejection {
-    if error_str.contains("unknown field") {
+    // `format` and `options` are syntax-level representation selectors. Their
+    // custom deserializers report invalid tokens as ordinary serde strings,
+    // so preserve the clause distinction here instead of treating them like
+    // invalid data values such as `limit=abc`.
+    if error_str.contains("unknown field")
+        || error_str.contains("invalid format")
+        || error_str.contains("invalid options")
+        || error_str.contains("invalid temporal format")
+    {
         ExtractorRejection::invalid_request(error_msg, uri)
     } else {
         ExtractorRejection::bad_request_data(error_msg, uri)
@@ -88,5 +96,25 @@ mod tests {
         let (mut parts, _) = req.into_parts();
         let result = ValidatedQuery::<TestParams>::from_request_parts(&mut parts, &()).await;
         assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })));
+    }
+
+    #[test]
+    fn invalid_representation_format_is_invalid_request() {
+        let rejection = classify_query_parse_error(
+            "invalid format value: bananas",
+            "invalid format".to_owned(),
+            "/test".parse().expect("valid URI"),
+        );
+        assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
+    }
+
+    #[test]
+    fn invalid_representation_options_are_invalid_request() {
+        let rejection = classify_query_parse_error(
+            "invalid options value: bananas",
+            "invalid options".to_owned(),
+            "/test".parse().expect("valid URI"),
+        );
+        assert!(matches!(rejection, ExtractorRejection::InvalidRequest { .. }));
     }
 }

@@ -24,7 +24,7 @@ pub struct TemporalRepresentationOptions {
     pub sys_attrs: SysAttrsInclusion,
 }
 
-/// Subscription-list response options from clauses 6.3.13 and 6.3.18.
+/// Subscription-list response options from clauses 6.3.13 and 6.3.11.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ListOptions {
     /// Whether the response emits the total result count.

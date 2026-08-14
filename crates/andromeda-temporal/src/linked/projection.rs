@@ -1,4 +1,4 @@
-//! Applying the root request's clause 6.3.15 nested projection to the Linked
+//! Applying the root request's clause 4.21 nested projection to the Linked
 //! Entities a temporal join resolves (clause 4.5.23).
 //!
 //! `pick=rel{a}` keeps `rel` on the root -- settled by
@@ -7,7 +7,7 @@
 //! plus its identity. This module derives which nested sub-projection applies
 //! to which resolved identifier from the traversal's own
 //! [`TemporalLinkedCandidate`]s rather than by re-walking the rendered roots:
-//! a root rendered as `temporalValues` or `aggregatedValues` (clause 4.5.5,
+//! a root rendered as `temporalValues` or `aggregatedValues` (clause 4.5.8,
 //! 4.5.19) collapses an attribute's instances into a value array and erases
 //! the `object` / `objectList` member a root-walk would need, exactly the
 //! problem the traversal's own `seed` already solves for candidate discovery.
@@ -48,7 +48,7 @@ impl TemporalService {
     /// `root_candidates`' keys come from [`TemporalLinkedCandidate::attributes`]
     /// rather than from scanning a rendered root [`Value`], which is what
     /// keeps this index complete regardless of the root's representation
-    /// (clause 4.5.5, 4.5.19). `linked`'s own keys are scanned directly: a
+    /// (clause 4.5.8, 4.5.19). `linked`'s own keys are scanned directly: a
     /// resolved Linked Entity's top-level attribute keys survive every
     /// representation, only the shape of each attribute's instances differs.
     ///
@@ -90,7 +90,7 @@ impl TemporalService {
 ///
 /// A Linked Entity no candidate's attribute nested a projection into, or one
 /// a bare-matching attribute reached alongside a nested one, is left exactly
-/// as it rendered -- clause 6.3.15's union rule renders such a target in
+/// as it rendered -- clause 4.21's union rule renders such a target in
 /// full.
 pub(crate) fn apply_nested_projections(
     root_candidates: &[TemporalLinkedCandidate],
@@ -131,7 +131,7 @@ enum Accumulator {
 /// nested `pick` / `omit` sub-projection that applies to each identifier they
 /// name.
 ///
-/// Clause 6.3.15's union rule: a target two Relationships both name is
+/// Clause 4.21's union rule: a target two Relationships both name is
 /// rendered one way, decided across every attribute that reaches it. A
 /// Relationship whose matching `pick` term carries no nested sub-projection
 /// (a bare reference) forces the target to render in full, absorbing any
@@ -304,7 +304,7 @@ mod tests {
         assert!(nested_projections(&candidates, &projection, &index).is_empty());
     }
 
-    /// Clause 6.3.15's union rule: a target reached by a nested `relA{a}` and
+    /// Clause 4.21's union rule: a target reached by a nested `relA{a}` and
     /// a bare `relB` -- both naming the same identifier -- renders in full.
     /// The bare reference contributes nothing to narrow, and forces the
     /// target to render unrestricted regardless of `relA`'s nested term.
@@ -341,7 +341,7 @@ mod tests {
         assert!(!nested_projections(&bare_first, &projection, &index).contains_key(&uri("urn:ngsi-ld:Slot:1")));
     }
 
-    /// Clause 6.3.15's union rule: a target reached by two nested references,
+    /// Clause 4.21's union rule: a target reached by two nested references,
     /// `relA{a}` and `relB{b}`, is narrowed to the union of both -- `a` and
     /// `b` both survive.
     #[test]

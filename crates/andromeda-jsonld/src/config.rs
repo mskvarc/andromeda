@@ -120,7 +120,7 @@ impl JsonLdConfig {
     pub fn build_engine(&self, l2_cache: Arc<impl ContextCache + 'static>) -> Result<JsonLdEngine, JsonLdError> {
         // Pin the deployment to the latest released core context (v1.9), the
         // version the compile-time vocabulary table is derived from, so the
-        // fastpath term table and the deployment agree (clause 4.3.6.8). This
+        // fastpath term table and the deployment agree (clause 4.4). This
         // replaces the process-global the engine used to read; the pin now lives
         // on the engine each tenant builds.
         let mut builder = JsonLdEngineBuilder::new()

@@ -37,12 +37,12 @@ pub(crate) struct AppliedTemporalJoin {
 /// Resolve the request's join and fold it into `entities`.
 ///
 /// `seed` is what the roots named, collected while they were rendered and
-/// before any clause 4.5.5 or 4.5.19 projection erased the `object` members;
+/// before any clause 4.5.8 or 4.5.19 projection erased the `object` members;
 /// without it a join over `temporalValues` would silently find nothing.
 ///
 /// `entities` are the rendered roots, and the join rewrites them in place: for
 /// [`RetrievingJoin::Flat`] the Linked Entities are appended after the roots,
-/// in traversal order (clause 6.4.3.2); for [`RetrievingJoin::Inline`] each
+/// in traversal order (clause 4.5.23.3); for [`RetrievingJoin::Inline`] each
 /// root has them nested under the Relationship instances that name them.
 ///
 /// The returned warnings are the ones passed in plus one per Linked Entity the
@@ -89,7 +89,7 @@ fn fold_resolution(
 ) -> Vec<NgsiLdWarning> {
     let ResolvedLinkedTemporalEntities { entities: linked, failures } = resolved;
     match join {
-        // Clause 6.4.3.2: the roots keep their place and the linked entities
+        // Clause 4.5.23.3: the roots keep their place and the linked entities
         // follow them, in traversal order.
         RetrievingJoin::Flat => entities.extend(linked.into_values()),
         RetrievingJoin::Inline => {
@@ -143,7 +143,7 @@ mod tests {
         entities.iter().filter_map(|entity| entity["id"].as_str()).collect()
     }
 
-    /// Clause 6.4.3.2: a flat join keeps the roots where they are and appends
+    /// Clause 4.5.23.3: a flat join keeps the roots where they are and appends
     /// the linked entities after them, in traversal order.
     #[test]
     fn a_flat_join_appends_the_linked_entities_after_the_roots() {

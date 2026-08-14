@@ -36,7 +36,7 @@ pub(crate) struct JoinRequest<'a> {
     pub(crate) contained_by: Option<&'a [Uri]>,
     /// Whether the linked entities carry the clause 4.8 system timestamps.
     pub(crate) sys_attrs: SysAttrsInclusion,
-    /// The request's compiled clause 6.3.15 projection, whose terms may carry
+    /// The request's compiled clause 4.21 projection, whose terms may carry
     /// the clause 4.21 sub-projections that narrow the linked entities.
     pub(crate) projection: Option<&'a Projection>,
 }

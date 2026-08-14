@@ -36,7 +36,7 @@ pub struct SnapshotRenderer<'a> {
     mode: ResponseFormat,
     /// The entities `join=inline` resolves relationships against, if any.
     inline_linked_entities: Option<&'a IndexMap<Uri, Entity>>,
-    /// The clause 6.3.15 `pick`/`omit` structural-member rule to apply to
+    /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
     /// the payload's `id`, `type` and `scope` keys, if any.
     structural_projection: Option<&'a Projection>,
 }
@@ -71,7 +71,7 @@ impl<'a> SnapshotRenderer<'a> {
         self
     }
 
-    /// Apply the clause 6.3.15 structural-member rule to the payload's `id`,
+    /// Apply the clause 4.21 structural-member rule to the payload's `id`,
     /// `type` and `scope` keys.
     pub const fn with_structural_projection(mut self, projection: &'a Projection) -> Self {
         self.structural_projection = Some(projection);
@@ -243,7 +243,7 @@ mod tests {
         pretty_assertions::assert_eq!(result["hasRoom"]["entity"]["id"], "urn:ngsi-ld:Room:1");
     }
 
-    /// Clause 6.3.15, literal reading: a non-empty `pick` naming only `id`
+    /// Clause 4.21, literal reading: a non-empty `pick` naming only `id`
     /// keeps `id` and drops `type`.
     #[test]
     fn structural_projection_of_pick_id_leaves_only_id() {
@@ -259,7 +259,7 @@ mod tests {
         assert!(result.get("type").is_none());
     }
 
-    /// Clause 6.3.15: `omit` removes the structural members it lists, here
+    /// Clause 4.21: `omit` removes the structural members it lists, here
     /// `scope`, while `id` and `type` survive untouched.
     #[test]
     fn structural_projection_of_omit_scope_removes_scope() {
@@ -276,7 +276,7 @@ mod tests {
         assert!(result.get("scope").is_none());
     }
 
-    /// Clause 6.3.15: `omit` removes `type` when the omit list names it.
+    /// Clause 4.21: `omit` removes `type` when the omit list names it.
     #[test]
     fn structural_projection_of_omit_type_removes_type() {
         let value = json!({"id": "urn:x", "type": "T"});

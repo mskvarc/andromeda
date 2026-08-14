@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, de::IgnoredAny};
 
-/// Request body for `PATCH /entityMaps/{id}` (clauses 5.14.2 and 6.34.3.2).
+/// Request body for `PATCH /entityMaps/{id}` (clauses 5.14.2 and 6.32.3.2).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateEntityMapBody {

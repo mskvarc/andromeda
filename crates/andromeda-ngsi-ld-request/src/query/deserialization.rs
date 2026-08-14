@@ -146,8 +146,8 @@ where
     .transpose()
 }
 
-/// Deserialize an optional `pick` / `omit` raw projection list (clause 6.3.15,
-/// grammar in clause 4.21).
+/// Deserialize an optional `pick` / `omit` raw projection list (clause 4.21,
+/// with the projection grammar also defined in clause 4.21).
 ///
 /// The whole wire value is handed to [`parse_projection_list`] rather than
 /// split on `,` here first: a linked-entity term such as

@@ -106,7 +106,7 @@ fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectSta
 fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
-    // Entity selectors, unioned (clause 5.2.11): `(sel1) OR (sel2) OR ...`,
+    // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // each reached through the `e` alias stage 1 selects the temporal
     // catalogue under. Rendered only when every selector constrains — the
     // reading `EntitySelection::selectors_constrain` shares with the entity path.
@@ -169,7 +169,7 @@ fn current_state_probe(compiled: &CompiledTemporalQuery, attribute_names: &Resol
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
-/// `e` alias stage 1 selects `temporal_entities` under, ANDed (clause 5.2.11).
+/// `e` alias stage 1 selects `temporal_entities` under, ANDed (clause 5.2.33).
 ///
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a

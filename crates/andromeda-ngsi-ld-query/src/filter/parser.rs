@@ -81,7 +81,7 @@ struct HopGuard<'a> {
 
 /// Read an identifier as an attribute name.
 ///
-/// The clause 5.2.4 name grammar accepts a short name, a prefixed name and an
+/// The clause 4.6.2 name grammar accepts a short name, a prefixed name and an
 /// expanded IRI, which is the whole range a filter can carry before and after
 /// expansion, so validating here rejects nothing a client may write.
 fn attribute_name(raw: &str) -> Result<AttributeName, QueryError> {

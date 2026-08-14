@@ -131,8 +131,8 @@ async fn temporal_create_invalid_json_returns_400() {
     let (status, body) = create_temporal_entity_raw(&c, b"{invalid json", "application/ld+json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "invalid JSON should return 400");
     assert!(
-        body["type"].as_str().is_some_and(|t| t.contains("BadRequestData")),
-        "error type should be BadRequestData"
+        body["type"].as_str().is_some_and(|t| t.contains("InvalidRequest")),
+        "error type should be InvalidRequest"
     );
     assert!(body["title"].as_str().is_some(), "should contain error title");
 }

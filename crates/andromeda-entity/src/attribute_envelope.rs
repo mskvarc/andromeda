@@ -6,7 +6,7 @@
 //! than something the store discovers later. The same holds for a member the
 //! family does not define at all: clauses 4.5.3, 4.5.18, 4.5.20 and 4.5.24
 //! leave four families unitless, so a `unitCode` on one is invalid input
-//! (clause 5.5.9) rather than a shape persistence happens to reject.
+//! (clause 5.5.6) rather than a shape persistence happens to reject.
 //!
 //! The walk steps over every member NGSI-LD reserves for itself. Those members
 //! are not attributes and their sub-nodes are not attribute instances: an

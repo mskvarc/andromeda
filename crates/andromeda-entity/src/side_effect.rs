@@ -1,6 +1,6 @@
 //! Work a batch write produces but does not have to finish before it answers.
 //!
-//! Temporal history and change events are the two, and clause 5.6.7 lets a
+//! Temporal history and change events are the two, and Andromeda lets a
 //! client trade read-your-write for latency on them with `Prefer:
 //! respond-async`. Either they run inline in the request that caused them, or
 //! they are persisted alongside the entity write and drained by a worker.

@@ -1,6 +1,6 @@
 //! The durable side-effect queue port.
 //!
-//! Clause 5.6.7 lets a batch operation answer before every consequence of the
+//! Andromeda lets a batch operation answer before every consequence of the
 //! write has been produced, which is what `Prefer: respond-async` opts into.
 //! The consequences still have to survive a crash, so they are written inside
 //! the same atomic write as the entities and drained afterwards.

@@ -40,6 +40,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::OrderFromInvalid { .. }
         | ParameterError::DropKeepExclusive
         | ParameterError::PickOmitExclusive
+        | ParameterError::PickOmitWithAttrs
         | ParameterError::ProjectionLinkedTermsWithoutJoin
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
         | ParameterError::FilterTraversalWithoutJoin
@@ -116,7 +117,27 @@ pub fn classify_jsonld_error(error: &JsonLdError) -> ClassifiedReport {
         | JsonLdError::Expansion(_)
         | JsonLdError::Compaction(_)
         | JsonLdError::InvalidIri(_)
-        | JsonLdError::InvalidDocument(_)
-        | JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | JsonLdError::InvalidDocument(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        JsonLdError::Json(source) if source.is_syntax() || source.is_eof() => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        JsonLdError::Json(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::classify_jsonld_error;
+    use andromeda_jsonld::error::JsonLdError;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+
+    #[test]
+    fn malformed_json_is_invalid_request() {
+        let error = JsonLdError::Json(serde_json::from_str::<serde_json::Value>("{").expect_err("malformed JSON"));
+        pretty_assertions::assert_eq!(classify_jsonld_error(&error).error_type(), NgsiLdErrorType::InvalidRequest);
+    }
+
+    #[test]
+    fn valid_json_with_a_deserialization_error_is_bad_request_data() {
+        let error = JsonLdError::Json(serde_json::from_value::<u64>(serde_json::json!("not a number")).expect_err("wrong JSON type"));
+        pretty_assertions::assert_eq!(classify_jsonld_error(&error).error_type(), NgsiLdErrorType::BadRequestData);
     }
 }

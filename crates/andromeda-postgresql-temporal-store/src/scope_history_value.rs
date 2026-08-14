@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 /// What one scope-history row records.
 ///
-/// A scope is not an attribute — clause 4.5.4 gives it no dataset dimension and
+/// A scope is not an attribute — clause 4.5.5 gives it no dataset dimension and
 /// no attribute family — so scope history has its own two-member value
 /// vocabulary rather than a borrowed subset of the attribute one. A scope that
 /// stops applying is recorded as a row carrying a deletion instant and no path,

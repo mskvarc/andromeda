@@ -100,7 +100,7 @@ pub(super) async fn resolve_linked_cached(
 /// Serialize a resolved linked-entity map to its `join=flat` append order.
 ///
 /// [`EntityQueryService::resolve_linked_entities`] guarantees `linked_map`'s
-/// iteration order is the traversal's first-encounter order (clause 4.5.23),
+/// iteration order is the traversal's first-encounter order (clause 4.5.23.3),
 /// and `IndexMap::values` walks a map in that same insertion order, so the
 /// values collected here carry that order forward unchanged. An entity that
 /// fails to serialize is dropped rather than failing the whole notification.
@@ -235,7 +235,7 @@ mod tests {
 
     /// `linked_entities_as_values` must not reorder its input: the map's
     /// iteration order is the traversal's first-encounter order (clause
-    /// 4.5.23), and the `join=flat` append in
+    /// 4.5.23.3), and the `join=flat` append in
     /// `crate::processor::payload::build_notification_data` relies on
     /// `as_values` carrying that order forward unchanged.
     #[test]

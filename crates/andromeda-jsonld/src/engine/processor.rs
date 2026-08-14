@@ -41,7 +41,7 @@ pub struct JsonLdEngine {
     /// Parsed request contexts, kept per URL for the life of the engine.
     user_term_tables: Arc<UserTermTableCache>,
     /// The released core context a versionless reference expands against
-    /// (clause 4.3.6.8). The fastpath term table is derived from this version,
+    /// (clause 4.4). The fastpath term table is derived from this version,
     /// so two engines built with different pins expand a versionless request
     /// differently, and this is where that decision lives rather than in a
     /// process-global.
@@ -76,7 +76,7 @@ impl JsonLdEngine {
 
     /// The released core context a versionless reference expands against.
     ///
-    /// The version this deployment pinned (clause 4.3.6.8); the fastpath term
+    /// The version this deployment pinned (clause 4.4); the fastpath term
     /// table is built from it. Defaults to the versionless core context when no
     /// pin was configured.
     pub const fn default_core_url(&self) -> &IriBuf {

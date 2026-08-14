@@ -52,7 +52,7 @@ pub struct TemporalConfig {
     /// Native or deferred append topology selected for this broker profile.
     #[config(env = "ANDROMEDA_TEMPORAL_APPEND_MODE", default = "native")]
     pub append_mode: TemporalAppendMode,
-    /// System default `lastN` cap from clause 6.3.10.
+    /// System default `lastN` cap from clause 5.2.21.
     #[config(env = "ANDROMEDA_TEMPORAL_DEFAULT_LAST_N", default = 19)]
     pub default_last_n: u32,
     /// Interval used by temporal-related expiry reconciliation while retention remains in composition.

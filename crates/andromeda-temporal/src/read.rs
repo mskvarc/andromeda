@@ -42,7 +42,7 @@ impl TemporalService {
 
         let rendered = self.render_one_temporal_entity(entity_id, &entity_types, &compiled, context).await?;
 
-        // Clause 6.3.9: an `attrs` filter that selects nothing leaves no
+        // Clause 5.7.2: an `attrs` filter that selects nothing leaves no
         // temporal representation to return, which is a 404 rather than an
         // entity with no attributes.
         if rendered.presence == HistoryPresence::Absent && !compiled.instances.attr_filter.is_empty() {

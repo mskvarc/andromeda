@@ -1,6 +1,6 @@
 //! The NGSI-LD `Date` lexical form in the one rendering the broker stores, orders and compares (ETSI GS CIM 009 clause 4.6.3).
 //!
-//! Clause 4.6.3 defines `Date` as an IETF RFC 3339 `full-date`, whose canonical
+//! Clause 4.6.3 defines `Date` as an ISO 8601 [Extended Format] `full-date`, whose canonical
 //! spelling `YYYY-MM-DD` is fixed-width and zero-padded. That is the property the
 //! broker depends on: byte-wise (`COLLATE "C"`) lexical order over the stored
 //! text is chronological order, so clause 4.9's `<`, `>`, `<=` and `>=` over a

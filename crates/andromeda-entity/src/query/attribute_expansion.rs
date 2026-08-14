@@ -1,7 +1,7 @@
 //! Resolving, once per request, the expanded IRI of every attribute key a
 //! response carries.
 //!
-//! Matching a clause 6.3.15 / 4.21 projection term against an attribute key
+//! Matching a clause 4.21 projection term against an attribute key
 //! needs the request `@context`, which only this layer holds. Whatever applies
 //! a projection further out — the renderer nesting linked entities above all —
 //! receives the expansions already resolved instead of a JSON-LD engine.

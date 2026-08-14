@@ -68,11 +68,11 @@ pub struct GetEntityParams {
     /// The representation the response uses (clause 4.5.1 `format`).
     #[serde(default, deserialize_with = "deserialize_option_response_format")]
     pub format: Option<ResponseFormat>,
-    /// Members the response is narrowed to (clause 6.3.15 `pick`), each term
+    /// Members the response is narrowed to (clause 4.21 `pick`), each term
     /// carrying whatever clause 4.21 sub-projection it was written with.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub pick: Option<Vec<RawProjectionTerm>>,
-    /// Members the response drops (clause 6.3.15 `omit`), each term carrying
+    /// Members the response drops (clause 4.21 `omit`), each term carrying
     /// whatever clause 4.21 sub-projection it was written with.
     #[serde(default, deserialize_with = "deserialize_optional_projection_terms")]
     pub omit: Option<Vec<RawProjectionTerm>>,
@@ -83,13 +83,13 @@ pub struct GetEntityParams {
     #[serde(rename = "datasetId")]
     #[serde(default, deserialize_with = "deserialize_optional_dataset_selectors")]
     pub dataset_id: Option<Vec<DatasetSelector>>,
-    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.8 `geometryProperty`).
+    /// The GeoProperty a GeoJSON response uses as its geometry (clause 6.3.15 `geometryProperty`).
     #[serde(rename = "geometryProperty")]
     pub geometry_property: Option<AttributeName>,
     /// Whether the operation is confined to this broker (clause 5.10 `local`).
     #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub local: Option<bool>,
-    /// How linked entities reach the response (clause 4.5.21 `join`).
+    /// How linked entities reach the response (clause 4.5.23 `join`).
     pub join: Option<JoinMode>,
     /// How many links deep the traversal goes (`joinLevel`).
     #[serde(rename = "joinLevel")]
@@ -117,12 +117,15 @@ impl GetEntityParams {
     /// too and must return 400 rather than being silently ignored.
     pub fn validate(&self) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
-        // Clause 6.3.15: pick and omit select opposite ends of the same
+        // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than
         // a request the broker can merge. The rule is the query's rule; the
         // retrieval carries the same two parameters and so the same rule.
         if self.pick.is_some() && self.omit.is_some() {
             return Err(ParameterError::PickOmitExclusive);
+        }
+        if (self.pick.is_some() || self.omit.is_some()) && self.attrs.is_some() {
+            return Err(ParameterError::PickOmitWithAttrs);
         }
         // Clause 5.7.2.4: a nested sub-projection describes a Linked Entity,
         // so it is only meaningful as far as the requested join reaches.
@@ -229,13 +232,22 @@ mod tests {
         assert!(terms[1].linked.is_empty());
     }
 
-    /// Clause 6.3.15 declares `pick` and `omit` mutually exclusive on every
+    /// Clause 4.21 declares `pick` and `omit` mutually exclusive on every
     /// binding that accepts them, the single-entity retrieval included.
     #[test]
     fn get_validate_rejects_pick_and_omit_together() {
         let params: GetEntityParams = serde_urlencoded::from_str("pick=speed&omit=scope").expect("valid projection terms");
         let error = params.validate().expect_err("expected mutual exclusivity error");
         assert!(matches!(error, ParameterError::PickOmitExclusive));
+    }
+
+    #[test]
+    fn get_validate_rejects_pick_or_omit_with_attrs() {
+        for query in ["pick=speed&attrs=fuelLevel", "omit=speed&attrs=fuelLevel"] {
+            let params: GetEntityParams = serde_urlencoded::from_str(query).expect("valid selectors");
+            let error = params.validate().expect_err("projection and attrs are mutually exclusive");
+            assert!(matches!(error, ParameterError::PickOmitWithAttrs));
+        }
     }
 
     /// Clause 5.7.2.4: a retrieval whose `pick` nests into a Linked Entity

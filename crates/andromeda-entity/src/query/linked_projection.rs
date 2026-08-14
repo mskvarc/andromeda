@@ -1,6 +1,6 @@
 //! The clause 4.21 nested projection that applies to each linked entity:
 //! deriving it from the `pick`/`omit` sub-projections its referencing
-//! Relationships carry (clause 6.3.15), and applying it to the entity.
+//! Relationships carry (clause 4.21), and applying it to the entity.
 
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -46,7 +46,7 @@ struct Level<'a> {
 impl EntityQueryService {
     /// Reduce every resolved linked entity to the nested projection that
     /// applies to it under the `join=flat` union rule (clause 4.21
-    /// `LinkedEntityTerm`, clause 6.3.15).
+    /// `LinkedEntityTerm`).
     ///
     /// `pick=rel{a,b}` reduces the entities reached through `rel` to `a`, `b`,
     /// `id` and `type`: the nested terms govern the linked entity's attribute
@@ -177,7 +177,7 @@ impl EntityQueryService {
                             }
                         }
 
-                        // Clause 6.3.15: a bare `omit` term (no nested
+                        // Clause 4.21: a bare `omit` term (no nested
                         // `{...}`) only drops this attribute from the entity
                         // being rendered here -- it says nothing about how
                         // the linked entity itself renders. It therefore
@@ -393,7 +393,7 @@ mod tests {
         assert_eq!(nested.pick, vec![leaf("temperature")]);
     }
 
-    /// Clause 6.3.15: when two Relationships reach the same linked entity and
+    /// Clause 4.21: when two Relationships reach the same linked entity and
     /// only one of them carries a nested projection, the flat union rule
     /// renders that entity in full rather than narrowing it.
     #[tokio::test]
@@ -454,7 +454,7 @@ mod tests {
         }
     }
 
-    /// Clause 6.3.15: a nested `omit` sub-projection propagates to the linked
+    /// Clause 4.21: a nested `omit` sub-projection propagates to the linked
     /// entity as an omit-projection, not a pick.
     #[tokio::test]
     async fn a_nested_omit_term_propagates_as_an_omit_projection() {
@@ -485,7 +485,7 @@ mod tests {
         assert_eq!(nested.omit, vec![leaf("temperature")]);
     }
 
-    /// Clause 6.3.15, decided invariant: a *bare* `omit` term (`omit=hasA`,
+    /// Clause 4.21, decided invariant: a *bare* `omit` term (`omit=hasA`,
     /// no nested `{...}`) only removes `hasA` from the root's own rendering.
     /// It says nothing about how the entity `hasA` links to should render, so
     /// it contributes no entry -- that target is absent from the map, which
@@ -605,7 +605,7 @@ mod tests {
         assert!(!target.attrs.contains_key("hasB"));
     }
 
-    /// Clause 6.3.15 union rule: a linked entity that any Relationship reached
+    /// Clause 4.21 union rule: a linked entity that any Relationship reached
     /// without a nested projection renders in full, so applying the nested
     /// projections leaves it untouched.
     #[tokio::test]
@@ -699,7 +699,7 @@ mod tests {
         assert!(target.attrs.contains_key("name"));
     }
 
-    /// Clause 6.3.15: a *bare* `omit` term still removes the attribute it
+    /// Clause 4.21: a *bare* `omit` term still removes the attribute it
     /// names from the entity being projected -- only a term carrying a nested
     /// sub-projection defers to the linked entity.
     #[tokio::test]
@@ -725,7 +725,7 @@ mod tests {
     /// The `join=flat` half of the shape contract the two join modes share.
     ///
     /// Clause 4.21 reduces a linked entity to the named attributes plus `id`
-    /// and `type`; `scope` follows the clause 6.3.15 structural keyword rule
+    /// and `type`; `scope` follows the clause 4.21 structural keyword rule
     /// and is dropped by a nested `pick` that does not name it. Every other
     /// entity member lives outside the attribute map -- the clause 4.8
     /// timestamps and the clause 4.7 geo-properties -- and neither mode may

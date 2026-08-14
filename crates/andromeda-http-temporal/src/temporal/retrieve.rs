@@ -49,6 +49,7 @@ pub async fn get(
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
+    params.validate(false).with_instance(&uri)?;
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;

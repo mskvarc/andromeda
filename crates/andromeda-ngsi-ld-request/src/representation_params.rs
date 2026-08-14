@@ -57,8 +57,9 @@ pub fn resolve_response_format(format: Option<ResponseFormat>, options: Option<&
 
 /// Reject a `format` or `options` value outside the clause 4.5.1 grammar.
 ///
-/// An unknown value is a client error, not something to silently ignore: clause
-/// 6.3.1 has a broker refuse a request it does not fully understand. `format`
+/// An unknown value is a client error, not something to silently ignore:
+/// Andromeda validates requests strictly and refuses one it does not fully
+/// understand. `format`
 /// must name a defined representation and each comma-separated `options` token
 /// must be one the broker defines.
 pub fn validate_representation_params(_format: Option<ResponseFormat>, options: Option<&str>) -> Result<(), ParameterError> {

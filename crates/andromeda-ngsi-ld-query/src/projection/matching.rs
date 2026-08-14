@@ -1,5 +1,5 @@
 //! Matching a `pick`/`omit` term list against a rendered attribute key
-//! (clause 6.3.15).
+//! (clause 4.21).
 //!
 //! Shared by every renderer that narrows an already-rendered `serde_json::Value`
 //! against a compiled [`ProjectionTerm`] list -- the non-temporal API's

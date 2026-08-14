@@ -33,10 +33,10 @@ const CONTEXT_KEYWORD: &str = "@context";
 /// preserving them here is what keeps the two join modes returning the same
 /// linked entity in the same shape. Whether the timestamps appear at all is
 /// the `sysAttrs` representation option (clause 4.8), which is orthogonal to
-/// the clause 6.3.15 projection and must not be overridden by it.
+/// the clause 4.21 projection and must not be overridden by it.
 ///
 /// `scope` is deliberately absent: it is the one entity member both join modes
-/// narrow, by the clause 6.3.15 structural *keyword* rule rather than by an
+/// narrow, by the clause 4.21 structural *keyword* rule rather than by an
 /// attribute term. See [`NestedProjection::keeps_scope`].
 ///
 /// [`Entity`]: andromeda_ngsi_ld_model::entity::Entity
@@ -123,7 +123,7 @@ impl<'a> NestedProjection<'a> {
 
     /// Whether `scope` survives this projection.
     ///
-    /// Clause 6.3.15 governs `scope` by keyword, not by attribute term: a
+    /// Clause 4.21 governs `scope` by keyword, not by attribute term: a
     /// non-empty `pick` keeps it only when the nested terms name the `scope`
     /// keyword, and a non-empty `omit` drops it when they do. This is the same
     /// rule `join=flat` applies to the typed entity, so both join modes narrow
@@ -302,7 +302,7 @@ mod tests {
 
     /// Clause 4.21 reduces a linked entity to the named attributes plus `id`
     /// and `type`. `scope` is not on that list, so a nested `pick` that does
-    /// not name the `scope` keyword drops it — the same clause 6.3.15
+    /// not name the `scope` keyword drops it — the same clause 4.21
     /// structural rule `join=flat` applies through
     /// `apply_structural_scope_projection`. The counterpart flat-side test is
     /// `andromeda-entity`'s
@@ -340,7 +340,7 @@ mod tests {
         assert_eq!(kept["scope"], "/Madrid");
     }
 
-    /// Clause 6.3.15: a nested `omit` naming the `scope` keyword drops
+    /// Clause 4.21: a nested `omit` naming the `scope` keyword drops
     /// `scope`, and one that does not leaves it.
     #[test]
     fn a_nested_omit_drops_scope_only_when_it_names_the_scope_keyword() {
@@ -380,7 +380,7 @@ mod tests {
     /// A nested projection must not reach them either, or the same linked
     /// entity would come back in two different shapes depending on the join
     /// mode. `sysAttrs` is a representation option (clause 4.8), orthogonal to
-    /// the clause 6.3.15 projection.
+    /// the clause 4.21 projection.
     #[test]
     fn a_nested_pick_preserves_every_entity_member_outside_the_attribute_map() {
         let projection = Projection {

@@ -40,7 +40,7 @@ pub enum EndpointTransport {
 impl MqttVersion {
     /// The version a subscription's `notifierInfo` names.
     ///
-    /// The accepted spellings are the ones clause 5.2.15 defines, not the ones
+    /// The accepted spellings are the ones clause 7.2 defines, not the ones
     /// [`MqttVersion`]'s `Display` produces: `Display` is for a log line and
     /// this is a wire value, and letting the two share a table would quietly
     /// widen what the broker accepts.
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn a_notifier_info_value_outside_what_clause_5_2_15_defines_is_rejected() {
+    fn a_notifier_info_value_outside_what_clause_7_2_defines_is_rejected() {
         let version = notifier_info(&[("MQTT-Version", "mqtt4.0")]);
         assert!(matches!(
             parse_endpoint_transport("mqtt://broker:1883/topic", Some(&version)),

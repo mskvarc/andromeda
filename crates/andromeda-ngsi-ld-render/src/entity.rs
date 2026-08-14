@@ -41,7 +41,7 @@ pub struct EntityRenderer<'a> {
     inline_linked_entities: Option<&'a IndexMap<Uri, Entity>>,
     /// The clause 4.5.1 rendering to produce.
     mode: ResponseFormat,
-    /// The clause 6.3.15 `pick`/`omit` structural-member rule to apply to
+    /// The clause 4.21 `pick`/`omit` structural-member rule to apply to
     /// the rendered value's `id`, `type` and `scope` keys, if any.
     structural_projection: Option<&'a Projection>,
     /// The clause 4.21 nested sub-projections `join=inline` applies to the
@@ -83,7 +83,7 @@ impl<'a> EntityRenderer<'a> {
         self
     }
 
-    /// Apply the clause 6.3.15 structural-member rule to the rendered
+    /// Apply the clause 4.21 structural-member rule to the rendered
     /// value's `id`, `type` and `scope` keys.
     ///
     /// Takes an `Option` so a caller that may or may not have compiled a
@@ -113,7 +113,7 @@ impl<'a> EntityRenderer<'a> {
 /// this, so the flat shape is assembled in one place rather than hand-rolled at
 /// each endpoint. A response with no join passes an empty `linked`.
 ///
-/// The two groups are taken separately because the clause 6.3.15
+/// The two groups are taken separately because the clause 4.21
 /// structural-member rule applies only to the roots: `root_projection` names
 /// what the *request* selected, whereas a linked entity is narrowed — if at
 /// all — by the clause 4.21 sub-projection of the Relationship that reached
@@ -226,7 +226,7 @@ impl<'a> EntityRenderer<'a> {
             }
         }
 
-        // Step 4: clause 6.3.15 structural-member pruning
+        // Step 4: clause 4.21 structural-member pruning
         if let Some(projection) = self.structural_projection {
             prune_structural_members(&mut value, projection);
         }
@@ -283,7 +283,7 @@ mod tests {
         pretty_assertions::assert_eq!(rendered[1]["id"], "urn:ngsi-ld:B:1");
     }
 
-    /// Clause 6.3.15 narrows what the *request* selected, so the structural
+    /// Clause 4.21 narrows what the *request* selected, so the structural
     /// rule reaches the matching entities only. A linked entity carries
     /// whatever the clause 4.21 sub-projection of its Relationship left it
     /// with, and keeps its `id` so the flat collection stays navigable.
@@ -571,7 +571,7 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["createdAt"], "2025-01-01T00:00:00Z");
     }
 
-    /// Clause 6.3.15, literal reading: a non-empty `pick` naming only `id`
+    /// Clause 4.21, literal reading: a non-empty `pick` naming only `id`
     /// keeps `id` and drops `type` (and `scope`, when present). Ordinary
     /// attributes are outside this rule -- `pick`'s attribute half is
     /// applied earlier, on the typed `Entity`, by
@@ -599,7 +599,7 @@ mod tests {
         pretty_assertions::assert_eq!(rendered["speed"]["value"], 10);
     }
 
-    /// Clause 6.3.15: `omit` removes the structural members it lists; here
+    /// Clause 4.21: `omit` removes the structural members it lists; here
     /// `scope` is dropped while `id` and `type` survive untouched.
     #[test]
     fn structural_projection_of_omit_scope_removes_scope() {
@@ -624,7 +624,7 @@ mod tests {
         assert!(!object.contains_key("scope"));
     }
 
-    /// Clause 6.3.15: `omit` removes `type` when the omit list names it.
+    /// Clause 4.21: `omit` removes `type` when the omit list names it.
     #[test]
     fn structural_projection_of_omit_type_removes_type() {
         let entity = parse_entity(json!({"id": "urn:ngsi-ld:Building:omit-type", "type": "Building"}));
@@ -643,7 +643,7 @@ mod tests {
         assert!(!object.contains_key("type"));
     }
 
-    /// Clause 6.3.15, literal reading: a non-empty `pick` that names only an
+    /// Clause 4.21, literal reading: a non-empty `pick` that names only an
     /// attribute leaves `id` and `type` out of the rendering, since neither
     /// keyword was listed.
     #[test]

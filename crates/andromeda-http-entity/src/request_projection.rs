@@ -1,4 +1,4 @@
-//! The clause 6.3.15 projection a query request compiled to.
+//! The clause 4.21 projection a query request compiled to.
 //!
 //! Both query endpoints already have the request compiled — `EntityQueryService`
 //! caches a [`CompiledEntityQuery`] keyed on the parameters and the context
@@ -37,7 +37,7 @@ impl RequestProjection {
         Ok(RequestProjection { compiled })
     }
 
-    /// The clause 6.3.15 projection, or `None` when nothing is narrowed.
+    /// The clause 4.21 projection, or `None` when nothing is narrowed.
     pub(crate) fn projection(&self) -> Option<&Projection> {
         self.compiled.as_ref().map(|compiled| &compiled.projection)
     }

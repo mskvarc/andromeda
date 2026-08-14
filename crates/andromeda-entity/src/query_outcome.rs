@@ -22,6 +22,6 @@ pub struct QueryOutcome<T> {
     /// Empty for a store that applied everything, which is the only case a
     /// single-backend deployment produces.
     pub unapplied: ResidualFilter,
-    /// Whether the clause 5.5.6 result window was applied, and what was counted.
+    /// Whether the clause 5.5.9 result window was applied, and what was counted.
     pub pagination: PaginationOutcome,
 }

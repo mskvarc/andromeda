@@ -9,7 +9,7 @@ use strum::{Display, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
 constant_string!(NotificationType, "Notification");
-constant_string!(CsourceNotificationType, "CsourceNotification");
+constant_string!(CsourceNotificationType, "ContextSourceNotification");
 
 /// Origin of an entity change event (ETSI GS CIM 009 v1.9.1, clause 5.5.13).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Display, EnumString)]
@@ -115,7 +115,7 @@ pub struct CsrChangeEvent {
 pub struct CsourceNotification {
     /// Generated notification identifier.
     pub id: Uri,
-    /// Always `CsourceNotification`.
+    /// Always `ContextSourceNotification`.
     #[serde(rename = "type")]
     #[builder(default)]
     pub type_: CsourceNotificationType,
@@ -187,7 +187,7 @@ mod tests {
             .trigger_reason(Some(CsrTriggerReason::NewlyMatching))
             .build();
         let rendered = serde_json::to_value(&notification).expect("serialises");
-        pretty_assertions::assert_eq!(rendered["type"], json!("CsourceNotification"));
+        pretty_assertions::assert_eq!(rendered["type"], json!("ContextSourceNotification"));
         pretty_assertions::assert_eq!(rendered["triggerReason"], json!("newlyMatching"));
     }
 

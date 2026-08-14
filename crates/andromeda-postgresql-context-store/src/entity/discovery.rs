@@ -1,4 +1,4 @@
-//! The aggregations behind entity type and attribute discovery (clause 5.7.3).
+//! The aggregations behind entity type and attribute discovery (clauses 5.7.5-5.7.10).
 //!
 //! Each statement aggregates across the whole `entities` table, so all of them
 //! are keyset-paginated on their aggregate key. Query-plan assumption: the

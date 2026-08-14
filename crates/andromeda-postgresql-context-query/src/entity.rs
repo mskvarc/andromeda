@@ -129,7 +129,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAt
 fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
-    // Entity selectors, unioned (clause 5.2.11): `(sel1) OR (sel2) OR ...`,
+    // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // where each selector ANDs its own id / idPattern / type. A union that
     // contains an unconstrained selector places no constraint, so it is
     // rendered only when every selector constrains — the reading
@@ -171,7 +171,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
 
 /// Render one selector's identifier, pattern and type predicates, ANDed.
 ///
-/// The three axes of a single [`EntitySelector`] hold together (clause 5.2.11):
+/// The three axes of a single [`EntitySelector`] hold together (clause 5.2.33):
 /// `{id:A,type:T}` selects entity `A` *and only if* it is a `T`. A selector
 /// with no axis set contributes an empty conjunction, which sea-query renders
 /// as always-true — the unconstrained case the caller filters out before it
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn a_union_of_selectors_ors_them_rather_than_cross_producting() {
-        // Clause 5.2.11: a POST `entities[]` body is a union of independent
+        // Clause 5.2.33: a POST `entities[]` body is a union of independent
         // selectors, so `{id:A,type:T1}` and `{id:B,type:T2}` render
         // `(A AND T1) OR (B AND T2)` and never the cross product that would also
         // match `(A,T2)`.
@@ -625,7 +625,7 @@ mod tests {
         assert!(built.bind_values.iter().any(|b| matches!(b, BindValue::Bytes(_))));
     }
 
-    /// Clause 4.11 orders on distance over the spheroid, and the `geography`
+    /// Clause 4.23 orders on distance over the sphere (Haversine), and the `geography`
     /// cast the ordering expression applies ignores any third ordinate. An
     /// `orderGeometry` that carries an altitude must therefore render exactly
     /// the statement a flat one renders; only the bound reference differs,

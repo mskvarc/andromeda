@@ -40,6 +40,7 @@ pub async fn query(
     let context = context.merge(body_context);
 
     let params = TemporalQueryParameters::try_from(request).with_instance(&uri)?;
+    params.validate(true).with_instance(&uri)?;
 
     // ETSI GS CIM 009 clause 5.5.15.
     if let Some(snapshot_id) = snapshot_id {
@@ -128,7 +129,7 @@ pub async fn query(
     {
         response = response.with_total_count(count);
     }
-    if any_truncated {
+    if any_truncated && range.is_some() {
         response = response.with_status(axum::http::StatusCode::PARTIAL_CONTENT);
     }
     if let Some(range) = range

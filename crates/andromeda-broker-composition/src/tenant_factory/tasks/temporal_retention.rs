@@ -2,7 +2,7 @@
 //!
 //! Retention ages temporal storage out on a cadence the operator chooses. It is
 //! not an NGSI-LD operation: the specification defines deletion of a Temporal
-//! Evolution (clause 5.6.16), which records what it removed and notifies, while
+//! Evolution (clause 5.6.16), while
 //! a dropped retention chunk is storage the operator decided not to keep and
 //! raises nothing. The task is therefore registered only once a horizon has been
 //! configured, and no broker runs it by default.

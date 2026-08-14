@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Which series of temporal instances an identifier names.
 ///
 /// Attribute history and scope history are separate series, and clause 4.5.7
-/// requires an `instanceId` to identify one instance, so each series mints its
+/// says a system should maintain an `instanceId` to identify one instance, so each series mints its
 /// broker-generated identifiers under its own URN template. Both templates are
 /// permanently stable: an identifier already handed to a client has to keep
 /// rendering byte for byte for the lifetime of the deployment.

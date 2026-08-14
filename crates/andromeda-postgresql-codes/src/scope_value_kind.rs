@@ -5,7 +5,7 @@ use crate::{compact_code_registry, registry::UnknownCompactCode};
 compact_code_registry! {
     /// Which value a scope-history row carries.
     ///
-    /// A scope is not an attribute: clause 4.5.4 gives it no dataset dimension,
+    /// A scope is not an attribute: clause 4.5.5 gives it no dataset dimension,
     /// no attribute family and no catalogue entry, so scope history has no
     /// attribute-kind column and its value vocabulary is its own rather than a
     /// borrowed subset of the attribute one. Sharing a registry between the two

@@ -36,7 +36,7 @@ impl TemporalService {
     pub async fn compile_temporal_query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<CompiledTemporalQuery, TemporalError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
-        // Clause 5.2.11: a POST temporal query body's `entities[]` is a union of
+        // Clause 5.2.33: a POST temporal query body's `entities[]` is a union of
         // selectors, compiled by the same helper the entity path uses so the two
         // cannot disagree on what a selection means.
         let selectors = compile_entity_selectors(
@@ -82,7 +82,8 @@ impl TemporalService {
             None
         };
 
-        // Apply jsonKeys: expand sub-path keys for specified attributes (spec 6.4.3.2)
+        // Apply jsonKeys for the specified attributes (spec 6.18.3.2). Per the spec, the
+        // listed keys are kept literal rather than expanded against the supplied @context.
         let q_expr = if let Some(q_expr) = q_expr {
             if let Some(ref jk) = params.json_keys {
                 let jk_iris = expand_attrs(jk, &expander).await?;
@@ -179,7 +180,7 @@ fn opted_in_attribute_names(iris: &[IriBuf]) -> Result<HashSet<AttributeName>, Q
     iris.iter().map(expanded_attribute_name).collect()
 }
 
-/// Expand `pick` / `omit` into a compiled clause 6.3.15 [`Projection`].
+/// Expand `pick` / `omit` into a compiled clause 4.21 [`Projection`].
 ///
 /// Kept apart from the rest of [`TemporalService::compile_temporal_query`] so
 /// the clause 4.5.23 join traversal (`crate::linked`) can expand the *root*

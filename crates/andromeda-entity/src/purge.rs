@@ -68,7 +68,7 @@ impl EntityService {
             };
             modified_count += 1;
 
-            // A purged attribute is a deleted attribute, and clause 5.2.14's
+            // A purged attribute is a deleted attribute, and clause 5.2.12's
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.

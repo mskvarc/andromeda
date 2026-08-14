@@ -1,6 +1,6 @@
 //! The NGSI-LD `DateTime` lexical form at the broker's declared precision (ETSI GS CIM 009 clause 4.6.3).
 //!
-//! Clause 4.6.3 defines `DateTime` as an IETF RFC 3339 timestamp restricted to
+//! Clause 4.6.3 defines `DateTime` as an ISO 8601 [Extended Format] timestamp restricted to
 //! UTC: the trailing zone designator "shall always be equal to the character
 //! 'Z'", and the fractional-second part carries "up to a maximum of six"
 //! digits. [`NgsiLdDateTime`] enforces both restrictions on parsed input

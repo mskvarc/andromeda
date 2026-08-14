@@ -44,7 +44,7 @@ pub fn matches(residual: &ResidualFilter, expanded: &Value) -> bool {
         && scope_matches(scope_q.as_ref(), expanded)
 }
 
-/// Clause 5.2.11 union of selectors: an entity matches when any selector admits
+/// Clause 5.2.33 union of selectors: an entity matches when any selector admits
 /// it, or when no selector constrains the identifier/pattern/type axes.
 ///
 /// Mirrors [`EntitySelection::selectors_constrain`] and the SQL renderer, so a
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn a_union_of_selectors_admits_only_the_pairings_a_selector_named() {
-        // Clause 5.2.11: `{id:A,type:T1}` OR `{id:B,type:T2}` admits A-as-T1 and
+        // Clause 5.2.33: `{id:A,type:T1}` OR `{id:B,type:T2}` admits A-as-T1 and
         // B-as-T2, but not the cross pairing A-as-T2 that neither selector named.
         let entity = |id: &str, type_iri: &str| json!([{"@id": id, "@type": [type_iri]}]);
         let residual = ResidualFilter::over(

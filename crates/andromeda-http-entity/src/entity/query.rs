@@ -247,7 +247,7 @@ pub(crate) async fn query(
         // and an absent `join` retrieve no linked entity at all, so neither
         // reaches the traversal. The join resolves before EntityMap creation
         // so a requested map can include the linked ids (spec 5.5.14, 5.7.2.4).
-        // Clause 6.3.15: the request's `pick`/`omit` govern both the matching
+        // Clause 4.21: the request's `pick`/`omit` govern both the matching
         // entities' structural members and, through their clause 4.21 nested
         // terms, the entities the traversal reaches. Both read it off the
         // compilation the query already ran, which has to outlive the join

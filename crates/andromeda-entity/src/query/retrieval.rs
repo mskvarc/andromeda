@@ -25,9 +25,9 @@ use std::collections::HashMap;
 ///
 /// The four members are the request's selection parameters, applied in the
 /// order the clauses stack: `attrs` (clause 5.7.2) picks the attributes,
-/// `pick`/`omit` (clause 6.3.15) project what is left, `datasetId`
+/// `pick`/`omit` (clause 4.21) project what is left, `datasetId`
 /// (clause 4.5.5) narrows the surviving instances, and `sysAttrs`
-/// (clause 4.5.7) decides whether the clause 4.8 timestamps come along.
+/// decides whether the clause 4.8 timestamps come along.
 pub struct RetrievalNarrowing<'a> {
     /// The attributes the response is narrowed to; empty selects all.
     pub attrs: &'a [AttributeName],
@@ -35,7 +35,7 @@ pub struct RetrievalNarrowing<'a> {
     pub sys_attrs: SysAttrsInclusion,
     /// The attribute instances the response is narrowed to; empty selects all.
     pub dataset_ids: &'a [DatasetSelector],
-    /// The clause 6.3.15 projection, absent when the request named neither
+    /// The clause 4.21 projection, absent when the request named neither
     /// `pick` nor `omit`.
     pub projection: Option<&'a Projection>,
 }
@@ -74,7 +74,7 @@ impl EntityQueryService {
             }
         }
 
-        // Clause 6.3.15 is applied before the clause 4.5.23 traversal reads the
+        // Clause 4.21 is applied before the clause 4.5.23 traversal reads the
         // entity's Relationships, matching the query path, where the projection
         // runs inside the query and the join follows it.
         if let Some(projection) = narrowing.projection {

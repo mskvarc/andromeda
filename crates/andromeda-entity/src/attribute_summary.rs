@@ -1,12 +1,12 @@
 //! Aggregated metadata for a single attribute across all entities.
 //!
-//! Backs the clause 5.7.3 attribute discovery endpoints.
+//! Backs the clause 5.7.8 attribute discovery endpoints.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 
 /// Aggregated metadata for a single attribute across all entities.
 ///
-/// Backs the clause 5.7.3 attribute discovery endpoints.
+/// Backs the clause 5.7.8 attribute discovery endpoints.
 #[derive(Debug)]
 pub struct AttributeSummary {
     /// The expanded IRI of the attribute, named as an attribute reference.

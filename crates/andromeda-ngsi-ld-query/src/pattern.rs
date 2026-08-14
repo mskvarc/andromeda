@@ -39,7 +39,7 @@ use std::{fmt, str::FromStr};
 /// thing.
 ///
 /// The wire form is the pattern as written, so a resource that stores one — an
-/// `EntitySelector.idPattern` (clause 5.2.11), a Snapshot entity selector
+/// `EntitySelector.idPattern` (clause 5.2.33), a Snapshot entity selector
 /// (5.2.23) — gives back exactly what the client sent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]

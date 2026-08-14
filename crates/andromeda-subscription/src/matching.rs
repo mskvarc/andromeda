@@ -109,7 +109,7 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
 
     // The compiled triggers and the event carry the same typed vocabulary, so
     // membership is an enum comparison rather than the per-event string
-    // allocation this used to make (clause 5.3.3).
+    // allocation this used to make (Table 5.2.12).
     if !sub.triggers.contains(&event.trigger_reason) {
         debug!("Subscription {} skipped: trigger '{}' not in {:?}", sub.id, event.trigger_reason, sub.triggers);
         return false;

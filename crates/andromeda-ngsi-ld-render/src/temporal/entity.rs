@@ -165,13 +165,13 @@ impl<'a> TemporalEntityRenderer<'a> {
     }
 }
 
-/// Apply the compiled clause 6.3.15 `pick` / `omit` projection to a temporal
+/// Apply the compiled clause 4.21 `pick` / `omit` projection to a temporal
 /// entity's attribute map.
 ///
 /// `scope` has no separate struct field in a temporal representation -- it is
 /// stored and rendered as an ordinary attribute-shaped row, keyed by its
 /// expanded IRI like every other attribute -- so its half of the clause
-/// 6.3.15 structural rule is applied here, against the
+/// 4.21 structural rule is applied here, against the
 /// [`ProjectionTerm::Scope`] keyword, rather than by the id/type pruning that
 /// runs later on the compacted representation. `id` and `type` are not
 /// members of this map at all: they are inserted separately once this
@@ -205,7 +205,7 @@ fn project_attrs(attrs: &mut TemporalAttrMap, projection: &Projection) {
     }
 }
 
-/// Whether `attr_name` is the clause 6.3.15 `scope` keyword's attribute row.
+/// Whether `attr_name` is the clause 4.21 `scope` keyword's attribute row.
 fn is_scope_attribute(attr_name: &AttributeName) -> bool {
     attr_name.as_str() == expanded_properties::SCOPE.as_str()
 }
@@ -290,7 +290,7 @@ mod tests {
         vec!["Vehicle".parse().expect("valid type name")]
     }
 
-    /// Clause 6.3.15: `pick=speed` keeps only the `speed` attribute row and
+    /// Clause 4.21: `pick=speed` keeps only the `speed` attribute row and
     /// drops every other attribute this entity's history carries.
     #[test]
     fn pick_of_one_attribute_keeps_only_that_attribute() {
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(object.get("@id"), Some(&json!(entity_id())));
     }
 
-    /// Clause 6.3.15: `omit=speed` drops the named attribute and leaves every
+    /// Clause 4.21: `omit=speed` drops the named attribute and leaves every
     /// other attribute in place.
     #[test]
     fn omit_of_one_attribute_drops_only_that_attribute() {
@@ -389,7 +389,7 @@ mod tests {
     }
 
     /// A non-empty `pick` that does not name the `scope` keyword drops the
-    /// `scope` attribute row, the same clause 6.3.15 structural rule the
+    /// `scope` attribute row, the same clause 4.21 structural rule the
     /// non-temporal API applies.
     #[test]
     fn a_pick_without_the_scope_keyword_drops_the_scope_attribute() {

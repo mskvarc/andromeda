@@ -41,7 +41,7 @@ pub(super) fn plan<'a>(compiled: &'a CompiledEntityQuery, profile: &StorageProfi
     // profile never triggers
     let mut narrowed = compiled.clone();
     residual.strip_from(&mut narrowed.selection);
-    // Clause 5.5.6: a window over rows a later filter will thin leaves the page
+    // Clause 5.5.9: a window over rows a later filter will thin leaves the page
     // short and every later page misaligned, so it is not applied here at all.
     narrowed.pagination = Pagination {
         limit: u32::MAX,
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn a_plan_that_hands_anything_back_never_also_claims_the_window() {
-        // Clause 5.5.6: the two are mutually exclusive, and the policy layer
+        // Clause 5.5.9: the two are mutually exclusive, and the policy layer
         // refuses the combination as a broken store rather than compensating.
         let compiled = query();
         for profile in every_profile() {
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn an_incomplete_pushdown_takes_no_window_and_asks_for_no_count() {
-        // Clause 5.5.6: the caller windows what survives the residual, so the
+        // Clause 5.5.9: the caller windows what survives the residual, so the
         // store must return every candidate row and count nothing.
         let compiled = query();
         let profile = StorageProfile {

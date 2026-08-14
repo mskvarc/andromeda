@@ -202,7 +202,7 @@ pub struct RegistrationCoverage {
 }
 
 /// How the broker reaches a context source and which operations it may send
-/// there (ETSI GS CIM 009 clauses 4.20, 5.2.9 and 5.2.43).
+/// there (ETSI GS CIM 009 clauses 4.20 and 5.2.9).
 #[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextSourceAccess {

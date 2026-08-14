@@ -6,7 +6,7 @@ use iri_rs::IriBuf;
 use typed_builder::TypedBuilder;
 
 /// One entity selector: an identifier list, an identifier pattern and a type
-/// expression a candidate must satisfy together (clause 5.2.11).
+/// expression a candidate must satisfy together (clause 5.2.33).
 ///
 /// A selector is the unit a POST query body's `entities[]` array is a union of.
 /// `{id:A,type:T1}` and `{id:B,type:T2}` are two selectors, and an entity
@@ -46,7 +46,7 @@ impl EntitySelector {
 /// without seeing the time window.
 ///
 /// The identifier, pattern and type axes are grouped into [`EntitySelector`]s
-/// and combined as a union (clause 5.2.11): an entity matches when it satisfies
+/// and combined as a union (clause 5.2.33): an entity matches when it satisfies
 /// any selector. The remaining members — `attrs`, `q`, `geo`, `scopeQ` — are
 /// global, and hold for every selector at once. One type serves the entity and
 /// temporal paths; a selection with no member set matches every entity, which
@@ -55,7 +55,7 @@ impl EntitySelector {
 #[derive(Debug, Clone, Default, TypedBuilder)]
 #[builder(field_defaults(default))]
 pub struct EntitySelection {
-    /// The entity selectors, combined as a union (clause 5.2.11).
+    /// The entity selectors, combined as a union (clause 5.2.33).
     ///
     /// Empty — or a single unconstrained selector — places no id/pattern/type
     /// constraint. A GET query holds one selector; a POST `entities[]` body

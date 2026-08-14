@@ -327,7 +327,7 @@ mod tests {
     }
 
     /// A stored projection selector is re-serialised whenever it is read back
-    /// (clause 6.3.15 `pick`/`omit`), so the grammar must round-trip through
+    /// (clause 4.21 `pick`/`omit`), so the grammar must round-trip through
     /// its own `Display` rendering.
     #[test]
     fn a_projection_list_round_trips_through_its_clause_4_21_text() {

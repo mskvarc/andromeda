@@ -111,7 +111,7 @@ impl CompiledQueryKey {
         }
         push_field(&mut parameters, params.count.map(|value| value.to_string()).as_deref());
 
-        // The structured POST selectors (clause 5.2.11) are part of the key: two
+        // The structured POST selectors (clause 5.2.33) are part of the key: two
         // bodies that flatten to the same `id`/`type` summary but group their
         // selectors differently compile to different queries. The count is
         // length-prefixed like every field, so a selector value cannot

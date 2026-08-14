@@ -1,6 +1,6 @@
 //! The NGSI-LD `Time` lexical form in the one rendering the broker stores, orders and compares (ETSI GS CIM 009 clause 4.6.3).
 //!
-//! Clause 4.6.3 defines `Time` as an IETF RFC 3339 `full-time`, which pins a time
+//! Clause 4.6.3 defines `Time` as an ISO 8601 [Extended Format] `full-time`, which pins a time
 //! of day exactly but admits many spellings of the same one: the offset may be
 //! `Z` or any numeric zone, the fractional part may be absent or carry any number
 //! of digits. A broker that stores those spellings verbatim compares them as
@@ -146,8 +146,9 @@ mod tests {
 
     #[test]
     fn a_numeric_offset_is_resolved_to_utc() {
-        // Clause 4.6.3 admits any offset, and two spellings of the same time of
-        // day must reach storage as one value.
+        // Clause 4.6.3 requires UTC, so Andromeda normalizes any offset present
+        // in the input to UTC for storage; two spellings of the same time of day
+        // must reach storage as one value.
         let east: NgsiLdTime = "13:00:00+01:00".parse().expect("a full-time");
         let zulu: NgsiLdTime = "12:00:00Z".parse().expect("a full-time");
         pretty_assertions::assert_eq!(east, zulu);

@@ -1,4 +1,4 @@
-//! The identity a Context Source answers `/info` with (clause 6.36.3.1).
+//! The identity a Context Source answers `/info` with (clause 6.33.3.1).
 
 use andromeda_ngsi_ld_lexicon::{constant_string, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use serde::Serialize;

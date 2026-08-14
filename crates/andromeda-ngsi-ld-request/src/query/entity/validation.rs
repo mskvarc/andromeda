@@ -36,11 +36,14 @@ impl EntityQueryParameters {
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);
         }
-        // Clause 6.3.15: pick and omit select opposite ends of the same
+        // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than
         // a request the broker can merge.
         if self.pick.is_some() && self.omit.is_some() {
             return Err(ParameterError::PickOmitExclusive);
+        }
+        if (self.pick.is_some() || self.omit.is_some()) && self.attrs.is_some() {
+            return Err(ParameterError::PickOmitWithAttrs);
         }
         validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
         // Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and how far the

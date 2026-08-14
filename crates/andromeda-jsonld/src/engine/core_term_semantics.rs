@@ -3,7 +3,7 @@
 //! The fastpath's term table is derived from the effective core context
 //! document rather than restating it. A term's `@type` coercion, its
 //! `@container`, and whether it carries a scoped `@context` are read straight
-//! from the JSON the deployment resolves against (clause 4.3.6.8 pins which
+//! from the JSON the deployment resolves against (clause 4.4 pins which
 //! released core context that is). Restating them in a hand-written table is
 //! what let the two drift: a coercion the context declared but the table
 //! forgot expanded a value into the wrong shape, and a term the context marked

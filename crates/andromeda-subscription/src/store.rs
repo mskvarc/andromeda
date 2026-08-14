@@ -63,7 +63,7 @@ pub struct SubscriptionFields<'a> {
 /// Fields that may be present in a subscription update request.
 ///
 /// `Option<Option<T>>` distinguishes "not provided" (outer `None`) from
-/// "provided as null" (inner `None`), which clause 5.8.4 needs in order to
+/// "provided as null" (inner `None`), which clause 5.8.2 needs in order to
 /// clear an `expiresAt` rather than leave it alone.
 #[derive(Debug)]
 pub struct StatusUpdateFields {

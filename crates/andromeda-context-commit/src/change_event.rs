@@ -8,7 +8,7 @@ use std::sync::Arc;
 use typed_builder::TypedBuilder;
 
 /// An entity mutation that may trigger notifications under NGSI-LD clause
-/// 5.3.3.
+/// 5.2.12.
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct ChangeEvent {
     /// Mutated entity identifier.
@@ -16,7 +16,7 @@ pub struct ChangeEvent {
     /// Types declared by the mutated entity.
     #[builder(default)]
     pub entity_types: Vec<EntityTypeName>,
-    /// Mutation trigger from clause 5.3.3.
+    /// Mutation trigger from clause 5.2.12.
     pub trigger_reason: NotificationTrigger,
     /// Attribute names touched by the mutation.
     #[builder(default)]

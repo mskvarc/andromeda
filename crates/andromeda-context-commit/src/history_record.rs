@@ -44,8 +44,8 @@ pub fn mutation_history(observed: &Arc<Value>, previous: &Value, current: &Value
 
 /// Build the tombstone every attribute instance of a deleted entity needs.
 ///
-/// Clause 5.6.6 deletes the entity's current state while leaving its Temporal
-/// Evolution standing, and clause 4.5.8 has an instance that has ended carry a
+/// Clause 5.6.6 deletes the entity's current state, and clause 4.5.8 has an
+/// instance that has ended carry a
 /// `deletedAt`. The deletion therefore records one tombstone per instance the
 /// entity still held, so temporal history says when each instance ended instead
 /// of trailing off with no explanation.

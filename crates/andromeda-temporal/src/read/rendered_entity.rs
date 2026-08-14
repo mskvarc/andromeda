@@ -39,7 +39,7 @@ const fn presence_of(is_empty: bool) -> HistoryPresence {
 /// tell from the representation alone — an entity with no history in range
 /// renders as a well-formed temporal entity carrying no attribute instances.
 /// A query drops it from the result set; a retrieval returns it, unless an
-/// `attrs` filter was what emptied it, in which case clause 6.3.9 makes it a
+/// `attrs` filter was what emptied it, in which case clause 5.7.2 makes it a
 /// 404. Reporting the fact rather than deciding it keeps that policy with the
 /// endpoints that own it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +72,7 @@ pub(crate) struct RenderedTemporalEntity {
     /// The Linked Entities this entity names, read off the representation
     /// before any format projection narrowed it.
     ///
-    /// Clause 4.5.5 collapses each attribute's instances into parallel value
+    /// Clause 4.5.8 collapses each attribute's instances into parallel value
     /// and timestamp arrays, which erases the `object` members a join needs to
     /// follow. Collecting here — while the normalized form still exists — is
     /// what lets `join=flat` work in every representation rather than silently
@@ -134,14 +134,14 @@ impl TemporalService {
         if !has_explicit_context(context) {
             normalize_temporal_payload_without_context(&mut compacted);
         }
-        // Clause 6.3.15, `id` / `type` half: the attribute half of the
+        // Clause 4.21, `id` / `type` half: the attribute half of the
         // projection already ran inside `TemporalEntityRenderer` on the
         // expanded representation, keyed by attribute IRI; `id` and `type`
         // only exist as such once compaction has turned `@id` / `@type` into
         // them, so their half of the structural rule runs here instead.
         prune_structural_members(&mut compacted, &compiled.projection);
         // Read the Linked Entities off the normalized form, before the clause
-        // 4.5.5 projection below erases the `object` members they live in.
+        // 4.5.8 projection below erases the `object` members they live in.
         let candidates = collect_candidates(slice::from_ref(&compacted), &IndexSet::new());
 
         let value = if compiled.representation.format == TemporalFormat::TemporalValues {

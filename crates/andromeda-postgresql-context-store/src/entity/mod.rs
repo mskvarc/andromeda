@@ -2,7 +2,7 @@
 
 /// Binary COPY path for bulk entity inserts.
 pub mod copy;
-/// The clause 5.7.3 type and attribute discovery aggregations.
+/// The clauses 5.7.5-5.7.10 type and attribute discovery aggregations.
 pub mod discovery;
 /// Removing entities and attribute instances whose `expiresAt` has passed.
 pub mod expiry;

@@ -1,11 +1,11 @@
-//! The compiled `pick` / `omit` projection of a query (clause 6.3.15).
+//! The compiled `pick` / `omit` projection of a query (clause 4.21).
 
 use crate::projection::term::ProjectionTerm;
 use typed_builder::TypedBuilder;
 
 /// Which members of a matching entity reach the response.
 ///
-/// Clause 6.3.15 defines `pick` and `omit` as mutually exclusive, and both as
+/// Clause 4.21 defines `pick` and `omit` as mutually exclusive, and both as
 /// purely presentational: neither changes which entities match, which is why
 /// they are held apart from the selection.
 #[derive(Debug, Clone, Default, PartialEq, Eq, TypedBuilder)]

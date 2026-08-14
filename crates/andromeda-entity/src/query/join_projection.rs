@@ -4,7 +4,7 @@
 //! The two join modes narrow linked entities by different rules, and clause
 //! 4.5.23 is what forces the difference. `join=flat` returns each linked
 //! entity exactly once, so a target reached by several Relationships can only
-//! be rendered one way: the union rule of clause 6.3.15 settles it, and the
+//! be rendered one way: the union rule of clause 4.21 settles it, and the
 //! narrowing happens here, on the entity itself. `join=inline` nests a
 //! separate copy of the target under every Relationship that names it, so each
 //! copy follows the sub-projection its own Relationship carried, and the

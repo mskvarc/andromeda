@@ -1,9 +1,9 @@
 //! How Andromeda resolves JSON-LD contexts and reshapes documents against
 //! them.
 //!
-//! NGSI-LD is a linked-data API: ETSI GS CIM 009 v1.9.1 clause 5.5.7 says
-//! every request and response carries an `@context`, clause 4.3.6.8 says which
-//! released core context a versionless reference means, and clause 5.13 makes
+//! NGSI-LD is a linked-data API: ETSI GS CIM 009 v1.9.1 clause 5.5.7 defines
+//! how terms are expanded and compacted against an `@context`, clause 4.4 says
+//! which released core context a versionless reference means, and clause 5.13 makes
 //! the contexts a broker has resolved a resource of their own. Everything that
 //! follows from those three is here — which contexts apply to one operation
 //! ([`context_spec`]), where a context comes from ([`loader`],

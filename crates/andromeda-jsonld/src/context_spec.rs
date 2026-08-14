@@ -9,7 +9,7 @@
 
 use crate::{
     core_context::{ANDROMEDA_CORE_CONTEXT_URL, is_ngsi_ld_core_context_url},
-    document_context::resolve_context_value,
+    document_context::{resolve_context_value, resolve_public_context_value},
 };
 use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf, IriRefBuf};
@@ -132,6 +132,16 @@ impl ContextSpec {
         resolve_context_value(None, self)
     }
 
+    /// The public response `@context` value for this spec.
+    ///
+    /// The broker-specific context is an expansion/compaction implementation
+    /// detail. Clause 6.3.6 requires a response to carry an `@context`; omitting
+    /// the private Andromeda context, which a client cannot use, is Andromeda's
+    /// own choice rather than a rule stated by the clause.
+    pub fn to_public_context_value(&self) -> Option<Value> {
+        resolve_public_context_value(None, self)
+    }
+
     /// The ordered context URLs a response carries in `Link` headers.
     ///
     /// Core-context aliases the request supplied are dropped and re-appended
@@ -177,6 +187,14 @@ impl ContextSpec {
             }
         }
 
+        urls
+    }
+
+    /// The public response context links for this spec.
+    pub fn to_public_link_headers(&self) -> Vec<IriRefBuf> {
+        let presentation = self.for_presentation();
+        let mut urls = presentation.to_link_headers();
+        urls.retain(|url| ANDROMEDA_CORE_CONTEXT_URL != url.as_str());
         urls
     }
 }
@@ -237,9 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn a_core_only_spec_resolves_to_the_bare_core_url() {
+    fn a_core_only_spec_resolves_to_the_core_url_array() {
         let spec = ContextSpec::core_only();
-        pretty_assertions::assert_eq!(spec.to_context_value().expect("a context value"), json!(NGSI_LD_CORE_CONTEXT_URL));
+        pretty_assertions::assert_eq!(spec.to_context_value().expect("a context value"), json!([NGSI_LD_CORE_CONTEXT_URL]));
         pretty_assertions::assert_eq!(spec.core_policy(), CoreContextPolicy::Only);
     }
 
@@ -271,5 +289,14 @@ mod tests {
 
         let explicit = ContextSpec::from_links(vec![iri_ref("https://example.com/context.jsonld")]).for_presentation();
         pretty_assertions::assert_eq!(explicit.to_link_headers(), vec![iri_ref("https://example.com/context.jsonld")]);
+    }
+
+    #[test]
+    fn public_presentation_never_advertises_the_private_broker_context() {
+        let spec = ContextSpec::none();
+        let context = spec.to_public_context_value().expect("a public context");
+
+        assert!(!context.to_string().contains("andromeda.internal"));
+        pretty_assertions::assert_eq!(spec.to_public_link_headers(), vec![iri_ref(NGSI_LD_CORE_CONTEXT_URL.as_str())]);
     }
 }

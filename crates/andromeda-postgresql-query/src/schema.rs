@@ -55,7 +55,7 @@ pub enum CurrentAttributeValues {
     ValueKind,
     /// DateTime value, when `value_kind` selects it
     ValueDatetime,
-    /// Foreign key to `unit_codes` for the instance's `unitCode` (clause 4.5.4)
+    /// Foreign key to `unit_codes` for the instance's `unitCode` (clause 4.5.2)
     UnitCodeId,
     /// Boolean value, when `value_kind` selects it
     ValueBool,

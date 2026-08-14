@@ -2,7 +2,7 @@
 
 use derive_more::IsVariant;
 
-/// What a store did with the clause 5.5.6 result window.
+/// What a store did with the clause 5.5.9 result window.
 ///
 /// The clause 6.3.13 count rides [`PaginationOutcome::Applied`] rather than
 /// sitting beside this enum, because a store that could not apply the window

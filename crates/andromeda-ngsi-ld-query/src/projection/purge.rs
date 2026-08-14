@@ -19,7 +19,7 @@ pub enum PurgeMode {
 
 /// Parse the comma-separated `drop` / `keep` parameter value.
 ///
-/// Clause 5.6.21 names attributes, so a value outside the clause 5.2.4 name
+/// Clause 5.6.21 names attributes, so a value outside the clause 4.6.2 name
 /// grammar cannot name one and the request is rejected rather than silently
 /// purging nothing.
 pub fn parse_attribute_list(raw: &str) -> Result<Vec<AttributeName>, QueryError> {
