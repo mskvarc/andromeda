@@ -126,7 +126,7 @@ async fn update_remove_mandatory_property_returns_400() {
     )
     .await;
     pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
-    pretty_assertions::assert_eq!(body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest");
+    pretty_assertions::assert_eq!(body["type"], BAD_REQUEST_DATA_TYPE.as_str());
 
     cleanup_registration(&c, &id).await;
 }
