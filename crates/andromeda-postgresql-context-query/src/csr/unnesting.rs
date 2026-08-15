@@ -15,16 +15,16 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The `AS info` element of the unnested `information` array.
 pub(crate) fn info() -> SimpleExpr {
-    SeaExpr::col((Alias::new("info"), Alias::new("value"))).into()
+    SeaExpr::col((Alias::new("info"), Alias::new("value")))
 }
 
 /// The `AS ent` element of an information item's unnested `entities` array.
 pub(crate) fn ent() -> SimpleExpr {
-    SeaExpr::col((Alias::new("ent"), Alias::new("value"))).into()
+    SeaExpr::col((Alias::new("ent"), Alias::new("value")))
 }
 
 /// `NOT jsonb_exists(target, 'key')` - whether `target` lacks `key`.
@@ -51,7 +51,7 @@ pub(crate) fn entities_of_item() -> SelectStatement {
 pub(crate) fn information_covers(entities_match: SelectStatement) -> SimpleExpr {
     let mut scan = Query::select();
     scan.expr(int_literal(1))
-        .from_function(jsonb_array_elements(SeaExpr::col(Csr::Information).into()), Alias::new("info"))
+        .from_function(jsonb_array_elements(SeaExpr::col(Csr::Information)), Alias::new("info"))
         .cond_where(
             Condition::any()
                 .add(lacks_key(info(), "entities"))

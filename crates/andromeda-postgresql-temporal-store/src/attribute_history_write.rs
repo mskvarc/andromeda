@@ -22,9 +22,9 @@ use andromeda_postgresql_seaquery::{
 };
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, Expr, Iden, JoinType, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
 use serde_json::Value;
-use sqlx::{Postgres, Transaction};
+use sqlx::{AssertSqlSafe, Postgres, Transaction};
 use uuid::Uuid;
 
 /// The `UNNEST` staging alias, `d`.
@@ -198,13 +198,13 @@ async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, targets: 
         return Ok(());
     }
     let history_dedup_sql = history_verbatim_dedup_sql();
-    sqlx::query(&history_dedup_sql)
+    sqlx::query(AssertSqlSafe(history_dedup_sql))
         .bind(&targets.streams)
         .bind(&targets.ids)
         .execute(&mut **tx)
         .await?;
     let claim_dedup_sql = claim_verbatim_dedup_delete_sql();
-    sqlx::query(&claim_dedup_sql)
+    sqlx::query(AssertSqlSafe(claim_dedup_sql))
         .bind(&targets.streams)
         .bind(&targets.ids)
         .execute(&mut **tx)
@@ -230,7 +230,7 @@ async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &
         return Ok(());
     }
     let claim_sql = claim_verbatim_instances_sql()?;
-    sqlx::query(&claim_sql)
+    sqlx::query(AssertSqlSafe(claim_sql))
         .bind(&targets.streams)
         .bind(&targets.ids)
         .execute(&mut **tx)
@@ -471,7 +471,7 @@ fn history_staging_columns() -> [UnnestColumn; 21] {
 
 /// A staging column reference, `d.<column>`.
 fn staged(column: HistoryStaged) -> SimpleExpr {
-    Expr::col((D, column)).into()
+    Expr::col((D, column))
 }
 
 /// The bulk attribute-history insert.
@@ -560,7 +560,7 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
 async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
     let binds = attribute_history_binds(rows)?;
     let sql = attribute_history_insert_sql()?;
-    sqlx::query(&sql)
+    sqlx::query(AssertSqlSafe(sql))
         .bind(&binds.recorded_ats)
         .bind(&binds.write_ids)
         .bind(&binds.stream_ids)

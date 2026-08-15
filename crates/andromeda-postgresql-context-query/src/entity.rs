@@ -34,7 +34,7 @@ use andromeda_postgresql_seaquery::{
     operator::regex_match,
     pg_operator::PgBinaryOperator,
 };
-use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, Func, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement, SimpleExpr};
 
 /// A compiled entity query: the paginated result statement and its optional
 /// fallback count, each a statement tree the store binds and executes on its own.
@@ -159,7 +159,7 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
         for attr in &query.selection.attrs {
             attr_cond = attr_cond.add(jsonb_key_exists(
                 SimpleExpr::from(SeaExpr::col(Entities::Payload)).json_get(int_literal(0)),
-                SeaExpr::val(attr.as_str()).into(),
+                SeaExpr::val(attr.as_str()),
             ));
         }
         condition = condition.add(attr_cond);
@@ -194,7 +194,7 @@ fn selector_condition(selector: &EntitySelector) -> Condition {
         condition = condition.add(SeaExpr::col(Entities::Id).is_in(ids));
     }
     if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(SeaExpr::col(Entities::Id).into(), SeaExpr::val(pattern.as_str()).into()));
+        condition = condition.add(regex_match(SeaExpr::col(Entities::Id), SeaExpr::val(pattern.as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
         condition = condition.add(type_condition(type_expr, TypesColumn::Entities));
@@ -210,13 +210,13 @@ fn selector_condition(selector: &EntitySelector) -> Condition {
 /// payload.
 fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> SimpleExpr {
     let base: SimpleExpr = match target {
-        OrderTarget::Id => SeaExpr::col(Entities::Id).into(),
-        OrderTarget::Type => SeaExpr::col(Entities::Types).into(),
+        OrderTarget::Id => SeaExpr::col(Entities::Id),
+        OrderTarget::Type => SeaExpr::col(Entities::Types),
         // The scope path column is an `ltree[]`, which no client collation applies to.
-        OrderTarget::Scope => return SeaExpr::col(Entities::ScopePaths).into(),
+        OrderTarget::Scope => return SeaExpr::col(Entities::ScopePaths),
         OrderTarget::Attribute(name) => {
             let json_path = attribute_value_jsonpath(name.as_str(), &[], &[], VALUE.as_str());
-            jsonb_path_query_first(SeaExpr::col(Entities::Payload).into(), &json_path)
+            jsonb_path_query_first(SeaExpr::col(Entities::Payload), &json_path)
         }
     };
     match collation {

@@ -19,8 +19,8 @@ use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_postgresql_schema::queue::WriteRecords;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
-use sqlx::{Postgres, Transaction};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Postgres, Transaction};
 use uuid::Uuid;
 
 /// Persist the bookkeeping record of one write inside the caller's transaction.
@@ -35,7 +35,7 @@ pub(crate) async fn persist_write_record(tx: &mut Transaction<'_, Postgres>, rec
     let statement = persist_write_record_statement(record.write_id().as_uuid(), record.recorded_at(), Utc::now())
         .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(&sql, values).execute(&mut **tx).await?;
+    sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -48,7 +48,7 @@ fn persist_write_record_statement(write_id: Uuid, recorded_at: DateTime<Utc>, ac
     statement
         .into_table(WriteRecords::Table)
         .columns([WriteRecords::WriteId, WriteRecords::RecordedAt, WriteRecords::AcceptedAt])
-        .values([Expr::val(write_id).into(), recorded_at.into(), accepted_at.into()])?
+        .values([Expr::val(write_id), recorded_at.into(), accepted_at.into()])?
         .on_conflict(OnConflict::new().do_nothing().to_owned());
     Ok(statement.to_owned())
 }

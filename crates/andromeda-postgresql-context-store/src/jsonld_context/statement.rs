@@ -6,7 +6,7 @@
 
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-use sea_query::{Alias, Condition, DeleteStatement, Expr, InsertStatement, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
+use sea_query::{Alias, Condition, DeleteStatement, Expr, ExprTrait, InsertStatement, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use serde_json::Value;
 
 /// Match a row by either of its identities: local id or source URL.
@@ -36,7 +36,7 @@ fn metadata_columns(statement: &mut SelectStatement) {
     statement
         .expr_as(Expr::col(JsonldContexts::Id), Alias::new("local_id"))
         .column(JsonldContexts::Url)
-        .expr_as(cast(Expr::col(JsonldContexts::Kind).into(), PostgresType::Text), Alias::new("kind"))
+        .expr_as(cast(Expr::col(JsonldContexts::Kind), PostgresType::Text), Alias::new("kind"))
         .column(JsonldContexts::CreatedAt)
         .column(JsonldContexts::ExpiresAt)
         .column(JsonldContexts::LastUsage)
@@ -47,7 +47,7 @@ fn metadata_columns(statement: &mut SelectStatement) {
 
 /// A `kind = $k::jsonld_context_kind` filter, cast from the bound label.
 fn kind_filter(kind: &str) -> SimpleExpr {
-    Expr::col(JsonldContexts::Kind).eq(cast(Expr::val(kind).into(), PostgresType::JsonldContextKind))
+    Expr::col(JsonldContexts::Kind).eq(cast(Expr::val(kind), PostgresType::JsonldContextKind))
 }
 
 /// A page of stored Contexts, ordered by id, optionally of one kind and after a
@@ -62,7 +62,7 @@ fn paged_where(statement: &mut SelectStatement, kind: Option<&str>, after: Optio
     if let Some(after) = after {
         statement.and_where(Expr::col(JsonldContexts::Id).gt(after));
     }
-    statement.order_by(JsonldContexts::Id, Order::Asc).limit(limit.max(0) as u64);
+    statement.order_by(JsonldContexts::Id, Order::Asc).limit(<i64 as Ord>::max(limit, 0) as u64);
 }
 
 /// The full-metadata page of stored Contexts.
@@ -93,7 +93,7 @@ pub fn metadata_by_identifier_query(identifier: &str) -> SelectStatement {
 pub fn stored_context_query(identifier: &str) -> SelectStatement {
     Query::select()
         .column(JsonldContexts::Id)
-        .expr_as(cast(Expr::col(JsonldContexts::Kind).into(), PostgresType::Text), Alias::new("kind"))
+        .expr_as(cast(Expr::col(JsonldContexts::Kind), PostgresType::Text), Alias::new("kind"))
         .column(JsonldContexts::Url)
         .from(JsonldContexts::Table)
         .cond_where(identity_matches(identifier))
@@ -148,11 +148,11 @@ pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str
         ])
         .values([
             local_id.into(),
-            Expr::val(serving_url).into(),
-            cast(Expr::val(kind_label).into(), PostgresType::JsonldContextKind),
+            Expr::val(serving_url),
+            cast(Expr::val(kind_label), PostgresType::JsonldContextKind),
             payload.into(),
-            Expr::current_timestamp().into(),
-            Expr::current_timestamp().into(),
+            Expr::current_timestamp(),
+            Expr::current_timestamp(),
             0_i64.into(),
         ])?;
     Ok(statement.to_owned())

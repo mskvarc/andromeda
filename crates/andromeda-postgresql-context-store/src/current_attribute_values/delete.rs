@@ -13,8 +13,8 @@ use andromeda_postgresql_seaquery::{
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
-use sea_query::{Expr, Iden, PostgresQueryBuilder, Query, SimpleExpr};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{Postgres, Transaction};
 
 /// The `UNNEST` set-delete's staging alias, `d`.
@@ -38,7 +38,7 @@ struct Staging;
 /// that ordered it commit together.
 ///
 /// The `dataset_id` array carries NULLs (`Vec<Option<&str>>`), which
-/// `sea-query-binder` cannot represent, so the three column arrays bind through
+/// `sea-query-sqlx` cannot represent, so the three column arrays bind through
 /// `sqlx` in the marker order [`delete_instances_sql`] emits; the statement
 /// structure is still built by sea-query.
 ///
@@ -61,7 +61,7 @@ pub async fn delete_instances_in_tx(tx: &mut Transaction<'_, Postgres>, keys: &[
     let (entity_keys, attribute_name_ids, dataset_ids) = (entity_keys, attribute_name_ids, dataset_ids);
 
     let sql = delete_instances_sql();
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&entity_keys)
         .bind(&attribute_name_ids)
         .bind(&dataset_ids)
@@ -88,7 +88,7 @@ pub async fn delete_entity_projections_in_tx(tx: &mut Transaction<'_, Postgres>,
 
     let keys: Vec<i64> = entity_keys.iter().copied().map(EntityKey::get).collect();
     let (sql, values) = entity_delete_statement(keys).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(&sql, values).execute(&mut **tx).await?;
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
 
     Ok(())
 }
@@ -101,7 +101,7 @@ pub async fn delete_entity_projections_in_tx(tx: &mut Transaction<'_, Postgres>,
 fn entity_delete_statement(keys: Vec<i64>) -> sea_query::DeleteStatement {
     Query::delete()
         .from_table(CurrentAttributeValues::Table)
-        .and_where(Expr::col(CurrentAttributeValues::EntityKey).eq(any(cast(Expr::val(keys).into(), PostgresType::BigintArray))))
+        .and_where(Expr::col(CurrentAttributeValues::EntityKey).eq(any(cast(Expr::val(keys), PostgresType::BigintArray))))
         .to_owned()
 }
 
@@ -138,7 +138,7 @@ fn delete_instances_sql() -> String {
         )
         .and_where(
             SimpleExpr::from(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::DatasetId)))
-                .not_distinct_from(Expr::col((Staging, CurrentAttributeValues::DatasetId)).into()),
+                .not_distinct_from(Expr::col((Staging, CurrentAttributeValues::DatasetId))),
         );
     let staged = staged;
 
@@ -154,7 +154,7 @@ fn delete_instances_sql() -> String {
 mod tests {
     use crate::current_attribute_values::delete::{delete_instances_sql, entity_delete_statement};
     use sea_query::PostgresQueryBuilder;
-    use sea_query_binder::SqlxBinder;
+    use sea_query_sqlx::SqlxBinder;
 
     #[test]
     fn the_instance_delete_reaches_the_default_instance() {

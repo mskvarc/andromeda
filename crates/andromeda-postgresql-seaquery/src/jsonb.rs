@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn jsonb_key_exists_uses_the_containment_operator() {
-        let expr = jsonb_key_exists(Expr::cust("\"payload\"->0"), Expr::val("speed").into());
+        let expr = jsonb_key_exists(Expr::cust("\"payload\"->0"), Expr::val("speed"));
         let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(sql.contains(" ? "), "{sql}");
     }
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn jsonb_path_exists_inlines_and_escapes_the_jsonpath() {
         let sql = Query::select()
-            .expr(jsonb_path_exists(Expr::col(Alias::new("payload")).into(), "$[0].\"o'brien\""))
+            .expr(jsonb_path_exists(Expr::col(Alias::new("payload")), "$[0].\"o'brien\""))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("jsonb_path_exists("), "{sql}");
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn jsonb_path_query_first_inlines_the_jsonpath() {
         let sql = Query::select()
-            .expr(jsonb_path_query_first(Expr::col(Alias::new("payload")).into(), "$[0].\"speed\""))
+            .expr(jsonb_path_query_first(Expr::col(Alias::new("payload")), "$[0].\"speed\""))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains("jsonb_path_query_first("), "{sql}");

@@ -33,7 +33,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     postgis::{st_contains, st_disjoint, st_distance, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_ewkb},
 };
-use sea_query::{Alias, Cond, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Cond, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// What a geo predicate is filtering, which fixes both where it reads the
 /// subject geometry and what a row without one means.
@@ -88,7 +88,7 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
     let reference = encode(&geo.geometry)?;
     // Built fresh per relation so the EWKB it binds is not shared as an owned
     // value between the two operands a `near` relation carries.
-    let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()).into());
+    let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()));
     let SubjectGeometry { planar, geographic, envelope } = subject;
 
     let spatial = match &geo.georel {
@@ -165,8 +165,8 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names:
         // A registration carries no attributes of its own, so `geoproperty`
         // does not apply and the named column is the whole of the subject.
         GeometrySource::Registration { column } => Some(SubjectGeometry {
-            planar: SeaExpr::col(Alias::new(column)).into(),
-            geographic: cast(SeaExpr::col(Alias::new(column)).into(), PostgresType::Geography),
+            planar: SeaExpr::col(Alias::new(column)),
+            geographic: cast(SeaExpr::col(Alias::new(column)), PostgresType::Geography),
             envelope: Envelope::RegistrationColumn,
         }),
         GeometrySource::Entity { row } if geo.geoproperty.as_str() == LOCATION.as_str() => Some(SubjectGeometry {
@@ -332,7 +332,7 @@ mod tests {
             .0
             .iter()
             .filter_map(|value| match value {
-                Value::Bytes(Some(bytes)) => Some(bytes.as_ref().clone()), // clone: the assertion outlives the borrow of the statement
+                Value::Bytes(Some(bytes)) => Some(bytes.clone()), // clone: the assertion outlives the borrow of the statement
                 _non_geometry => None,
             })
             .collect()

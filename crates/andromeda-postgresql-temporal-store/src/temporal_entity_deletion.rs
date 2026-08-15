@@ -18,9 +18,9 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::aggregate::count_all;
-use sea_query::{DeleteStatement, Expr, Iden, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
-use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
+use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, JoinType, LockType, PostgresQueryBuilder, Query, QueryStatementBuilder, SelectStatement, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 
@@ -104,9 +104,12 @@ impl TemporalRepository {
         let attribute_writes = delete_returning_write_ids(&mut tx, delete_attribute_history_statement(entity_key)).await?;
         let scope_writes = delete_returning_write_ids(&mut tx, delete_scope_history_statement(entity_key)).await?;
         let (streams_sql, streams_values) = delete_attribute_streams_statement(entity_key).build_sqlx(PostgresQueryBuilder);
-        let streams = sqlx::query_with(&streams_sql, streams_values).execute(&mut *tx).await?.rows_affected();
+        let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
         let (entity_sql, entity_values) = delete_temporal_entity_statement(entity_key).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&entity_sql, entity_values).execute(&mut *tx).await?;
+        sqlx::query_with(AssertSqlSafe(entity_sql), entity_values).execute(&mut *tx).await?;
         let touched_writes = attribute_writes.iter().chain(scope_writes.iter()).copied().collect::<BTreeSet<Uuid>>();
         let touched_writes = touched_writes.into_iter().collect::<Vec<Uuid>>();
         let released_write_records = release_named(&mut tx, &touched_writes).await?;
@@ -132,7 +135,7 @@ impl TemporalRepository {
     /// the expected type.
     pub async fn audit_orphaned_temporal_rows(&self) -> Result<OrphanedTemporalRows, TemporalStoreError> {
         let (sql, values) = audit_orphaned_statement().build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_one(&self.pool).await?;
+        let row = sqlx::query_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
         Ok(OrphanedTemporalRows {
             attribute_history_rows: count(&row, "orphaned_attribute_history_rows")?,
             scope_history_rows: count(&row, "orphaned_scope_history_rows")?,
@@ -150,7 +153,7 @@ fn count(row: &PgRow, column: &str) -> Result<i64, TemporalStoreError> {
 /// Resolve and lock the temporal entity one deletion addresses.
 async fn locate_temporal_entity(tx: &mut Transaction<'_, Postgres>, entity_id: &Uri) -> Result<TemporalEntityKey, TemporalStoreError> {
     let (sql, values) = lock_temporal_entity_statement(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-    let located = sqlx::query_with(&sql, values).fetch_optional(&mut **tx).await?;
+    let located = sqlx::query_with(AssertSqlSafe(sql), values).fetch_optional(&mut **tx).await?;
     let Some(row) = located else {
         return Err(TemporalStoreError::NotFound(format!("Temporal evolution of {entity_id} not found")));
     };
@@ -163,7 +166,7 @@ async fn locate_temporal_entity(tx: &mut Transaction<'_, Postgres>, entity_id: &
 /// Run one deletion statement, collecting the write identity of every removed row.
 async fn delete_returning_write_ids(tx: &mut Transaction<'_, Postgres>, statement: DeleteStatement) -> Result<Vec<Uuid>, TemporalStoreError> {
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(&sql, values).fetch_all(&mut **tx).await?;
+    let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&mut **tx).await?;
     rows.into_iter()
         .map(|row| {
             row.try_get("write_id")

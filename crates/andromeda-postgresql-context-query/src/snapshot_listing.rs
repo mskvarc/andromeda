@@ -8,7 +8,7 @@
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use andromeda_postgresql_seaquery::{aggregate::count_all, literal::text_literal, pg_array::any, pg_operator::PgBinaryOperator};
-use sea_query::{Alias, Condition, Expr as SeaExpr, Iden, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Iden, Order, Query, SelectStatement, SimpleExpr};
 
 /// The inputs that select one page of a snapshot's entities.
 #[derive(Debug)]
@@ -56,7 +56,7 @@ fn listing_condition(params: &SnapshotListingParams<'_>) -> Condition {
         && !ids.is_empty()
     {
         let ids: Vec<String> = ids.iter().map(Uri::to_string).collect();
-        condition = condition.add(SeaExpr::expr(SeaExpr::col(Alias::new("entity_id"))).eq(any(SeaExpr::val(ids).into())));
+        condition = condition.add(SeaExpr::expr(SeaExpr::col(Alias::new("entity_id"))).eq(any(SeaExpr::val(ids))));
     }
 
     condition
@@ -72,8 +72,8 @@ pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> SnapshotListin
         .from(Alias::new(params.table))
         .cond_where(condition.clone())
         .order_by(Alias::new("entity_id"), Order::Asc)
-        .limit(params.limit.max(0) as u64)
-        .offset(params.offset.max(0) as u64);
+        .limit(<i64 as Ord>::max(params.limit, 0) as u64)
+        .offset(<i64 as Ord>::max(params.offset, 0) as u64);
 
     let mut count = Query::select();
     count

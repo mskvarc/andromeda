@@ -2,7 +2,7 @@
 
 use andromeda_ngsi_ld_query::filter::predicate::{CmpOp, PatternPolarity};
 use andromeda_postgresql_seaquery::pg_operator::PgBinaryOperator;
-use sea_query::{BinOper, Expr, SimpleExpr};
+use sea_query::{BinOper, Expr, ExprTrait, SimpleExpr};
 
 /// Build a clause 4.9 comparison between two already-lifted operands.
 ///
@@ -43,7 +43,7 @@ mod tests {
     }
 
     fn operands() -> (SimpleExpr, SimpleExpr) {
-        (Expr::col(sea_query::Alias::new("stored")).into(), Expr::val("x").into())
+        (Expr::col(sea_query::Alias::new("stored")), Expr::val("x"))
     }
 
     #[test]

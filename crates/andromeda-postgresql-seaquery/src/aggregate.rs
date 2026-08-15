@@ -98,15 +98,12 @@ pub fn count_over_all() -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::aggregate::array_agg_ordered;
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     #[test]
     fn the_aggregate_orders_its_inputs_inside_the_call() {
         let sql = Query::select()
-            .expr(array_agg_ordered(
-                Expr::col(Alias::new("name")).into(),
-                Expr::col(Alias::new("position")).into(),
-            ))
+            .expr(array_agg_ordered(Expr::col(Alias::new("name")), Expr::col(Alias::new("position"))))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"array_agg("name" ORDER BY "position")"#), "{sql}");
@@ -116,15 +113,15 @@ mod tests {
     fn the_distinct_aggregates_carry_their_distinct_and_filter() {
         use crate::aggregate::{array_agg_distinct, array_agg_distinct_filter, count_all, count_distinct};
         let render = |expr| Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
-        assert!(render(array_agg_distinct(Expr::col(Alias::new("t")).into())).contains(r#"array_agg(DISTINCT "t")"#));
+        assert!(render(array_agg_distinct(Expr::col(Alias::new("t")))).contains(r#"array_agg(DISTINCT "t")"#));
         assert!(
             render(array_agg_distinct_filter(
-                Expr::col(Alias::new("at")).into(),
+                Expr::col(Alias::new("at")),
                 Expr::col(Alias::new("at")).is_not_null()
             ))
             .contains(r#"array_agg(DISTINCT "at") FILTER (WHERE "at" IS NOT NULL)"#)
         );
-        assert!(render(count_distinct(Expr::col(Alias::new("id")).into())).contains(r#"COUNT(DISTINCT "id")"#));
+        assert!(render(count_distinct(Expr::col(Alias::new("id")))).contains(r#"COUNT(DISTINCT "id")"#));
         assert!(render(count_all()).contains("COUNT(*)"));
     }
 
@@ -132,7 +129,7 @@ mod tests {
     fn the_group_aggregates_render_their_own_function_names() {
         use crate::aggregate::{bool_or, row_number, stddev};
         let render = |expr| Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
-        assert!(render(stddev(Expr::col(Alias::new("v")).into())).contains(r#"STDDEV("v")"#));
+        assert!(render(stddev(Expr::col(Alias::new("v")))).contains(r#"STDDEV("v")"#));
         assert!(render(bool_or(Expr::col(Alias::new("u")).is_null())).contains(r#"BOOL_OR("u" IS NULL)"#));
         assert!(render(row_number()).contains("ROW_NUMBER()"));
     }

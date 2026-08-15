@@ -14,18 +14,18 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
-chrono = { version = "0.4.44", features = ["serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
 iso8601-duration = { version = "0.2.0", features = ["serde"] }
 langtag = { version = "1.1.0", features = ["serde"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 serde_urlencoded = "0.7.1"
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.18"
+thiserror = "2.0.20"
 urn-rs = { version = "0.9.2", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 headers = "0.4.1"
-http = "1.4.0"
+http = "1.5.0"
 pretty_assertions = "1.4.1"

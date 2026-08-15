@@ -20,12 +20,12 @@ pub fn make_interval_secs(seconds: SimpleExpr) -> SimpleExpr {
 #[cfg(test)]
 mod tests {
     use crate::interval::make_interval_secs;
-    use sea_query::{Expr, PostgresQueryBuilder, Query};
+    use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query};
 
     #[test]
     fn the_interval_is_built_from_a_bound_seconds_argument() {
         let (sql, values) = Query::select()
-            .expr(Expr::current_timestamp().add(make_interval_secs(Expr::val(30.0_f64).into())))
+            .expr(Expr::current_timestamp().add(make_interval_secs(Expr::val(30.0_f64))))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("make_interval(secs => $1)"), "{sql}");

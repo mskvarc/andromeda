@@ -31,9 +31,9 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, Expr, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use serde_json::Value;
-use sqlx::postgres::PgRow;
+use sqlx::{AssertSqlSafe, postgres::PgRow};
 
 /// The `temporal_attribute_streams` alias in the stream-scope subquery.
 #[derive(Iden, Clone, Copy)]
@@ -92,8 +92,8 @@ impl TemporalRepository {
         let generated_sql = delete_instance_sql(InstanceColumn::Generated);
         let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(&generated_sql).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(&verbatim_sql).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
         let deleted = statement
             .bind(entity_id.as_str())
@@ -110,7 +110,7 @@ impl TemporalRepository {
         // `instanceId` of an instance it has just deleted.
         if let InstanceIdentity::Verbatim(identifier) = instance {
             let release_sql = release_verbatim_instance_claim_sql();
-            sqlx::query(&release_sql)
+            sqlx::query(AssertSqlSafe(release_sql))
                 .bind(identifier.as_str())
                 .bind(entity_id.as_str())
                 .bind(attribute_name.as_str())
@@ -132,8 +132,8 @@ impl TemporalRepository {
         let generated_sql = update_instance_sql(InstanceColumn::Generated);
         let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(&generated_sql).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(&verbatim_sql).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
         let updated = statement
             .bind(entity_id.as_str())
@@ -169,8 +169,8 @@ impl TemporalRepository {
         let generated_sql = select_instance_sql(InstanceColumn::Generated);
         let verbatim_sql = select_instance_sql(InstanceColumn::Verbatim);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(&generated_sql).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(&verbatim_sql).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query(AssertSqlSafe(generated_sql)).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(AssertSqlSafe(verbatim_sql)).bind(identifier.as_str()),
         };
         Ok(statement
             .bind(entity_id.as_str())

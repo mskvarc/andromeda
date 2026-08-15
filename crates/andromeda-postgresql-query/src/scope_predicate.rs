@@ -13,7 +13,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_schema::temporal::ScopeHistory;
 use andromeda_postgresql_seaquery::{column_reference::ColumnReference, ltree::ltree_matches};
-use sea_query::{Condition, Expr as SeaExpr, Iden, IntoIden, Query, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, IntoIden, Query, SimpleExpr};
 
 /// The `scope_history` alias a temporal scope probe reads under.
 #[derive(Iden, Clone, Copy)]
@@ -102,7 +102,7 @@ pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
 fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr {
     let lquery = pattern_to_lquery(pattern);
     match target {
-        ScopeTarget::CurrentPaths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery).into()),
+        ScopeTarget::CurrentPaths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery)),
         ScopeTarget::History {
             entity_key_column,
             timeproperty,
@@ -121,10 +121,7 @@ fn scope_history_exists(lquery: &str, entity_key_column: &ColumnReference, timep
         .expr(SeaExpr::val(1))
         .from_as(ScopeHistory::Table, Sh)
         .and_where(SeaExpr::col((Sh, ScopeHistory::TemporalEntityKey)).eq(entity_key_column.column_expr()))
-        .and_where(ltree_matches(
-            SeaExpr::col((Sh, ScopeHistory::ScopePath)).into(),
-            SeaExpr::val(lquery.to_string()).into(),
-        ));
+        .and_where(ltree_matches(SeaExpr::col((Sh, ScopeHistory::ScopePath)), SeaExpr::val(lquery.to_string())));
 
     match interval {
         TimeInterval::Unbounded => {}

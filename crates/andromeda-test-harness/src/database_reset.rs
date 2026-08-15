@@ -56,7 +56,7 @@ pub async fn cleanup_prefix(pool: &PgPool, identifiers: &TestIdentifiers) -> Res
     let mut transaction = pool.begin().await.map_err(DatabaseResetError::Sqlx)?;
     delete_temporal_intents(&mut transaction, &like).await?;
     for statement in PREFIX_DELETES {
-        sqlx::query(statement)
+        sqlx::query(*statement)
             .bind(&like)
             .execute(&mut *transaction)
             .await

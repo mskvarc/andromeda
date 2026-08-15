@@ -129,7 +129,7 @@ async fn offending(pool: &PgPool, invariant: &Invariant) -> i64 {
 
 /// The number of rows one relation holds.
 async fn population(pool: &PgPool, relation: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {relation}"))
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {relation}")))
         .fetch_one(pool)
         .await
         .unwrap_or_else(|error| unreachable!("{relation} must be readable: {error}"))

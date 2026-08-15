@@ -67,9 +67,7 @@ pub fn st_within(geo_col: SimpleExpr, ref_geom: SimpleExpr) -> SimpleExpr {
 /// The distance is a request-supplied value, so it binds as a parameter rather
 /// than being interpolated into the statement text.
 pub fn st_dwithin(geo_col: SimpleExpr, ref_geom: SimpleExpr, distance: f64) -> SimpleExpr {
-    Func::cust(PostgisFunction::Dwithin)
-        .args([geo_col, ref_geom, Expr::val(distance).into()])
-        .into()
+    Func::cust(PostgisFunction::Dwithin).args([geo_col, ref_geom, Expr::val(distance)]).into()
 }
 
 /// PostGIS: `ST_Contains(geo_col, ref_geom)` - tests if geometry A contains geometry B.
@@ -143,14 +141,14 @@ mod tests {
 
     #[test]
     fn st_within_generates_correct_sql() {
-        let sql = render(st_within(Expr::col(("e", "location")).into(), Expr::val("geojson").into()));
+        let sql = render(st_within(Expr::col(("e", "location")), Expr::val("geojson")));
         assert!(sql.contains("ST_Within"), "{sql}");
     }
 
     #[test]
     fn st_dwithin_binds_the_distance_rather_than_interpolating_it() {
         let (sql, _values) = Query::select()
-            .expr(st_dwithin(Expr::col(("e", "location")).into(), Expr::val("geojson").into(), 1000.0))
+            .expr(st_dwithin(Expr::col(("e", "location")), Expr::val("geojson"), 1000.0))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("ST_DWithin"), "{sql}");
@@ -161,7 +159,7 @@ mod tests {
 
     #[test]
     fn validated_geom_from_ewkb_generates_st_geomfromewkb() {
-        let sql = render(validated_geom_from_ewkb(Expr::val(Vec::<u8>::new()).into()));
+        let sql = render(validated_geom_from_ewkb(Expr::val(Vec::<u8>::new())));
         assert!(sql.contains("ST_MakeValid"), "{sql}");
         assert!(sql.contains("ST_GeomFromEWKB"), "{sql}");
         assert!(!sql.contains("ST_GeomFromGeoJSON"), "{sql}");

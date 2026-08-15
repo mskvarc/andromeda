@@ -26,7 +26,7 @@ const FIXTURE: [&str; 5] = [
 
 /// Run `EXPLAIN` on one connection so a temporary relation stays visible.
 async fn explain_on(connection: &mut PgConnection, statement: &str) -> String {
-    let plans: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, BUFFERS) {statement}"))
+    let plans: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
         .fetch_all(&mut *connection)
         .await
         .expect("the plan must be readable");

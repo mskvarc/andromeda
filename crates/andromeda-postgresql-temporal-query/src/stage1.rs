@@ -35,7 +35,7 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{literal::int_literal, operator::regex_match};
 use iri_rs::IriBuf;
-use sea_query::{Condition, Expr as SeaExpr, Func, JoinType, Order, SelectStatement};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Func, JoinType, Order, SelectStatement};
 
 /// The Stage 1 statement and its optional count, each a statement tree the store
 /// binds and executes on its own.
@@ -188,10 +188,7 @@ fn temporal_selector_condition(selector: &EntitySelector) -> Condition {
         condition = condition.add(SeaExpr::col((E, TemporalEntities::Id)).is_in(ids));
     }
     if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(
-            SeaExpr::col((E, TemporalEntities::Id)).into(),
-            SeaExpr::val(pattern.as_str()).into(),
-        ));
+        condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
         condition = condition.add(type_condition(type_expr, TypesColumn::AliasedEntities));

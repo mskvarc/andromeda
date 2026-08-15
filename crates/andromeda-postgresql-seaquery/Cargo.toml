@@ -9,9 +9,9 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-chrono = "0.4.44"
-sea-query = { version = "0.32.7", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }
-thiserror = "2.0.18"
+chrono = "0.4.45"
+sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array", "with-chrono", "with-uuid"] }
+thiserror = "2.0.20"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

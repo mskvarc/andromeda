@@ -17,8 +17,8 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, Iden, JoinType, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
-use sqlx::{Postgres, Transaction};
+use sea_query::{Expr, ExprTrait, Iden, JoinType, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
+use sqlx::{AssertSqlSafe, Postgres, Transaction};
 use uuid::Uuid;
 
 /// The `UNNEST` staging alias, `d`, each set-write reads its parallel arrays under.
@@ -82,14 +82,14 @@ impl TemporalRepository {
         }
         let binds = scope_history_binds(entries)?;
         let dedup_sql = scope_history_dedup_sql();
-        sqlx::query(&dedup_sql)
+        sqlx::query(AssertSqlSafe(dedup_sql))
             .bind(&binds.entity_ids)
             .bind(&binds.generated_instance_uuids)
             .bind(&binds.verbatim_instance_ids)
             .execute(&mut **tx)
             .await?;
         let insert_sql = scope_history_insert_sql()?;
-        sqlx::query(&insert_sql)
+        sqlx::query(AssertSqlSafe(insert_sql))
             .bind(&binds.recorded_ats)
             .bind(&binds.entity_ids)
             .bind(&binds.write_ids)
@@ -203,11 +203,10 @@ fn scope_history_dedup_sql() -> String {
         .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::EntityKey)))
         .and_where(
             SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceUuid)))
-                .not_distinct_from(Expr::col((D, Staged::GeneratedInstanceUuid)).into()),
+                .not_distinct_from(Expr::col((D, Staged::GeneratedInstanceUuid))),
         )
         .and_where(
-            SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::VerbatimInstanceId)))
-                .not_distinct_from(Expr::col((D, Staged::VerbatimInstanceId)).into()),
+            SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::VerbatimInstanceId))).not_distinct_from(Expr::col((D, Staged::VerbatimInstanceId))),
         );
     let matches = matches;
 
@@ -255,7 +254,7 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
         .expr(Expr::col((D, Staged::DeletedAt)))
         .expr(Expr::col((D, Staged::GeneratedInstanceUuid)))
         .expr(Expr::col((D, Staged::VerbatimInstanceId)))
-        .expr(cast(Expr::col((D, Staged::ScopePath)).into(), PostgresType::Ltree))
+        .expr(cast(Expr::col((D, Staged::ScopePath)), PostgresType::Ltree))
         .from_function(call, D)
         .join_as(
             JoinType::InnerJoin,

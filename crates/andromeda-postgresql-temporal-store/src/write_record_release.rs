@@ -16,9 +16,9 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{cast::cast, pg_array::any, pg_type::PostgresType};
 use chrono::{DateTime, Utc};
-use sea_query::{Cond, DeleteStatement, Expr, Iden, IntoIden, IntoTableRef, PostgresQueryBuilder, Query, SimpleExpr};
-use sea_query_binder::SqlxBinder;
-use sqlx::{Postgres, Transaction, postgres::PgPool};
+use sea_query::{Cond, DeleteStatement, Expr, ExprTrait, Iden, IntoIden, IntoTableRef, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
 
 /// The `attribute_history` alias inside a protection subquery.
@@ -46,9 +46,9 @@ struct Ti;
 /// Returns [`TemporalStoreError::Database`] when the statement fails.
 pub(crate) async fn release_named(tx: &mut Transaction<'_, Postgres>, write_ids: &[Uuid]) -> Result<u64, TemporalStoreError> {
     let mut statement = base_release();
-    statement.and_where(Expr::col(WriteRecords::WriteId).eq(any(cast(Expr::val(write_ids.to_vec()).into(), PostgresType::UuidArray))));
+    statement.and_where(Expr::col(WriteRecords::WriteId).eq(any(cast(Expr::val(write_ids.to_vec()), PostgresType::UuidArray))));
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_with(&sql, values).execute(&mut **tx).await?.rows_affected())
+    Ok(sqlx::query_with(AssertSqlSafe(sql), values).execute(&mut **tx).await?.rows_affected())
 }
 
 /// Release every unprotected idempotency record recorded before a cutoff.
@@ -64,7 +64,7 @@ pub(crate) async fn release_behind_horizon(pool: &PgPool, cutoff: DateTime<Utc>)
     let mut statement = base_release();
     statement.and_where(Expr::col(WriteRecords::RecordedAt).lt(cutoff));
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    Ok(sqlx::query_with(&sql, values).execute(pool).await?.rows_affected())
+    Ok(sqlx::query_with(AssertSqlSafe(sql), values).execute(pool).await?.rows_affected())
 }
 
 /// The delete of `write_records` guarded by the three effect protections, before

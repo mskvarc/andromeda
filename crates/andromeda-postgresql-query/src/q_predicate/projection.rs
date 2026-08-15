@@ -28,7 +28,7 @@ use andromeda_postgresql_seaquery::{
     literal::{false_literal, int_literal},
     pg_type::PostgresType,
 };
-use sea_query::{Condition, Expr as SeaExpr, Iden, Query, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SimpleExpr};
 
 /// The alias every value probe reads the `current_attribute_values` scan under.
 #[derive(Iden, Clone, Copy)]
@@ -37,7 +37,7 @@ struct Cav;
 
 /// A `"cav"."column"` reference into the probe's projection scan.
 fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
-    SeaExpr::col((Cav, column)).into()
+    SeaExpr::col((Cav, column))
 }
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
@@ -299,40 +299,36 @@ fn scalar_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
             Some(value) => compare(
                 probe_column(CurrentAttributeValues::ValueNumber),
                 op,
-                cast(SeaExpr::val(value).into(), PostgresType::Numeric),
+                cast(SeaExpr::val(value), PostgresType::Numeric),
             ),
             // A `serde_json::Number` that fits no f64 cannot be carried to the
             // projection at all, and one that large is out of range for
             // `scalar_exceeds_precision` to have admitted a comparison anyway.
             None => false_literal(),
         },
-        Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value).into()),
+        Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value)),
         Scalar::Str(value) => {
-            let string_test = compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value.as_str()).into());
+            let string_test = compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value.as_str()));
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {
-                    let uri_test = compare(probe_column(CurrentAttributeValues::ValueUri), op, SeaExpr::val(value.as_str()).into());
+                    let uri_test = compare(probe_column(CurrentAttributeValues::ValueUri), op, SeaExpr::val(value.as_str()));
                     string_test.or(uri_test)
                 }
                 RelationshipObjects::NonMatching => string_test,
             }
         }
-        Scalar::DateTime(value) => compare(probe_column(CurrentAttributeValues::ValueDatetime), op, SeaExpr::val(*value).into()),
+        Scalar::DateTime(value) => compare(probe_column(CurrentAttributeValues::ValueDatetime), op, SeaExpr::val(*value)),
         Scalar::Date(value) => compare(
             probe_column(CurrentAttributeValues::ValueString),
             op,
-            SeaExpr::val(NgsiLdDate::from(*value).to_string()).into(),
+            SeaExpr::val(NgsiLdDate::from(*value).to_string()),
         ),
         // The operand is rendered in the same canonical form the write path
         // stores, rather than in the clause 4.9 serialisation the client wrote:
         // `12:00:00+01:00` and `11:00:00Z` are one time of day, and only the
         // canonical text of both compares against the stored column.
         Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
-            Ok(canonical) => compare(
-                probe_column(CurrentAttributeValues::ValueString),
-                op,
-                SeaExpr::val(canonical.to_string()).into(),
-            ),
+            Ok(canonical) => compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(canonical.to_string())),
             // A time of day with no canonical form is one no write path could
             // have stored, so nothing can compare equal to it.
             Err(_) => false_literal(),
@@ -408,7 +404,7 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
     let value = Condition::all().add(pattern_predicate(
         probe_column(CurrentAttributeValues::ValueString),
         polarity,
-        SeaExpr::val(pattern.as_str()).into(),
+        SeaExpr::val(pattern.as_str()),
     ));
     exists_on_projection(id, value, target)
 }

@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     fn a_column_casts_with_the_postfix_operator() {
-        let sql = render(cast(Expr::col(sea_query::Alias::new("value_number")).into(), PostgresType::Numeric));
+        let sql = render(cast(Expr::col(sea_query::Alias::new("value_number")), PostgresType::Numeric));
         assert!(sql.contains("::numeric"), "{sql}");
         assert!(!sql.contains("CAST("), "the postfix form is kept, not CAST(): {sql}");
     }
@@ -70,7 +70,7 @@ mod tests {
     /// the statement, never widened to binary floating point.
     #[test]
     fn a_numeric_cast_never_introduces_a_float() {
-        let sql = render(cast(Expr::val("12345678901234567890").into(), PostgresType::Numeric));
+        let sql = render(cast(Expr::val("12345678901234567890"), PostgresType::Numeric));
         assert!(sql.contains("::numeric"), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
         assert!(!sql.contains("float8"), "{sql}");
@@ -93,12 +93,12 @@ mod tests {
 
     #[test]
     fn each_type_renders_its_own_token() {
-        assert!(render(cast(Expr::val(0).into(), PostgresType::Boolean)).contains("::boolean"));
-        assert!(render(cast(Expr::val(0).into(), PostgresType::Timestamptz)).contains("::timestamptz"));
-        assert!(render(cast(Expr::val(0).into(), PostgresType::Geography)).contains("::geography"));
-        assert!(render(cast(Expr::val(0).into(), PostgresType::Interval)).contains("::interval"));
-        assert!(render(cast(Expr::val(0).into(), PostgresType::IntegerArray)).contains("::integer[]"));
-        assert!(render(cast(Expr::val(0).into(), PostgresType::TextArray)).contains("::text[]"));
-        assert!(render(cast(Expr::val(0).into(), PostgresType::Lquery)).contains("::lquery"));
+        assert!(render(cast(Expr::val(0), PostgresType::Boolean)).contains("::boolean"));
+        assert!(render(cast(Expr::val(0), PostgresType::Timestamptz)).contains("::timestamptz"));
+        assert!(render(cast(Expr::val(0), PostgresType::Geography)).contains("::geography"));
+        assert!(render(cast(Expr::val(0), PostgresType::Interval)).contains("::interval"));
+        assert!(render(cast(Expr::val(0), PostgresType::IntegerArray)).contains("::integer[]"));
+        assert!(render(cast(Expr::val(0), PostgresType::TextArray)).contains("::text[]"));
+        assert!(render(cast(Expr::val(0), PostgresType::Lquery)).contains("::lquery"));
     }
 }

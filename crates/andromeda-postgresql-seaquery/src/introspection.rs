@@ -8,7 +8,7 @@
 //! setting name passed as a bound value or a named iden rather than
 //! interpolated into a statement string.
 
-use sea_query::{Alias, Expr, Func, Iden, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Expr, ExprTrait, Func, Iden, QueryStatementBuilder, SelectStatement, SimpleExpr};
 
 /// The `pg_extension` system catalog.
 #[derive(Iden, Clone, Copy)]

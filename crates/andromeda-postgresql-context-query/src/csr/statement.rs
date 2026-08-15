@@ -24,7 +24,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     postgis::geometry_as_geojson,
 };
-use sea_query::{Alias, Condition, Expr as SeaExpr, Func, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement, SimpleExpr};
 
 /// A compiled CSR discovery query: the paginated result statement and its count,
 /// each a statement tree the store binds and executes on its own.
@@ -58,13 +58,13 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError
         .column(Csr::Tenant)
         .column(Csr::ObservationInterval)
         .column(Csr::ManagementInterval)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::Location).into()), Csr::Location)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::ObservationSpace).into()), Csr::ObservationSpace)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::OperationSpace).into()), Csr::OperationSpace)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::Location)), Csr::Location)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::ObservationSpace)), Csr::ObservationSpace)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::OperationSpace)), Csr::OperationSpace)
         .column(Csr::ExpiresAt)
         .column(Csr::Endpoint)
         .column(Csr::Accept)
-        .expr_as(cast(SeaExpr::col(Csr::Mode).into(), PostgresType::Text), Csr::Mode)
+        .expr_as(cast(SeaExpr::col(Csr::Mode), PostgresType::Text), Csr::Mode)
         .column(Csr::Operations)
         .column(Csr::Scope)
         .column(Csr::RefreshRate)
@@ -72,7 +72,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError
         .column(Csr::ContextSourceInfo)
         .column(Csr::JsonldContext)
         .column(Csr::ContextSourceAlias)
-        .expr_as(cast(SeaExpr::col(Csr::Status).into(), PostgresType::Text), Csr::Status)
+        .expr_as(cast(SeaExpr::col(Csr::Status), PostgresType::Text), Csr::Status)
         .column(Csr::TimesSent)
         .column(Csr::TimesFailed)
         .column(Csr::LastSuccess)
@@ -213,7 +213,7 @@ fn interval_bound(interval_col: Csr, member: &str) -> SimpleExpr {
 /// A filter instant bound as RFC 3339 text and cast in the statement, so it
 /// compares as `timestamptz` against a lifted interval bound.
 fn interval_instant(rfc3339: String) -> SimpleExpr {
-    cast(SeaExpr::val(rfc3339).into(), PostgresType::Timestamptz)
+    cast(SeaExpr::val(rfc3339), PostgresType::Timestamptz)
 }
 
 /// Whether some `information` item declares one of `names` as a property or a
@@ -234,7 +234,7 @@ fn attribute_names_declared(names: &[String]) -> SimpleExpr {
     };
     let mut scan = Query::select();
     scan.expr(int_literal(1))
-        .from_function(jsonb_array_elements(SeaExpr::col(Csr::Information).into()), Alias::new("info"))
+        .from_function(jsonb_array_elements(SeaExpr::col(Csr::Information)), Alias::new("info"))
         .cond_where(Condition::any().add(member_of("propertyNames", "pn")).add(member_of("relationshipNames", "rn")));
     SeaExpr::exists(scan)
 }

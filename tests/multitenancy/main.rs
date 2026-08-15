@@ -120,7 +120,7 @@ async fn drop_orphan_tenant_databases(main_pool: &PgPool) {
         .unwrap_or_default();
     for db in dbs {
         let sql = format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)");
-        let _ = sqlx::query(&sql).execute(main_pool).await;
+        let _ = sqlx::query(sqlx::AssertSqlSafe(sql)).execute(main_pool).await;
     }
 }
 

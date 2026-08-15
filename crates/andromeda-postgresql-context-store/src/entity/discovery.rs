@@ -25,8 +25,8 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     unnest::unnest_of,
 };
-use sea_query::{CaseStatement, Cond, Expr, Func, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
+use sea_query::{CaseStatement, Cond, Expr, ExprTrait, Func, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 
@@ -109,7 +109,7 @@ struct AttributeTypes;
 /// a fresh expression each time so the node can appear in the test, the `THEN`
 /// and the `ELSE` without sharing an owned value.
 fn attribute_container(payload: &dyn Fn() -> SimpleExpr) -> SimpleExpr {
-    let node = || payload().json_get(Expr::val(0).into());
+    let node = || payload().json_get(Expr::val(0));
     CaseStatement::new()
         .case(Expr::expr(jsonb_typeof(node())).eq("object"), node())
         .finally(payload())
@@ -121,7 +121,7 @@ fn attribute_container(payload: &dyn Fn() -> SimpleExpr) -> SimpleExpr {
 fn keyset_after(key: SimpleExpr, after: Option<&str>) -> Cond {
     let after = after.map(str::to_owned);
     Cond::any()
-        .add(Expr::expr(cast(Expr::val(after.clone()).into(), PostgresType::Text)).is_null())
+        .add(Expr::expr(cast(Expr::val(after.clone()), PostgresType::Text)).is_null())
         .add(Expr::expr(key).gt(Expr::val(after)))
 }
 
@@ -130,11 +130,11 @@ impl EntityRepository {
     pub async fn types(&self) -> Result<Vec<EntityTypeName>, ContextStoreError> {
         let statement = Query::select()
             .distinct()
-            .expr(SimpleExpr::from(unnest_of(Expr::col(Entities::Types).into())))
+            .expr(SimpleExpr::from(unnest_of(Expr::col(Entities::Types))))
             .from(Entities::Table)
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let raw: Vec<String> = sqlx::query_scalar_with(&sql, values).fetch_all(&self.pool).await?;
+        let raw: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         raw.into_iter().map(stored_type_name).collect()
     }
 
@@ -144,14 +144,14 @@ impl EntityRepository {
         statement
             .column(Entities::Payload)
             .from(Entities::Table)
-            .and_where(Expr::val(entity_type.as_str()).eq(any(Expr::col(Entities::Types).into())))
+            .and_where(Expr::val(entity_type.as_str()).eq(any(Expr::col(Entities::Types))))
             .order_by(Entities::Id, Order::Asc)
-            .offset(offset.unwrap_or(0).max(0) as u64);
+            .offset(<i64 as Ord>::max(offset.unwrap_or(0), 0) as u64);
         if let Some(limit) = limit {
-            statement.limit(limit.max(0) as u64);
+            statement.limit(<i64 as Ord>::max(limit, 0) as u64);
         }
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_scalar_with(&sql, values).fetch_all(&self.pool).await?)
+        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?)
     }
 
     /// Retrieve all entity payloads with optional pagination.
@@ -161,12 +161,12 @@ impl EntityRepository {
             .column(Entities::Payload)
             .from(Entities::Table)
             .order_by(Entities::Id, Order::Asc)
-            .offset(offset.unwrap_or(0).max(0) as u64);
+            .offset(<i64 as Ord>::max(offset.unwrap_or(0), 0) as u64);
         if let Some(limit) = limit {
-            statement.limit(limit.max(0) as u64);
+            statement.limit(<i64 as Ord>::max(limit, 0) as u64);
         }
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_scalar_with(&sql, values).fetch_all(&self.pool).await?)
+        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?)
     }
 
     /// Count entities that have the given type IRI.
@@ -174,10 +174,10 @@ impl EntityRepository {
         let statement = Query::select()
             .expr(count_all())
             .from(Entities::Table)
-            .and_where(Expr::val(entity_type.as_str()).eq(any(Expr::col(Entities::Types).into())))
+            .and_where(Expr::val(entity_type.as_str()).eq(any(Expr::col(Entities::Types))))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_scalar_with(&sql, values).fetch_one(&self.pool).await?)
+        Ok(sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(&self.pool).await?)
     }
 
     /// Per-type attribute summaries, keyset-paginated on the aggregated type IRI.
@@ -187,7 +187,7 @@ impl EntityRepository {
         limit: u32,
     ) -> Result<Vec<(EntityTypeName, Vec<AttributeName>)>, ContextStoreError> {
         let (sql, values) = entity_type_summaries_statement(after.map(EntityTypeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -203,14 +203,14 @@ impl EntityRepository {
     /// attribute IRI.
     pub async fn get_attribute_summary(&self, after: Option<&AttributeName>, limit: u32) -> Result<Vec<AttributeSummary>, ContextStoreError> {
         let (sql, values) = attribute_summary_statement(after.map(AttributeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         rows.iter().map(row_to_attribute_summary).collect()
     }
 
     /// Attribute metadata for a single attribute IRI.
     pub async fn get_attribute_info(&self, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, ContextStoreError> {
         let (sql, values) = attribute_info_statement(attr_iri.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(&self.pool).await?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
         row.as_ref().map(row_to_attribute_summary).transpose()
     }
 }
@@ -228,25 +228,25 @@ fn attribute_summary_base(key_predicate: SimpleExpr) -> SelectStatement {
     let attributes = Query::select()
         .expr_as(Expr::col((Je, Key)), AttrKey)
         .expr_as(Expr::col((Je, ValueColumn)), AttrValue)
-        .from_function(jsonb_each(attribute_container(&|| Expr::col((E, Entities::Payload)).into())), Je)
+        .from_function(jsonb_each(attribute_container(&|| Expr::col((E, Entities::Payload)))), Je)
         .and_where(key_predicate)
         .to_owned();
 
     let attribute_type_iri = SimpleExpr::from(Expr::col((Attrs, AttrValue)))
-        .json_get(Expr::val(0).into())
-        .json_get(Expr::val("@type").into());
+        .json_get(Expr::val(0))
+        .json_get(Expr::val("@type"));
     let attribute_types = Query::select().expr_as(jsonb_array_elements_text(attribute_type_iri), ValueColumn).to_owned();
 
     Query::select()
         .expr_as(Expr::col((Attrs, AttrKey)), AttrKey)
-        .expr_as(count_distinct(Expr::col((E, Entities::Id)).into()), EntityCount)
-        .expr_as(array_agg_distinct(Expr::col(T).into()), EntityTypes)
+        .expr_as(count_distinct(Expr::col((E, Entities::Id))), EntityCount)
+        .expr_as(array_agg_distinct(Expr::col(T)), EntityTypes)
         .expr_as(
-            array_agg_distinct_filter(Expr::col((At, ValueColumn)).into(), Expr::col((At, ValueColumn)).is_not_null()),
+            array_agg_distinct_filter(Expr::col((At, ValueColumn)), Expr::col((At, ValueColumn)).is_not_null()),
             AttributeTypes,
         )
         .from_as(Entities::Table, E)
-        .from_function(unnest_of(Expr::col((E, Entities::Types)).into()), T)
+        .from_function(unnest_of(Expr::col((E, Entities::Types))), T)
         .join_lateral(JoinType::InnerJoin, attributes, Attrs, SimpleExpr::from(Expr::val(true)))
         .join_lateral(JoinType::LeftJoin, attribute_types, At, SimpleExpr::from(Expr::val(true)))
         .group_by_col((Attrs, AttrKey))
@@ -258,7 +258,7 @@ fn attribute_summary_base(key_predicate: SimpleExpr) -> SelectStatement {
 fn attribute_summary_statement(after: Option<&str>, limit: u64) -> SelectStatement {
     let mut statement = attribute_summary_base(Expr::col((Je, Key)).not_like("@%"));
     statement
-        .cond_having(keyset_after(Expr::col((Attrs, AttrKey)).into(), after))
+        .cond_having(keyset_after(Expr::col((Attrs, AttrKey)), after))
         .order_by((Attrs, AttrKey), Order::Asc)
         .limit(limit);
     statement
@@ -278,7 +278,7 @@ fn attribute_info_statement(attr_iri: &str) -> SelectStatement {
 fn entity_type_summaries_statement(after: Option<&str>, limit: u64) -> SelectStatement {
     let keys = Query::select()
         .expr_as(
-            SimpleExpr::from(jsonb_object_keys(attribute_container(&|| Expr::col(Entities::Payload).into()))),
+            SimpleExpr::from(jsonb_object_keys(attribute_container(&|| Expr::col(Entities::Payload)))),
             AttrKey,
         )
         .to_owned();
@@ -288,17 +288,17 @@ fn entity_type_summaries_statement(after: Option<&str>, limit: u64) -> SelectSta
         .expr_as(Expr::col(T), TypeIri)
         .expr_as(
             Func::coalesce([
-                array_agg_distinct_filter(Expr::col((Ak, AttrKey)).into(), Expr::col((Ak, AttrKey)).is_not_null()),
+                array_agg_distinct_filter(Expr::col((Ak, AttrKey)), Expr::col((Ak, AttrKey)).is_not_null()),
                 text_array(&[]),
             ]),
             AttrKeys,
         )
         .from(Entities::Table)
-        .from_function(unnest_of(Expr::col(Entities::Types).into()), T)
+        .from_function(unnest_of(Expr::col(Entities::Types)), T)
         .join_lateral(JoinType::InnerJoin, keys, Ak, SimpleExpr::from(Expr::val(true)))
         .and_where(Expr::col((Ak, AttrKey)).not_like("@%"))
         .group_by_col(T)
-        .cond_having(keyset_after(Expr::col(T).into(), after))
+        .cond_having(keyset_after(Expr::col(T), after))
         .order_by(T, Order::Asc)
         .limit(limit);
     statement
@@ -329,7 +329,7 @@ fn row_to_attribute_summary(row: &PgRow) -> Result<AttributeSummary, ContextStor
 mod tests {
     use crate::entity::discovery::{attribute_info_statement, attribute_summary_statement, entity_type_summaries_statement};
     use sea_query::PostgresQueryBuilder;
-    use sea_query_binder::SqlxBinder;
+    use sea_query_sqlx::SqlxBinder;
 
     #[test]
     fn the_paginated_summary_and_the_single_lookup_share_one_aggregate() {

@@ -9,7 +9,7 @@
 //! that translation is `andromeda-postgresql-query`, which is built on top of
 //! these primitives — and it names no physical relation, which is
 //! `andromeda-postgresql-schema`. `sqlx` stays out: a rendered statement leaves
-//! as a `sea_query::SelectStatement` the store binds through `sea-query-binder`.
+//! as a `sea_query::SelectStatement` the store binds through `sea-query-sqlx`.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]

@@ -9,7 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-sea-query = { version = "0.32.7", features = ["backend-postgres", "with-chrono"] }
+sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

@@ -20,12 +20,12 @@ use andromeda_postgresql_seaquery::{
     operator::present_and,
     pg_operator::PgBinaryOperator,
 };
-use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, Query, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, ExprTrait, Query, QueryStatementBuilder, SimpleExpr};
 
 /// The registration's `additional_properties` JSONB document, read fresh each
 /// time it opens an extraction.
 fn additional_properties() -> SimpleExpr {
-    SeaExpr::col(Alias::new("additional_properties")).into()
+    SeaExpr::col(Alias::new("additional_properties"))
 }
 
 /// Compile a parsed `q` expression against `additional_properties`.
@@ -43,7 +43,7 @@ fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
         return Ok(no_registration_matches());
     };
     match pred {
-        Predicate::Exists(_) => Ok(Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str()).into()))),
+        Predicate::Exists(_) => Ok(Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str())))),
         Predicate::Equality { membership, rhs, .. } => Ok(csr_equality_condition(path, *membership, rhs)),
         Predicate::Ordering { op, rhs, .. } => Ok(csr_ordering_condition(path, *op, rhs)),
         Predicate::MatchPattern { pattern, .. } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match)),
@@ -84,7 +84,7 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
     // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
     // `Alpha` (clause 4.9). Every comparison arm in this file extracts the same
     // way; the pattern arm must agree.
-    let value = pattern_predicate(stored_text(extract.clone()), polarity, SeaExpr::val(pattern).into()); // clone: the presence guard reads the same extraction
+    let value = pattern_predicate(stored_text(extract.clone()), polarity, SeaExpr::val(pattern)); // clone: the presence guard reads the same extraction
     Condition::all().add(present_and(present(extract), value))
 }
 

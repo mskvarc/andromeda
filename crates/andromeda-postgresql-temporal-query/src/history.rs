@@ -27,7 +27,7 @@ use andromeda_postgresql_seaquery::{
     aggregate::{count_all, row_number},
     postgis::st_as_ewkb,
 };
-use sea_query::{Alias, Asterisk, Condition, Expr, JoinType, Order, Query, SelectStatement, WindowStatement};
+use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, JoinType, Order, Query, SelectStatement, WindowStatement};
 
 /// Build Stage 2 query: temporal history for a single entity.
 ///
@@ -147,7 +147,7 @@ fn project_base_columns(select: &mut SelectStatement) {
     }
     // The geometry is serialised back to EWKB in the statement; the store
     // decodes that wire form into a GeoJSON value in Rust.
-    select.expr_as(st_as_ewkb(Expr::col((Ah, AttributeHistory::ValueGeo)).into()), Alias::new("value_geo_ewkb"));
+    select.expr_as(st_as_ewkb(Expr::col((Ah, AttributeHistory::ValueGeo))), Alias::new("value_geo_ewkb"));
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
     select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
 }

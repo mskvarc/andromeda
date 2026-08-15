@@ -110,7 +110,7 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::{cast::cast, literal::int_literal, pg_array::array_of_subquery, pg_operator::PgBinaryOperator, pg_type::PostgresType};
 use iri_rs::IriBuf;
-use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// The alias every projection subquery reads `registration_information` under.
 fn ri() -> Alias {
@@ -119,7 +119,7 @@ fn ri() -> Alias {
 
 /// A `"ri"."column"` reference into the correlated projection scan.
 fn ri_col(column: RegistrationInformation) -> SimpleExpr {
-    SeaExpr::col((ri(), column)).into()
+    SeaExpr::col((ri(), column))
 }
 
 /// The correlated scan shared by every projection subquery, optionally narrowed
@@ -172,11 +172,11 @@ where
 /// `idx_registration_information_entity_types` serves, and it only serves it
 /// standing alone. The requested type is collected by `ARRAY(SELECT $1::TEXT)`
 /// rather than bound as a `text[]` value, so a single scalar crosses the bind
-/// boundary rather than an array `sea-query-binder` would have to encode.
+/// boundary rather than an array `sea-query-sqlx` would have to encode.
 pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
     let requested = || {
         let mut single = Query::select();
-        single.expr(cast(SeaExpr::val(entity_type.as_str()).into(), PostgresType::Text));
+        single.expr(cast(SeaExpr::val(entity_type.as_str()), PostgresType::Text));
         array_of_subquery(single)
     };
     candidate([

@@ -41,7 +41,7 @@ use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
-use sea_query::{CaseStatement, SimpleExpr};
+use sea_query::{CaseStatement, ExprTrait, SimpleExpr};
 
 /// The RFC 3339 `date-time` shape a `::timestamptz` cast is allowed to see.
 ///
@@ -133,7 +133,7 @@ mod tests {
     /// The stored operand every test lifts: a plain column stands in for the
     /// `payload #>> '{}'` extraction the real callers pass.
     fn stored() -> SimpleExpr {
-        Expr::col(Alias::new("stored")).into()
+        Expr::col(Alias::new("stored"))
     }
 
     fn render(expr: SimpleExpr) -> String {

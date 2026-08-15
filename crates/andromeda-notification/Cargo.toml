@@ -25,21 +25,21 @@ andromeda-registration.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
 andromeda-tenancy.workspace = true
-async-trait = "0.1.89"
-chrono = { version = "0.4.44", features = ["serde"] }
+async-trait = "0.1.92"
+chrono = { version = "0.4.45", features = ["serde"] }
 confique = "0.4.0"
-dashmap = { version = "6.1.0", features = ["inline"] }
+dashmap = { version = "6.2.1", features = ["inline"] }
 derive_more = { version = "2.1.1", features = ["display", "from"] }
-futures = "0.3.32"
+futures = "0.3.34"
 indexmap = { version = "2.14.0", features = ["serde"] }
-iri-rs = { version = "3.4.0", features = ["serde", "static"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-thiserror = "2.0.18"
+iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
 tracing = "0.1.44"
 typed-builder = "0.23.2"
 url = { version = "2.5.8", features = ["serde"] }
-uuid = { version = "1.23.1", features = ["fast-rng", "v4"] }
+uuid = { version = "1.24.1", features = ["fast-rng", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

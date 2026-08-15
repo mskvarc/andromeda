@@ -3,13 +3,13 @@
 use andromeda_component_report::{ComponentReport, ComponentVersion, TimescaleLicense};
 use andromeda_postgresql_seaquery::introspection::{current_setting, current_setting_missing_ok, extension_version};
 use sea_query::{Alias, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// Discover the PostgreSQL server and installed storage extensions active on one pool.
 pub async fn discover(pool: &PgPool) -> Result<Vec<ComponentReport>, sqlx::Error> {
     let (sql, values) = discover_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(&sql, values).fetch_one(pool).await?;
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
 
     let pg_version: String = row.get("pg_version");
     let postgis_version: Option<String> = row.get("postgis_version");

@@ -84,7 +84,13 @@ mod tests {
 
     /// Build one resolved migration with the shape `migrate!()` produces.
     fn migration(version: i64, description: &'static str, sql: &'static str) -> Migration {
-        Migration::new(version, Cow::Borrowed(description), MigrationType::ReversibleUp, Cow::Borrowed(sql), false)
+        Migration::new(
+            version,
+            Cow::Borrowed(description),
+            MigrationType::ReversibleUp,
+            sqlx::SqlStr::from_static(sql),
+            false,
+        )
     }
 
     #[test]
@@ -137,7 +143,7 @@ mod tests {
                 9,
                 Cow::Borrowed("subscriptions"),
                 MigrationType::ReversibleDown,
-                Cow::Borrowed("DROP TABLE subscriptions"),
+                sqlx::SqlStr::from_static("DROP TABLE subscriptions"),
                 false,
             ),
         ];

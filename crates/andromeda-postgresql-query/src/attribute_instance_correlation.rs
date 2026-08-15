@@ -12,7 +12,7 @@
 use crate::attribute_name_id::AttributeNameId;
 use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
 use andromeda_postgresql_seaquery::literal::int_literal;
-use sea_query::{Alias, Expr as SeaExpr, IntoIden, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, Expr as SeaExpr, ExprTrait, IntoIden, Query, SelectStatement, SimpleExpr};
 
 /// The `entities` row a correlated subquery binds back to.
 ///
@@ -52,8 +52,8 @@ impl<'a> CorrelatedEntityRow<'a> {
     /// with itself and silently admits every instance in the tenant.
     pub fn column(&self, column: impl IntoIden) -> SimpleExpr {
         match self.alias {
-            Some(alias) => SeaExpr::col((Alias::new(alias), column.into_iden())).into(),
-            None => SeaExpr::col((Entities::Table, column.into_iden())).into(),
+            Some(alias) => SeaExpr::col((Alias::new(alias), column.into_iden())),
+            None => SeaExpr::col((Entities::Table, column.into_iden())),
         }
     }
 
@@ -92,7 +92,7 @@ pub fn geometry_instances_of(outer: CorrelatedEntityRow<'_>, subquery_alias: &st
 /// The subquery's geometry column: the `value_geo` of the instance rows
 /// [`geometry_instances_of`] selects.
 pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
-    SeaExpr::col((Alias::new(subquery_alias), CurrentAttributeValues::ValueGeo)).into()
+    SeaExpr::col((Alias::new(subquery_alias), CurrentAttributeValues::ValueGeo))
 }
 
 /// A `SELECT 1` marker for a correlated `EXISTS` built over

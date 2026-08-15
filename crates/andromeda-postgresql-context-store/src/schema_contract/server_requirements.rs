@@ -7,7 +7,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// The PostgreSQL version the tenant schema requires.
@@ -135,7 +135,7 @@ pub enum ExtensionVersionError {
 /// Refuse a tenant whose server or extensions are below what the schema needs.
 pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContractError> {
     let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(&sql, values).fetch_one(pool).await?;
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;
 
     check_postgres(PostgresVersion::new(row.get("server_version_num")))?;
     check_extension(

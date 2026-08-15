@@ -28,9 +28,9 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Cond, Expr, Iden, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
-use sqlx::{Postgres, Row, Transaction};
+use sea_query::{Cond, Expr, ExprTrait, Iden, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Postgres, Row, Transaction};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -105,7 +105,7 @@ impl TemporalRepository {
         // freshly created or already present — resolves in one read without the
         // `RETURNING`-plus-`UNION ALL` the single command needed.
         let insert_sql = stream_insert_sql()?;
-        sqlx::query(&insert_sql)
+        sqlx::query(AssertSqlSafe(insert_sql))
             .bind(entity_key.get())
             .bind(&binds.ids)
             .bind(&binds.attribute_name_ids)
@@ -113,7 +113,7 @@ impl TemporalRepository {
             .execute(&mut **tx)
             .await?;
         let read_sql = stream_read_sql();
-        let rows = sqlx::query(&read_sql)
+        let rows = sqlx::query(AssertSqlSafe(read_sql))
             .bind(entity_key.get())
             .bind(&binds.attribute_name_ids)
             .bind(&binds.dataset_ids)
@@ -147,7 +147,7 @@ async fn upsert_temporal_entity(
     if !upsert.types.is_empty() {
         let types = upsert.types.iter().map(EntityTypeName::as_str).collect::<Vec<_>>();
         let upsert_sql = temporal_entity_upsert_sql()?;
-        sqlx::query(&upsert_sql)
+        sqlx::query(AssertSqlSafe(upsert_sql))
             .bind(upsert.entity_id.as_str())
             .bind(recorded_at)
             .bind(&types)
@@ -155,7 +155,7 @@ async fn upsert_temporal_entity(
             .await?;
     }
     let (key_sql, key_values) = temporal_entity_key_statement(upsert.entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-    let located = sqlx::query_with(&key_sql, key_values).fetch_optional(&mut **tx).await?;
+    let located = sqlx::query_with(AssertSqlSafe(key_sql), key_values).fetch_optional(&mut **tx).await?;
     let Some(row) = located else {
         return Err(TemporalStoreError::NotFound(format!(
             "Temporal evolution of {} does not exist and the write declares no entity type to create it with",
@@ -343,7 +343,7 @@ fn stream_read_sql() -> String {
     let stream_match = Cond::all()
         .add(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).eq(external_placeholder(1)))
         .add(Expr::col((S, TemporalAttributeStreams::AttributeNameId)).equals((D, StreamStaged::AttributeNameId)))
-        .add(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(Expr::col((D, StreamStaged::DatasetId)).into()));
+        .add(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(Expr::col((D, StreamStaged::DatasetId))));
 
     let mut select = Query::select();
     select

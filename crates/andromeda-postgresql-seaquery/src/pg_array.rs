@@ -1,6 +1,6 @@
 //! PostgreSQL array constructs sea-query has no native form for.
 
-use sea_query::{Expr, Func, Iden, PostgresQueryBuilder, SelectStatement, SimpleExpr};
+use sea_query::{Expr, Func, Iden, PostgresQueryBuilder, QueryStatementBuilder, SelectStatement, SimpleExpr};
 
 /// `ARRAY(subquery)` where the subquery carries bound values, collecting a
 /// single-column result set into one Postgres array.
@@ -45,13 +45,13 @@ pub fn any(array: SimpleExpr) -> SimpleExpr {
 /// The array value owns its elements, so each string is copied: a bound
 /// parameter cannot borrow from the caller's slice across the round trip.
 pub fn text_array(values: &[&str]) -> SimpleExpr {
-    Expr::val(values.iter().map(|value| (*value).to_owned()).collect::<Vec<String>>()).into()
+    Expr::val(values.iter().map(|value| (*value).to_owned()).collect::<Vec<String>>())
 }
 
 #[cfg(test)]
 mod tests {
     use crate::pg_array::{any, array_subquery};
-    use sea_query::{Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr};
+    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render_expr(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
@@ -69,7 +69,7 @@ mod tests {
         let (sql, values) = Query::select()
             .column(Alias::new("id"))
             .from(Alias::new("attribute_names"))
-            .and_where(Expr::col(Alias::new("name")).eq(any(Expr::val(vec!["a".to_string(), "b".to_string()]).into())))
+            .and_where(Expr::col(Alias::new("name")).eq(any(Expr::val(vec!["a".to_string(), "b".to_string()]))))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("= ANY("), "{sql}");

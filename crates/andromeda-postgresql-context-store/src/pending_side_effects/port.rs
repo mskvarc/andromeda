@@ -19,8 +19,8 @@ use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::interval::make_interval_secs;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sea_query::{DeleteStatement, Expr, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{DeleteStatement, Expr, ExprTrait, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 use std::sync::Arc;
@@ -31,7 +31,10 @@ use uuid::Uuid;
 impl SideEffectQueue for PendingSideEffectsRepository {
     async fn lease_batch(&self, worker_id: &SideEffectLeaseOwner, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, EntityError> {
         let (sql, values) = lease_batch_statement(worker_id.as_ref(), batch_size, f64::from(lease_seconds)).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(self.pool()).await.map_err(persistence)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(self.pool())
+            .await
+            .map_err(persistence)?;
 
         let mut leased = Vec::with_capacity(rows.len());
         for row in rows {
@@ -50,7 +53,10 @@ impl SideEffectQueue for PendingSideEffectsRepository {
 
     async fn ack(&self, id: SideEffectJobId, owner: &SideEffectLeaseOwner) -> Result<LeaseAcknowledgement, EntityError> {
         let (sql, values) = ack_statement(id.as_uuid(), owner.as_ref()).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence)?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
@@ -62,13 +68,19 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         next_attempt_at: DateTime<Utc>,
     ) -> Result<LeaseAcknowledgement, EntityError> {
         let (sql, values) = nack_statement(id.as_uuid(), owner.as_ref(), error, next_attempt_at).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence)?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
     async fn mark_dead(&self, id: SideEffectJobId, owner: &SideEffectLeaseOwner, error: &str) -> Result<LeaseAcknowledgement, EntityError> {
         let (sql, values) = mark_dead_statement(id.as_uuid(), owner.as_ref(), error).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence)?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 }
@@ -144,7 +156,7 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
                 .or(Expr::col(PendingSideEffects::LockedUntil).lte(Expr::current_timestamp())),
         )
         .order_by(PendingSideEffects::NextAttemptAt, Order::Asc)
-        .limit(batch_size.max(0) as u64)
+        .limit(<i32 as Ord>::max(batch_size, 0) as u64)
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
 
@@ -152,7 +164,7 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
         .table(PendingSideEffects::Table)
         .value(
             PendingSideEffects::LockedUntil,
-            Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds).into())),
+            Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
         .value(PendingSideEffects::LockedBy, owner)
         .and_where(Expr::col(PendingSideEffects::Id).in_subquery(candidates))

@@ -78,7 +78,7 @@ pub fn unnest_call<'column>(arrays: impl IntoIterator<Item = (&'column UnnestCol
 /// numbering is untouched.
 pub fn apply_with_ordinality(sql: String, alias: &dyn Iden, columns: &[UnnestColumn], ordinality: &dyn Iden) -> String {
     let emitted = format!("AS {}", quoted(alias));
-    let mut names: Vec<String> = columns.iter().map(|column| Iden::to_string(&*column.name)).collect();
+    let mut names: Vec<String> = columns.iter().map(|column| column.name.to_string()).collect();
     names.push(Iden::to_string(ordinality));
     let replacement = format!("WITH ORDINALITY AS {}({})", Iden::to_string(alias), names.join(", "));
     sql.replacen(&emitted, &replacement, 1)
@@ -95,7 +95,7 @@ pub fn apply_with_ordinality(sql: String, alias: &dyn Iden, columns: &[UnnestCol
 /// only match.
 pub fn apply_column_alias(sql: String, alias: &dyn Iden, columns: &[UnnestColumn]) -> String {
     let emitted = format!("AS {}", quoted(alias));
-    let names: Vec<String> = columns.iter().map(|column| Iden::to_string(&*column.name)).collect();
+    let names: Vec<String> = columns.iter().map(|column| column.name.to_string()).collect();
     let replacement = format!("AS {}({})", Iden::to_string(alias), names.join(", "));
     sql.replacen(&emitted, &replacement, 1)
 }

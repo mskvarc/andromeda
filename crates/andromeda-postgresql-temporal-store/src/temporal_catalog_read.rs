@@ -15,9 +15,9 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
 use andromeda_postgresql_temporal_query::alias::{An, S, Te};
-use sea_query::{Alias, DeleteStatement, Expr, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
-use sqlx::Row;
+use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Row};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -38,7 +38,7 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn temporal_entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalStoreError> {
         let (sql, values) = temporal_entity_exists_query(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let exists = sqlx::query_scalar_with(&sql, values).fetch_one(&self.pool).await?;
+        let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
         Ok(exists)
     }
 
@@ -60,7 +60,7 @@ impl TemporalRepository {
         }
         let identifiers: Vec<&str> = entity_ids.iter().map(Uri::as_str).collect();
         let (sql, values) = temporal_entity_types_query(&identifiers).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let mut types_by_entity = HashMap::with_capacity(rows.len());
         for row in rows {
             let raw_id: String = row
@@ -91,7 +91,7 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn attribute_stream_exists(&self, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalStoreError> {
         let (sql, values) = attribute_stream_exists_query(entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
-        let exists = sqlx::query_scalar_with(&sql, values).fetch_one(&self.pool).await?;
+        let exists = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_one(&self.pool).await?;
         Ok(exists)
     }
 
@@ -103,7 +103,7 @@ impl TemporalRepository {
     /// [`TemporalStoreError::Decode`] when a stored discriminator is not a URI.
     pub(crate) async fn attribute_dataset_ids(&self, entity_id: &Uri, attribute_name: &AttributeName) -> Result<Vec<Option<Uri>>, TemporalStoreError> {
         let (sql, values) = attribute_dataset_ids_query(entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
                 row.try_get::<Option<String>, _>("dataset_id")
@@ -125,7 +125,7 @@ impl TemporalRepository {
     /// [`TemporalStoreError::Decode`] when a stored name is not an attribute IRI.
     pub(crate) async fn temporal_attribute_names(&self, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalStoreError> {
         let (sql, values) = temporal_attribute_names_query(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 let raw: String = row.try_get("attribute_name")?;
@@ -165,13 +165,13 @@ impl TemporalRepository {
         let (select_sql, select_values) =
             select_attribute_streams_query(entity_id.as_str(), attribute_name.as_str(), dataset_selector).build_sqlx(PostgresQueryBuilder);
         let mut tx = self.pool.begin().await?;
-        let stream_ids: Vec<Uuid> = sqlx::query_scalar_with(&select_sql, select_values).fetch_all(&mut *tx).await?;
+        let stream_ids: Vec<Uuid> = sqlx::query_scalar_with(AssertSqlSafe(select_sql), select_values).fetch_all(&mut *tx).await?;
         if stream_ids.is_empty() {
             tx.rollback().await?;
             return Ok(0);
         }
         let (history_sql, history_values) = delete_stream_history_query(&stream_ids).build_sqlx(PostgresQueryBuilder);
-        let removed = sqlx::query_with(&history_sql, history_values).fetch_all(&mut *tx).await?;
+        let removed = sqlx::query_with(AssertSqlSafe(history_sql), history_values).fetch_all(&mut *tx).await?;
         let touched_writes = removed
             .iter()
             .map(|row| {
@@ -180,7 +180,10 @@ impl TemporalRepository {
             })
             .collect::<Result<Vec<Uuid>, _>>()?;
         let (streams_sql, streams_values) = delete_streams_query(&stream_ids).build_sqlx(PostgresQueryBuilder);
-        let streams = sqlx::query_with(&streams_sql, streams_values).execute(&mut *tx).await?.rows_affected();
+        let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
         release_named(&mut tx, &touched_writes).await?;
         tx.commit().await?;
         Ok(streams)
@@ -203,7 +206,7 @@ enum DatasetSelector<'a> {
 /// The array value owns its elements, so the slice is copied: a bound parameter
 /// cannot borrow from the caller's slice across the round trip.
 fn uuid_array(ids: &[Uuid]) -> sea_query::SimpleExpr {
-    Expr::val(ids.to_vec()).into()
+    Expr::val(ids.to_vec())
 }
 
 /// Join a stream to its temporal entity and its attribute name.

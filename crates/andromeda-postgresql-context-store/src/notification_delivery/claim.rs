@@ -17,8 +17,23 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
 };
-use sea_query::{Alias, Expr, Func, JoinType, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UpdateStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{
+    Alias,
+    Expr,
+    ExprTrait,
+    Func,
+    JoinType,
+    LockBehavior,
+    LockType,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    QueryStatementBuilder,
+    SelectStatement,
+    SimpleExpr,
+    UpdateStatement,
+};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::postgres::PgPool;
 
 /// Claim up to `batch_size` due deliveries for `worker_id` under `lease`.
@@ -55,7 +70,7 @@ pub async fn claim_due(
     let mut tx = pool.begin().await?;
 
     let (sql, values) = claim_statement(worker_id, batch_size, max_attempts, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
-    let claimed_ids: Vec<i64> = sqlx::query_scalar_with(&sql, values).fetch_all(&mut *tx).await?;
+    let claimed_ids: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
     if claimed_ids.is_empty() {
         tx.commit().await?;
         return Ok(Vec::new());
@@ -64,7 +79,7 @@ pub async fn claim_due(
     let (sql, values) = claimed_projection_statement(&claimed_ids).build_sqlx(PostgresQueryBuilder);
     let (unnest_alias, unnest_columns, ordinality) = ordinality_alias();
     let sql = apply_with_ordinality(sql, &unnest_alias, &unnest_columns, &ordinality);
-    let rows: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(&sql, values).fetch_all(&mut *tx).await?;
+    let rows: Vec<RawClaimedDeliveryRow> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
 
     tx.commit().await?;
     Ok(rows.into_iter().map(ClaimedDelivery::try_from).collect())
@@ -105,7 +120,7 @@ fn claim_statement(worker_id: &str, batch_size: i32, max_attempts: i32, lease_se
                 .or(Expr::col(NotificationDeliveries::LeaseUntil).lte(Expr::current_timestamp())),
         )
         .order_by(NotificationDeliveries::NextAttemptAt, Order::Asc)
-        .limit(batch_size.max(0) as u64)
+        .limit(<i32 as Ord>::max(batch_size, 0) as u64)
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
 
@@ -115,7 +130,7 @@ fn claim_statement(worker_id: &str, batch_size: i32, max_attempts: i32, lease_se
         .value(NotificationDeliveries::ClaimedBy, worker_id)
         .value(
             NotificationDeliveries::LeaseUntil,
-            Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds).into())),
+            Expr::current_timestamp().add(make_interval_secs(Expr::val(lease_seconds))),
         )
         .and_where(Expr::col(NotificationDeliveries::Id).in_subquery(candidates))
         .returning_col(NotificationDeliveries::Id)
@@ -137,14 +152,11 @@ fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
 
     let ordered_names = Query::select()
         .expr(array_agg_ordered(
-            Expr::col((dictionary.clone(), AttributeNames::Name)).into(),
-            Expr::col((unnest_alias.clone(), position)).into(),
+            Expr::col((dictionary.clone(), AttributeNames::Name)),
+            Expr::col((unnest_alias.clone(), position)),
         ))
         .from_function(
-            unnest_call([(
-                &unnest_columns[0],
-                Expr::col((event.clone(), NotificationEvents::ChangedAttributeNameIds)).into(),
-            )]),
+            unnest_call([(&unnest_columns[0], Expr::col((event.clone(), NotificationEvents::ChangedAttributeNameIds)))]),
             unnest_alias.clone(),
         )
         .join_as(
@@ -190,7 +202,7 @@ fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
 
 /// A bound `bigint[]` value from a batch of claimed identifiers.
 fn bigint_array(ids: &[i64]) -> SimpleExpr {
-    Expr::val(ids.to_vec()).into()
+    Expr::val(ids.to_vec())
 }
 
 #[cfg(test)]

@@ -16,8 +16,9 @@ use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_re
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
 use andromeda_postgresql_seaquery::timescale::drop_chunks;
 use chrono::{DateTime, TimeDelta, Utc};
-use sea_query::{DeleteStatement, Expr, Iden, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query::{DeleteStatement, Expr, ExprTrait, Iden, PostgresQueryBuilder, Query};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::AssertSqlSafe;
 use thiserror::Error;
 
 /// The `attribute_history` alias inside a garbage-collection subquery.
@@ -128,9 +129,15 @@ impl TemporalRepository {
         let attribute_history_chunks = self.drop_chunks("attribute_history", cutoff).await?;
         let scope_history_chunks = self.drop_chunks("scope_history", cutoff).await?;
         let (streams_sql, streams_values) = collect_empty_streams().build_sqlx(PostgresQueryBuilder);
-        let streams = sqlx::query_with(&streams_sql, streams_values).execute(&self.pool).await?.rows_affected();
+        let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
         let (entities_sql, entities_values) = collect_empty_temporal_entities().build_sqlx(PostgresQueryBuilder);
-        let temporal_entities = sqlx::query_with(&entities_sql, entities_values).execute(&self.pool).await?.rows_affected();
+        let temporal_entities = sqlx::query_with(AssertSqlSafe(entities_sql), entities_values)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
         let released_write_records = release_behind_horizon(&self.pool, cutoff).await?;
         Ok(TemporalRetentionOutcome::Swept(TemporalRetentionSweep {
             cutoff,
@@ -144,9 +151,9 @@ impl TemporalRepository {
 
     /// Drop one hypertable's chunks that lie entirely before the cutoff.
     async fn drop_chunks(&self, hypertable: &str, cutoff: DateTime<Utc>) -> Result<usize, TemporalStoreError> {
-        let statement = Query::select().expr(drop_chunks(hypertable, Expr::val(cutoff).into())).to_owned();
+        let statement = Query::select().expr(drop_chunks(hypertable, Expr::val(cutoff))).to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_with(&sql, values).fetch_all(&self.pool).await?.len())
+        Ok(sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?.len())
     }
 }
 
@@ -236,7 +243,7 @@ mod tests {
     fn both_hypertables_are_aged_out_on_the_operational_write_clock() {
         for hypertable in ["attribute_history", "scope_history"] {
             let sql = Query::select()
-                .expr(drop_chunks(hypertable, Expr::val("2026-01-01T00:00:00Z").into()))
+                .expr(drop_chunks(hypertable, Expr::val("2026-01-01T00:00:00Z")))
                 .to_owned()
                 .to_string(PostgresQueryBuilder);
             assert!(sql.contains(&format!("drop_chunks('{hypertable}', older_than => ")), "{sql}");

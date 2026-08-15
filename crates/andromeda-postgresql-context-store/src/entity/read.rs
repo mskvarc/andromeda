@@ -12,8 +12,8 @@ use andromeda_postgresql_context_query::entity as entity_sql;
 use andromeda_postgresql_query::{projected_attribute_names::projected_attribute_names, q_predicate::attribute_names::ResolvedAttributeNames};
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
-use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
 use std::collections::HashMap;
@@ -22,7 +22,9 @@ impl EntityRepository {
     /// Retrieve an entity's expanded payload by identifier.
     pub async fn get(&self, id: &Uri) -> Result<Option<Value>, ContextStoreError> {
         let (sql, values) = payload_by_id_query(id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let result: Option<Value> = sqlx::query_scalar_with(&sql, values).fetch_optional(&self.pool).await?;
+        let result: Option<Value> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(result)
     }
 
@@ -33,7 +35,7 @@ impl EntityRepository {
         }
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let (sql, values) = payloads_by_ids_query(&id_strs).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         let mut result = HashMap::with_capacity(ids.len());
         for row in rows {
@@ -47,7 +49,7 @@ impl EntityRepository {
     /// Retrieve an entity's payload together with its `modified_at`.
     pub async fn get_snapshot(&self, id: &Uri) -> Result<Option<EntitySnapshot>, ContextStoreError> {
         let (sql, values) = snapshot_by_id_query(id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(&self.pool).await?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
 
         Ok(row.map(|row| EntitySnapshot {
             payload: row.get("payload"),
@@ -62,7 +64,7 @@ impl EntityRepository {
         }
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let (sql, values) = snapshots_by_ids_query(&id_strs).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         let mut result = HashMap::with_capacity(ids.len());
         for row in rows {
@@ -81,7 +83,7 @@ impl EntityRepository {
     /// Retrieve system attributes for a single entity.
     pub async fn get_sys_attrs(&self, id: &Uri) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
         let (sql, values) = sys_attrs_by_id_query(id.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(&self.pool).await?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
 
         Ok(row.map(|row| SysAttrsSnapshot {
             created_at: row.get("created_at"),
@@ -97,7 +99,7 @@ impl EntityRepository {
         }
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
         let (sql, values) = sys_attrs_by_ids_query(&id_strs).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         let mut result = HashMap::with_capacity(rows.len());
         for row in rows {
@@ -129,14 +131,18 @@ impl EntityRepository {
 
         let has_count = built.count.is_some();
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
-        let result_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let result_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         let (rows, window_count) = extract_payloads(result_rows, has_count)?;
 
         let total_count = match (built.count, window_count, rows.is_empty()) {
             (Some(_), Some(count), _) => Some(count),
             (Some(count), None, true) => {
                 let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-                Some(sqlx::query_scalar_with(&count_sql, count_values).fetch_one(&self.pool).await?)
+                Some(
+                    sqlx::query_scalar_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
+                        .fetch_one(&self.pool)
+                        .await?,
+                )
             }
             (Some(_), None, false) | (None, _, _) => None,
         };
@@ -154,7 +160,7 @@ impl EntityRepository {
         let statement = entity_sql::build_ids_query(&planned.query, &attribute_names)?;
 
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         let ids: Vec<Uri> = rows.iter().map(|row| stored_uri(row.get("id"))).collect::<Result<_, _>>()?;
         Ok(planned.outcome(ids, None))
     }

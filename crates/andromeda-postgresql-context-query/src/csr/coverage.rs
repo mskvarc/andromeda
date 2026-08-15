@@ -27,7 +27,7 @@ use crate::csr::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_seaquery::{jsonb::jsonb_exists, literal::text_literal, operator::regex_match, pg_operator::PgBinaryOperator};
 use iri_rs::IriBuf;
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
 
 /// Whether a registration's `information[].entities[]` covers `entity_type`.
 ///
@@ -63,10 +63,11 @@ pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
         Condition::any()
             .add(Condition::all().add(lacks_key(ent(), "id")).add(lacks_key(ent(), "idPattern")))
             .add(SeaExpr::expr(ent().json_get_text(text_literal("id"))).eq(entity_id.as_str()))
-            .add(Condition::all().add(jsonb_exists(ent(), text_literal("idPattern"))).add(regex_match(
-                SeaExpr::val(entity_id.as_str()).into(),
-                ent().json_get_text(text_literal("idPattern")),
-            ))),
+            .add(
+                Condition::all()
+                    .add(jsonb_exists(ent(), text_literal("idPattern")))
+                    .add(regex_match(SeaExpr::val(entity_id.as_str()), ent().json_get_text(text_literal("idPattern")))),
+            ),
     );
     entity_id_candidate(entity_id).and(information_covers(entities_match))
 }

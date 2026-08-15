@@ -52,14 +52,14 @@ mod tests {
 
     #[test]
     fn to_char_renders_the_function_with_its_inline_format() {
-        let sql = render(to_char(Expr::col(Alias::new("observed_at")).into(), "HH24:MI:SS.US"));
+        let sql = render(to_char(Expr::col(Alias::new("observed_at")), "HH24:MI:SS.US"));
         assert!(sql.contains("to_char("), "{sql}");
         assert!(sql.contains("'HH24:MI:SS.US'"), "the format is inlined, not bound: {sql}");
     }
 
     #[test]
     fn pg_input_is_valid_names_the_type_it_validates_against() {
-        let sql = render(pg_input_is_valid(Expr::col(Alias::new("stored")).into(), PostgresType::Timestamptz));
+        let sql = render(pg_input_is_valid(Expr::col(Alias::new("stored")), PostgresType::Timestamptz));
         assert!(sql.contains("pg_input_is_valid("), "{sql}");
         assert!(sql.contains("'timestamptz'"), "{sql}");
     }

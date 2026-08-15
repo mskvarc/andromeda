@@ -23,7 +23,7 @@ mod tests {
     #[test]
     fn a_collation_is_applied_as_a_quoted_postfix() {
         let sql = Query::select()
-            .expr(collate(Expr::col(Alias::new("id")).into(), "und-u-ks-identic"))
+            .expr(collate(Expr::col(Alias::new("id")), "und-u-ks-identic"))
             .to_owned()
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"COLLATE "und-u-ks-identic""#), "{sql}");

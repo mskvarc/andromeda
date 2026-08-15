@@ -2,18 +2,18 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository};
 use sea_query::{PostgresQueryBuilder, SelectStatement};
-use sea_query_binder::SqlxBinder;
-use sqlx::postgres::PgRow;
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, postgres::PgRow};
 
 impl TemporalRepository {
     /// Execute a compiled temporal statement tree, binding its values through
-    /// `sea-query-binder`.
+    /// `sea-query-sqlx`.
     ///
     /// # Errors
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn execute_temporal_query(&self, statement: SelectStatement) -> Result<Vec<PgRow>, TemporalStoreError> {
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        Ok(sqlx::query_with(&sql, values).fetch_all(&self.pool).await?)
+        Ok(sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?)
     }
 }

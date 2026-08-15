@@ -60,33 +60,30 @@ pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedCompar
     match scalar {
         Scalar::Number(_) => LiftedComparison {
             stored: cast_compound(stored_text, PostgresType::Numeric),
-            operand: cast(SeaExpr::val(scalar.literal_text()).into(), PostgresType::Numeric),
+            operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Numeric),
         },
         Scalar::Bool(_) => LiftedComparison {
             stored: cast_compound(stored_text, PostgresType::Boolean),
-            operand: cast(SeaExpr::val(scalar.literal_text()).into(), PostgresType::Boolean),
+            operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Boolean),
         },
         Scalar::Str(_) => LiftedComparison {
             stored: stored_text,
-            operand: SeaExpr::val(scalar.literal_text()).into(),
+            operand: SeaExpr::val(scalar.literal_text()),
         },
         Scalar::DateTime(instant) => LiftedComparison {
             stored: stored_date_time(stored_text),
-            operand: cast(
-                SeaExpr::val(instant.to_rfc3339_opts(SecondsFormat::Micros, true)).into(),
-                PostgresType::Timestamptz,
-            ),
+            operand: cast(SeaExpr::val(instant.to_rfc3339_opts(SecondsFormat::Micros, true)), PostgresType::Timestamptz),
         },
         Scalar::Date(date) => LiftedComparison {
             stored: stored_text,
-            operand: SeaExpr::val(NgsiLdDate::from(*date).to_string()).into(),
+            operand: SeaExpr::val(NgsiLdDate::from(*date).to_string()),
         },
         Scalar::Time(time) => LiftedComparison {
             stored: stored_time(stored_text),
             // A time of day with no canonical form is one no write path could
             // have stored; binding text nothing can equal is the non-match the
             // normalised stored column would produce anyway.
-            operand: SeaExpr::val(NgsiLdTime::normalise(*time).map_or_else(|_| String::new(), |canonical| canonical.to_string())).into(),
+            operand: SeaExpr::val(NgsiLdTime::normalise(*time).map_or_else(|_| String::new(), |canonical| canonical.to_string())),
         },
     }
 }
@@ -138,7 +135,7 @@ mod tests {
     /// A plain column stands in for the `payload #>> '{}'` extraction real
     /// callers lift.
     fn stored() -> SimpleExpr {
-        SeaExpr::col(Alias::new("stored")).into()
+        SeaExpr::col(Alias::new("stored"))
     }
 
     /// Render one lifted operand to its SQL text alone.
@@ -150,7 +147,7 @@ mod tests {
     fn bound_value(expr: SimpleExpr) -> String {
         let (_, Values(values)) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
         match values.into_iter().next().expect("one bound value") {
-            Value::String(Some(text)) => *text,
+            Value::String(Some(text)) => text,
             other => unreachable!("a lifted operand binds text: {other:?}"),
         }
     }

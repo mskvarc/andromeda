@@ -84,7 +84,10 @@ async fn read_stamp_row(pool: &PgPool) -> Option<(i32, String)> {
 async fn under_drift(pool: &PgPool, drift: &str) -> Result<(), SchemaContractError> {
     let stamped = read_stamp_row(pool).await;
 
-    sqlx::query(drift).execute(pool).await.expect("the drift statement must apply");
+    sqlx::query(sqlx::AssertSqlSafe(drift))
+        .execute(pool)
+        .await
+        .expect("the drift statement must apply");
     let verified = verify_schema_contract(pool, &embedded_contract()).await;
 
     sqlx::query("DELETE FROM schema_metadata")
@@ -114,7 +117,10 @@ async fn under_drift(pool: &PgPool, drift: &str) -> Result<(), SchemaContractErr
 async fn under_drift_through_ensure(pool: &PgPool, drift: &str) -> (Result<(), SchemaContractError>, Option<(i32, String)>) {
     let stamped = read_stamp_row(pool).await;
 
-    sqlx::query(drift).execute(pool).await.expect("the drift statement must apply");
+    sqlx::query(sqlx::AssertSqlSafe(drift))
+        .execute(pool)
+        .await
+        .expect("the drift statement must apply");
     let outcome = ensure_schema_contract(pool, &embedded_contract()).await;
     let row_after_ensure = read_stamp_row(pool).await;
 

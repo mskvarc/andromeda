@@ -97,7 +97,7 @@ struct ChurnOutcome {
 async fn churn(pool: &PgPool, statement: &str, entity_key: i64) -> ChurnOutcome {
     let mut transaction = pool.begin().await.expect("the churn transaction must open");
     for round in 1..=CHURN_UPDATES {
-        sqlx::query(statement)
+        sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(entity_key)
             .bind(round)
             .execute(&mut *transaction)

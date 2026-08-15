@@ -3,7 +3,7 @@
 //! Almost every value in a converted statement is a sea-query bound value:
 //! `build_sqlx` renders its `$n` marker and numbers it. One value shape cannot
 //! travel that way — a nullable-element array (`Vec<Option<T>>`) — because
-//! `sea-query-binder` 0.7 cannot carry it in either direction:
+//! `sea-query-sqlx` cannot carry it in either direction:
 //!
 //! - Reading a `Value::Array` back into a Postgres array binds it as
 //!   `Option<Vec<T>>`, and the `Value` to `Vec<T>` conversion unwraps every

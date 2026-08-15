@@ -205,7 +205,7 @@ impl<'ast> Visit<'ast> for ArchitectureVisitor<'_> {
     }
 
     fn visit_item_impl(&mut self, item: &'ast ItemImpl) {
-        if let Some((_, trait_path, _)) = &item.trait_
+        if let Some((trait_path, _)) = &item.trait_
             && let Some(trait_name) = trait_path.segments.last().map(|segment| segment.ident.to_string())
             && let Some(owner) = technical_http_trait_owner(&trait_name)
             && !self.path.starts_with(owner)

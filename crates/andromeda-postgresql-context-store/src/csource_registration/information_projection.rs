@@ -347,7 +347,7 @@ pub async fn replace_registration_information(
         .filter(|operations| !operations.is_empty())
         .map(|operations| operations.iter().map(|operation| stored_operation(*operation).code()).collect());
 
-    let mut insert: QueryBuilder<'_, Postgres> = QueryBuilder::new(
+    let mut insert: QueryBuilder<Postgres> = QueryBuilder::new(
         "INSERT INTO registration_information \
          (registration_id, entity_types, entity_id, entity_id_pattern, property_name_ids, relationship_name_ids, operations) ",
     );

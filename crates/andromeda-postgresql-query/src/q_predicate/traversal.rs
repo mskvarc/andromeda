@@ -19,7 +19,7 @@ use crate::{attribute_name_id::AttributeNameId, q_predicate::target::QFilterTarg
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
 use andromeda_postgresql_seaquery::{literal::int_literal, operator::array_contains};
-use sea_query::{Alias, Condition, Expr as SeaExpr, JoinType, Query, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, JoinType, Query, SimpleExpr};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
 /// itself.
@@ -115,7 +115,7 @@ fn type_guard(guard_types: &[AttributeName], linked_alias: &str) -> SimpleExpr {
     guard_types
         .iter()
         .fold(Condition::any(), |guard, guard_type| {
-            guard.add(array_contains(types_column.clone().into(), SeaExpr::val(guard_type.as_str()).into()))
+            guard.add(array_contains(types_column.clone(), SeaExpr::val(guard_type.as_str())))
         })
         .into()
 }

@@ -20,9 +20,10 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, unnest_call},
 };
 use dashmap::DashMap;
-use sea_query::{Alias, Asterisk, Expr, Func, InsertStatement, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, InsertStatement, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{
+    AssertSqlSafe,
     PgConnection,
     Row,
     postgres::{PgPool, PgRow},
@@ -104,7 +105,7 @@ impl AttributeNameCache {
     /// [`AttributeNameLookupError::StoredName`] when a stored row is unreadable.
     pub async fn preload(&self) -> Result<(), AttributeNameLookupError> {
         let (sql, values) = preload_query().build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         self.absorb(&decode(&rows)?, CachePublication::Publish);
         Ok(())
     }
@@ -152,7 +153,7 @@ impl AttributeNameLookup for AttributeNameCache {
         // The pool rather than a caller's connection: publication to the cache
         // is only sound from a committed snapshot, which is what this read sees.
         let (sql, values) = name_select_query(&wanted).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         let found = decode(&rows)?;
         self.absorb(&found, CachePublication::Publish);
         resolved.extend(found);
@@ -193,7 +194,7 @@ impl AttributeNameLookup for AttributeNameCache {
         // of this same transaction minted is uncommitted, and a read that could
         // not see it would count it as new a second time.
         let (held_sql, held_values) = name_select_query(&wanted).build_sqlx(PostgresQueryBuilder);
-        let held = decode(&sqlx::query_with(&held_sql, held_values).fetch_all(&mut *connection).await?)?;
+        let held = decode(&sqlx::query_with(AssertSqlSafe(held_sql), held_values).fetch_all(&mut *connection).await?)?;
         let unheld = names_not_yet_held(&wanted, &held);
         // What the dictionary already held may still be rolled back by the
         // caller's transaction, so the mappings answer this caller and go no
@@ -210,15 +211,17 @@ impl AttributeNameLookup for AttributeNameCache {
         // the bound be crossed silently. The read is paid only when a name is
         // genuinely new, which is once per distinct attribute IRI per process.
         let (size_sql, size_values) = size_query().build_sqlx(PostgresQueryBuilder);
-        let existing: i64 = sqlx::query_scalar_with(&size_sql, size_values).fetch_one(&mut *connection).await?;
+        let existing: i64 = sqlx::query_scalar_with(AssertSqlSafe(size_sql), size_values)
+            .fetch_one(&mut *connection)
+            .await?;
         // `COUNT(*)` is never negative; saturating to `u64::MAX` on a value
         // that says otherwise refuses the write rather than admitting it.
         self.growth_limit.admit(u64::try_from(existing).unwrap_or(u64::MAX), unheld.len())?;
 
         let (insert_sql, insert_values) = name_insert_query(&unheld).map_err(statement_error)?.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&insert_sql, insert_values).execute(&mut *connection).await?;
+        sqlx::query_with(AssertSqlSafe(insert_sql), insert_values).execute(&mut *connection).await?;
         let (minted_sql, minted_values) = name_select_query(&unheld).build_sqlx(PostgresQueryBuilder);
-        let minted = decode(&sqlx::query_with(&minted_sql, minted_values).fetch_all(&mut *connection).await?)?;
+        let minted = decode(&sqlx::query_with(AssertSqlSafe(minted_sql), minted_values).fetch_all(&mut *connection).await?)?;
         self.absorb(&minted, CachePublication::Withhold);
         resolved.extend(minted);
         Ok(resolved.into_iter().collect())
@@ -302,10 +305,11 @@ fn name_select_query(names: &[&str]) -> SelectStatement {
 /// array through `UNNEST`, so a large batch cannot exhaust the parameter space.
 fn name_insert_query(names: &[&str]) -> Result<InsertStatement, sea_query::error::Error> {
     let column = UnnestColumn::new(AttributeNames::Name, PostgresType::TextArray);
+    let source_alias = Alias::new("t");
     let mut source = Query::select();
     source
-        .column(Alias::new("unnest"))
-        .from_function(unnest_call([(&column, text_array(names))]), Alias::new("t"));
+        .column(source_alias.clone())
+        .from_function(unnest_call([(&column, text_array(names))]), source_alias);
     let mut insert = Query::insert();
     insert
         .into_table(AttributeNames::Table)
@@ -432,12 +436,15 @@ mod tests {
     /// its insert, so the insert states what happens then rather than failing.
     #[test]
     fn minting_leaves_a_name_another_writer_already_minted_alone() {
-        use sea_query_binder::SqlxBinder;
+        use sea_query_sqlx::SqlxBinder;
         let (sql, values) = name_insert_query(&["https://example.com/speed"])
             .expect("arity")
             .build_sqlx(PostgresQueryBuilder);
         assert!(sql.contains("INSERT INTO \"attribute_names\" (\"name\")"), "{sql}");
-        assert!(sql.contains("UNNEST($1::text[])"), "the batch is one bound array cast to text[]: {sql}");
+        assert!(
+            sql.contains("SELECT \"t\" FROM UNNEST($1::text[]) AS \"t\""),
+            "the scalar table-function result is selected through its table alias: {sql}"
+        );
         assert!(sql.contains("ON CONFLICT (\"name\") DO NOTHING"), "{sql}");
         assert_eq!(values.0.0.len(), 1, "{sql}");
     }
@@ -453,7 +460,7 @@ mod tests {
     /// large batch inside the protocol's parameter space.
     #[test]
     fn a_batch_of_names_is_read_back_through_a_single_array_bind() {
-        use sea_query_binder::SqlxBinder;
+        use sea_query_sqlx::SqlxBinder;
         let (sql, values) = name_select_query(&["https://example.com/speed", "https://example.com/brand"]).build_sqlx(PostgresQueryBuilder);
         assert!(sql.contains("\"name\" = ANY("), "{sql}");
         assert_eq!(values.0.0.len(), 1, "the whole batch is one bound array: {sql}");

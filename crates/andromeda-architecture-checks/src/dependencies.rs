@@ -56,7 +56,7 @@ impl DependencyKind {
 ///
 /// Every boundary derives its denylist from this list rather than restating its
 /// own, so no crate's can be quietly weaker than another's: the drivers and
-/// dialects (`sqlx`, `sea-query`, `sea-query-binder`, `geozero`), the transports
+/// dialects (`sqlx`, `sea-query`, `sea-query-sqlx`, `geozero`), the transports
 /// and async runtime (`axum`, `reqwest`, `rumqttc`, `tokio`), the wire buffer
 /// (`bytes`), the configuration and CLI front ends (`confique`, `clap`), the
 /// alternate JSON parser (`sonic-rs`) and the global allocator (`mimalloc`) are
@@ -73,7 +73,7 @@ pub const FORBIDDEN_PRODUCTION_DEPENDENCIES: &[&str] = &[
     "reqwest",
     "rumqttc",
     "sea-query",
-    "sea-query-binder",
+    "sea-query-sqlx",
     "sonic-rs",
     "sqlx",
     "tokio",
@@ -427,7 +427,7 @@ workspace = true
     fn the_baseline_forbids_the_runtime_transport_dialect_and_allocator_gaps() {
         // The four the per-crate template omitted, which is what let an async
         // runtime into a passive crate and a dialect binder past every guard.
-        for gap in ["rumqttc", "sea-query-binder", "sonic-rs", "mimalloc"] {
+        for gap in ["rumqttc", "sea-query-sqlx", "sonic-rs", "mimalloc"] {
             assert!(FORBIDDEN_PRODUCTION_DEPENDENCIES.contains(&gap), "{gap} must be forbidden by default");
         }
     }

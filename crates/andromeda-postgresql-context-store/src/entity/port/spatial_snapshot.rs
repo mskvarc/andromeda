@@ -13,8 +13,8 @@ use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use async_trait::async_trait;
-use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
 use tracing::warn;
 
 /// Read the typed columns required to reconstruct default-location index
@@ -23,7 +23,7 @@ fn location_snapshots_statement() -> SelectStatement {
     Query::select()
         .column(Entities::Id)
         .column(Entities::Types)
-        .expr(cast(Expr::col(Entities::Location).into(), PostgresType::Bytea))
+        .expr(cast(Expr::col(Entities::Location), PostgresType::Bytea))
         .from(Entities::Table)
         .and_where(Expr::col(Entities::Location).is_not_null())
         .to_owned()
@@ -33,7 +33,7 @@ fn location_snapshots_statement() -> SelectStatement {
 impl EntitySpatialSnapshotSource for EntityRepository {
     async fn location_snapshots(&self) -> Result<Vec<EntitySpatialSnapshot>, EntityError> {
         let (sql, values) = location_snapshots_statement().build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_as_with::<_, (String, Vec<String>, Vec<u8>), _>(&sql, values)
+        let rows = sqlx::query_as_with::<_, (String, Vec<String>, Vec<u8>), _>(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| EntityError::persistence(format!("spatial snapshot query failed: {error}")))?;
@@ -74,7 +74,7 @@ mod tests {
     use crate::entity::{port::spatial_snapshot::location_snapshots_statement, repo::EntityRepository};
     use andromeda_entity::port::spatial_snapshot::EntitySpatialSnapshotSource;
     use sea_query::PostgresQueryBuilder;
-    use sea_query_binder::SqlxBinder;
+    use sea_query_sqlx::SqlxBinder;
 
     fn assert_spatial_source<T: EntitySpatialSnapshotSource>() {}
 

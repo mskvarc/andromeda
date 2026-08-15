@@ -16,8 +16,8 @@ use crate::error::ContextStoreError;
 use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
 use andromeda_postgresql_schema::notification::NotificationDeliveries;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, Keyword, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::postgres::PgPool;
 
 /// The attempt count an exhausted delivery carries.
@@ -42,7 +42,7 @@ pub(crate) const EXHAUSTED_ATTEMPT_COUNT: i32 = i32::MAX;
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn mark_delivered(pool: &PgPool, id: i64, worker_id: &str) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_delivered_statement(id, worker_id).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(&sql, values).execute(pool).await?;
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 
@@ -59,7 +59,7 @@ pub async fn mark_failed(
     next_attempt_at: DateTime<Utc>,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_failed_statement(id, worker_id, failure, next_attempt_at).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(&sql, values).execute(pool).await?;
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 
@@ -70,7 +70,7 @@ pub async fn mark_failed(
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn mark_exhausted(pool: &PgPool, id: i64, worker_id: &str, failure: &str) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_exhausted_statement(id, worker_id, failure).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(&sql, values).execute(pool).await?;
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 

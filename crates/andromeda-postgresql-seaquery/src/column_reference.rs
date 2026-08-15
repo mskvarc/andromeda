@@ -50,8 +50,8 @@ impl ColumnReference {
     /// Render the reference as the quoted SQL text a custom fragment interpolates.
     pub fn render(&self) -> String {
         match self {
-            ColumnReference::Bare(column) => quoted(&**column),
-            ColumnReference::Qualified(relation, column) => qualified(&**relation, &**column),
+            ColumnReference::Bare(column) => format!("\"{column}\""),
+            ColumnReference::Qualified(relation, column) => format!("\"{relation}\".\"{column}\""),
         }
     }
 
@@ -60,8 +60,8 @@ impl ColumnReference {
     /// column through the builder instead.
     pub fn column_expr(&self) -> SimpleExpr {
         match self {
-            ColumnReference::Bare(column) => Expr::col(column.clone()).into(),
-            ColumnReference::Qualified(relation, column) => Expr::col((relation.clone(), column.clone())).into(),
+            ColumnReference::Bare(column) => Expr::col(column.clone()),
+            ColumnReference::Qualified(relation, column) => Expr::col((relation.clone(), column.clone())),
         }
     }
 }

@@ -12,7 +12,7 @@ use andromeda_postgresql_seaquery::{
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
 };
-use sea_query::{CaseStatement, Expr, Iden, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SimpleExpr};
 use sqlx::{Postgres, Transaction};
 
 /// The `UNNEST` set-write's staging alias, `d`.
@@ -43,7 +43,7 @@ struct Ordinality;
 /// within the batch rather than by any timestamp a client supplied.
 ///
 /// The fourteen column arrays bind through `sqlx` rather than sea-query because
-/// nine of them carry NULLs (`Vec<Option<T>>`), which `sea-query-binder` cannot
+/// nine of them carry NULLs (`Vec<Option<T>>`), which `sea-query-sqlx` cannot
 /// represent — see [`external_placeholder`]. The statement structure is still
 /// built by sea-query; only the array values are bound outside it, in the marker
 /// order [`projection_upsert_sql`] emits.
@@ -59,7 +59,7 @@ pub async fn upsert_projection_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &
 
     let binds = ProjectionBinds::from_rows(rows)?;
     let sql = projection_upsert_sql()?;
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&binds.entity_keys)
         .bind(&binds.modified_ats)
         .bind(&binds.attribute_name_ids)
@@ -108,7 +108,7 @@ fn staging_columns() -> [UnnestColumn; 14] {
 
 /// A staging column reference, `d.<column>`.
 fn staged(column: CurrentAttributeValues) -> SimpleExpr {
-    Expr::col((Staging, column)).into()
+    Expr::col((Staging, column))
 }
 
 /// Build the projection upsert statement for one batch.

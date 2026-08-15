@@ -32,7 +32,7 @@ mod tests {
     #[test]
     fn the_lock_key_is_the_hash_of_the_bound_value() {
         let (sql, values) = Query::select()
-            .expr(advisory_xact_lock(Expr::val("tenant-a").into()))
+            .expr(advisory_xact_lock(Expr::val("tenant-a")))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("pg_advisory_xact_lock(hashtext("), "{sql}");

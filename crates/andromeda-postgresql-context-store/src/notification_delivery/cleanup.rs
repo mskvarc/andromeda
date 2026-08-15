@@ -14,8 +14,8 @@ use crate::error::ContextStoreError;
 use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
 use andromeda_postgresql_seaquery::pg_array::any;
 use chrono::{DateTime, Utc};
-use sea_query::{DeleteStatement, Expr, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query::{DeleteStatement, Expr, ExprTrait, PostgresQueryBuilder, Query};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::postgres::PgPool;
 
 /// Remove deliveries completed before `cutoff`, and any event left unreferenced.
@@ -40,12 +40,12 @@ use sqlx::postgres::PgPool;
 pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
     let mut tx = pool.begin().await?;
     let (sql, values) = purge_delivered_statement(cutoff).build_sqlx(PostgresQueryBuilder);
-    let events: Vec<i64> = sqlx::query_scalar_with(&sql, values).fetch_all(&mut *tx).await?;
+    let events: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
     let removed = events.len() as u64;
 
     if !events.is_empty() {
         let (sql, values) = purge_orphan_events_among_statement(&events).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values).execute(&mut *tx).await?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
@@ -81,7 +81,7 @@ pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Res
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>, max_attempts: i32) -> Result<u64, ContextStoreError> {
     let (sql, values) = purge_exhausted_statement(cutoff, max_attempts).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(&sql, values).execute(pool).await?;
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(result.rows_affected())
 }
 
@@ -108,7 +108,7 @@ pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>, max_at
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn purge_orphan_events_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
     let (sql, values) = purge_orphan_events_before_statement(cutoff).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(&sql, values).execute(pool).await?;
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(result.rows_affected())
 }
 
@@ -136,7 +136,7 @@ fn purge_orphan_events_among_statement(event_ids: &[i64]) -> DeleteStatement {
         .to_owned();
     Query::delete()
         .from_table(NotificationEvents::Table)
-        .and_where(Expr::col(NotificationEvents::Id).eq(any(Expr::val(event_ids.to_vec()).into())))
+        .and_where(Expr::col(NotificationEvents::Id).eq(any(Expr::val(event_ids.to_vec()))))
         .and_where(Expr::exists(referencing_delivery).not())
         .to_owned()
 }

@@ -11,7 +11,7 @@ use andromeda_health::{
 };
 use async_trait::async_trait;
 use sea_query::{Expr, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
 use std::{collections::BTreeMap, time::Instant};
 
@@ -42,7 +42,7 @@ impl HealthIndicator for DatabaseHealthIndicator {
         // A trivial round trip that proves the pool can reach the database; the
         // selected constant is never read, only the success of the query.
         let (sql, values) = Query::select().expr(Expr::val(1)).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(&self.pool).await;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool).await;
         let elapsed_ms = start.elapsed().as_millis();
 
         let mut details = BTreeMap::new();

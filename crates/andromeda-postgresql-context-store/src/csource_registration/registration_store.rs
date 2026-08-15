@@ -27,8 +27,8 @@ use andromeda_registration::{
 };
 use async_trait::async_trait;
 use iri_rs::IriBuf;
-use sea_query::{CaseStatement, Cond, Expr as SeaExpr, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{CaseStatement, Cond, Expr as SeaExpr, ExprTrait, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::postgres::PgPool;
 use std::{fmt::Display, sync::Arc};
 
@@ -115,13 +115,13 @@ fn apply_csr_projection(select: &mut SelectStatement) {
         .column(Csr::Tenant)
         .column(Csr::ObservationInterval)
         .column(Csr::ManagementInterval)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::Location).into()), Csr::Location)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::ObservationSpace).into()), Csr::ObservationSpace)
-        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::OperationSpace).into()), Csr::OperationSpace)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::Location)), Csr::Location)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::ObservationSpace)), Csr::ObservationSpace)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::OperationSpace)), Csr::OperationSpace)
         .column(Csr::ExpiresAt)
         .column(Csr::Endpoint)
         .column(Csr::Accept)
-        .expr_as(cast(SeaExpr::col(Csr::Mode).into(), PostgresType::Text), Csr::Mode)
+        .expr_as(cast(SeaExpr::col(Csr::Mode), PostgresType::Text), Csr::Mode)
         .column(Csr::Operations)
         .column(Csr::Scope)
         .column(Csr::RefreshRate)
@@ -129,7 +129,7 @@ fn apply_csr_projection(select: &mut SelectStatement) {
         .column(Csr::ContextSourceInfo)
         .column(Csr::JsonldContext)
         .column(Csr::ContextSourceAlias)
-        .expr_as(cast(SeaExpr::col(Csr::Status).into(), PostgresType::Text), Csr::Status)
+        .expr_as(cast(SeaExpr::col(Csr::Status), PostgresType::Text), Csr::Status)
         .column(Csr::TimesSent)
         .column(Csr::TimesFailed)
         .column(Csr::LastSuccess)
@@ -284,7 +284,7 @@ impl RegistrationStore for PostgresRegistrationStore {
             .and_where(SeaExpr::col(Csr::ExpiresAt).lte(cutoff))
             .order_by(Csr::Id, Order::Asc);
         let (select_sql, select_values) = expired_select.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&select_sql, select_values)
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(select_sql.as_str()), select_values)
             .fetch_all(&mut *transaction)
             .await
             .map_err(persistence_error)?;
@@ -304,7 +304,7 @@ impl RegistrationStore for PostgresRegistrationStore {
             .and_where(SeaExpr::col(RegistrationInformation::RegistrationId).in_subquery(expired_ids))
             .to_owned();
         let (info_sql, info_values) = delete_information.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&info_sql, info_values)
+        sqlx::query_with(sqlx::AssertSqlSafe(info_sql.as_str()), info_values)
             .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;
@@ -315,7 +315,7 @@ impl RegistrationStore for PostgresRegistrationStore {
             .and_where(SeaExpr::col(Csr::ExpiresAt).lte(cutoff))
             .to_owned();
         let (delete_sql, delete_values) = delete_registrations.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&delete_sql, delete_values)
+        sqlx::query_with(sqlx::AssertSqlSafe(delete_sql.as_str()), delete_values)
             .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;
@@ -332,7 +332,10 @@ impl RegistrationStore for PostgresRegistrationStore {
             .to_owned();
         let statement = Query::select().expr(SeaExpr::exists(inner)).to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let row: (bool,) = sqlx::query_as_with(&sql, values).fetch_one(&self.pool).await.map_err(persistence_error)?;
+        let row: (bool,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(persistence_error)?;
         Ok(row.0)
     }
 
@@ -343,7 +346,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         let scopes = params.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let create_sql = csr_create_sql()?;
-        sqlx::query(&create_sql)
+        sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
             .bind(id.as_str())
             .bind(params.registration_name)
             .bind(params.description)
@@ -386,7 +389,10 @@ impl RegistrationStore for PostgresRegistrationStore {
         let mut select = csr_base_select();
         select.and_where(SeaExpr::col(Csr::Id).eq(id.as_str()));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(&self.pool).await.map_err(persistence_error)?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(persistence_error)?;
         match row {
             Some(row) => Ok(Some(row_to_csr(&row).map_err(persistence_error)?)),
             None => Ok(None),
@@ -396,7 +402,7 @@ impl RegistrationStore for PostgresRegistrationStore {
     async fn list(&self, pagination: Pagination) -> Result<RegistrationPage, RegistrationError> {
         let count = Query::select().expr(count_all()).from(Csr::Table).to_owned();
         let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-        let count_row: (i64,) = sqlx::query_as_with(&count_sql, count_values)
+        let count_row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
             .fetch_one(&self.pool)
             .await
             .map_err(persistence_error)?;
@@ -406,7 +412,10 @@ impl RegistrationStore for PostgresRegistrationStore {
             .limit(u64::from(pagination.limit))
             .offset(u64::from(pagination.offset));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence_error)?;
         let csrs = rows
             .iter()
             .map(|row| row_to_csr(row).map_err(persistence_error))
@@ -420,12 +429,15 @@ impl RegistrationStore for PostgresRegistrationStore {
     async fn query_compiled(&self, compiled: &CompiledCsrQuery) -> Result<RegistrationPage, RegistrationError> {
         let built = csr_sql::build_csr_query(compiled).map_err(persistence_error)?;
         let (count_sql, count_values) = built.count.build_sqlx(PostgresQueryBuilder);
-        let (total,): (i64,) = sqlx::query_as_with(&count_sql, count_values)
+        let (total,): (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
             .fetch_one(&self.pool)
             .await
             .map_err(persistence_error)?;
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence_error)?;
         let csrs = rows
             .iter()
             .map(|row| row_to_csr(row).map_err(persistence_error))
@@ -443,7 +455,7 @@ impl RegistrationStore for PostgresRegistrationStore {
         let scopes = values.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let update_sql = csr_update_sql();
-        let result = sqlx::query(&update_sql)
+        let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(id.as_str())
             .bind(values.registration_name.as_deref())
             .bind(values.description.as_deref())
@@ -501,7 +513,10 @@ impl RegistrationStore for PostgresRegistrationStore {
         }
         select.order_by(Csr::CreatedAt, Order::Asc);
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence_error)?;
         rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
     }
 
@@ -513,7 +528,10 @@ impl RegistrationStore for PostgresRegistrationStore {
         }
         select.order_by(Csr::Id, Order::Asc).limit(u64::from(limit));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence_error)?;
         rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
     }
 
@@ -527,7 +545,7 @@ impl RegistrationStore for PostgresRegistrationStore {
             .and_where(SeaExpr::col(RegistrationInformation::RegistrationId).eq(id.as_str()))
             .to_owned();
         let (info_sql, info_values) = delete_information.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&info_sql, info_values)
+        sqlx::query_with(sqlx::AssertSqlSafe(info_sql.as_str()), info_values)
             .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;
@@ -537,7 +555,7 @@ impl RegistrationStore for PostgresRegistrationStore {
             .and_where(SeaExpr::col(Csr::Id).eq(id.as_str()))
             .to_owned();
         let (delete_sql, delete_values) = delete_registration.build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&delete_sql, delete_values)
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(delete_sql.as_str()), delete_values)
             .execute(&mut *transaction)
             .await
             .map_err(persistence_error)?;

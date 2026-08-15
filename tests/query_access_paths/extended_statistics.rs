@@ -24,7 +24,7 @@ const CORRELATED_FIXTURE: [&str; 3] = [
 
 /// Read the planner's estimated row count for a statement.
 async fn estimated_rows(connection: &mut PgConnection, statement: &str) -> f64 {
-    let plan: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN {statement}"))
+    let plan: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN {statement}")))
         .fetch_all(&mut *connection)
         .await
         .expect("the plan must be readable");

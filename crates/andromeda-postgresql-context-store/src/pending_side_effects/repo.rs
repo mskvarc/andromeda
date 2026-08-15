@@ -9,7 +9,7 @@ use andromeda_context_commit::{side_effect_job_id::SideEffectJobId, write_ordina
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
@@ -45,11 +45,11 @@ fn enqueue_statement(
             PendingSideEffects::Payload,
         ])
         .values([
-            Expr::val(id).into(),
-            Expr::val(write_id).into(),
+            Expr::val(id),
+            Expr::val(write_id),
             recorded_at.into(),
             consequence_base.into(),
-            Expr::val(payload).into(),
+            Expr::val(payload),
         ])?
         .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
     Ok(statement.to_owned())
@@ -102,7 +102,7 @@ impl PendingSideEffectsRepository {
         )
         .map_err(|error| ContextStoreError::Internal(format!("failed to build pending_side_effects insert: {error}")))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values).execute(&mut **tx).await?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
         Ok(())
     }
 }

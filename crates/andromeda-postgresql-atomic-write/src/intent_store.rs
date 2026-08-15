@@ -21,6 +21,7 @@ use sea_query::{
     Alias,
     DeleteStatement,
     Expr,
+    ExprTrait,
     InsertStatement,
     Keyword,
     LockBehavior,
@@ -32,7 +33,7 @@ use sea_query::{
     SimpleExpr,
     UpdateStatement,
 };
-use sea_query_binder::SqlxBinder;
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
@@ -66,10 +67,10 @@ fn intent_unnest_columns() -> [UnnestColumn; 4] {
 fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<Value>) -> Result<InsertStatement, sea_query::error::Error> {
     let columns = intent_unnest_columns();
     let call = unnest_call([
-        (&columns[0], Expr::val(ids).into()),
+        (&columns[0], Expr::val(ids)),
         (&columns[1], text_array(entity_ids)),
-        (&columns[2], Expr::val(bases).into()),
-        (&columns[3], Expr::val(payloads).into()),
+        (&columns[2], Expr::val(bases)),
+        (&columns[3], Expr::val(payloads)),
     ]);
     let input = Alias::new("input");
     let source = Query::select()
@@ -136,7 +137,10 @@ impl PostgresTemporalIntentStore {
             .map_err(|error| TemporalError::internal(format!("failed to build intent enqueue: {error}")))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let sql = apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns());
-        sqlx::query_with(&sql, values).execute(&mut **tx).await.map_err(persistence)?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(&mut **tx)
+            .await
+            .map_err(persistence)?;
         Ok(())
     }
 
@@ -159,7 +163,10 @@ impl PostgresTemporalIntentStore {
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
         let (sql, values) = claim_statement(owner.as_uuid(), entity_id.map(Uri::as_str), i64::from(limit.get()), lease_until).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence)?;
         let mut claimed = rows
             .iter()
             .map(|row| {
@@ -180,13 +187,19 @@ impl PostgresTemporalIntentStore {
 impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
     async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
         let (sql, values) = pending_statement(Some(entity_id.as_str())).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence)?;
         rows.iter().map(PostgresTemporalIntentStore::decode).collect()
     }
 
     async fn pending_intents(&self) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
         let (sql, values) = pending_statement(None).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence)?;
         rows.iter().map(PostgresTemporalIntentStore::decode).collect()
     }
 }
@@ -215,7 +228,10 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
     async fn acknowledge(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<(), TemporalError> {
         let (sql, values) =
             acknowledge_statement(intent.sequence.get(), intent.intent.record.write_id().as_uuid(), owner.as_uuid()).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(&self.pool)
+            .await
+            .map_err(persistence)?;
         if result.rows_affected() == 1 {
             Ok(())
         } else {
@@ -232,7 +248,10 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
             owner.as_uuid(),
         )
         .build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(&self.pool)
+            .await
+            .map_err(persistence)?;
         if result.rows_affected() == 1 {
             Ok(())
         } else {
@@ -265,7 +284,7 @@ fn claim_statement(owner: Uuid, entity_id: Option<&str>, limit: i64, lease_until
     }
     eligible
         .order_by(TemporalAppendIntents::Sequence, Order::Asc)
-        .limit(limit.max(0) as u64)
+        .limit(<i64 as Ord>::max(limit, 0) as u64)
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked);
 
     Query::update()

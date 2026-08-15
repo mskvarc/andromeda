@@ -18,7 +18,7 @@ mod tests {
 
     #[test]
     fn ltree_matches_uses_lquery_cast() {
-        let expr = ltree_matches(Expr::col("scope_paths").into(), Expr::val("A.B.*").into());
+        let expr = ltree_matches(Expr::col("scope_paths"), Expr::val("A.B.*"));
         let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(sql.contains("::lquery"), "{sql}");
     }

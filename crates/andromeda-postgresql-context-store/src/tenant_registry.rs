@@ -9,8 +9,8 @@ use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
 use andromeda_tenancy::{config::TenancyConfig, database::TenantDatabase, database_name::TenantDatabaseName, error::TenancyError, status::TenantStatus};
 use async_trait::async_trait;
-use sea_query::{Expr, InsertStatement, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, InsertStatement, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
 
 /// The tenant registry, backed by the platform database's `tenants` table.
@@ -65,7 +65,7 @@ impl PostgresTenantRegistry {
     async fn register_default_tenant(&self) -> Result<(), ContextStoreError> {
         let statement = default_tenant_upsert(self.default_database.as_str(), &TenantStatus::Active.to_string()).map_err(statement_error)?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values).execute(&self.main_pool).await?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.main_pool).await?;
         Ok(())
     }
 }
@@ -91,7 +91,7 @@ impl TenantDatabase for PostgresTenantRegistry {
 
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
         let (sql, values) = registered_tenants_query().build_sqlx(PostgresQueryBuilder);
-        let names: Vec<String> = sqlx::query_scalar_with(&sql, values)
+        let names: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
@@ -108,7 +108,7 @@ impl TenantDatabase for PostgresTenantRegistry {
 
     async fn lookup(&self, name: &TenantName) -> Result<Option<TenantDatabaseName>, TenancyError> {
         let (sql, values) = named_tenant_database_query(name.as_str(), NamedTenantScope::ExcludeDefault).build_sqlx(PostgresQueryBuilder);
-        let db_name: Option<String> = sqlx::query_scalar_with(&sql, values)
+        let db_name: Option<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
@@ -132,10 +132,10 @@ impl PostgresTenantRegistry {
     async fn provision_inner(&self, name: &TenantName) -> Result<TenantDatabaseName, ContextStoreError> {
         let mut tx = self.main_pool.begin().await?;
         let (lock_sql, lock_values) = advisory_lock_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&lock_sql, lock_values).execute(&mut *tx).await?;
+        sqlx::query_with(sqlx::AssertSqlSafe(lock_sql.as_str()), lock_values).execute(&mut *tx).await?;
 
         let (lookup_sql, lookup_values) = named_tenant_database_query(name.as_str(), NamedTenantScope::AnyRow).build_sqlx(PostgresQueryBuilder);
-        if let Some(existing) = sqlx::query_scalar_with::<_, String, _>(&lookup_sql, lookup_values)
+        if let Some(existing) = sqlx::query_scalar_with::<_, String, _>(sqlx::AssertSqlSafe(lookup_sql.as_str()), lookup_values)
             .fetch_optional(&mut *tx)
             .await?
         {
@@ -149,7 +149,7 @@ impl PostgresTenantRegistry {
 
         let statement = tenant_insert(name.as_str(), db_name.as_str(), &TenantStatus::Active.to_string()).map_err(statement_error)?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values).execute(&mut *tx).await?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut *tx).await?;
         tx.commit().await?;
 
         let tenant_url = self.database_url.with_db_name(&db_name);
@@ -198,7 +198,7 @@ fn named_tenant_database_query(name: &str, scope: NamedTenantScope) -> SelectSta
 
 /// Take the transaction advisory lock keyed on `name`.
 fn advisory_lock_query(name: &str) -> SelectStatement {
-    Query::select().expr(advisory_xact_lock(Expr::val(name).into())).to_owned()
+    Query::select().expr(advisory_xact_lock(Expr::val(name))).to_owned()
 }
 
 /// Insert the unnamed default tenant, refreshing its timestamp if it exists.
@@ -222,12 +222,12 @@ fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement,
             true.into(),
             db_name.into(),
             status.into(),
-            Expr::current_timestamp().into(),
-            Expr::current_timestamp().into(),
+            Expr::current_timestamp(),
+            Expr::current_timestamp(),
         ])?
         .on_conflict(
             OnConflict::column(Tenants::DbName)
-                .values([(Tenants::ModifiedAt, Expr::current_timestamp().into())])
+                .values([(Tenants::ModifiedAt, Expr::current_timestamp())])
                 .to_owned(),
         );
     Ok(statement.to_owned())
@@ -251,8 +251,8 @@ fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<InsertStatem
             false.into(),
             db_name.into(),
             status.into(),
-            Expr::current_timestamp().into(),
-            Expr::current_timestamp().into(),
+            Expr::current_timestamp(),
+            Expr::current_timestamp(),
         ])?;
     Ok(statement.to_owned())
 }
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn the_advisory_lock_hashes_the_bound_name() {
         let (sql, values) = {
-            use sea_query_binder::SqlxBinder;
+            use sea_query_sqlx::SqlxBinder;
             advisory_lock_query("acme").build_sqlx(PostgresQueryBuilder)
         };
         assert!(sql.contains("pg_advisory_xact_lock(hashtext("), "{sql}");

@@ -12,7 +12,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     postgis::{st_distance, validated_geom_from_ewkb},
 };
-use sea_query::{Alias, Expr as SeaExpr, Func, Keyword, SimpleExpr};
+use sea_query::{Alias, Expr as SeaExpr, Func, Keyword, QueryStatementBuilder, SimpleExpr};
 
 /// The expression measuring an entity's distance to the reference geometry a
 /// distance ordering sorts by (clause 4.23), with the reference geometry bound
@@ -36,7 +36,7 @@ use sea_query::{Alias, Expr as SeaExpr, Func, Keyword, SimpleExpr};
 /// and leaves the `id` tiebreaker to decide.
 pub fn geo_order_distance(target: &OrderTarget, attribute_names: &ResolvedAttributeNames, outer: CorrelatedEntityRow<'_>, reference: &[u8]) -> SimpleExpr {
     // Built fresh per branch so the EWKB it binds is not shared as an owned value.
-    let reference_geography = || cast(validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()).into()), PostgresType::Geography);
+    let reference_geography = || cast(validated_geom_from_ewkb(SeaExpr::val(reference.to_vec())), PostgresType::Geography);
     match order_subject(target, attribute_names) {
         OrderSubject::None => st_distance(cast(SimpleExpr::Keyword(Keyword::Null), PostgresType::Geography), reference_geography()),
         OrderSubject::LocationColumn => st_distance(outer.column(Alias::new("location_geo")), reference_geography()),

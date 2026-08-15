@@ -136,7 +136,7 @@ pub async fn analyze(pool: &PgPool) {
 
 /// Run `EXPLAIN (ANALYZE, BUFFERS)` and return the plan as one text block.
 pub async fn explain(pool: &PgPool, statement: &str) -> String {
-    let lines: Vec<String> = sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, BUFFERS) {statement}"))
+    let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
         .fetch_all(pool)
         .await
         .expect("the plan must be readable");

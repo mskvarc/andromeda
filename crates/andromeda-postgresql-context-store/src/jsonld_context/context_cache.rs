@@ -8,7 +8,7 @@ use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use async_trait::async_trait;
 use iri_rs::IriBuf;
 use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
 use urn_rs::UrnBuilder;
@@ -21,7 +21,7 @@ const CACHED_KIND: &str = "Cached";
 impl ContextCache for JsonLdContextRepository {
     async fn get(&self, url: &IriBuf) -> Result<Option<Value>, ContextCacheError> {
         let (sql, values) = payload_by_identifier_query(url.as_str()).build_sqlx(PostgresQueryBuilder);
-        let row: Option<(Json<Value>,)> = sqlx::query_as_with(&sql, values)
+        let row: Option<(Json<Value>,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| ContextCacheError::Read(error.to_string()))?;
@@ -32,7 +32,7 @@ impl ContextCache for JsonLdContextRepository {
         let local_id = cached_context_identifier()?;
         let statement = cache_insert(&local_id, url.as_str(), payload).map_err(|error| ContextCacheError::Write(error.to_string()))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values)
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(&self.pool)
             .await
             .map_err(|error| ContextCacheError::Write(error.to_string()))?;
@@ -59,10 +59,10 @@ fn cache_insert(local_id: &str, url: &str, payload: &Value) -> Result<InsertStat
             url.into(),
             // A bound text parameter does not implicitly coerce to the enum
             // column the way an unknown-typed literal would, so the label is cast.
-            cast(Expr::val(CACHED_KIND).into(), PostgresType::JsonldContextKind),
+            cast(Expr::val(CACHED_KIND), PostgresType::JsonldContextKind),
             payload.clone().into(), // clone: the bound value owns the JSON for the round trip
-            Expr::current_timestamp().into(),
-            Expr::current_timestamp().into(),
+            Expr::current_timestamp(),
+            Expr::current_timestamp(),
             0_i64.into(),
         ])?
         .on_conflict(OnConflict::column(JsonldContexts::Url).do_nothing().to_owned());

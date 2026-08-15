@@ -11,8 +11,8 @@ use andromeda_postgresql_schema::{
 };
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
@@ -57,7 +57,7 @@ pub async fn insert_events_in_tx(
     // The conflict clause suppresses a replayed event, so a replay reads back
     // only the events this transaction actually inserted; every one of them is
     // then owed its deliveries.
-    let inserted: Vec<(i64, i32)> = sqlx::query_as_with(&sql, values).fetch_all(&mut **tx).await?;
+    let inserted: Vec<(i64, i32)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut **tx).await?;
 
     for (event_id, event_ordinal) in inserted {
         let Some(event) = events.iter().find(|event| matches_ordinal(event, event_ordinal)) else {
@@ -69,7 +69,7 @@ pub async fn insert_events_in_tx(
         }
         let statement = insert_deliveries_statement(event_id, record.recorded_at(), &subscription_ids)?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values).execute(&mut **tx).await?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&mut **tx).await?;
     }
 
     Ok(())
@@ -113,11 +113,11 @@ fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &
         statement
             .values([
                 recorded_at.into(),
-                Expr::val(write_id).into(),
+                Expr::val(write_id),
                 event_ordinal.into(),
                 stored_trigger(event.trigger).code().into(),
                 event.entity_id.as_str().into(),
-                Expr::val(changed_attribute_name_ids).into(),
+                Expr::val(changed_attribute_name_ids),
                 // The snapshot is bound by value because a bound parameter owns
                 // its data; the entity state cannot be borrowed into the wire
                 // buffer.
@@ -138,7 +138,7 @@ fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &
 
 /// Bind one optional entity snapshot as a JSONB value or SQL `NULL`.
 fn snapshot_value(snapshot: Option<&Value>) -> sea_query::SimpleExpr {
-    Expr::val(snapshot.cloned()).into()
+    Expr::val(snapshot.cloned())
 }
 
 /// Insert the deliveries one written event owes, resolving each matched

@@ -51,8 +51,8 @@ mod tests {
         let sql = Query::select()
             .expr(time_bucket(
                 Expr::cust("'PT1H'::interval"),
-                Expr::col(Alias::new("observed_at")).into(),
-                Expr::col(Alias::new("origin")).into(),
+                Expr::col(Alias::new("observed_at")),
+                Expr::col(Alias::new("origin")),
             ))
             .to_owned()
             .to_string(PostgresQueryBuilder);
@@ -62,7 +62,7 @@ mod tests {
     #[test]
     fn drop_chunks_names_its_hypertable_and_binds_the_cutoff() {
         let (sql, values) = Query::select()
-            .expr(drop_chunks("attribute_history", Expr::val("2026-01-01T00:00:00Z").into()))
+            .expr(drop_chunks("attribute_history", Expr::val("2026-01-01T00:00:00Z")))
             .to_owned()
             .build(PostgresQueryBuilder);
         assert!(sql.contains("drop_chunks('attribute_history', older_than => "), "{sql}");

@@ -2,7 +2,7 @@
 //! containment, POSIX regex, and the presence-and-value conjunction.
 
 use crate::pg_operator::PgBinaryOperator;
-use sea_query::{Expr, SimpleExpr};
+use sea_query::{Expr, ExprTrait, SimpleExpr};
 
 /// Combine a presence test with a value test.
 ///
@@ -45,7 +45,7 @@ mod tests {
     /// `= ANY`, so the rendered leaf must be the containment form.
     #[test]
     fn array_membership_renders_as_containment_over_a_single_element_array() {
-        let expr = array_contains(Expr::col("types").into(), Expr::val("type_iri").into());
+        let expr = array_contains(Expr::col("types"), Expr::val("type_iri"));
         let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(sql.contains("@> ARRAY(SELECT "), "{sql}");
         assert!(!sql.contains("= ANY"), "{sql}");
@@ -62,7 +62,7 @@ mod tests {
 
     #[test]
     fn regex_match_generates_the_posix_operator() {
-        let expr = regex_match(Expr::col("id").into(), Expr::val("urn:.*").into());
+        let expr = regex_match(Expr::col("id"), Expr::val("urn:.*"));
         let sql = Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder);
         assert!(sql.contains(" ~ "), "{sql}");
     }

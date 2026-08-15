@@ -24,8 +24,8 @@ impl TypesColumn {
     /// The column reference this target reads.
     fn expr(self) -> SimpleExpr {
         match self {
-            TypesColumn::Entities => SeaExpr::col(Entities::Types).into(),
-            TypesColumn::AliasedEntities => SeaExpr::col((E, Entities::Types)).into(),
+            TypesColumn::Entities => SeaExpr::col(Entities::Types),
+            TypesColumn::AliasedEntities => SeaExpr::col((E, Entities::Types)),
         }
     }
 }
@@ -34,7 +34,7 @@ impl TypesColumn {
 pub fn condition(expr: &TypeExpr, column: TypesColumn) -> Condition {
     match expr {
         TypeExpr::Wildcard => Condition::all(),
-        TypeExpr::Type(iri) => Condition::all().add(array_contains(column.expr(), SeaExpr::val(iri.as_str()).into())),
+        TypeExpr::Type(iri) => Condition::all().add(array_contains(column.expr(), SeaExpr::val(iri.as_str()))),
         TypeExpr::And(children) => children.iter().fold(Condition::all(), |cond, child| cond.add(condition(child, column))),
         TypeExpr::Or(children) => children.iter().fold(Condition::any(), |cond, child| cond.add(condition(child, column))),
     }

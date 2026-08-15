@@ -29,8 +29,23 @@ use andromeda_snapshot::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use sea_query::{Alias, Expr, Func, FunctionCall, Iden, IntoIden, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
+use sea_query::{
+    Alias,
+    Expr,
+    ExprTrait,
+    Func,
+    FunctionCall,
+    Iden,
+    IntoIden,
+    Keyword,
+    OnConflict,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+};
+use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgPool};
 use std::fmt::Display;
@@ -61,7 +76,7 @@ fn persistence_error(error: impl Display) -> SnapshotError {
 
 /// `entity_data ->> 'type'` - the entity's type token as text.
 fn entity_type_text(table: impl IntoIden) -> SimpleExpr {
-    SimpleExpr::from(Expr::col((table.into_iden(), SnapshotEntities::EntityData))).json_get_text(Expr::val("type").into())
+    SimpleExpr::from(Expr::col((table.into_iden(), SnapshotEntities::EntityData))).json_get_text(Expr::val("type"))
 }
 
 /// The stored-snapshot projection every read shares, decoding the status enum to
@@ -75,7 +90,7 @@ fn apply_snapshot_projection(select: &mut SelectStatement) {
         .column(Snapshots::SnapshotPriority)
         .column(Snapshots::Endpoint)
         .column(Snapshots::ReceiverInfo)
-        .expr_as(cast(Expr::col(Snapshots::Status).into(), PostgresType::Text), Snapshots::Status)
+        .expr_as(cast(Expr::col(Snapshots::Status), PostgresType::Text), Snapshots::Status)
         .column(Snapshots::QueriesDetails)
         .column(Snapshots::TemporalQueriesDetails)
         .column(Snapshots::CreatedAt)
@@ -209,7 +224,7 @@ fn snapshot_rows_unnest(columns: &[UnnestColumn; 2]) -> FunctionCall {
 impl SnapshotStore for SnapshotRepository {
     async fn create(&self, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
         let sql = snapshot_create_sql()?;
-        sqlx::query(&sql)
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(params.id.as_str())
             .bind(params.snapshot_queries.map(serde_json::to_value).transpose()?)
             .bind(params.snapshot_temporal_queries.map(serde_json::to_value).transpose()?)
@@ -234,7 +249,10 @@ impl SnapshotStore for SnapshotRepository {
         let mut select = snapshot_select();
         select.and_where(Expr::col(Snapshots::Id).eq(id.as_str()));
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(self.pool()).await.map_err(persistence_error)?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(persistence_error)?;
         match row {
             Some(row) => Ok(Some(row_to_snapshot(&row).map_err(persistence_error)?)),
             None => Ok(None),
@@ -248,7 +266,10 @@ impl SnapshotStore for SnapshotRepository {
             .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(self.pool()).await.map_err(persistence_error)?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(persistence_error)?;
         Ok(row.is_some())
     }
 
@@ -260,7 +281,10 @@ impl SnapshotStore for SnapshotRepository {
             .order_by(Snapshots::CreatedAt, Order::Asc)
             .limit(1);
         let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-        let row = sqlx::query_with(&sql, values).fetch_optional(self.pool()).await.map_err(persistence_error)?;
+        let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(persistence_error)?;
         row.as_ref().map(row_to_snapshot).transpose().map_err(persistence_error)
     }
 
@@ -275,27 +299,24 @@ impl SnapshotStore for SnapshotRepository {
             .table(Snapshots::Table)
             .value(
                 Snapshots::SnapshotLifetime,
-                Func::coalesce([
-                    Expr::val(lifetime.map(ToString::to_string)).into(),
-                    Expr::col(Snapshots::SnapshotLifetime).into(),
-                ]),
+                Func::coalesce([Expr::val(lifetime.map(ToString::to_string)), Expr::col(Snapshots::SnapshotLifetime)]),
             )
             .value(
                 Snapshots::SnapshotPriority,
-                Func::coalesce([
-                    Expr::val(priority.map(|p| i16::from(p.as_u8()))).into(),
-                    Expr::col(Snapshots::SnapshotPriority).into(),
-                ]),
+                Func::coalesce([Expr::val(priority.map(|p| i16::from(p.as_u8()))), Expr::col(Snapshots::SnapshotPriority)]),
             )
             .value(
                 Snapshots::ExpiresAt,
-                Func::coalesce([Expr::val(new_expires_at).into(), Expr::col(Snapshots::ExpiresAt).into()]),
+                Func::coalesce([Expr::val(new_expires_at), Expr::col(Snapshots::ExpiresAt)]),
             )
             .value(Snapshots::ModifiedAt, now())
             .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence_error)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence_error)?;
         Ok(result.rows_affected())
     }
 
@@ -308,7 +329,7 @@ impl SnapshotStore for SnapshotRepository {
     ) -> Result<u64, SnapshotError> {
         let statement = Query::update()
             .table(Snapshots::Table)
-            .value(Snapshots::Status, cast(Expr::val(<&str>::from(status)).into(), PostgresType::SnapshotStatus))
+            .value(Snapshots::Status, cast(Expr::val(<&str>::from(status)), PostgresType::SnapshotStatus))
             .value(Snapshots::QueriesDetails, Expr::val(queries_details.and_then(|d| serde_json::to_value(d).ok())))
             .value(
                 Snapshots::TemporalQueriesDetails,
@@ -319,7 +340,10 @@ impl SnapshotStore for SnapshotRepository {
             .and_where(Expr::col(Snapshots::Status).eq("preparing"))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence_error)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence_error)?;
         Ok(result.rows_affected())
     }
 
@@ -329,7 +353,10 @@ impl SnapshotStore for SnapshotRepository {
 
     async fn match_by_filter(&self, filter: &SnapshotPurgeFilter) -> Result<Vec<Uri>, SnapshotError> {
         let (sql, values) = build_match_query(filter).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(self.pool()).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(self.pool())
+            .await
+            .map_err(persistence_error)?;
         let mut ids = Vec::with_capacity(rows.len());
         for row in &rows {
             let raw: String = row.try_get("id").map_err(persistence_error)?;
@@ -349,7 +376,7 @@ impl SnapshotStore for SnapshotRepository {
         let mut tx = self.pool().begin().await.map_err(persistence_error)?;
 
         let control_sql = clone_snapshot_sql()?;
-        sqlx::query(&control_sql)
+        sqlx::query(sqlx::AssertSqlSafe(control_sql.as_str()))
             .bind(source_id.as_str())
             .bind(new_id.as_str())
             .bind(new_expires_at)
@@ -358,7 +385,7 @@ impl SnapshotStore for SnapshotRepository {
             .map_err(persistence_error)?;
 
         let entities_sql = clone_rows_sql(SnapshotEntities::Table, SnapshotEntities::EntityId, SnapshotEntities::EntityData)?;
-        sqlx::query(&entities_sql)
+        sqlx::query(sqlx::AssertSqlSafe(entities_sql.as_str()))
             .bind(source_id.as_str())
             .bind(new_id.as_str())
             .execute(&mut *tx)
@@ -370,7 +397,7 @@ impl SnapshotStore for SnapshotRepository {
             SnapshotTemporalEntities::EntityId,
             SnapshotTemporalEntities::TemporalData,
         )?;
-        sqlx::query(&temporal_sql)
+        sqlx::query(sqlx::AssertSqlSafe(temporal_sql.as_str()))
             .bind(source_id.as_str())
             .bind(new_id.as_str())
             .execute(&mut *tx)
@@ -388,7 +415,10 @@ impl SnapshotStore for SnapshotRepository {
             .and_where(Expr::col(Snapshots::ExpiresAt).lte(cutoff))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence_error)?;
+        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence_error)?;
         Ok(result.rows_affected())
     }
 
@@ -399,7 +429,10 @@ impl SnapshotStore for SnapshotRepository {
             .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        sqlx::query_with(&sql, values).execute(self.pool()).await.map_err(persistence_error)?;
+        sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .execute(self.pool())
+            .await
+            .map_err(persistence_error)?;
         Ok(())
     }
 
@@ -476,11 +509,14 @@ impl SnapshotStore for SnapshotRepository {
             .expr_as(entity_type_text(SnapshotEntities::Table), TypeColumn)
             .from(SnapshotEntities::Table)
             .and_where(Expr::col(SnapshotEntities::SnapshotId).eq(snapshot_id.as_str()))
-            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val("type").into()))
+            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val("type")))
             .order_by(TypeColumn, Order::Asc)
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(self.pool()).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(self.pool())
+            .await
+            .map_err(persistence_error)?;
         let mut types = Vec::with_capacity(rows.len());
         for row in &rows {
             if let Some(raw) = row.try_get::<Option<String>, _>("t").map_err(persistence_error)? {
@@ -498,7 +534,7 @@ impl SnapshotStore for SnapshotRepository {
             .and_where(Expr::expr(entity_type_text(SnapshotEntities::Table)).eq(type_name.as_str()))
             .to_owned();
         let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-        let count_row = sqlx::query_with(&count_sql, count_values)
+        let count_row = sqlx::query_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
             .fetch_one(self.pool())
             .await
             .map_err(persistence_error)?;
@@ -512,7 +548,7 @@ impl SnapshotStore for SnapshotRepository {
             .and_where(Expr::col(SnapshotEntities::SnapshotId).eq(snapshot_id.as_str()))
             .and_where(Expr::expr(entity_type_text(SnapshotEntities::Table)).eq(type_name.as_str()));
         let (attr_sql, attr_values) = attributes.build_sqlx(PostgresQueryBuilder);
-        let attr_rows = sqlx::query_with(&attr_sql, attr_values)
+        let attr_rows = sqlx::query_with(sqlx::AssertSqlSafe(attr_sql.as_str()), attr_values)
             .fetch_all(self.pool())
             .await
             .map_err(persistence_error)?;
@@ -528,7 +564,10 @@ impl SnapshotStore for SnapshotRepository {
         let mut attributes = distinct_attribute_keys();
         attributes.and_where(Expr::col(SnapshotEntities::SnapshotId).eq(snapshot_id.as_str()));
         let (sql, values) = attributes.build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(self.pool()).await.map_err(persistence_error)?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(self.pool())
+            .await
+            .map_err(persistence_error)?;
         let mut attrs = Vec::with_capacity(rows.len());
         for row in &rows {
             let raw: String = row.try_get("key").map_err(persistence_error)?;
@@ -542,10 +581,10 @@ impl SnapshotStore for SnapshotRepository {
             .expr_as(count_all(), CountColumn)
             .from(SnapshotEntities::Table)
             .and_where(Expr::col(SnapshotEntities::SnapshotId).eq(snapshot_id.as_str()))
-            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val(attr_name.as_str()).into()))
+            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val(attr_name.as_str())))
             .to_owned();
         let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-        let count_row = sqlx::query_with(&count_sql, count_values)
+        let count_row = sqlx::query_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
             .fetch_one(self.pool())
             .await
             .map_err(persistence_error)?;
@@ -559,12 +598,12 @@ impl SnapshotStore for SnapshotRepository {
             .expr_as(entity_type_text(SnapshotEntities::Table), TypeColumn)
             .from(SnapshotEntities::Table)
             .and_where(Expr::col(SnapshotEntities::SnapshotId).eq(snapshot_id.as_str()))
-            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val(attr_name.as_str()).into()))
-            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val("type").into()))
+            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val(attr_name.as_str())))
+            .and_where(SimpleExpr::from(Expr::col(SnapshotEntities::EntityData)).jsonb_has_key(Expr::val("type")))
             .order_by(TypeColumn, Order::Asc)
             .to_owned();
         let (type_sql, type_values) = type_statement.build_sqlx(PostgresQueryBuilder);
-        let type_rows = sqlx::query_with(&type_sql, type_values)
+        let type_rows = sqlx::query_with(sqlx::AssertSqlSafe(type_sql.as_str()), type_values)
             .fetch_all(self.pool())
             .await
             .map_err(persistence_error)?;
@@ -585,10 +624,7 @@ fn distinct_attribute_keys() -> SelectStatement {
         .distinct()
         .column(KeyColumn)
         .from(SnapshotEntities::Table)
-        .from_function(
-            jsonb_object_keys(Expr::col((SnapshotEntities::Table, SnapshotEntities::EntityData)).into()),
-            KeyColumn,
-        )
+        .from_function(jsonb_object_keys(Expr::col((SnapshotEntities::Table, SnapshotEntities::EntityData))), KeyColumn)
         .and_where(Expr::col(KeyColumn).is_not_in(NON_ATTRIBUTE_KEYS))
         .order_by(KeyColumn, Order::Asc)
         .to_owned()
@@ -601,7 +637,10 @@ async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, SnapshotError> 
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(&sql, values).execute(pool).await.map_err(persistence_error)?;
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
     Ok(result.rows_affected())
 }
 
@@ -618,14 +657,14 @@ async fn query_snapshot_table(params: &SnapshotQueryParams<'_>) -> Result<(Vec<V
     });
 
     let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-    let count_row = sqlx::query_with(&count_sql, count_values)
+    let count_row = sqlx::query_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
         .fetch_one(params.pool)
         .await
         .map_err(persistence_error)?;
     let total: i64 = count_row.try_get("cnt").map_err(persistence_error)?;
 
     let (data_sql, data_values) = data.build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(&data_sql, data_values)
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(data_sql.as_str()), data_values)
         .fetch_all(params.pool)
         .await
         .map_err(persistence_error)?;
@@ -695,7 +734,7 @@ async fn run_batch_insert(pool: &PgPool, sql: &str, snapshot_id: &Uri, entities:
     }
     let entity_ids: Vec<&str> = entities.iter().map(|entity| entity.entity_id.as_str()).collect();
     let payloads: Vec<&Value> = entities.iter().map(|e| e.data).collect();
-    sqlx::query(sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(snapshot_id.as_str())
         .bind(&entity_ids)
         .bind(&payloads)
@@ -709,7 +748,10 @@ async fn run_batch_insert(pool: &PgPool, sql: &str, snapshot_id: &Uri, entities:
 async fn get_snapshot_row(pool: &PgPool, table: Alias, data_column: Alias, snapshot_id: &Uri, entity_id: &Uri) -> Result<Option<Value>, SnapshotError> {
     let data_name = Iden::to_string(&data_column);
     let (sql, values) = build_get_row_query(table, data_column, snapshot_id, entity_id).build_sqlx(PostgresQueryBuilder);
-    let row = sqlx::query_with(&sql, values).fetch_optional(pool).await.map_err(persistence_error)?;
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_optional(pool)
+        .await
+        .map_err(persistence_error)?;
 
     match row {
         Some(row) => {

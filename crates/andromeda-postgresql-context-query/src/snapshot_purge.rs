@@ -4,7 +4,7 @@
 use andromeda_ngsi_ld_model::snapshot_filter::{Conjunction, SnapshotField, SnapshotOp, SnapshotPurgeFilter, SnapshotPurgeTerm, SnapshotValue};
 use andromeda_postgresql_schema::snapshot::Snapshots;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-use sea_query::{BinOper, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
+use sea_query::{BinOper, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// Build the `SELECT` that finds every snapshot a purge filter matches.
 ///
@@ -60,11 +60,11 @@ const fn snapshot_column(field: SnapshotField) -> Snapshots {
 /// against one casts to `snapshot_status`.
 fn operand(value: &SnapshotValue) -> SimpleExpr {
     match value {
-        SnapshotValue::Id(id) => SeaExpr::val(id.as_str()).into(),
-        SnapshotValue::Priority(priority) => SeaExpr::val(i16::from(priority.as_u8())).into(),
-        SnapshotValue::Status(status) => cast(SeaExpr::val(<&str>::from(*status).to_string()).into(), PostgresType::SnapshotStatus),
-        SnapshotValue::Endpoint(url) => SeaExpr::val(url.as_str()).into(),
-        SnapshotValue::DateTime(instant) => SeaExpr::val(*instant).into(),
+        SnapshotValue::Id(id) => SeaExpr::val(id.as_str()),
+        SnapshotValue::Priority(priority) => SeaExpr::val(i16::from(priority.as_u8())),
+        SnapshotValue::Status(status) => cast(SeaExpr::val(<&str>::from(*status).to_string()), PostgresType::SnapshotStatus),
+        SnapshotValue::Endpoint(url) => SeaExpr::val(url.as_str()),
+        SnapshotValue::DateTime(instant) => SeaExpr::val(*instant),
     }
 }
 

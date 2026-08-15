@@ -8,6 +8,82 @@ edition = "2024"
 license = "EUPL-1.2"
 authors = ["Matej Škvarč <matej.skvarc@senlab.io>"]
 
+[workspace.lints.clippy]
+branches_sharing_code = "warn"
+cloned_instead_of_copied = "warn"
+expect_used = "deny"
+get_unwrap = "deny"
+map_unwrap_or = "deny"
+missing_const_for_fn = "warn"
+needless_collect = "warn"
+panic = "deny"
+redundant_clone = "warn"
+unwrap_used = "deny"
+used_underscore_binding = "warn"
+wildcard_dependencies = "warn"
+wildcard_imports = "warn"
+
+[package]
+name = "andromeda"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-broker-composition.workspace = true
+clap = { version = "4.6.6", features = ["derive", "wrap_help"] }
+clap-themes = "0.1.3"
+mimalloc = "0.1.52"
+shadow-rs = "2.0.0"
+tokio = { version = "1.53.1", features = ["full"] }
+
+[build-dependencies]
+shadow-rs = "2.0.0"
+
+[dev-dependencies]
+andromeda-context-commit.workspace = true
+andromeda-entity.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
+andromeda-notification.workspace = true
+andromeda-postgresql-attribute-dictionary.workspace = true
+andromeda-postgresql-codes.workspace = true
+andromeda-postgresql-context-store.workspace = true
+andromeda-postgresql-query.workspace = true
+andromeda-postgresql-temporal-store.workspace = true
+andromeda-tenancy.workspace = true
+andromeda-test-client.workspace = true
+andromeda-test-fixtures.workspace = true
+andromeda-test-harness.workspace = true
+andromeda-test-mocks.workspace = true
+andromeda-unit-catalog.workspace = true
+axum = { version = "0.8.9", features = ["ws"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+futures = "0.3.34"
+iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+pretty_assertions = "1.4.1"
+regex = "1.13.1"
+reqwest = { version = "0.13.4", features = ["json"] }
+rumqttc = { version = "0.25.1", features = ["use-rustls"] }
+serde_json = "1.0.151"
+serial_test = "4.0.1"
+sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
+url = "2.5.8"
+urlencoding = "2.1.3"
+uuid = { version = "1.24.1", features = ["fast-rng", "serde", "v4", "v7"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+opt-level = 3
+debug = true
+
 [workspace.dependencies]
 andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" }
 andromeda-broker-composition = { path = "crates/andromeda-broker-composition" }
@@ -70,79 +146,3 @@ andromeda-test-fixtures = { path = "crates/andromeda-test-fixtures" }
 andromeda-test-harness = { path = "crates/andromeda-test-harness" }
 andromeda-test-mocks = { path = "crates/andromeda-test-mocks" }
 andromeda-unit-catalog = { path = "crates/andromeda-unit-catalog" }
-
-[workspace.lints.clippy]
-branches_sharing_code = "warn"
-cloned_instead_of_copied = "warn"
-expect_used = "deny"
-get_unwrap = "deny"
-map_unwrap_or = "deny"
-missing_const_for_fn = "warn"
-needless_collect = "warn"
-panic = "deny"
-redundant_clone = "warn"
-unwrap_used = "deny"
-used_underscore_binding = "warn"
-wildcard_dependencies = "warn"
-wildcard_imports = "warn"
-
-[package]
-name = "andromeda"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-authors.workspace = true
-build = "build.rs"
-
-[lints]
-workspace = true
-
-[dependencies]
-andromeda-broker-composition.workspace = true
-clap = { version = "4.6.1", features = ["derive", "wrap_help"] }
-clap-themes = "0.1.3"
-mimalloc = "0.1.50"
-shadow-rs = "2.0.0"
-tokio = { version = "1.52.1", features = ["full"] }
-
-[build-dependencies]
-shadow-rs = "2.0.0"
-
-[dev-dependencies]
-andromeda-context-commit.workspace = true
-andromeda-entity.workspace = true
-andromeda-ngsi-ld-lexicon.workspace = true
-andromeda-ngsi-ld-model.workspace = true
-andromeda-ngsi-ld-vocabulary.workspace = true
-andromeda-notification.workspace = true
-andromeda-postgresql-attribute-dictionary.workspace = true
-andromeda-postgresql-codes.workspace = true
-andromeda-postgresql-context-store.workspace = true
-andromeda-postgresql-query.workspace = true
-andromeda-postgresql-temporal-store.workspace = true
-andromeda-tenancy.workspace = true
-andromeda-test-client.workspace = true
-andromeda-test-fixtures.workspace = true
-andromeda-test-harness.workspace = true
-andromeda-test-mocks.workspace = true
-andromeda-unit-catalog.workspace = true
-axum = { version = "0.8.9", features = ["ws"] }
-chrono = { version = "0.4.44", features = ["serde"] }
-futures = "0.3.32"
-iri-rs = { version = "3.4.0", features = ["serde", "static"] }
-pretty_assertions = "1.4.1"
-regex = "1.12.3"
-reqwest = { version = "0.13.2", features = ["json"] }
-rumqttc = { version = "0.25.1", features = ["use-rustls"] }
-serde_json = "1.0.149"
-serial_test = "3.4.0"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
-url = "2.5.8"
-urlencoding = "2.1.3"
-uuid = { version = "1.23.1", features = ["fast-rng", "serde", "v4", "v7"] }
-
-[profile.release]
-lto = "thin"
-codegen-units = 16
-opt-level = 3
-debug = true

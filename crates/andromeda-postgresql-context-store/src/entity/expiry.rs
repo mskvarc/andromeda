@@ -15,8 +15,8 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
 };
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Expr, ExprTrait, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::Row;
 
 /// The `expiresAt` member of an attribute instance, as the expanded JSON-LD
@@ -63,7 +63,7 @@ impl EntityRepository {
     /// Read identifiers of entities whose `expiresAt` has passed.
     pub async fn entities_due_for_expiry(&self, cutoff: DateTime<Utc>, batch_size: EntityExpiryBatchSize) -> Result<Vec<Uri>, ContextStoreError> {
         let (sql, values) = entities_due_for_expiry_statement(cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
-        let rows: Vec<(String,)> = sqlx::query_as_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows: Vec<(String,)> = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         rows.into_iter().map(|(id,)| stored_uri(id)).collect()
     }
@@ -75,7 +75,7 @@ impl EntityRepository {
         batch_size: EntityExpiryBatchSize,
     ) -> Result<Vec<(Uri, EntitySnapshot)>, ContextStoreError> {
         let (sql, values) = entities_with_expired_attributes_statement(cutoff, u64::from(batch_size.get())).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -122,7 +122,7 @@ fn entities_with_expired_attributes_statement(cutoff: DateTime<Utc>, limit: u64)
     let attributes = attribute_arrays_of_entity();
     let instances = instances_of_attribute();
 
-    let expiry_text = SimpleExpr::from(Expr::col((Inst, ValueColumn))).json_path_text(Expr::val(EXPIRES_AT_VALUE_PATH.map(str::to_owned).to_vec()).into());
+    let expiry_text = SimpleExpr::from(Expr::col((Inst, ValueColumn))).json_path_text(Expr::val(EXPIRES_AT_VALUE_PATH.map(str::to_owned).to_vec()));
     let expiry = cast_compound(expiry_text, PostgresType::Timestamptz);
 
     let mut existence = Query::select();
@@ -151,12 +151,12 @@ fn entities_with_expired_attributes_statement(cutoff: DateTime<Utc>, limit: u64)
 /// `payload -> 0` is the entity node; correlated to the outer `entities` row
 /// rather than lateral, since it reads a column of the enclosing query.
 fn attribute_arrays_of_entity() -> SelectStatement {
-    let entity_node = SimpleExpr::from(Expr::col((Entities::Table, Entities::Payload))).json_get(Expr::val(0).into());
+    let entity_node = SimpleExpr::from(Expr::col((Entities::Table, Entities::Payload))).json_get(Expr::val(0));
     Query::select()
         .expr_as(Expr::col((Attr, ValueColumn)), Val)
         .from_function(jsonb_each(entity_node), Attr)
         .and_where(Expr::col((Attr, Key)).not_like("@%"))
-        .and_where(Expr::expr(jsonb_typeof(Expr::col((Attr, ValueColumn)).into())).eq("array"))
+        .and_where(Expr::expr(jsonb_typeof(Expr::col((Attr, ValueColumn)))).eq("array"))
         .to_owned()
 }
 
@@ -165,7 +165,7 @@ fn attribute_arrays_of_entity() -> SelectStatement {
 fn instances_of_attribute() -> SelectStatement {
     Query::select()
         .expr(Expr::col((Elem, ValueColumn)))
-        .from_function(jsonb_array_elements(Expr::col((Kv, Val)).into()), Elem)
+        .from_function(jsonb_array_elements(Expr::col((Kv, Val))), Elem)
         .to_owned()
 }
 
@@ -174,7 +174,7 @@ mod tests {
     use crate::entity::expiry::{entities_due_for_expiry_statement, entities_with_expired_attributes_statement};
     use chrono::{TimeZone, Utc};
     use sea_query::PostgresQueryBuilder;
-    use sea_query_binder::SqlxBinder;
+    use sea_query_sqlx::SqlxBinder;
 
     fn cutoff() -> chrono::DateTime<Utc> {
         Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant")

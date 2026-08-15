@@ -35,7 +35,7 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     timescale::time_bucket,
 };
-use sea_query::{Alias, CaseStatement, Condition, Expr, Func, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Condition, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement, SimpleExpr};
 
 /// Unified numeric expression for type-aware aggregation (NGSI-LD 4.5.19.1).
 ///
@@ -47,15 +47,12 @@ use sea_query::{Alias, CaseStatement, Condition, Expr, Func, JoinType, Order, Qu
 /// widening it to binary floating point to aggregate would report a minimum or a
 /// maximum that was never observed.
 fn numeric_expr() -> SimpleExpr {
-    let bool_as_numeric = cast(
-        cast(Expr::col((Ah, AttributeHistory::ValueBool)).into(), PostgresType::Integer),
-        PostgresType::Numeric,
-    );
+    let bool_as_numeric = cast(cast(Expr::col((Ah, AttributeHistory::ValueBool)), PostgresType::Integer), PostgresType::Numeric);
     let array_length = CaseStatement::new().case(
-        Expr::expr(jsonb_typeof(Expr::col((Ah, AttributeHistory::ValueObject)).into())).eq("array"),
-        cast(jsonb_array_length(Expr::col((Ah, AttributeHistory::ValueObject)).into()), PostgresType::Numeric),
+        Expr::expr(jsonb_typeof(Expr::col((Ah, AttributeHistory::ValueObject)))).eq("array"),
+        cast(jsonb_array_length(Expr::col((Ah, AttributeHistory::ValueObject))), PostgresType::Numeric),
     );
-    Func::coalesce([Expr::col((Ah, AttributeHistory::ValueNumber)).into(), bool_as_numeric, array_length.into()]).into()
+    Func::coalesce([Expr::col((Ah, AttributeHistory::ValueNumber)), bool_as_numeric, array_length.into()]).into()
 }
 
 /// The span of registry codes and unit identities one aggregation group covered.
@@ -113,12 +110,12 @@ fn aggregate_columns(methods: &[AggrMethod]) -> Vec<(SimpleExpr, &'static str)> 
 /// every typed value column into one comparable text.
 fn distinct_value_expr() -> SimpleExpr {
     Func::coalesce([
-        cast(Expr::col((Ah, AttributeHistory::ValueNumber)).into(), PostgresType::Text),
-        Expr::col((Ah, AttributeHistory::ValueString)).into(),
-        cast(Expr::col((Ah, AttributeHistory::ValueBool)).into(), PostgresType::Text),
-        cast(Expr::col((Ah, AttributeHistory::ValueDatetime)).into(), PostgresType::Text),
-        Expr::col((Ah, AttributeHistory::ValueUri)).into(),
-        cast(Expr::col((Ah, AttributeHistory::ValueObject)).into(), PostgresType::Text),
+        cast(Expr::col((Ah, AttributeHistory::ValueNumber)), PostgresType::Text),
+        Expr::col((Ah, AttributeHistory::ValueString)),
+        cast(Expr::col((Ah, AttributeHistory::ValueBool)), PostgresType::Text),
+        cast(Expr::col((Ah, AttributeHistory::ValueDatetime)), PostgresType::Text),
+        Expr::col((Ah, AttributeHistory::ValueUri)),
+        cast(Expr::col((Ah, AttributeHistory::ValueObject)), PostgresType::Text),
     ])
     .into()
 }
@@ -167,19 +164,15 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
         let iso = period.as_iso8601();
         let origin = match compiled.window.interval.reference() {
             // The reference instant of clause 4.5.19 aligns the buckets.
-            Some(reference) => Expr::val(*reference).into(),
+            Some(reference) => Expr::val(*reference),
             // Absent, buckets align to the actual data range (not epoch).
             None => {
                 needs_origin_join = true;
-                Expr::col((Alias::new("bucket_origin"), Alias::new("origin"))).into()
+                Expr::col((Alias::new("bucket_origin"), Alias::new("origin")))
             }
         };
-        let bucket_start = time_bucket(
-            cast(Expr::val(iso.clone()).into(), PostgresType::Interval),
-            Expr::col((Ah, axis)).into(),
-            origin,
-        );
-        let bucket_end = bucket_start.clone().add(cast(Expr::val(iso).into(), PostgresType::Interval));
+        let bucket_start = time_bucket(cast(Expr::val(iso.clone()), PostgresType::Interval), Expr::col((Ah, axis)), origin);
+        let bucket_end = bucket_start.clone().add(cast(Expr::val(iso), PostgresType::Interval));
         select.expr_as(bucket_start, Alias::new("bucket_start"));
         select.expr_as(bucket_end, Alias::new("bucket_end"));
     } else {
@@ -204,11 +197,11 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
     // nothing else. An absent period is the whole range, which is one bucket
     // rather than no grouping at all.
     let mut group = vec![
-        Expr::col((An, AttributeNames::Name)).into(),
+        Expr::col((An, AttributeNames::Name)),
         SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))),
     ];
     if period.is_some() {
-        group.push(Expr::col(Alias::new("bucket_start")).into());
+        group.push(Expr::col(Alias::new("bucket_start")));
     }
     select.add_group_by(group);
 

@@ -11,9 +11,9 @@
 use crate::{error::TemporalStoreError, repo::TemporalRepository};
 use andromeda_postgresql_schema::{temporal::AttributeHistory, unit::UnitCodes};
 use andromeda_postgresql_seaquery::aggregate::count_all;
-use sea_query::{Expr, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
-use sea_query_binder::SqlxBinder;
-use sqlx::Row;
+use sea_query::{Expr, ExprTrait, Iden, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{AssertSqlSafe, Row};
 
 /// The `attribute_history` alias the audit reads stored identities under.
 #[derive(Iden, Clone, Copy)]
@@ -56,7 +56,7 @@ impl TemporalRepository {
     /// the expected type.
     pub async fn audit_unregistered_unit_codes(&self) -> Result<Vec<UnregisteredUnitCodeRows>, TemporalStoreError> {
         let (sql, values) = audit_statement().build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 Ok(UnregisteredUnitCodeRows {

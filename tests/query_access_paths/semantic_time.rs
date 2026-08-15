@@ -52,13 +52,13 @@ const ORIGIN: &str = "TIMESTAMPTZ '2026-01-01 00:00:00Z'";
 /// The observations one axis window selects across one stream, named by the
 /// hour each observation sits at on the seeded grid.
 async fn narrow_selection(pool: &PgPool, stream: uuid::Uuid, axis: &Axis, from: &str, to: &str) -> Vec<i32> {
-    sqlx::query_scalar(&format!(
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT (EXTRACT(EPOCH FROM (ah.observed_at - {ORIGIN})) / 3600)::int AS hour \
          FROM attribute_history AS ah \
          WHERE ah.stream_id = $1 AND ah.{} >= {from} AND ah.{} < {to} \
          ORDER BY hour",
         axis.column, axis.column
-    ))
+    )))
     .bind(stream)
     .fetch_all(pool)
     .await
@@ -108,23 +108,23 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
     let corpus = seed(pool, scope.id_prefix()).await;
 
     for axis in AXES {
-        let selected: i64 = sqlx::query_scalar(&format!(
+        let selected: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM attribute_history AS ah \
              JOIN temporal_attribute_streams AS s ON s.id = ah.stream_id \
              WHERE s.temporal_entity_key = $1 AND ah.{} IS NOT NULL",
             axis.column
-        ))
+        )))
         .bind(corpus.entity_key())
         .fetch_one(pool)
         .await
         .unwrap_or_else(|error| unreachable!("the broad {} selection must run: {error}", axis.timeproperty));
 
-        let column_rows: i64 = sqlx::query_scalar(&format!(
+        let column_rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM attribute_history AS ah \
              JOIN temporal_attribute_streams AS s ON s.id = ah.stream_id \
              WHERE s.temporal_entity_key = $1 AND ah.{} IS NOT NULL",
             axis.column
-        ))
+        )))
         .bind(corpus.entity_key())
         .fetch_one(pool)
         .await

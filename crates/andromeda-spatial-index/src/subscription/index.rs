@@ -71,7 +71,7 @@ impl SpatialSubscriptionIndex {
 /// geometry satisfies.
 fn candidates_in(tree: &RTree<SubEntry>, entity_geometry: &Geometry, envelope: &AABB<[f64; 2]>) -> Vec<Uri> {
     let mut matched = Vec::new();
-    for entry in tree.locate_in_envelope_intersecting(envelope) {
+    for entry in tree.locate_in_envelope_intersecting(*envelope) {
         if matches(&entry.georel, entity_geometry, &entry.ref_geometry) {
             matched.push(entry.subscription_id.clone()); // clone: the answer outlives the tree borrow
         }

@@ -9,14 +9,14 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-compact_str = "0.9.0"
-dashmap = "6.1.0"
+compact_str = "0.10.0"
+dashmap = "6.2.1"
 derive_more = { version = "2.1.1", features = ["display"] }
-thiserror = "2.0.18"
-tokio = { version = "1.52.1", features = ["rt", "sync", "time"] }
-tokio-util = { version = "0.7.18", features = ["rt"] }
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt", "sync", "time"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
 tracing = "0.1.44"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "test-util"] }

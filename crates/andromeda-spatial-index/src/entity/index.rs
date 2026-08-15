@@ -125,7 +125,7 @@ const fn refinement_for(georel: &GeoRel) -> Refinement {
 fn evaluate(tree: &RTree<SpatialEntry>, georel: &GeoRel, reference: &Geometry) -> HashSet<Urn> {
     let candidates: Vec<&SpatialEntry> = match candidates_for(georel) {
         Candidates::WholePartition => tree.iter().collect(),
-        Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(&geometry_envelope(reference)).collect(),
+        Candidates::EnvelopeIntersecting => tree.locate_in_envelope_intersecting(geometry_envelope(reference)).collect(),
     };
 
     candidates

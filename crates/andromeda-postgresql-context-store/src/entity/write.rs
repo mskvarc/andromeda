@@ -18,7 +18,7 @@
 //!
 //! Each statement's parallel arrays bind through `sqlx` rather than sea-query:
 //! the geometry, expiry and expectation arrays carry NULLs (`Vec<Option<T>>`),
-//! which `sea-query-binder` cannot represent, so every array is bound outside
+//! which `sea-query-sqlx` cannot represent, so every array is bound outside
 //! sea-query in the marker order the statement builder emits. The statement
 //! structure — every relation, column, cast, function and clause — is still
 //! built by sea-query.
@@ -47,7 +47,7 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use chrono::{DateTime, Utc};
-use sea_query::{CaseStatement, Cond, Expr, Func, Iden, IntoIden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr, TableRef};
+use sea_query::{CaseStatement, Cond, Expr, ExprTrait, Func, Iden, IntoIden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr, TableRef};
 use sqlx::{Postgres, Row, Transaction};
 
 /// The staging alias, `d`, each set-write reads its parallel arrays under.
@@ -89,7 +89,7 @@ enum StagedColumn {
 
 /// A staging column reference, `d.<column>`.
 fn staged(column: StagedColumn) -> SimpleExpr {
-    Expr::col((Staged, column)).into()
+    Expr::col((Staged, column))
 }
 
 /// The validated-geometry projection of a staged EWKB column:
@@ -242,7 +242,7 @@ fn entity_update_sql() -> String {
             Entities::ExpiresAt,
             SimpleExpr::from(Func::coalesce([
                 staged(StagedColumn::ExpiresAt),
-                Expr::col((Entities::Table, Entities::ExpiresAt)).into(),
+                Expr::col((Entities::Table, Entities::ExpiresAt)),
             ])),
         )
         .from(TableRef::FunctionCall(call, Staged.into_iden()))
@@ -300,7 +300,7 @@ impl EntityRepository {
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
         let sql = entity_insert_sql()?;
-        let rows: Vec<(i64, String)> = sqlx::query_as(&sql)
+        let rows: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
@@ -340,7 +340,7 @@ impl EntityRepository {
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
         let sql = entity_update_sql();
-        let rows: Vec<(i64, String)> = sqlx::query_as(&sql)
+        let rows: Vec<(i64, String)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
@@ -386,7 +386,11 @@ impl EntityRepository {
 
         let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>();
         let sql = entity_delete_sql();
-        let rows = sqlx::query(&sql).bind(ids).bind(expected_modified_at).fetch_all(&mut **tx).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(ids)
+            .bind(expected_modified_at)
+            .fetch_all(&mut **tx)
+            .await?;
 
         rows.into_iter()
             .map(|row| {

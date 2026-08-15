@@ -31,8 +31,8 @@ use andromeda_subscription::{
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
-use sea_query::{Cond, Expr, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Cond, Expr, ExprTrait, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{Row, postgres::PgArguments, query::Query as SqlxQuery, types::Json};
 use std::fmt::Display;
 use url::Url;
@@ -77,7 +77,7 @@ fn create_error(error: sqlx::Error, identifier: &Uri) -> SubscriptionError {
 
 /// The `status::text AS status` read cast: a query decodes the enum as text.
 fn status_as_text() -> SimpleExpr {
-    cast(Expr::col(Subscriptions::Status).into(), PostgresType::Text)
+    cast(Expr::col(Subscriptions::Status), PostgresType::Text)
 }
 
 /// The predicate confining a statement to one subscription family, inline like
@@ -134,7 +134,7 @@ fn projected_select(kind: StoredKind) -> SelectStatement {
 /// `NOW() - make_interval(secs => time_interval)`: the instant a periodic
 /// subscription of the row's interval last became due.
 fn interval_deadline() -> SimpleExpr {
-    Expr::expr(now()).sub(make_interval_secs(Expr::col(Subscriptions::TimeInterval).into()))
+    Expr::expr(now()).sub(make_interval_secs(Expr::col(Subscriptions::TimeInterval)))
 }
 
 /// The due-interval predicate: an active periodic subscription whose interval
@@ -493,7 +493,7 @@ macro_rules! impl_subscription_store {
                 let mut select = projected_select($kind);
                 select.and_where(Expr::col(Subscriptions::Id).eq(id.as_str())).and_where(of_kind($kind));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-                let pg_row = sqlx::query_with(&sql, values)
+                let pg_row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
                     .fetch_optional(&self.pool)
                     .await
                     .map_err(persistence_error)?;
@@ -515,7 +515,7 @@ macro_rules! impl_subscription_store {
                     .and_where(of_kind($kind))
                     .to_owned();
                 let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
-                let count_row: (i64,) = sqlx::query_as_with(&count_sql, count_values)
+                let count_row: (i64,) = sqlx::query_as_with(sqlx::AssertSqlSafe(count_sql.as_str()), count_values)
                     .fetch_one(&self.pool)
                     .await
                     .map_err(persistence_error)?;
@@ -524,10 +524,13 @@ macro_rules! impl_subscription_store {
                 select
                     .and_where(of_kind($kind))
                     .order_by(Subscriptions::CreatedAt, Order::Asc)
-                    .limit(limit.max(0) as u64)
-                    .offset(offset.max(0) as u64);
+                    .limit(<i64 as Ord>::max(limit, 0) as u64)
+                    .offset(<i64 as Ord>::max(offset, 0) as u64);
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-                let pg_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 // A listing renders resources, so the surrogate key each row
                 // carries is dropped rather than threaded into the response.
                 let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
@@ -545,7 +548,10 @@ macro_rules! impl_subscription_store {
                     .and_where(of_kind($kind))
                     .to_owned();
                 let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-                let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 Ok(result.rows_affected())
             }
 
@@ -558,7 +564,10 @@ macro_rules! impl_subscription_store {
                     .to_owned();
                 let statement = Query::select().expr(Expr::exists(inner)).to_owned();
                 let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-                let row: (bool,) = sqlx::query_as_with(&sql, values).fetch_one(&self.pool).await.map_err(persistence_error)?;
+                let row: (bool,) = sqlx::query_as_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 Ok(row.0)
             }
 
@@ -568,7 +577,10 @@ macro_rules! impl_subscription_store {
                     .and_where(Expr::col(Subscriptions::Status).eq(text_literal("active")))
                     .and_where(of_kind($kind));
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-                let pg_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
             }
 
@@ -594,19 +606,28 @@ macro_rules! impl_subscription_store {
                     );
                 }
                 let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-                let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 Ok(result.rows_affected() > 0)
             }
 
             async fn mark_success(&self, id: &Uri) -> Result<(), SubscriptionError> {
                 let (sql, values) = mark_statement(Subscriptions::LastSuccess, id, $kind).build_sqlx(PostgresQueryBuilder);
-                sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 Ok(())
             }
 
             async fn mark_failure(&self, id: &Uri) -> Result<(), SubscriptionError> {
                 let (sql, values) = mark_statement(Subscriptions::LastFailure, id, $kind).build_sqlx(PostgresQueryBuilder);
-                sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 Ok(())
             }
 
@@ -623,7 +644,10 @@ macro_rules! impl_subscription_store {
                     .returning(Query::returning().column(Subscriptions::Id))
                     .to_owned();
                 let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-                let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 rows.iter()
                     .map(|row| {
                         row.try_get::<String, _>("id")
@@ -635,7 +659,7 @@ macro_rules! impl_subscription_store {
 
             async fn create_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), SubscriptionError> {
                 let sql = $create()?;
-                let query = ($create_fn)(sqlx::query(&sql), id, fields, status);
+                let query = ($create_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, status);
                 query.execute(&self.pool).await.map_err(|error| create_error(error, id))?;
                 tracing::info!("Created {} subscription: {}", $kind.wire(), id);
                 Ok(())
@@ -643,7 +667,7 @@ macro_rules! impl_subscription_store {
 
             async fn update_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<u64, SubscriptionError> {
                 let sql = $update();
-                let query = ($update_fn)(sqlx::query(&sql), id, fields, status);
+                let query = ($update_fn)(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), id, fields, status);
                 let result = query.execute(&self.pool).await.map_err(persistence_error)?;
                 Ok(result.rows_affected())
             }
@@ -656,7 +680,10 @@ macro_rules! impl_subscription_store {
                     .and_where(Expr::col(Subscriptions::TimeInterval).is_not_null())
                     .cond_where(interval_elapsed());
                 let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
-                let pg_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                let pg_rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                    .fetch_all(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
                 // An interval notification is sent straight to the endpoint and
                 // never enqueues a delivery, so it needs no surrogate key.
                 Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)

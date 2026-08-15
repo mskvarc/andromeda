@@ -8,8 +8,8 @@ use crate::schema_contract::{
     server_requirements::verify_server_requirements,
 };
 use andromeda_postgresql_schema::tenancy::SchemaMetadata;
-use sea_query::{Alias, Expr, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, UpdateStatement};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, UpdateStatement};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// Refuse a tenant whose schema is not the one this binary was built against,
@@ -112,7 +112,7 @@ async fn applied_migrations_digest_between(
     up_to_version: SchemaVersion,
 ) -> Result<MigrationsDigest, SchemaContractError> {
     let (sql, values) = applied_migrations_digest_statement(i64::from(from_version.get()), i64::from(up_to_version.get())).build_sqlx(PostgresQueryBuilder);
-    let rows = sqlx::query_with(&sql, values).fetch_all(pool).await?;
+    let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(pool).await?;
     let records = rows
         .iter()
         .map(|row| {
@@ -176,7 +176,7 @@ async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaCon
     let statement = stamp_statement(contract.version().get(), contract.digest().to_string())
         .map_err(|error| SchemaContractError::Database(sqlx::Error::Protocol(error.to_string())))?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(&sql, values).execute(pool).await?;
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(())
 }
 
@@ -192,14 +192,14 @@ async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaCon
 /// competing write with a different one.
 async fn restamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
     let (sql, values) = restamp_statement(contract.version().get(), contract.digest().to_string()).build_sqlx(PostgresQueryBuilder);
-    sqlx::query_with(&sql, values).execute(pool).await?;
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(())
 }
 
 /// Read the singleton, if the tenant carries one.
 async fn read_stamp(pool: &PgPool) -> Result<Option<StampedContract>, SchemaContractError> {
     let (sql, values) = read_stamp_statement().build_sqlx(PostgresQueryBuilder);
-    let Some(row) = sqlx::query_with(&sql, values).fetch_optional(pool).await? else {
+    let Some(row) = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(pool).await? else {
         return Ok(None);
     };
     let version = SchemaVersion::try_from(i64::from(row.get::<i32, _>("schema_version")))?;
@@ -235,7 +235,7 @@ fn stamp_statement(version: i32, digest: String) -> Result<InsertStatement, sea_
             SchemaMetadata::Singleton,
             SchemaMetadata::MigrationsSha256,
         ])
-        .values([Expr::current_timestamp().into(), version.into(), true.into(), digest.into()])?
+        .values([Expr::current_timestamp(), version.into(), true.into(), digest.into()])?
         .on_conflict(OnConflict::column(SchemaMetadata::Singleton).do_nothing().to_owned());
     Ok(statement.to_owned())
 }
@@ -318,7 +318,13 @@ mod tests {
 
     /// Build one resolved migration with the shape `migrate!()` produces.
     fn migration(version: i64, description: &'static str, sql: &'static str) -> Migration {
-        Migration::new(version, Cow::Borrowed(description), MigrationType::ReversibleUp, Cow::Borrowed(sql), false)
+        Migration::new(
+            version,
+            Cow::Borrowed(description),
+            MigrationType::ReversibleUp,
+            sqlx::SqlStr::from_static(sql),
+            false,
+        )
     }
 
     /// The contract a migration set expresses, built the way `migrate!()`

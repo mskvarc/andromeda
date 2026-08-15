@@ -20,21 +20,21 @@ andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 async-lock = "3.4.2"
-async-trait = "0.1.89"
-chrono = { version = "0.4.44", features = ["serde"] }
+async-trait = "0.1.92"
+chrono = { version = "0.4.45", features = ["serde"] }
 confique = { version = "0.4.0", features = ["toml"] }
 derive_more = { version = "2.1.1", features = ["display"] }
 indexmap = { version = "2.14.0", features = ["serde"] }
-iri-rs = { version = "3.4.0", features = ["serde", "static"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
+iri-rs = { version = "3.4.1", features = ["serde", "static"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 strum = { version = "0.28.0", features = ["derive"] }
-thiserror = "2.0.18"
+thiserror = "2.0.20"
 tracing = "0.1.44"
-uuid = { version = "1.23.1", features = ["serde", "v4"] }
+uuid = { version = "1.24.1", features = ["serde", "v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 pretty_assertions = "1.4.1"
-tokio = { version = "1.52.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }

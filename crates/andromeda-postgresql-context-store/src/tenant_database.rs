@@ -11,8 +11,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
-use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
-use sea_query_binder::SqlxBinder;
+use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
+use sea_query_sqlx::SqlxBinder;
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use url::Url;
@@ -31,7 +31,7 @@ pub fn configure_pool_options(max_connections: u32, synchronous_commit_setting: 
     PgPoolOptions::new().max_connections(max_connections).after_connect(move |conn, _meta| {
         Box::pin(async move {
             let stmt = set_synchronous_commit(synchronous_commit_setting);
-            conn.execute(stmt.as_str()).await?;
+            conn.execute(sqlx::AssertSqlSafe(stmt)).await?;
             Ok(())
         })
     })
@@ -112,10 +112,13 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &Tenant
     let db_name = db_name.as_str();
     let mut conn = PgConnection::connect(admin_url.as_str()).await?;
     let (sql, values) = database_exists_statement(db_name).build_sqlx(PostgresQueryBuilder);
-    let exists = sqlx::query_with(&sql, values).fetch_optional(&mut conn).await?.is_some();
+    let exists = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_optional(&mut conn)
+        .await?
+        .is_some();
     if !exists {
         let sql = create_database(db_name);
-        conn.execute(sql.as_str()).await?;
+        conn.execute(sqlx::AssertSqlSafe(sql)).await?;
     }
     conn.close().await?;
     Ok(())

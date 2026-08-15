@@ -17,11 +17,11 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 axum = "0.8.9"
-chrono = "0.4.44"
+chrono = "0.4.45"
 headers = "0.4.1"
-iri-rs = "3.4.0"
+iri-rs = "3.4.1"
 mediatype = "0.23.0"
-serde = "1.0.228"
+serde = "1.0.229"
 sonic-rs = "0.5.8"
 tracing = "0.1.44"
 url = "2.5.8"
@@ -30,5 +30,5 @@ url = "2.5.8"
 andromeda-architecture-checks.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 pretty_assertions = "1.4.1"
-serde_json = "1.0.149"
-tokio = { version = "1.52.1", features = ["macros", "rt"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
