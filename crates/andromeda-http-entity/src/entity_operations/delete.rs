@@ -28,10 +28,12 @@ use crate::entity_operations::{
     public_error,
     start_rendering,
 };
+use andromeda_http_extraction::tenant_state;
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 
 pub(crate) async fn batch_delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -58,7 +60,7 @@ pub(crate) async fn batch_delete(
     }
 
     // Distributed forwarding per spec 5.6.10
-    let context: andromeda_jsonld::context_spec::ContextSpec = context.into_inner();
+    let context: ContextSpec = context.into_inner();
     let context_url = context.link_contexts().first();
     let forwarded = state
         .forwarding
@@ -101,7 +103,7 @@ pub(crate) async fn batch_delete(
 
     // Inclusive or no match: delete locally
     let batch = service.batch_delete(&entity_ids, mode).await.with_entity_instance(&uri)?;
-    let result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, crate::entity_error::classify_entity_error);
+    let result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
 
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))

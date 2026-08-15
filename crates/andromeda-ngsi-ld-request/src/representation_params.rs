@@ -9,7 +9,7 @@
 
 use crate::error::ParameterError;
 use andromeda_ngsi_ld_representation::response_format::ResponseFormat;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 
 /// Deserialize an entity `format` query parameter into its protocol value.
 pub(crate) fn deserialize_option_response_format<'de, D>(deserializer: D) -> Result<Option<ResponseFormat>, D::Error>
@@ -21,7 +21,7 @@ where
         "keyValues" | "simplified" => Ok(ResponseFormat::Simplified),
         "concise" => Ok(ResponseFormat::Concise),
         "normalized" => Ok(ResponseFormat::Normalized),
-        other => Err(serde::de::Error::custom(format!("invalid entity format: {other}"))),
+        other => Err(DeserializeError::custom(format!("invalid entity format: {other}"))),
     })
     .transpose()
 }
@@ -76,6 +76,7 @@ pub fn validate_representation_params(_format: Option<ResponseFormat>, options: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entity::GetEntityParams;
 
     #[test]
     fn format_wins_over_a_conflicting_options() {
@@ -118,7 +119,7 @@ mod tests {
 
     #[test]
     fn deserialization_rejects_an_unknown_format() {
-        assert!(serde_urlencoded::from_str::<crate::entity::GetEntityParams>("format=bananas").is_err());
+        assert!(serde_urlencoded::from_str::<GetEntityParams>("format=bananas").is_err());
     }
 
     #[test]

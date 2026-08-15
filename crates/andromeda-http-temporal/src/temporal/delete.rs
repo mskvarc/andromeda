@@ -1,9 +1,10 @@
 //! HTTP handling for temporal delete.
 
 use crate::temporal::{IntoResponse, OriginalUri, ProblemResponse, Response, ResultInstanceExt, StatusCode, TenantState, TypedPath, Uri};
+use andromeda_http_extraction::tenant_state;
 
 pub async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
+    tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {

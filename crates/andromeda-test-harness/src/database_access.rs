@@ -1,7 +1,7 @@
 //! Explicit test-database access and serialized reset entry points.
 
 use crate::{
-    configuration::TestRunConfiguration,
+    configuration::{ConfigurationError, TestRunConfiguration},
     database_isolation::{DatabaseIsolationError, connect_pool},
 };
 use sqlx::PgPool;
@@ -17,7 +17,7 @@ pub async fn connect_test_database() -> Result<PgPool, DatabaseAccessError> {
 pub enum DatabaseAccessError {
     /// Runtime configuration is invalid.
     #[error(transparent)]
-    Configuration(#[from] crate::configuration::ConfigurationError),
+    Configuration(#[from] ConfigurationError),
     /// Database connection or advisory-lock acquisition failed.
     #[error(transparent)]
     Isolation(#[from] DatabaseIsolationError),

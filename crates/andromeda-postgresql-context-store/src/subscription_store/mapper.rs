@@ -24,7 +24,7 @@ use andromeda_subscription::{stored_subscription::StoredSubscription, subscripti
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::{Row, postgres::PgRow};
 use tracing::warn;
 use url::Url;
 
@@ -40,7 +40,7 @@ fn stored_subscription_key(raw: i64) -> Result<SubscriptionKey, ContextStoreErro
 }
 
 /// Read a `SubscriptionRow` from a `PgRow`, honouring [`DatasetIdPresence`].
-pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
+pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Result<SubscriptionRow, ContextStoreError> {
     let dataset_id_raw: Option<Vec<String>> = match dataset_id_presence {
         DatasetIdPresence::Present => row.try_get("dataset_id")?,
         DatasetIdPresence::Absent => None,
@@ -157,10 +157,7 @@ pub fn row_from_pg(row: &sqlx::postgres::PgRow, dataset_id_presence: DatasetIdPr
 /// A listing's total still counts the stored rows, so it can exceed the number
 /// returned. That is the honest figure: the rows are there, this build cannot
 /// read them.
-pub fn rows_to_stored_subscriptions(
-    rows: &[sqlx::postgres::PgRow],
-    dataset_id_presence: DatasetIdPresence,
-) -> Result<Vec<StoredSubscription>, ContextStoreError> {
+pub fn rows_to_stored_subscriptions(rows: &[PgRow], dataset_id_presence: DatasetIdPresence) -> Result<Vec<StoredSubscription>, ContextStoreError> {
     let mut subscriptions = Vec::with_capacity(rows.len());
     for pg_row in rows {
         let row = row_from_pg(pg_row, dataset_id_presence)?;

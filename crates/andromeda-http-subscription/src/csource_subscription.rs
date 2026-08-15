@@ -10,10 +10,12 @@ use andromeda_http_extraction::{
     jsonld::JsonLd,
     prefer::PreferHeader,
     query::ValidatedQuery,
+    tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
 };
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
+    headers::with_location,
     pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering,
@@ -36,7 +38,7 @@ use serde_json::Value;
 
 /// POST /ngsi-ld/v1/csourceSubscriptions -- Create a context source subscription.
 pub async fn create(
-    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): SubscriptionTenantStateOrCreate,
+    ProvisionableTenantState(state): SubscriptionTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
@@ -50,12 +52,12 @@ pub async fn create(
 
     let id = service.create(payload, &context, None).await.with_subscription_instance(&uri)?;
 
-    Ok(andromeda_http_response::headers::with_location(StatusCode::CREATED.into_response(), &id))
+    Ok(with_location(StatusCode::CREATED.into_response(), &id))
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.
 pub async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -82,7 +84,7 @@ pub async fn get(
 
 /// GET /ngsi-ld/v1/csourceSubscriptions -- Query context source subscriptions.
 pub async fn query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -141,7 +143,7 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Update a context source subscription.
 pub async fn update(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(subscription_id): TypedPath<Uri>,
@@ -163,7 +165,7 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Delete a context source subscription.
 pub async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {

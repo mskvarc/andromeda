@@ -11,7 +11,7 @@ use typed_builder::TypedBuilder;
 /// CSR queries support a subset of entity query features plus temporal filtering
 /// against the registration's observation/management intervals.
 #[derive(Debug, Clone, TypedBuilder)]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct CompiledCsrQuery {
     /// Resource identifiers to filter by. Empty means no identifier filter.
     pub ids: Vec<Uri>,
@@ -43,6 +43,6 @@ pub struct CompiledCsrTemporalFilter {
     pub interval: TimeInterval,
     /// The time property to filter on.
     /// Determines whether the observation or management interval is checked.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub timeproperty: Option<TimeProp>,
 }

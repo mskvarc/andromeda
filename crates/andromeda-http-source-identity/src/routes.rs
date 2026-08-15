@@ -32,10 +32,11 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use std::error::Error;
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn source_identity_fragment_owns_its_complete_path() -> Result<(), Box<dyn std::error::Error>> {
+    async fn source_identity_fragment_owns_its_complete_path() -> Result<(), Box<dyn Error>> {
         let state = SourceIdentityState::new(
             "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
             "test".parse::<ContextSourcePseudonym>()?,

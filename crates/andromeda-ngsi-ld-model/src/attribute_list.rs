@@ -55,22 +55,22 @@ pub struct AttributeInfo {
     /// Fixed `Attribute` discriminator.
     #[serde(rename = "type")]
     #[jsonld(skip)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: AttributeResourceType,
     /// Compacted name of the attribute.
     #[jsonld(property = "ngsi:attributeName", coerce = "@id")]
     pub attribute_name: AttributeName,
     /// Attribute families this attribute has been seen as.
     #[jsonld(property = "ngsi:attributeTypes", coerce = "@id", vec)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub attribute_types: Vec<AttributeType>,
     /// Number of entity instances carrying this attribute.
     #[jsonld(property = "ngsi:attributeCount")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub attribute_count: Option<i64>,
     /// Entity types on which this attribute appears.
     #[jsonld(property = "ngsi:typeNames", coerce = "@id", vec)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_names: Option<Vec<EntityTypeName>>,
 }
 

@@ -4,7 +4,7 @@ use andromeda_test_mocks::{callback_server::CallbackServerError, notification_se
 use axum::http::HeaderMap;
 use serde_json::Value;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Instant};
 
 pub struct CapturedNotification {
     pub headers: HeaderMap,
@@ -36,12 +36,12 @@ impl NotificationAdapter {
     }
 
     pub async fn wait_for_subscription_notification(&self, subscription_id: &str, timeout: Duration) -> CapturedNotification {
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = Instant::now() + timeout;
         loop {
             if let Some(notification) = self.take_matching(subscription_id).await {
                 return notification;
             }
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(Instant::now());
             let request = self.server.next_request(remaining).await.expect("notification arrives before timeout");
             let body = request.json().expect("notification body is valid JSON");
             self.pending.lock().await.push(CapturedNotification {
@@ -52,13 +52,13 @@ impl NotificationAdapter {
     }
 
     pub async fn wait_for_no_subscription_notification(&self, subscription_id: &str, duration: Duration) {
-        let deadline = tokio::time::Instant::now() + duration;
+        let deadline = Instant::now() + duration;
         loop {
             assert!(
                 self.take_matching(subscription_id).await.is_none(),
                 "unexpected notification for subscription {subscription_id}"
             );
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let remaining = deadline.saturating_duration_since(Instant::now());
             match self.server.next_request(remaining).await {
                 Ok(request) => {
                     let body = request.json().expect("notification body is valid JSON");

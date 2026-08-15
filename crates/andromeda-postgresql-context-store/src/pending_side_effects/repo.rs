@@ -8,7 +8,7 @@ use crate::{error::ContextStoreError, pending_side_effects::payload::PersistedBa
 use andromeda_context_commit::{side_effect_job_id::SideEffectJobId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
+use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
@@ -27,13 +27,7 @@ use uuid::Uuid;
 /// ordinal base the enqueueing commit used, and resume its temporal and
 /// notification consequences under them rather than under a freshly minted
 /// identity.
-fn enqueue_statement(
-    id: Uuid,
-    write_id: Uuid,
-    recorded_at: DateTime<Utc>,
-    consequence_base: i32,
-    payload: Value,
-) -> Result<InsertStatement, sea_query::error::Error> {
+fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, consequence_base: i32, payload: Value) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PendingSideEffects::Table)

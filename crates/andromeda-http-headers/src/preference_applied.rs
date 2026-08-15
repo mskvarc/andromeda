@@ -28,6 +28,7 @@ use crate::{
     version::NgsiLdVersion,
 };
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// Typed `Preference-Applied` response header for NGSI-LD (RFC 7240, clause 6.3.6).
 ///
@@ -75,7 +76,7 @@ impl headers::Header for PreferenceApplied {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let s: String = self.0.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Preference-Applied header"),
         }
     }
@@ -89,7 +90,7 @@ mod tests {
     /// Helper: decode a `PreferenceApplied` from a raw header string.
     fn decode_preference_applied(raw: &str) -> PreferenceApplied {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         PreferenceApplied::decode(&mut iter).expect("valid Preference-Applied header")
     }
 

@@ -28,6 +28,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
+    mem::take,
     sync::Arc,
 };
 
@@ -93,11 +94,11 @@ impl EntityService {
         let mut outcome = self.commit_chunk(writes, mode).await?;
 
         for attempt in 1..=WRITE_ATTEMPTS {
-            success.extend(std::mem::take(&mut outcome.success));
-            created.extend(std::mem::take(&mut outcome.created));
-            errors.extend(std::mem::take(&mut outcome.errors));
+            success.extend(take(&mut outcome.success));
+            created.extend(take(&mut outcome.created));
+            errors.extend(take(&mut outcome.errors));
 
-            let retry: Vec<(Uri, EntityError)> = std::mem::take(&mut outcome.retryable);
+            let retry: Vec<(Uri, EntityError)> = take(&mut outcome.retryable);
             if retry.is_empty() {
                 break;
             }

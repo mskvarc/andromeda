@@ -11,7 +11,7 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use async_trait::async_trait;
-use dashmap::DashMap;
+use dashmap::{DashMap, mapref::entry::Entry};
 use std::{
     collections::HashSet,
     sync::{
@@ -21,7 +21,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, task::JoinHandle, time::interval as tokio_interval};
 use tracing::info;
 
 /// The instant every last-used stamp is measured from.
@@ -99,7 +99,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     ///
     /// A single-tenant broker holds exactly one runtime that is never evicted,
     /// so the sweep would have nothing to do.
-    pub fn spawn_janitor(self: &Arc<TenantRuntimeManager<D, F>>) -> Option<tokio::task::JoinHandle<()>> {
+    pub fn spawn_janitor(self: &Arc<TenantRuntimeManager<D, F>>) -> Option<JoinHandle<()>> {
         if !self.config.enabled {
             return None;
         }
@@ -186,14 +186,14 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
         // release and this insert. The loser releases what it built rather
         // than replacing a runtime other requests are already holding.
         match self.runtimes.entry(tenant.clone()) {
-            dashmap::mapref::entry::Entry::Occupied(entry) => {
+            Entry::Occupied(entry) => {
                 entry.get().touch();
                 let winner = Arc::clone(&entry.get().state);
                 drop(entry);
                 runtime.shutdown().await;
                 Ok(winner)
             }
-            dashmap::mapref::entry::Entry::Vacant(vacant) => {
+            Entry::Vacant(vacant) => {
                 vacant.insert(CachedRuntime {
                     state: Arc::clone(&state),
                     runtime,
@@ -208,7 +208,7 @@ impl<D: TenantDatabase, F: TenantStateFactory> TenantRuntimeManager<D, F> {
     async fn run_janitor(self: Arc<TenantRuntimeManager<D, F>>) {
         let interval = Duration::from_secs(self.config.janitor_interval_seconds.max(1));
         let ttl = Duration::from_secs(self.config.runtime_idle_ttl_seconds.max(1));
-        let mut ticker = tokio::time::interval(interval);
+        let mut ticker = tokio_interval(interval);
         loop {
             ticker.tick().await;
 
@@ -348,7 +348,7 @@ mod tests {
         },
         time::{Duration, Instant},
     };
-    use tokio::sync::Notify;
+    use tokio::{sync::Notify, time::sleep};
 
     fn named(raw: &str) -> TenantName {
         TenantName::try_from(raw.to_string()).expect("a valid tenant name")
@@ -564,7 +564,7 @@ mod tests {
         }
 
         // Let every task reach the build or the single-flight lock.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        sleep(Duration::from_millis(200)).await;
         pretty_assertions::assert_eq!(factory.built.load(Ordering::Relaxed), 1, "single-flight must build exactly once");
 
         gate.notify_waiters();
@@ -739,7 +739,7 @@ mod tests {
             .expect("resolves");
 
         // A zero TTL makes every runtime idle the instant it is inspected.
-        let idle = manager.idle_runtimes(std::time::Duration::ZERO);
+        let idle = manager.idle_runtimes(Duration::ZERO);
         let idle_tenants: Vec<TenantRef> = idle.iter().map(|(tenant, _)| tenant.clone()).collect();
         pretty_assertions::assert_eq!(idle_tenants, vec![TenantRef::Named(named("acme"))]);
         pretty_assertions::assert_eq!(manager.evict_all(idle).await, 1);

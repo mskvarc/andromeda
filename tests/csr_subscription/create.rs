@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use crate::{
     ALREADY_EXISTS_TYPE,
     BAD_REQUEST_DATA_TYPE,
@@ -20,6 +20,8 @@ use chrono::{Duration, SecondsFormat, Utc};
 use reqwest::StatusCode;
 use serde_json::Value;
 use serial_test::serial;
+use std::time::Duration as StdDuration;
+use tokio::time::sleep;
 
 #[tokio::test]
 #[serial]
@@ -99,7 +101,7 @@ async fn csr_subscription_create_with_expires_at_becomes_expired_after_deadline(
     let (create_status, _, _) = create_csource_subscription(&http_client, &payload).await;
     pretty_assertions::assert_eq!(create_status, StatusCode::CREATED);
 
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    sleep(StdDuration::from_secs(5)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
     pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
@@ -117,7 +119,7 @@ async fn csr_subscription_create_without_expires_at_remains_active() {
     let (create_status, _, _) = create_csource_subscription(&http_client, &payload).await;
     pretty_assertions::assert_eq!(create_status, StatusCode::CREATED);
 
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    sleep(StdDuration::from_secs(3)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, None).await;
     pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);

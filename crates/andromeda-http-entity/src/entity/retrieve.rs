@@ -34,10 +34,11 @@ use crate::entity::{
     start_rendering,
     with_linked_resolution_warnings,
 };
+use andromeda_http_extraction::tenant_state;
 use std::{iter::once, slice::from_ref};
 
 pub(crate) async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,

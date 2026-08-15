@@ -5,6 +5,7 @@
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_SNAPSHOT: HeaderName = HeaderName::from_static("ngsild-snapshot");
@@ -55,7 +56,7 @@ impl headers::Header for NgsiLdSnapshot {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         match HeaderValue::from_str(self.0.as_str()) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Snapshot header"),
         }
     }
@@ -68,7 +69,7 @@ mod tests {
 
     fn decode_from(raw: &str) -> Result<NgsiLdSnapshot, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         NgsiLdSnapshot::decode(&mut iter)
     }
 

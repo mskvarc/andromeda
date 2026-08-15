@@ -7,6 +7,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_snapshot::service::SnapshotService;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -48,7 +49,7 @@ impl TenantStateResolver<Arc<SnapshotRouteServices>> for SnapshotRouteState {
         &'a self,
         tenant: &'a TenantRef,
         creation_policy: TenantCreationPolicy,
-        instance: &'a axum::http::Uri,
+        instance: &'a Uri,
     ) -> BoxFuture<'a, Result<Arc<SnapshotRouteServices>, ProblemResponse>> {
         Box::pin(async move {
             self.resolver

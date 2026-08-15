@@ -10,7 +10,7 @@ use typed_builder::TypedBuilder;
 /// distance is measured from, which is unrelated to the `georel` predicate that
 /// decided which entities matched at all.
 #[derive(Debug, Clone, Default, TypedBuilder)]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct ResultOrdering {
     /// Ordering terms, applied left to right. Empty means the broker's default
     /// order.

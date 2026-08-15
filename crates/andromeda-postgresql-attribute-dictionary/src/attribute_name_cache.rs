@@ -20,7 +20,19 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, unnest_call},
 };
 use dashmap::DashMap;
-use sea_query::{Alias, Asterisk, Expr, ExprTrait, Func, InsertStatement, OnConflict, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{
+    Alias,
+    Asterisk,
+    Expr,
+    ExprTrait,
+    Func,
+    InsertStatement,
+    OnConflict,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    error::Error as SeaQueryError,
+};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{
     AssertSqlSafe,
@@ -270,7 +282,7 @@ fn decode(rows: &[PgRow]) -> Result<Vec<(AttributeName, AttributeNameId)>, Attri
 }
 
 /// The failure a statement that could not be assembled becomes.
-fn statement_error(error: sea_query::error::Error) -> AttributeNameLookupError {
+fn statement_error(error: SeaQueryError) -> AttributeNameLookupError {
     AttributeNameLookupError::StatementBuild(error.to_string())
 }
 
@@ -303,7 +315,7 @@ fn name_select_query(names: &[&str]) -> SelectStatement {
 /// than a prior existence check: another transaction may have minted the same
 /// name between this one's read and its insert. The batch arrives as one bound
 /// array through `UNNEST`, so a large batch cannot exhaust the parameter space.
-fn name_insert_query(names: &[&str]) -> Result<InsertStatement, sea_query::error::Error> {
+fn name_insert_query(names: &[&str]) -> Result<InsertStatement, SeaQueryError> {
     let column = UnnestColumn::new(AttributeNames::Name, PostgresType::TextArray);
     let source_alias = Alias::new("t");
     let mut source = Query::select();

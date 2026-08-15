@@ -27,6 +27,7 @@ use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use std::mem::take;
 use tracing::debug;
 
 pub(super) struct NotificationBuildParams<'a> {
@@ -59,7 +60,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
             Some(value) => value.clone(),
             None => Value::Null,
         },
-        other => other.clone(),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
     };
 
     if entity.is_null() {
@@ -176,7 +177,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
                 Some(value) => value.clone(),
                 None => Value::Null,
             },
-            other => other.clone(),
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
         };
         if let Ok(prev_compacted) = engine
             .compact(
@@ -232,7 +233,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
             .await
             {
                 Ok(resolved) => {
-                    let payload = std::mem::take(&mut all_compacted[0]);
+                    let payload = take(&mut all_compacted[0]);
                     match SnapshotRenderer::new(payload).with_inline_linked_entities(&resolved.by_id).render() {
                         Ok(rendered) => all_compacted[0] = rendered,
                         Err(error) => {

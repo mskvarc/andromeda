@@ -256,6 +256,7 @@ mod tests {
     use super::*;
     use crate::{error::SubscriptionError, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
+    use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
     use std::num::NonZeroU32;
     use url::Url;
@@ -292,7 +293,7 @@ mod tests {
             time_interval_secs: None,
             notification_attributes: None,
             notification_format: None,
-            notification_sys_attrs: andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion::Strip,
+            notification_sys_attrs: SysAttrsInclusion::Strip,
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,

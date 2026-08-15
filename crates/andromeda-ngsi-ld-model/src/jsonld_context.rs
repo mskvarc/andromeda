@@ -26,7 +26,7 @@ pub enum ContextKind {
 pub struct ContextMetadata {
     /// Origin URL, absent for contexts the broker itself created.
     #[serde(rename = "URL")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub url: Option<Url>,
     /// Identifier under which the broker serves this context.
     pub local_id: Uri,
@@ -35,14 +35,14 @@ pub struct ContextMetadata {
     /// When the broker first stored it.
     pub created_at: DateTime<Utc>,
     /// When the cached copy stops being valid, if it expires at all.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
     /// When it was last read.
     pub last_usage: DateTime<Utc>,
     /// How many times it has been read.
     pub number_of_hits: u64,
     /// Implementation-specific extra information (clause 5.13).
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub extra_info: Option<Value>,
 }
 

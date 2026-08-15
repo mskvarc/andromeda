@@ -2,7 +2,7 @@
 
 use crate::{
     header::{HeaderEncodingError, jsonld_link_header},
-    response::TestResponse,
+    response::{HeaderDecodeError, TestResponse},
     test_client::TestClient,
     transport_error::{EndpointError, TransportError},
 };
@@ -200,7 +200,7 @@ pub enum RequiredLocationError {
     Missing,
     /// The location header was malformed.
     #[error(transparent)]
-    Header(#[from] crate::response::HeaderDecodeError),
+    Header(#[from] HeaderDecodeError),
 }
 
 fn query_suffix(query: &str) -> String {

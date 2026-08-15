@@ -1,7 +1,11 @@
 //! Byte-preserving HTTP response capture and explicit JSON decoding.
 
 use bytes::Bytes;
-use http::{HeaderMap, StatusCode};
+use http::{
+    HeaderMap,
+    StatusCode,
+    header::{LOCATION, ToStrError},
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use thiserror::Error;
@@ -46,7 +50,7 @@ impl TestResponse {
     /// Return the `Location` header when it is present and valid UTF-8.
     pub fn location(&self) -> Result<Option<&str>, HeaderDecodeError> {
         self.headers
-            .get(http::header::LOCATION)
+            .get(LOCATION)
             .map(|value| value.to_str().map_err(HeaderDecodeError::InvalidHeaderValue))
             .transpose()
     }
@@ -79,7 +83,7 @@ pub enum JsonBodyError {
 pub enum HeaderDecodeError {
     /// A present header did not contain valid visible text.
     #[error("response header contains invalid text: {0}")]
-    InvalidHeaderValue(#[source] http::header::ToStrError),
+    InvalidHeaderValue(#[source] ToStrError),
 }
 
 #[cfg(test)]

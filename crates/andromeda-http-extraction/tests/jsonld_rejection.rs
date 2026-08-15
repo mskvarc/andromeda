@@ -9,20 +9,21 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+use std::error::Error;
 
 #[derive(Deserialize)]
 struct RequiredIdentifier {
     id: String,
 }
 
-async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn std::error::Error>> {
+async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn Error>> {
     let response = rejection.into_response();
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
     Ok(serde_json::from_slice(&bytes)?)
 }
 
 #[tokio::test]
-async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(), Box<dyn std::error::Error>> {
+async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(), Box<dyn Error>> {
     let request = Request::builder()
         .uri("/ngsi-ld/v1/entities")
         .header(CONTENT_TYPE, "application/json")
@@ -39,7 +40,7 @@ async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(
 }
 
 #[tokio::test]
-async fn structurally_invalid_json_is_bad_request_data_before_policy_execution() -> Result<(), Box<dyn std::error::Error>> {
+async fn structurally_invalid_json_is_bad_request_data_before_policy_execution() -> Result<(), Box<dyn Error>> {
     let request = Request::builder()
         .uri("/ngsi-ld/v1/entities")
         .header(CONTENT_TYPE, "application/json")

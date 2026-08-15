@@ -76,7 +76,10 @@ impl_accept_extractor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::{Request, header::ACCEPT};
+    use axum::{
+        body::Body,
+        http::{Request, header::ACCEPT},
+    };
 
     // --- Unit tests for format matching ---
 
@@ -153,7 +156,7 @@ mod tests {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
             .header(ACCEPT, "application/xml")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormat::from_request_parts(&mut parts, &()).await;
@@ -170,7 +173,7 @@ mod tests {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/temporal/entities")
             .header(ACCEPT, "application/geo+json")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormatNoGeo::from_request_parts(&mut parts, &()).await;
@@ -187,7 +190,7 @@ mod tests {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/temporal/entities")
             .header(ACCEPT, "application/ld+json")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormatNoGeo::from_request_parts(&mut parts, &()).await;
@@ -196,10 +199,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_accept_header_defaults_to_json() {
-        let req = Request::builder()
-            .uri("/ngsi-ld/v1/entities")
-            .body(axum::body::Body::empty())
-            .expect("valid request");
+        let req = Request::builder().uri("/ngsi-ld/v1/entities").body(Body::empty()).expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormat::from_request_parts(&mut parts, &()).await.expect("should succeed");
         pretty_assertions::assert_eq!(result.0, ResponseMediaType::Json);
@@ -210,7 +210,7 @@ mod tests {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
             .header(ACCEPT, "application/xml, application/ld+json;q=0.9, application/json")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .expect("valid request");
         let (mut parts, _) = req.into_parts();
         let result = AcceptFormat::from_request_parts(&mut parts, &()).await.expect("should succeed");

@@ -142,7 +142,7 @@ pub struct NotificationParams {
 /// `notificationTrigger`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct SubscriptionSelection {
     /// Entity selectors defining which entities trigger notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,7 +159,7 @@ pub struct SubscriptionSelection {
 /// (ETSI GS CIM 009 clauses 4.9, 4.10, 4.19 and 5.2.21).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct SubscriptionFilters {
     /// NGSI-LD query expression to filter matching entities (clause 4.9).
     ///
@@ -190,7 +190,7 @@ pub struct SubscriptionFilters {
 /// (ETSI GS CIM 009 clauses 5.2.12 and 5.5.13).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct SubscriptionDelivery {
     /// Periodic notification interval in seconds (alternative to watched attributes).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -216,13 +216,13 @@ pub struct SubscriptionDelivery {
 pub struct SubscriptionLifecycle {
     /// Whether the subscription is currently active.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub is_active: Option<bool>,
     /// Current lifecycle status of the subscription.
     pub status: SubscriptionStatus,
     /// Expiration timestamp after which the subscription becomes inactive.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the subscription was created.
     #[serde(with = "rfc3339::datetime")]
@@ -248,29 +248,29 @@ pub struct Subscription {
     pub id: Uri,
     /// JSON-LD type (always `Subscription`).
     #[serde(rename = "type", default)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: SubscriptionType,
     /// Human-readable subscription name.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub subscription_name: Option<String>,
     /// Human-readable description of the subscription purpose.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub description: Option<String>,
     /// What the subscription watches.
     #[serde(flatten)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub selection: SubscriptionSelection,
     /// What narrows the matches further.
     #[serde(flatten)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub filters: SubscriptionFilters,
     /// Notification delivery configuration.
     pub notification: NotificationParams,
     /// How and how often notifications are produced.
     #[serde(flatten)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub delivery: SubscriptionDelivery,
     /// Whether the subscription is running, and since when.
     #[serde(flatten)]

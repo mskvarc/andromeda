@@ -45,10 +45,14 @@ use andromeda_tenancy::{
     runtime::TenantRuntimeManager,
     tenant_ref::TenantRef,
 };
-use std::sync::Arc;
+use std::{io::Error as IoError, sync::Arc};
 use thiserror::Error;
 use tokio::runtime::Handle;
-use tracing::{error, info};
+use tracing::{
+    error,
+    info,
+    subscriber::{SetGlobalDefaultError, set_global_default},
+};
 use tracing_subscriber::fmt;
 
 /// HTTP API and process resources whose shutdown begins after traffic drains.
@@ -177,9 +181,9 @@ async fn construct(config: Arc<RuntimeConfig>) -> Result<BrokerExecution, Broker
 }
 
 /// Install composition-owned tracing before any runtime resource is opened.
-fn initialize_tracing(config: &RuntimeConfig) -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
+fn initialize_tracing(config: &RuntimeConfig) -> Result<(), SetGlobalDefaultError> {
     let subscriber = fmt().compact().with_max_level(config.observability.log_level.as_tracing_level()).finish();
-    tracing::subscriber::set_global_default(subscriber)
+    set_global_default(subscriber)
 }
 
 /// Report the active construction profile before broker resources are opened.
@@ -225,7 +229,7 @@ async fn shutdown_signal() {
 }
 
 /// Report the terminal result of the Ctrl-C listener.
-fn report_ctrl_c(result: Result<(), std::io::Error>) {
+fn report_ctrl_c(result: Result<(), IoError>) {
     match result {
         Ok(()) => tracing::info!(signal = "ctrl-c", event = "shutdown_signal_received"),
         Err(error) => tracing::error!(error = %error, "Ctrl-C signal listener failed"),

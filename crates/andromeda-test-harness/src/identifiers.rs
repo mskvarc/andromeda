@@ -1,6 +1,7 @@
 //! Structured globally unique identifiers for isolated test resources.
 
 use iri_rs::IriBuf;
+use std::process;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -91,7 +92,7 @@ pub struct TestIdentifiers {
 impl TestIdentifiers {
     /// Allocate a process-independent unique test scope.
     pub fn allocate(suite: &TestSuiteName) -> Result<TestIdentifiers, IdentifierError> {
-        let prefix = format!("urn:ngsi-ld:test:{}:{}:{}", suite.as_str(), std::process::id(), Uuid::new_v4());
+        let prefix = format!("urn:ngsi-ld:test:{}:{}:{}", suite.as_str(), process::id(), Uuid::new_v4());
         let prefix = prefix.parse().map_err(|_error| IdentifierError::GeneratedIri)?;
         Ok(TestIdentifiers { prefix })
     }

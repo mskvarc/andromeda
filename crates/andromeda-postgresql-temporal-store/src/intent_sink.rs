@@ -29,7 +29,7 @@ use andromeda_temporal::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Display, sync::Arc};
 
 /// PostgreSQL temporal history used through the idempotent append port.
 ///
@@ -241,6 +241,6 @@ fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, Tempo
 }
 
 /// Classify one store failure at the temporal port boundary.
-fn persistence(error: impl std::fmt::Display) -> TemporalError {
+fn persistence(error: impl Display) -> TemporalError {
     TemporalError::persistence(error.to_string())
 }

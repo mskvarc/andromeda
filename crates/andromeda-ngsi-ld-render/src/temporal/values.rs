@@ -43,7 +43,7 @@ impl TemporalValuesRenderer {
     pub fn render(self) -> Result<Value, TemporalValuesError> {
         let obj = match self.payload {
             Value::Object(m) => m,
-            other => return Ok(other),
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => return Ok(other),
         };
 
         const RESERVED: &[&str] = &["id", "type", "@context", "createdAt", "modifiedAt", "deletedAt"];
@@ -63,7 +63,7 @@ impl TemporalValuesRenderer {
 
             let instances = match value {
                 Value::Array(arr) => arr,
-                other => {
+                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
                     result.insert(key.clone(), other.clone());
                     continue;
                 }

@@ -19,7 +19,7 @@ use axum::{
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, mem::take};
 
 /// Construct a deliberate public batch-extraction failure with request instance.
 fn public_error(error_type: NgsiLdErrorType, detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
@@ -94,7 +94,7 @@ where
         }
         // Move headers out before reassembling the request for body extraction.
         // Bytes::from_request does not inspect headers, so empty headers are safe.
-        let headers = std::mem::take(&mut parts.headers);
+        let headers = take(&mut parts.headers);
         let req = Request::from_parts(parts, body);
         let body = Bytes::from_request(req, state).await.map_err(IntoResponse::into_response)?;
         Ok(BatchBody { headers, body })
@@ -150,7 +150,7 @@ pub fn parse_batch_entities(
             ));
         }
         Value::Array(arr) => arr,
-        _ => {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => {
             return Err(public_error(
                 NgsiLdErrorType::BadRequestData,
                 "Request body must be a JSON array of entities",
@@ -175,7 +175,7 @@ pub fn parse_batch_entities(
                             }
                         }
                     }
-                    other => {
+                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
                         let key = other.to_string();
                         if seen.insert(key) {
                             merged_ctx_values.push(other.clone()); // clone: collecting values from borrowed JSON

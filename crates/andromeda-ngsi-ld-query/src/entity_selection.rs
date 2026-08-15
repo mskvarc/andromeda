@@ -14,7 +14,7 @@ use typed_builder::TypedBuilder;
 /// `(A,T2)` that neither named. A GET query, whose `id` and `type` parameters
 /// are independent lists over one implicit group, is a single selector.
 #[derive(Debug, Clone, Default, TypedBuilder)]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct EntitySelector {
     /// Resource identifiers this selector admits. Empty means no identifier
     /// constraint (clause 5.7.2 `id`).
@@ -53,7 +53,7 @@ impl EntitySelector {
 /// is what makes `Default` meaningful here: it is the empty filter, and a
 /// caller describing the predicates a store *declined* starts from it.
 #[derive(Debug, Clone, Default, TypedBuilder)]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct EntitySelection {
     /// The entity selectors, combined as a union (clause 5.2.33).
     ///

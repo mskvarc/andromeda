@@ -1,6 +1,10 @@
 //! Subscription persistence normalization.
 
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+use andromeda_jsonld::{
+    compaction::{compact_attr_iri, compact_type_iri},
+    context_spec::ContextSpec,
+    engine::processor::JsonLdEngine,
+};
 use chrono::Utc;
 use serde_json::Value;
 
@@ -61,7 +65,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     {
         for entity_sel in arr.iter_mut() {
             if let Some(type_iri) = entity_sel.get("type").and_then(|v| v.as_str()).map(String::from) {
-                let compacted = andromeda_jsonld::compaction::compact_type_iri(engine, &type_iri, context).await;
+                let compacted = compact_type_iri(engine, &type_iri, context).await;
                 if let Some(obj) = entity_sel.as_object_mut() {
                     obj.insert("type".to_string(), Value::String(compacted));
                 }
@@ -75,7 +79,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     {
         for attr in arr.iter_mut() {
             if let Some(iri) = attr.as_str().map(String::from) {
-                let compacted = andromeda_jsonld::compaction::compact_attr_iri(engine, &iri, context).await;
+                let compacted = compact_attr_iri(engine, &iri, context).await;
                 *attr = Value::String(compacted);
             }
         }
@@ -88,7 +92,7 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
     {
         for attr in arr.iter_mut() {
             if let Some(iri) = attr.as_str().map(String::from) {
-                let compacted = andromeda_jsonld::compaction::compact_attr_iri(engine, &iri, context).await;
+                let compacted = compact_attr_iri(engine, &iri, context).await;
                 *attr = Value::String(compacted);
             }
         }

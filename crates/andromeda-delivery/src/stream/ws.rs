@@ -22,8 +22,8 @@ mod tests {
 
     registry_conformance_tests!(
         conformance,
-        crate::stream::ws::WsNotificationMessage,
-        crate::stream::ws::WsNotificationMessage {
+        super::super::WsNotificationMessage,
+        super::super::WsNotificationMessage {
             data: r#"{"id":"urn:ngsi-ld:Notification:1"}"#.to_owned(),
         },
         "WebSocket"

@@ -26,9 +26,11 @@ use crate::entity::{
     first_forwarded_status,
     has_remote_errors,
 };
+use andromeda_http_extraction::tenant_state;
+use axum::http::Method;
 
 pub(crate) async fn delete_attr(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
@@ -70,7 +72,7 @@ pub(crate) async fn delete_attr(
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: Some(&attr_id),
-            method: axum::http::Method::DELETE,
+            method: Method::DELETE,
             body: None,
             context_url,
             context: &context,

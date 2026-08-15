@@ -5,6 +5,7 @@
 
 use crate::link::quoting::SplitAsciiUnquoted;
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_WARNING: HeaderName = HeaderName::from_static("ngsild-warning");
@@ -92,7 +93,7 @@ impl headers::Header for NgsiLdWarningHeader {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         for warning in &self.0 {
             match HeaderValue::from_str(&warning.to_string()) {
-                Ok(val) => values.extend(std::iter::once(val)),
+                Ok(val) => values.extend(iter::once(val)),
                 Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Warning header value"),
             }
         }
@@ -129,7 +130,7 @@ mod tests {
     #[test]
     fn decode_parses_response_is_stale() {
         let val = HeaderValue::from_str("110 - \"cached\"").expect("valid");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::ResponseIsStale("cached".to_string())]);
     }
@@ -137,7 +138,7 @@ mod tests {
     #[test]
     fn decode_parses_revalidation_failed() {
         let val = HeaderValue::from_str("111 - \"bad\"").expect("valid");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::RevalidationFailed("bad".to_string())]);
     }
@@ -145,7 +146,7 @@ mod tests {
     #[test]
     fn decode_parses_miscellaneous_warning() {
         let val = HeaderValue::from_str("199 - \"timeout\"").expect("valid");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousWarning("timeout".to_string())]);
     }
@@ -153,7 +154,7 @@ mod tests {
     #[test]
     fn decode_parses_persistent_warning() {
         let val = HeaderValue::from_str("299 - \"forbidden\"").expect("valid");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.as_slice(), &[NgsiLdWarning::MiscellaneousPersistentWarning("forbidden".to_string())]);
     }
@@ -203,7 +204,7 @@ mod tests {
     fn decode_comma_separated_warnings_in_single_header_value() {
         let combined = "199 - \"timeout\", 299 - \"forbidden\"";
         let val = HeaderValue::from_str(combined).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode multiple");
         pretty_assertions::assert_eq!(header.0.len(), 2);
         pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout".to_string()));
@@ -214,7 +215,7 @@ mod tests {
     fn decode_warning_with_comma_in_quoted_text() {
         let raw = "199 - \"timeout, retry later\"";
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode");
         pretty_assertions::assert_eq!(header.0.len(), 1);
         pretty_assertions::assert_eq!(header.0[0], NgsiLdWarning::MiscellaneousWarning("timeout, retry later".to_string()));
@@ -229,7 +230,7 @@ mod tests {
         // `SplitAsciiUnquoted` fixes it.
         let raw = r#"110 - "a\", b""#;
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         let header = NgsiLdWarningHeader::decode(&mut iter).expect("should decode as one warning");
         pretty_assertions::assert_eq!(header.0.len(), 1);
     }

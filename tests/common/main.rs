@@ -9,13 +9,13 @@
 //! (each test creates and cleans up its own resources).
 
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod errors;
 
 use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
 use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -159,7 +159,7 @@ async fn raw_request(
     body: Option<&[u8]>,
     content_type: Option<&str>,
     accept: Option<&str>,
-) -> (StatusCode, reqwest::header::HeaderMap, Value) {
+) -> (StatusCode, HeaderMap, Value) {
     let url = format!("{BASE_URL}{path}");
     let mut builder = client.request(method, &url);
     if let Some(ct) = content_type {
@@ -716,7 +716,7 @@ async fn ld_context_not_available_create_registration_returns_504() {
 // NGSI-LD 6.3.4 clause 3
 // ---------------------------------------------------------------------------
 
-fn assert_json_content_type(headers: &reqwest::header::HeaderMap) {
+fn assert_json_content_type(headers: &HeaderMap) {
     let ct = headers
         .get("content-type")
         .expect("should have Content-Type header")
@@ -725,7 +725,7 @@ fn assert_json_content_type(headers: &reqwest::header::HeaderMap) {
     assert!(ct.contains("application/json"), "Content-Type should contain application/json, got {ct}");
 }
 
-fn assert_has_link_header(headers: &reqwest::header::HeaderMap) {
+fn assert_has_link_header(headers: &HeaderMap) {
     assert!(headers.get("link").is_some(), "response should have Link header");
 }
 

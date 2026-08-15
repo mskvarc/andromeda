@@ -6,6 +6,7 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_registration::error::RegistrationError;
 use axum::http::Uri;
+use std::fmt::Display;
 
 /// A typed failure consumed by the registration HTTP binding.
 pub trait RegistrationHttpClassify {
@@ -51,7 +52,7 @@ where
 }
 
 /// Sanitize a binding invariant and attach the request URI.
-pub(crate) fn internal_problem(detail: impl std::fmt::Display, instance: &Uri) -> ProblemResponse {
+pub(crate) fn internal_problem(detail: impl Display, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::internal(&detail).with_instance(instance.clone())
 }
 
@@ -61,9 +62,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_registration::error::RegistrationError;
+    use std::error::Error;
 
     #[test]
-    fn focused_registration_categories_and_disclosure_are_stable() -> Result<(), Box<dyn std::error::Error>> {
+    fn focused_registration_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:ContextSourceRegistration:1".parse::<Uri>()?;
         for (error, expected) in [
             (RegistrationError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),

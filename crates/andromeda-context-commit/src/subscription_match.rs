@@ -15,13 +15,13 @@ pub struct SubscriptionMatch {
     /// Mutation trigger reason.
     pub trigger: NotificationTrigger,
     /// Expanded entity snapshot after the mutation.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub entity_snapshot: Option<Value>,
     /// Expanded entity snapshot before the mutation.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub previous_snapshot: Option<Value>,
     /// Attributes changed by the mutation.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub changed_attrs: Vec<AttributeName>,
 }
 

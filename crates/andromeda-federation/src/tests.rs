@@ -45,7 +45,9 @@ fn incoming_via_without_the_local_alias_is_not_a_loop() {
     assert!(!loop_detected(Some(&via), &local_alias));
 }
 
-fn entity_from_json(value: serde_json::Value) -> andromeda_ngsi_ld_model::entity::Entity {
+use andromeda_ngsi_ld_model::entity::Entity;
+
+fn entity_from_json(value: serde_json::Value) -> Entity {
     serde_json::from_value(value).expect("test entity fixture")
 }
 

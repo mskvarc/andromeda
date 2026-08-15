@@ -4,12 +4,12 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, reference::NgsiLd
 use andromeda_ngsi_ld_query::{
     dataset::DatasetSelector,
     filter::{expression::Expr, parser},
-    geo::input::GeoQueryInput,
+    geo::input::{GeoQueryInput, GeoQueryInputError},
     pattern::Pattern,
     projection::grammar::{RawProjectionTerm, parse_projection_list},
 };
 use iso8601_duration::Duration as Iso8601Duration;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 
 /// A complete optional geo-query decoded from URL parameters.
 #[derive(Debug, Clone, Default)]
@@ -38,13 +38,13 @@ impl<'de> Deserialize<'de> for OptionalGeoQuery {
             (None, None, None) => return Ok(OptionalGeoQuery(None)),
             (Some(georel), Some(geometry_type), Some(coordinates)) => (georel, geometry_type, coordinates),
             (None | Some(_), None | Some(_), None | Some(_)) => {
-                return Err(serde::de::Error::custom("georel, geometry, and coordinates must be supplied together"));
+                return Err(DeserializeError::custom("georel, geometry, and coordinates must be supplied together"));
             }
         };
         decode_geo_query(georel, geometry_type, coordinates, parameters.geoproperty)
             .map(Some)
             .map(OptionalGeoQuery)
-            .map_err(serde::de::Error::custom)
+            .map_err(DeserializeError::custom)
     }
 }
 
@@ -63,7 +63,7 @@ pub fn decode_geo_query(
 pub enum GeoQueryDecodeError {
     /// The relationship token is invalid.
     #[error("invalid georel: {0}")]
-    Decode(#[from] andromeda_ngsi_ld_query::geo::input::GeoQueryInputError),
+    Decode(#[from] GeoQueryInputError),
 }
 
 /// Deserialize an optional comma-separated entity identifier list.
@@ -82,9 +82,9 @@ where
             .map(str::trim)
             .map(|member| {
                 if member.is_empty() {
-                    return Err(serde::de::Error::custom("entity identifier list contains an empty member"));
+                    return Err(DeserializeError::custom("entity identifier list contains an empty member"));
                 }
-                member.parse::<Uri>().map_err(serde::de::Error::custom)
+                member.parse::<Uri>().map_err(DeserializeError::custom)
             })
             .collect()
     })
@@ -99,9 +99,9 @@ where
     let raw = Option::<String>::deserialize(deserializer)?;
     raw.map(|value| {
         if value.trim().is_empty() {
-            return Err(serde::de::Error::custom("Invalid idPattern: empty value"));
+            return Err(DeserializeError::custom("Invalid idPattern: empty value"));
         }
-        value.parse().map_err(serde::de::Error::custom)
+        value.parse().map_err(DeserializeError::custom)
     })
     .transpose()
 }
@@ -117,7 +117,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parser::parse(&value).map_err(serde::de::Error::custom)).transpose()
+    raw.map(|value| parser::parse(&value).map_err(DeserializeError::custom)).transpose()
 }
 
 /// Deserialize an optional comma-separated list of NGSI-LD attribute names.
@@ -137,9 +137,9 @@ where
             .map(str::trim)
             .map(|member| {
                 if member.is_empty() {
-                    return Err(serde::de::Error::custom("attribute name list contains an empty member"));
+                    return Err(DeserializeError::custom("attribute name list contains an empty member"));
                 }
-                member.parse().map_err(serde::de::Error::custom)
+                member.parse().map_err(DeserializeError::custom)
             })
             .collect()
     })
@@ -164,7 +164,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| parse_projection_list(&value).map_err(serde::de::Error::custom)).transpose()
+    raw.map(|value| parse_projection_list(&value).map_err(DeserializeError::custom)).transpose()
 }
 
 /// Deserialize an optional comma-separated list of dataset selectors.
@@ -182,9 +182,9 @@ where
             .map(str::trim)
             .map(|member| {
                 if member.is_empty() {
-                    return Err(serde::de::Error::custom("dataset identifier list contains an empty member"));
+                    return Err(DeserializeError::custom("dataset identifier list contains an empty member"));
                 }
-                member.parse().map_err(serde::de::Error::custom)
+                member.parse().map_err(DeserializeError::custom)
             })
             .collect()
     })
@@ -204,12 +204,12 @@ where
     raw.map(|value| {
         let value = value.trim();
         if value.contains(',') {
-            return Err(serde::de::Error::custom("datasetId must contain one URI or @none selector"));
+            return Err(DeserializeError::custom("datasetId must contain one URI or @none selector"));
         }
         if value.is_empty() {
-            return Err(serde::de::Error::custom("datasetId must not be empty"));
+            return Err(DeserializeError::custom("datasetId must not be empty"));
         }
-        value.parse().map_err(serde::de::Error::custom)
+        value.parse().map_err(DeserializeError::custom)
     })
     .transpose()
 }
@@ -220,6 +220,6 @@ where
     D: Deserializer<'de>,
 {
     let raw = Option::<String>::deserialize(deserializer)?;
-    raw.map(|value| value.parse().map_err(|error| serde::de::Error::custom(format!("{error:?}"))))
+    raw.map(|value| value.parse().map_err(|error| DeserializeError::custom(format!("{error:?}"))))
         .transpose()
 }

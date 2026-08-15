@@ -2,7 +2,7 @@
 
 use dashmap::DashMap;
 use serde_json::Value;
-use std::{fs, path::PathBuf, sync::OnceLock};
+use std::{fs, io, path::PathBuf, sync::OnceLock};
 use thiserror::Error;
 
 /// A validated RFC 6901 JSON Pointer used to mutate fixture fields.
@@ -93,7 +93,7 @@ pub enum FixtureError {
         path: PathBuf,
         /// Underlying filesystem failure.
         #[source]
-        source: std::io::Error,
+        source: io::Error,
     },
     /// The fixture does not contain valid JSON.
     #[error("fixture is not valid JSON: {0}")]

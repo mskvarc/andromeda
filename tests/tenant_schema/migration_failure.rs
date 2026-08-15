@@ -24,7 +24,12 @@
 
 use crate::SUITE;
 use andromeda_postgresql_context_store::schema_contract::{contract::SchemaContract, error::SchemaContractError, schema_metadata::verify_schema_contract};
-use andromeda_test_harness::{configuration::TestRunConfiguration, database_access::connect_test_database, serialized_environment::SerializedEnvironment};
+use andromeda_test_harness::{
+    configuration::TestRunConfiguration,
+    database_access::connect_test_database,
+    environment::TestEnvironment,
+    serialized_environment::SerializedEnvironment,
+};
 use pretty_assertions::assert_eq;
 use sqlx::{PgPool, Row, migrate::Migrator};
 use std::{fs, path::Path};
@@ -157,9 +162,7 @@ async fn a_tenant_left_between_cutover_phases_is_refused_at_startup() {
 /// would let a half-restored database look healthy.
 #[tokio::test]
 async fn the_cutover_leaves_no_compatibility_view_over_a_replaced_relation() {
-    let scope = andromeda_test_harness::environment::TestEnvironment::from_suite(SUITE)
-        .await
-        .expect("isolated test environment");
+    let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
 
     for relation in REPLACED_RELATIONS {
         let surviving: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM information_schema.views WHERE table_schema = 'public' AND table_name = $1")

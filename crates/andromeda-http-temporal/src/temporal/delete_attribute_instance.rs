@@ -18,9 +18,10 @@ use crate::temporal::{
     Uri,
     ValidatedQuery,
 };
+use andromeda_http_extraction::tenant_state;
 
 pub async fn delete_attr_instance(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
+    tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,

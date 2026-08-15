@@ -6,7 +6,7 @@
 //!
 //! Naming convention: `notification_join_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod concurrency;
 mod depth;
@@ -18,6 +18,7 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use std::time::Duration;
+use tokio::time::sleep;
 
 async fn create(client: &TestClient, entity: &Value) {
     let response = client.post_entity(entity).send().await.expect("create entity failed");
@@ -32,7 +33,7 @@ async fn append_attrs(client: &TestClient, entity_id: &str, fragment: &Value) {
 async fn create_subscription(client: &TestClient, body: &Value) {
     let response = client.create_subscription(body).await.expect("create_subscription failed");
     assert_eq!(response.status, StatusCode::CREATED);
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    sleep(Duration::from_millis(150)).await;
 }
 
 fn subscription_with_flat_join(subscription_id: &str, entity_id: &str, endpoint_url: &str, join_level: Option<u32>) -> Value {

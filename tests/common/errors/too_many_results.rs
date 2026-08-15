@@ -6,7 +6,7 @@
 //! the ceiling lands, populate this test with a query that matches more
 //! than the configured limit.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 #[tokio::test]
 #[ignore = "Broker has no TooManyResults ceiling yet; follow-up: wire a configurable max-results bound and populate this test."]

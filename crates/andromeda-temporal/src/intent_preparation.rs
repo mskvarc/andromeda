@@ -531,7 +531,10 @@ mod tests {
         write_record::WriteRecord,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
-    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_ngsi_ld_model::{
+        attribute::json_number::JsonNumber,
+        temporal::{TemporalHistoryRow, TemporalValue},
+    };
     use chrono::{DateTime, TimeZone, Utc};
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -611,8 +614,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(rows.len(), 2);
-        pretty_assertions::assert_eq!(rows[0].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(JsonNumber::Signed(55)));
-        pretty_assertions::assert_eq!(rows[1].value, andromeda_ngsi_ld_model::temporal::TemporalValue::Number(JsonNumber::Signed(61)));
+        pretty_assertions::assert_eq!(rows[0].value, TemporalValue::Number(JsonNumber::Signed(55)));
+        pretty_assertions::assert_eq!(rows[1].value, TemporalValue::Number(JsonNumber::Signed(61)));
         assert!(rows.iter().all(|row| {
             row.dataset_id
                 .as_ref()
@@ -639,8 +642,8 @@ mod tests {
         assert!(matches!(
             &intent.entries[0],
             TemporalAppendEntry::Observation {
-                row: andromeda_ngsi_ld_model::temporal::TemporalHistoryRow {
-                    value: andromeda_ngsi_ld_model::temporal::TemporalValue::Uri(uri),
+                row: TemporalHistoryRow {
+                    value: TemporalValue::Uri(uri),
                     ..
                 },
                 ..
@@ -673,8 +676,8 @@ mod tests {
                 matches!(
                     &intent.entries[0],
                     TemporalAppendEntry::Observation {
-                        row: andromeda_ngsi_ld_model::temporal::TemporalHistoryRow {
-                            value: andromeda_ngsi_ld_model::temporal::TemporalValue::Object(list),
+                        row: TemporalHistoryRow {
+                            value: TemporalValue::Object(list),
                             ..
                         },
                         ..

@@ -584,7 +584,7 @@ mod tests {
                 pretty_assertions::assert_eq!(membership, SetMembership::Within);
                 pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Number(20.into())));
             }
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -614,7 +614,7 @@ mod tests {
                 pretty_assertions::assert_eq!(membership, SetMembership::Outside);
                 pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Str("Mercedes".to_string())));
             }
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -627,7 +627,7 @@ mod tests {
                 pretty_assertions::assert_eq!(op, OrderingOp::Greater);
                 pretty_assertions::assert_eq!(rhs, Scalar::Number(50.into()));
             }
-            other => unreachable!("expected Ordering, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -636,7 +636,7 @@ mod tests {
         let expr = parse("speed>50;brandName!=\"Mercedes\"").unwrap();
         match expr {
             Expr::And(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
-            other => unreachable!("expected And, got {other:?}"),
+            other @ (Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected And, got {other:?}"),
         }
     }
 
@@ -645,7 +645,7 @@ mod tests {
         let expr = parse("speed>50|temperature<10").unwrap();
         match expr {
             Expr::Or(terms) => pretty_assertions::assert_eq!(terms.len(), 2),
-            other => unreachable!("expected Or, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Pred(_)) => unreachable!("expected Or, got {other:?}"),
         }
     }
 
@@ -657,10 +657,10 @@ mod tests {
                 pretty_assertions::assert_eq!(terms.len(), 2);
                 match &terms[1] {
                     Expr::And(and_terms) => pretty_assertions::assert_eq!(and_terms.len(), 2),
-                    other => unreachable!("expected And as second OR term, got {other:?}"),
+                    other @ (Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected And as second OR term, got {other:?}"),
                 }
             }
-            other => unreachable!("expected Or, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Pred(_)) => unreachable!("expected Or, got {other:?}"),
         }
     }
 
@@ -672,10 +672,10 @@ mod tests {
                 pretty_assertions::assert_eq!(terms.len(), 2);
                 match &terms[0] {
                     Expr::Or(_) => {}
-                    other => unreachable!("expected Or inside parens, got {other:?}"),
+                    other @ (Expr::And(_) | Expr::Pred(_)) => unreachable!("expected Or inside parens, got {other:?}"),
                 }
             }
-            other => unreachable!("expected And, got {other:?}"),
+            other @ (Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected And, got {other:?}"),
         }
     }
 
@@ -688,9 +688,9 @@ mod tests {
                     pretty_assertions::assert_eq!(min, Scalar::Number(10.into()));
                     pretty_assertions::assert_eq!(max, Scalar::Number(20.into()));
                 }
-                other => unreachable!("expected Range, got {other:?}"),
+                other @ (CompareValue::Scalar(_) | CompareValue::ValueList(_)) => unreachable!("expected Range, got {other:?}"),
             },
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -702,9 +702,9 @@ mod tests {
                 CompareValue::ValueList(vals) => {
                     pretty_assertions::assert_eq!(vals.len(), 3);
                 }
-                other => unreachable!("expected ValueList, got {other:?}"),
+                other @ (CompareValue::Scalar(_) | CompareValue::Range { .. }) => unreachable!("expected ValueList, got {other:?}"),
             },
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -716,7 +716,7 @@ mod tests {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "brandName");
                 pretty_assertions::assert_eq!(pattern.as_str(), "Merc.*");
             }
-            other => unreachable!("expected MatchPattern, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected MatchPattern, got {other:?}"),
         }
     }
 
@@ -728,7 +728,7 @@ mod tests {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "brandName");
                 pretty_assertions::assert_eq!(pattern.as_str(), "Merc.*");
             }
-            other => unreachable!("expected NotMatchPattern, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected NotMatchPattern, got {other:?}"),
         }
     }
 
@@ -739,7 +739,7 @@ mod tests {
         // request rather than a string that quietly compares as text.
         match parse("observed>=2017-12-24T12:00:00Z").expect("parses") {
             Expr::Pred(Predicate::Ordering { rhs: Scalar::DateTime(_), .. }) => {}
-            other => unreachable!("expected a date-time operand, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a date-time operand, got {other:?}"),
         }
 
         let error = parse("observed>=2017-13-45").expect_err("must reject");
@@ -776,10 +776,12 @@ mod tests {
                     Scalar::DateTime(dt) => {
                         pretty_assertions::assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Secs, true), "2017-12-24T12:00:00Z");
                     }
-                    other => unreachable!("expected DateTime scalar, got {other:?}"),
+                    other @ (Scalar::Number(_) | Scalar::Bool(_) | Scalar::Str(_) | Scalar::Date(_) | Scalar::Time(_)) => {
+                        unreachable!("expected DateTime scalar, got {other:?}")
+                    }
                 }
             }
-            other => unreachable!("expected Ordering, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -791,7 +793,7 @@ mod tests {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "address");
                 pretty_assertions::assert_eq!(path.terminal().value_path.iter().map(AttributeName::as_str).collect::<Vec<_>>(), vec!["city"]);
             }
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -807,7 +809,7 @@ mod tests {
                     vec!["airquality", "particulate"]
                 );
             }
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -818,7 +820,7 @@ mod tests {
             Expr::Pred(Predicate::Ordering { op, .. }) => {
                 pretty_assertions::assert_eq!(op, OrderingOp::LessEq);
             }
-            other => unreachable!("expected Ordering, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -830,10 +832,10 @@ mod tests {
                 pretty_assertions::assert_eq!(terms.len(), 2);
                 match &terms[0] {
                     Expr::And(and_terms) => pretty_assertions::assert_eq!(and_terms.len(), 2),
-                    other => unreachable!("expected And, got {other:?}"),
+                    other @ (Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected And, got {other:?}"),
                 }
             }
-            other => unreachable!("expected Or, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Pred(_)) => unreachable!("expected Or, got {other:?}"),
         }
     }
 
@@ -845,9 +847,9 @@ mod tests {
                 CompareValue::Scalar(Scalar::Str(s)) => {
                     pretty_assertions::assert_eq!(s, "urn:ngsi-ld:OffStreetParking:Downtown1");
                 }
-                other => unreachable!("expected Str, got {other:?}"),
+                other @ (CompareValue::Scalar(_) | CompareValue::Range { .. } | CompareValue::ValueList(_)) => unreachable!("expected Str, got {other:?}"),
             },
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -859,9 +861,11 @@ mod tests {
                 Scalar::Number(n) => {
                     pretty_assertions::assert_eq!(n.as_f64(), Some(-5.0));
                 }
-                other => unreachable!("expected Number, got {other:?}"),
+                other @ (Scalar::Bool(_) | Scalar::Str(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => {
+                    unreachable!("expected Number, got {other:?}")
+                }
             },
-            other => unreachable!("expected Ordering, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 
@@ -873,9 +877,9 @@ mod tests {
                 CompareValue::Scalar(Scalar::Number(n)) => {
                     pretty_assertions::assert_eq!(n.as_f64(), Some(23.5));
                 }
-                other => unreachable!("expected Number, got {other:?}"),
+                other @ (CompareValue::Scalar(_) | CompareValue::Range { .. } | CompareValue::ValueList(_)) => unreachable!("expected Number, got {other:?}"),
             },
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -886,7 +890,7 @@ mod tests {
             Expr::Pred(Predicate::Equality { rhs, .. }) => {
                 pretty_assertions::assert_eq!(rhs, CompareValue::Scalar(Scalar::Bool(true)));
             }
-            other => unreachable!("expected Equality, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
     }
 
@@ -932,7 +936,7 @@ mod tests {
     fn predicate_of(expr: &Expr) -> &Predicate {
         match expr {
             Expr::Pred(pred) => pred,
-            other => unreachable!("expected a single predicate, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_)) => unreachable!("expected a single predicate, got {other:?}"),
         }
     }
 
@@ -951,7 +955,9 @@ mod tests {
                 pretty_assertions::assert_eq!(*membership, SetMembership::Within);
                 pretty_assertions::assert_eq!(*rhs, CompareValue::Scalar(Scalar::Str("commercial".to_string())));
             }
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an equality predicate, got {other:?}")
+            }
         }
     }
 
@@ -967,7 +973,9 @@ mod tests {
                 pretty_assertions::assert_eq!(guard, vec!["Building", "Store"]);
                 pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "category");
             }
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an equality predicate, got {other:?}")
+            }
         }
     }
 
@@ -985,7 +993,9 @@ mod tests {
                 pretty_assertions::assert_eq!(local_of(terminal).attr.as_str(), "c");
                 pretty_assertions::assert_eq!(*rhs, CompareValue::Scalar(Scalar::Number(5.into())));
             }
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an equality predicate, got {other:?}")
+            }
         }
     }
 
@@ -999,7 +1009,9 @@ mod tests {
                 assert!(guard.is_empty(), "{guard:?}");
                 pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "b");
             }
-            other => unreachable!("expected an existence predicate, got {other:?}"),
+            other @ (Predicate::Equality { .. } | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an existence predicate, got {other:?}")
+            }
         }
     }
 
@@ -1016,7 +1028,9 @@ mod tests {
                 assert!(guard.is_empty(), "a lone prefixed name is not a guard: {guard:?}");
                 pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "prefix:name");
             }
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an equality predicate, got {other:?}")
+            }
         }
     }
 
@@ -1028,12 +1042,14 @@ mod tests {
                 pretty_assertions::assert_eq!(terms.len(), 2);
                 match predicate_of(&terms[0]) {
                     Predicate::Ordering { path, .. } => pretty_assertions::assert_eq!(local_of(path).attr.as_str(), "speed"),
-                    other => unreachable!("expected an ordering predicate, got {other:?}"),
+                    other @ (Predicate::Exists(_) | Predicate::Equality { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                        unreachable!("expected an ordering predicate, got {other:?}")
+                    }
                 }
                 let (relationship, _, _) = hop_of(predicate_of(&terms[1]).path());
                 pretty_assertions::assert_eq!(relationship, "isParkedIn");
             }
-            other => unreachable!("expected a conjunction, got {other:?}"),
+            other @ (Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a conjunction, got {other:?}"),
         }
     }
 
@@ -1050,7 +1066,9 @@ mod tests {
                 pretty_assertions::assert_eq!(guard, vec!["ex:A", "Store"]);
                 pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "category");
             }
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an equality predicate, got {other:?}")
+            }
         }
     }
 
@@ -1073,7 +1091,9 @@ mod tests {
                 pretty_assertions::assert_eq!(guard, vec!["Building", "ex:Store"]);
                 pretty_assertions::assert_eq!(local_of(inner).attr.as_str(), "category");
             }
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Predicate::Exists(_) | Predicate::Ordering { .. } | Predicate::MatchPattern { .. } | Predicate::NotMatchPattern { .. }) => {
+                unreachable!("expected an equality predicate, got {other:?}")
+            }
         }
     }
 

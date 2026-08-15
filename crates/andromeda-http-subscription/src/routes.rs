@@ -59,7 +59,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
     struct RejectingResolver;
@@ -75,7 +75,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owns_subscription_and_streaming_route_inventory() -> Result<(), Box<dyn std::error::Error>> {
+    async fn owns_subscription_and_streaming_route_inventory() -> Result<(), Box<dyn Error>> {
         let routes = super::SubscriptionRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/subscriptions"),

@@ -1,3 +1,4 @@
+use crate::error::NotificationError;
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -39,7 +40,7 @@ impl CsourceIntervalNotificationOperation {
     }
 
     /// Evaluate every context-source interval subscription due at the execution boundary.
-    pub async fn execute(&self) -> Result<usize, crate::error::NotificationError> {
+    pub async fn execute(&self) -> Result<usize, NotificationError> {
         let due_subs = self.sub_repo.find_due_interval_subscriptions().await?;
         let due_count = due_subs.len();
 
@@ -132,7 +133,7 @@ impl CsourceIntervalNotificationOperation {
         Ok(due_count)
     }
 
-    async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::NotificationError> {
+    async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, NotificationError> {
         let mut matching = Vec::new();
         let page_size = 500;
         let mut offset = 0;
@@ -151,7 +152,7 @@ impl CsourceIntervalNotificationOperation {
             }
 
             for csr in page.registrations {
-                let csr_value = serde_json::to_value(&csr).map_err(|error| crate::error::NotificationError::representation(error.to_string()))?;
+                let csr_value = serde_json::to_value(&csr).map_err(|error| NotificationError::representation(error.to_string()))?;
                 if matches_csr_for_subscription(&csr_value, sub) {
                     matching.push(csr_value);
                 }

@@ -15,7 +15,7 @@ use crate::link::{
 use headers::HeaderMapExt;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use iri_rs::IriRefBuf;
-use std::{fmt, str::FromStr};
+use std::{fmt, iter, str::FromStr};
 
 /// Typed `Link` header (RFC 8288).
 ///
@@ -144,7 +144,7 @@ impl headers::Header for Link {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         match self.to_header_value() {
-            Some(value) => values.extend(std::iter::once(value)),
+            Some(value) => values.extend(iter::once(value)),
             None => tracing::warn!(link = %self, "failed to encode Link header"),
         }
     }
@@ -157,6 +157,7 @@ mod tests {
     use http::HeaderValue;
     use iri_rs::{IriBuf, IriRefBuf};
     use mediatype::MediaTypeBuf;
+    use std::iter;
 
     /// A validated IRI reference, for building link targets in tests.
     fn iri_ref(value: &str) -> IriRefBuf {
@@ -166,7 +167,7 @@ mod tests {
     /// Decode a `Link` from a raw header string through the `headers` trait.
     fn decode_link(raw: &str) -> Option<Link> {
         let value = HeaderValue::from_str(raw).ok()?;
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
         Link::decode(&mut values).ok()
     }
 

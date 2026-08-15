@@ -159,7 +159,7 @@ fn validate_geo_q_geometry(geo_q: &Value) -> Result<(), SubscriptionError> {
     };
     let coordinates = match coordinates {
         Value::String(raw) => serde_json::from_str::<Value>(raw).map_err(|error| SubscriptionError::validation(format!("geoQ coordinates: {error}")))?,
-        other => other.clone(), // clone: the GeoJSON decoder consumes the value it decodes
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => other.clone(), // clone: the GeoJSON decoder consumes the value it decodes
     };
     let value = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
     Geometry::from_geojson_value(&value)
@@ -189,17 +189,17 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), Subscriptio
                                     Value::String(s) if s.trim().is_empty() => {
                                         return Err(SubscriptionError::validation("notification.endpoint.uri must be a non-empty string"));
                                     }
-                                    _other => {}
+                                    Value::String(_) | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => {}
                                 }
                             }
                         }
-                        _other => {}
+                        _other @ (Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => {}
                     }
                 } else {
                     return Err(SubscriptionError::validation("notification.endpoint is required"));
                 }
             }
-            _other => {
+            _other @ (Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => {
                 return Err(SubscriptionError::validation("notification must be an object"));
             }
         }

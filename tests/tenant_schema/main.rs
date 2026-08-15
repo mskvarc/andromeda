@@ -11,7 +11,7 @@
 //!
 //! Naming convention: `<subject>_<scenario>_<expected outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod backfill_freeze;
 mod code_registry;

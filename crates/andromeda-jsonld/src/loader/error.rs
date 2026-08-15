@@ -133,7 +133,19 @@ mod tests {
                 pretty_assertions::assert_eq!(url.as_str(), "https://example.com/gone.jsonld");
                 pretty_assertions::assert_eq!(status, StatusCode::GONE);
             }
-            other => unreachable!("expected ContextHttp, got {other}"),
+            other @ (JsonLdError::ProtectedContextPreload { .. }
+            | JsonLdError::ContextFetchDisabled { .. }
+            | JsonLdError::ContextLoad { .. }
+            | JsonLdError::ContextTooLarge { .. }
+            | JsonLdError::ContextInvalid { .. }
+            | JsonLdError::EmbeddedContextInvalid(_)
+            | JsonLdError::InlineContextInvalid(_)
+            | JsonLdError::ClientBuild(_)
+            | JsonLdError::Expansion(_)
+            | JsonLdError::Compaction(_)
+            | JsonLdError::InvalidIri(_)
+            | JsonLdError::InvalidDocument(_)
+            | JsonLdError::Json(_)) => unreachable!("expected ContextHttp, got {other}"),
         }
     }
 }

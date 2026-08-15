@@ -73,10 +73,11 @@ mod tests {
     use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
     use axum::{
         body::Body,
+        http,
         http::{Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
     struct RejectingResolver;
@@ -91,7 +92,7 @@ mod tests {
         }
     }
 
-    fn request(method: Method, path: &str) -> Result<Request<Body>, axum::http::Error> {
+    fn request(method: Method, path: &str) -> Result<Request<Body>, http::Error> {
         Request::builder()
             .method(method)
             .uri(path)
@@ -100,7 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_entity_route_inventory_is_owned_by_this_fragment() -> Result<(), Box<dyn std::error::Error>> {
+    async fn complete_entity_route_inventory_is_owned_by_this_fragment() -> Result<(), Box<dyn Error>> {
         let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/entities"),
@@ -136,7 +137,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn methods_outside_the_inventory_are_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    async fn methods_outside_the_inventory_are_rejected() -> Result<(), Box<dyn Error>> {
         let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/types"),

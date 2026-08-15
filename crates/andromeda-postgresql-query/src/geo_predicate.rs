@@ -333,7 +333,30 @@ mod tests {
             .iter()
             .filter_map(|value| match value {
                 Value::Bytes(Some(bytes)) => Some(bytes.clone()), // clone: the assertion outlives the borrow of the statement
-                _non_geometry => None,
+                _non_geometry @ (Value::Bool(_)
+                | Value::TinyInt(_)
+                | Value::SmallInt(_)
+                | Value::Int(_)
+                | Value::BigInt(_)
+                | Value::TinyUnsigned(_)
+                | Value::SmallUnsigned(_)
+                | Value::Unsigned(_)
+                | Value::BigUnsigned(_)
+                | Value::Float(_)
+                | Value::Double(_)
+                | Value::String(_)
+                | Value::Enum(_)
+                | Value::Char(_)
+                | Value::Bytes(_)
+                | Value::Json(_)
+                | Value::ChronoDate(_)
+                | Value::ChronoTime(_)
+                | Value::ChronoDateTime(_)
+                | Value::ChronoDateTimeUtc(_)
+                | Value::ChronoDateTimeLocal(_)
+                | Value::ChronoDateTimeWithTimeZone(_)
+                | Value::Uuid(_)
+                | Value::Array(..)) => None,
             })
             .collect()
     }

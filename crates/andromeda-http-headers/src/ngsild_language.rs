@@ -17,6 +17,7 @@
 
 use crate::language::{LanguageFilter, LanguageRange};
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// Typed `NGSILD-Language` request header.
 ///
@@ -67,7 +68,7 @@ impl headers::Header for NgsiLdLanguage {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let rendered: String = self.0.preferences().iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&rendered) {
-            Ok(value) => values.extend(std::iter::once(value)),
+            Ok(value) => values.extend(iter::once(value)),
             Err(error) => tracing::warn!(error = %error, "failed to encode NGSILD-Language header"),
         }
     }
@@ -78,11 +79,12 @@ mod tests {
     use crate::{language::LanguageRange, ngsild_language::NgsiLdLanguage, quality::Quality};
     use headers::Header;
     use http::HeaderValue;
+    use std::iter;
 
     /// Decode an `NgsiLdLanguage` from a raw header string.
     fn decode_header(raw: &str) -> Result<NgsiLdLanguage, headers::Error> {
         let value = HeaderValue::from_str(raw).expect("valid header value");
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
         NgsiLdLanguage::decode(&mut values)
     }
 

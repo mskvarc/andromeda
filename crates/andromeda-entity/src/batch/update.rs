@@ -30,7 +30,7 @@ fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
     let entity_obj = match entity {
         Value::Array(arr) => arr.first().and_then(Value::as_object),
         Value::Object(obj) => Some(obj),
-        _other => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     };
     let attrs_obj = attrs.as_object();
 

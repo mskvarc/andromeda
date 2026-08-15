@@ -31,10 +31,11 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use std::error::Error;
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn health_fragment_owns_the_health_path() -> Result<(), Box<dyn std::error::Error>> {
+    async fn health_fragment_owns_the_health_path() -> Result<(), Box<dyn Error>> {
         let response = HealthRoutes::new(Health::builder().build())
             .into_router()
             .oneshot(Request::get("/health").body(Body::empty())?)

@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use andromeda_http_extraction::tenant_state::ExistingTenantState;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::OriginalUri,
@@ -89,7 +90,7 @@ impl Stream for SseEventStream {
 /// persistent connection that streams notification events as they are dispatched
 /// by the notification worker.
 pub async fn stream(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {

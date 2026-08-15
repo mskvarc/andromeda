@@ -14,8 +14,8 @@ use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_ngsi_ld_model::{key_value_pair::KeyValuePair, registration::ContextSourceAccess};
 use headers::{Header, HeaderMapExt};
 use iri_rs::IriRefBuf;
-use reqwest::header::{HeaderName, HeaderValue};
-use std::str::FromStr;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::{iter, str::FromStr};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -79,7 +79,7 @@ impl FederationService {
         tenant: Option<&TenantName>,
         incoming_via: Option<&Via>,
     ) -> Result<reqwest::RequestBuilder, FederationError> {
-        let mut typed_headers = reqwest::header::HeaderMap::new();
+        let mut typed_headers = HeaderMap::new();
         typed_headers.typed_insert(headers::Connection::close());
 
         let pairs = access.context_source_info.as_deref().unwrap_or_default();
@@ -102,8 +102,8 @@ impl FederationService {
         let accept = accept_value
             .as_deref()
             .and_then(|raw| {
-                let value = reqwest::header::HeaderValue::from_str(raw).ok()?;
-                let mut values = std::iter::once(&value);
+                let value = HeaderValue::from_str(raw).ok()?;
+                let mut values = iter::once(&value);
                 Accept::decode(&mut values).ok()
             })
             .unwrap_or_else(|| Accept::single(ResponseMediaType::Json));
@@ -115,7 +115,7 @@ impl FederationService {
 
         if let Some(name) = tenant {
             let tenant_header = NgsiLdTenant::new(name.clone()); // clone: TenantName is borrowed, header needs ownership
-            let mut request_headers = reqwest::header::HeaderMap::new();
+            let mut request_headers = HeaderMap::new();
             request_headers.typed_insert(tenant_header);
             request = request.headers(request_headers);
         }
@@ -127,7 +127,7 @@ impl FederationService {
             Some(existing) => existing.clone().append(self.received_protocol.clone(), self.source_alias.clone()),
             None => Via::with_entry(self.received_protocol.clone(), self.source_alias.clone()),
         };
-        let mut via_headers = reqwest::header::HeaderMap::new();
+        let mut via_headers = HeaderMap::new();
         via_headers.typed_insert(new_via);
         request = request.headers(via_headers);
 

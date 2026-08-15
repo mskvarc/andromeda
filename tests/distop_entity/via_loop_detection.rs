@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Via header loop detection tests.
 //!
 //! Tests the broker's ability to detect and prevent forwarding loops using the Via header

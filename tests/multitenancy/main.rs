@@ -6,7 +6,7 @@
 //!
 //! Naming convention: `multitenancy_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::{context::CORE_CONTEXT, problem_detail as error};
 use andromeda_test_harness::{
@@ -18,6 +18,7 @@ use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::time::Duration;
+use tokio::time::sleep;
 use uuid::Uuid;
 
 #[path = "../support/notification_adapter.rs"]
@@ -484,7 +485,7 @@ async fn multitenancy_unnamed_default_tenant_notifications_omit_tenant_header() 
     );
 
     // Small delay to let subscription activate before creating entity
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    sleep(Duration::from_millis(150)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:unnamed-notif");
     let (status, _, _) = ngsi_request(
@@ -527,7 +528,7 @@ async fn multitenancy_named_tenant_notifications_include_ngsild_tenant_header() 
         "create subscription in named tenant must include NGSILD-Tenant header"
     );
 
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    sleep(Duration::from_millis(150)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:named-notif");
     let (status, _, _) = ngsi_request(
@@ -568,7 +569,7 @@ async fn multitenancy_subscription_does_not_receive_events_from_different_tenant
     let (status, _, _) = ngsi_request(&http_client, Method::POST, "/subscriptions", Some(&sub), &tenant_a, false).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    sleep(Duration::from_millis(150)).await;
 
     // Create entity in tenant B — must NOT trigger subscription in tenant A
     let entity_id = unique_entity_id("urn:ngsi-ld:Vehicle:sub-isolation");

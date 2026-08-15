@@ -37,21 +37,22 @@ mod tests {
     use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
-        body::to_bytes,
+        body::{Body, to_bytes},
         http::{StatusCode, Uri, header::CONTENT_TYPE},
-        response::IntoResponse,
+        response::{IntoResponse, Response},
     };
     use serde_json::Value;
+    use std::io::Error as IoError;
 
-    async fn body(response: ProblemResponse) -> Result<(axum::response::Response, Value), serde_json::Error> {
+    async fn body(response: ProblemResponse) -> Result<(Response, Value), serde_json::Error> {
         let response = response.into_response();
         let status = response.status();
         let headers = response.headers().clone();
         let value = match to_bytes(response.into_body(), usize::MAX).await {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) => return Err(serde_json::Error::io(std::io::Error::other(error))),
+            Err(error) => return Err(serde_json::Error::io(IoError::other(error))),
         };
-        let mut rebuilt = axum::response::Response::new(axum::body::Body::empty());
+        let mut rebuilt = Response::new(Body::empty());
         *rebuilt.status_mut() = status;
         *rebuilt.headers_mut() = headers;
         Ok((rebuilt, value))

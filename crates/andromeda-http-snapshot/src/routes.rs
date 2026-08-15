@@ -41,7 +41,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
     struct RejectingResolver;
@@ -57,7 +57,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owns_the_complete_snapshot_inventory() -> Result<(), Box<dyn std::error::Error>> {
+    async fn owns_the_complete_snapshot_inventory() -> Result<(), Box<dyn Error>> {
         let routes = super::SnapshotRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::POST, "/snapshots"),

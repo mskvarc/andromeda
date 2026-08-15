@@ -14,9 +14,10 @@ use crate::temporal::{
     Uri,
     Value,
 };
+use andromeda_http_extraction::tenant_state;
 
 pub async fn add_attrs(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
+    tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,

@@ -4,6 +4,7 @@ use crate::{entity::types_present::EntityTypesMissing, jsonld_context::mapper::C
 use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookupError;
 use andromeda_postgresql_encoding::ewkb::EwkbError;
 use andromeda_postgresql_query::error::RenderError;
+use sqlx::migrate::MigrateError;
 
 /// Errors from the PostgreSQL context store.
 ///
@@ -42,7 +43,7 @@ pub enum ContextStoreError {
     ContextMapper(#[from] ContextMapperError),
     /// A database migration failed.
     #[error("context store migration: {0}")]
-    Migration(#[from] sqlx::migrate::MigrateError),
+    Migration(#[from] MigrateError),
     /// A tenant database is not the schema this binary was built against.
     #[error("context store schema contract: {0}")]
     SchemaContract(#[from] SchemaContractError),

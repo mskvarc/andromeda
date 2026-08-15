@@ -36,6 +36,7 @@ use crate::{
     version::NgsiLdVersion,
 };
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// Typed `Prefer` request header for NGSI-LD (RFC 7240, clause 6.3.6).
 ///
@@ -97,7 +98,7 @@ impl headers::Header for Prefer {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let s: String = self.0.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Prefer header"),
         }
     }
@@ -111,7 +112,7 @@ mod tests {
     /// Helper: decode a `Prefer` from a raw header string.
     fn decode_prefer(raw: &str) -> Prefer {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         Prefer::decode(&mut iter).expect("valid Prefer header")
     }
 

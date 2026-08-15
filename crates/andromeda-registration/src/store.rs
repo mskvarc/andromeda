@@ -66,66 +66,66 @@ use url::Url;
 #[derive(Debug, TypedBuilder)]
 pub struct CreateCsrParams<'a> {
     /// Human-readable name of the registration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub registration_name: Option<&'a str>,
     /// Free-text description of the registration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub description: Option<&'a str>,
     /// Registration information entries describing provided entities/attributes.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub information: Option<Vec<RegistrationInfo>>,
     /// Tenant identifier for multi-tenancy.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub tenant: Option<TenantName>,
     /// Expected interval between observations.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_interval: Option<&'a Value>,
     /// Expected interval between management interactions.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub management_interval: Option<&'a Value>,
     /// The `location` geometry.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub location: Option<Geometry>,
     /// The `observationSpace` geometry.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_space: Option<Geometry>,
     /// The `operationSpace` geometry.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operation_space: Option<Geometry>,
     /// Expiration timestamp for the registration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
     /// Base endpoint URL of the context source.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub endpoint: Option<Url>,
     /// Preferred MIME type for responses from the context source.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub accept: Option<MediaTypeBuf>,
     /// Forwarding mode for distributed operations.
     pub mode: ForwardingMode,
     /// NGSI-LD operations supported by the context source.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operations: Option<Vec<CsrOperation>>,
     /// Scope values for the registration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub scope: Option<Vec<ScopeBuf>>,
     /// ISO 8601 duration between context source refreshes.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub refresh_rate: Option<Iso8601Duration>,
     /// Management information for the registration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub management: Option<&'a Value>,
     /// Additional context source metadata entries.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub context_source_info: Option<Vec<KeyValuePair>>,
     /// JSON-LD context associated with this registration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub jsonld_context: Option<Url>,
     /// Unique pseudonym for Via-based loop detection.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub context_source_alias: Option<ContextSourcePseudonym>,
     /// Non-standard properties preserved from the original request.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub additional_properties: Option<Value>,
 }
 
@@ -170,67 +170,67 @@ impl CreateCsrParams<'_> {
 #[derive(Debug, Default, TypedBuilder)]
 pub struct CsrUpdateFragment {
     /// Updated registration name.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub registration_name: Option<Option<String>>,
     /// Updated description.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub description: Option<Option<String>>,
     /// Updated registration information entries.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub information: Option<Vec<RegistrationInfo>>,
     /// Updated tenant identifier.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub tenant: Option<Option<TenantName>>,
     /// Updated observation interval.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_interval: Option<Option<Value>>,
     /// Updated management interval.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub management_interval: Option<Option<Value>>,
     /// Updated `location` geometry (`Some(None)` clears, `Some(Some(_))` replaces).
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub location: Option<Option<Geometry>>,
     /// Updated `observationSpace` geometry.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_space: Option<Option<Geometry>>,
     /// Updated `operationSpace` geometry.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operation_space: Option<Option<Geometry>>,
     /// Updated expiration timestamp.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub expires_at: Option<Option<DateTime<Utc>>>,
     /// Updated endpoint URL.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub endpoint: Option<Url>,
     /// Updated accepted MIME type.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub accept: Option<Option<MediaTypeBuf>>,
     /// Updated forwarding mode.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub mode: Option<ForwardingMode>,
     /// Updated supported operations.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operations: Option<Option<Vec<CsrOperation>>>,
     /// Updated scope values.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub scope: Option<Option<Vec<ScopeBuf>>>,
     /// Updated refresh rate duration.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub refresh_rate: Option<Option<Iso8601Duration>>,
     /// Updated management information.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub management: Option<Option<Value>>,
     /// Updated context source metadata entries.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub context_source_info: Option<Option<Vec<KeyValuePair>>>,
     /// Updated JSON-LD context reference.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub jsonld_context: Option<Option<Url>>,
     /// Updated context source alias pseudonym.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub context_source_alias: Option<Option<ContextSourcePseudonym>>,
     /// Updated non-standard properties.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub additional_properties: Option<Value>,
 }
 

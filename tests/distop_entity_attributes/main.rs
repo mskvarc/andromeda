@@ -16,7 +16,7 @@
 //!
 //! Naming convention: `distop_entity_attrs_<operation>_<mode>_<scenario>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 #[path = "../support/context_source_adapter.rs"]
 pub mod context_source_adapter;

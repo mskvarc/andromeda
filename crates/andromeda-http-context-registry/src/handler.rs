@@ -5,7 +5,7 @@ use crate::{
     state::ContextRegistryTenantState,
 };
 use andromeda_context_registry::{detail_level::ContextDetailLevel, removal::ContextRemoval};
-use andromeda_http_extraction::{origin::request_origin, query::ValidatedQuery, typed_path::TypedPath};
+use andromeda_http_extraction::{origin::request_origin, query::ValidatedQuery, tenant_state::ExistingTenantState, typed_path::TypedPath};
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
@@ -20,7 +20,7 @@ use axum::{
 use serde_json::Value;
 
 pub(crate) async fn create(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): ContextRegistryTenantState,
+    ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     body: Bytes,
@@ -37,7 +37,7 @@ pub(crate) async fn create(
 }
 
 pub(crate) async fn query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): ContextRegistryTenantState,
+    ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<ListParams>,
 ) -> Result<Response, ProblemResponse> {
@@ -50,7 +50,7 @@ pub(crate) async fn query(
 }
 
 pub(crate) async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): ContextRegistryTenantState,
+    ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(context_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<ServeParams>,
@@ -64,7 +64,7 @@ pub(crate) async fn get(
 }
 
 pub(crate) async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): ContextRegistryTenantState,
+    ExistingTenantState(state): ContextRegistryTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(context_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<DeleteParams>,

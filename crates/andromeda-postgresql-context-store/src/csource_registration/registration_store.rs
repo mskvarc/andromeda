@@ -84,8 +84,11 @@ fn create_error(error: sqlx::Error, identifier: &Uri) -> RegistrationError {
         | sqlx::Error::PoolTimedOut
         | sqlx::Error::PoolClosed
         | sqlx::Error::WorkerCrashed
-        | sqlx::Error::Migrate(_) => persistence_error(error),
-        other => persistence_error(other),
+        | sqlx::Error::Migrate(_)
+        | sqlx::Error::InvalidSavePointStatement
+        | sqlx::Error::BeginFailed
+        | sqlx::Error::InvalidArgument(_)
+        | _ => persistence_error(error),
     }
 }
 

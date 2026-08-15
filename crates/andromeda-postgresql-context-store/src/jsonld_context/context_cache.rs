@@ -7,7 +7,7 @@ use andromeda_postgresql_schema::jsonld::JsonldContexts;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use async_trait::async_trait;
 use iri_rs::IriBuf;
-use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
+use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
@@ -41,7 +41,7 @@ impl ContextCache for JsonLdContextRepository {
 }
 
 /// Insert a remotely-fetched Context, leaving an already-cached URL untouched.
-fn cache_insert(local_id: &str, url: &str, payload: &Value) -> Result<InsertStatement, sea_query::error::Error> {
+fn cache_insert(local_id: &str, url: &str, payload: &Value) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(JsonldContexts::Table)

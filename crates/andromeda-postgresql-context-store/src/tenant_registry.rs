@@ -9,7 +9,19 @@ use andromeda_postgresql_schema::tenancy::Tenants;
 use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
 use andromeda_tenancy::{config::TenancyConfig, database::TenantDatabase, database_name::TenantDatabaseName, error::TenancyError, status::TenantStatus};
 use async_trait::async_trait;
-use sea_query::{Expr, ExprTrait, InsertStatement, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{
+    Expr,
+    ExprTrait,
+    InsertStatement,
+    Keyword,
+    OnConflict,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    error::Error as SeaQueryError,
+};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::PgPool;
 
@@ -79,7 +91,7 @@ fn registry_unavailable(error: &sqlx::Error) -> TenancyError {
 ///
 /// A column/value arity mismatch is the only cause, so it is an internal
 /// invariant rather than a database failure.
-fn statement_error(error: sea_query::error::Error) -> ContextStoreError {
+fn statement_error(error: SeaQueryError) -> ContextStoreError {
     ContextStoreError::Internal(error.to_string())
 }
 
@@ -205,7 +217,7 @@ fn advisory_lock_query(name: &str) -> SelectStatement {
 ///
 /// The conflict target is `db_name`, whose unique index is what keeps a restart
 /// from inserting a second default row.
-fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement, sea_query::error::Error> {
+fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(Tenants::Table)
@@ -234,7 +246,7 @@ fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement,
 }
 
 /// Insert a named tenant.
-fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<InsertStatement, sea_query::error::Error> {
+fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(Tenants::Table)

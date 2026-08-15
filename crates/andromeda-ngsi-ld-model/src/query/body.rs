@@ -23,7 +23,7 @@ constant_string!(QueryType, "Query");
 /// (ETSI GS CIM 009 v1.9.1 clause 5.2.23).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TypedBuilder)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct Query {
     /// Required fixed resource discriminator.
     #[serde(rename = "type")]
@@ -116,7 +116,7 @@ pub struct Query {
 /// Serde support for comma-separated attribute-name members.
 mod attribute_name_csv {
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize a comma-separated member into validated names.
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<AttributeName>>, D::Error>
@@ -129,9 +129,9 @@ mod attribute_name_csv {
                     .map(str::trim)
                     .map(|name| {
                         if name.is_empty() {
-                            return Err(serde::de::Error::custom("attribute-name list contains an empty member"));
+                            return Err(DeserializeError::custom("attribute-name list contains an empty member"));
                         }
-                        name.parse().map_err(serde::de::Error::custom)
+                        name.parse().map_err(DeserializeError::custom)
                     })
                     .collect()
             })
@@ -160,7 +160,7 @@ mod attribute_name_csv {
 /// terms every member yields are concatenated into one flat list.
 mod projection_term_list {
     use andromeda_ngsi_ld_query::projection::grammar::{RawProjectionTerm, parse_projection_list};
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as DeserializeError};
 
     /// Deserialize the array of projection-language strings into the terms
     /// they parse to, concatenated in array order.
@@ -172,7 +172,7 @@ mod projection_term_list {
             .map(|members| {
                 members
                     .iter()
-                    .map(|member| parse_projection_list(member).map_err(serde::de::Error::custom))
+                    .map(|member| parse_projection_list(member).map_err(DeserializeError::custom))
                     .collect::<Result<Vec<Vec<RawProjectionTerm>>, D::Error>>()
                     .map(|groups| groups.into_iter().flatten().collect())
             })

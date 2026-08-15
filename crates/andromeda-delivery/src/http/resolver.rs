@@ -10,11 +10,12 @@
 
 use crate::http::{config::PrivateIpBlocking, private_ip::is_private_ip};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
-use std::net::SocketAddr;
+use std::{error::Error, net::SocketAddr};
+use tokio::net::lookup_host;
 
 /// The result the `reqwest` DNS contract expects: resolved addresses, or a
 /// boxed error that fails the connection.
-type ResolveResult = Result<Addrs, Box<dyn std::error::Error + Send + Sync>>;
+type ResolveResult = Result<Addrs, Box<dyn Error + Send + Sync>>;
 
 /// Resolver that blocks any resolution reaching private or reserved address
 /// space.
@@ -43,7 +44,7 @@ impl Resolve for PrivateIpResolver {
 async fn vetted_addrs(host: String, blocking: PrivateIpBlocking) -> ResolveResult {
     // Port 0: `reqwest` overrides it with the URL's port (or the scheme default)
     // per the `Resolve` contract, so only the address is significant here.
-    let resolved: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+    let resolved: Vec<SocketAddr> = lookup_host((host.as_str(), 0)).await?.collect();
 
     if blocking == PrivateIpBlocking::Enabled
         && let Some(private) = resolved.iter().find(|addr| is_private_ip(&addr.ip()))

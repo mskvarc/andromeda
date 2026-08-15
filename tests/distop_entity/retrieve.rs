@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Distributed entity retrieve tests.
 //!
 //! Tests retrieving single entities across context sources with different registration modes.

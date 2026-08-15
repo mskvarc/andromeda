@@ -18,7 +18,7 @@
 use crate::entity_members::ENTITY_MEMBERS;
 use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
 use serde_json::{Map, Value};
-use std::str::FromStr;
+use std::{mem::take, str::FromStr};
 
 /// Rewrite every attribute of an entity into its normalized form.
 ///
@@ -68,13 +68,13 @@ fn normalize_attribute(value: &mut Value) {
         // The geospatial exception (clause 4.5.2.3): a bare GeoJSON geometry is
         // the value of a GeoProperty, not of a Property.
         if is_geojson_geometry(instance) {
-            let geometry = std::mem::take(value);
+            let geometry = take(value);
             *value = as_typed_value(AttributeType::GeoProperty, geometry);
             return;
         }
         // Any other object carries no type to infer, so it is the value of an
         // implicit Property.
-        let concise = std::mem::take(value);
+        let concise = take(value);
         *value = as_typed_value(AttributeType::Property, concise);
         return;
     }
@@ -92,7 +92,7 @@ fn normalize_attribute(value: &mut Value) {
 
     // A bare scalar, or an array that is not entirely instances, is the value
     // of an implicit Property (clause 4.5.2.3).
-    let concise = std::mem::take(value);
+    let concise = take(value);
     *value = as_typed_value(AttributeType::Property, concise);
 }
 

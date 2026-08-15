@@ -23,9 +23,10 @@ pub fn batch_operation_result<E>(success: Vec<Uri>, errors: Vec<(Uri, E)>, class
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use std::error::Error;
 
     #[test]
-    fn projection_preserves_successes_failures_and_supplied_classification() -> Result<(), Box<dyn std::error::Error>> {
+    fn projection_preserves_successes_failures_and_supplied_classification() -> Result<(), Box<dyn Error>> {
         let success = "urn:ngsi-ld:Entity:1".parse::<Uri>()?;
         let failed = "urn:ngsi-ld:Entity:2".parse::<Uri>()?;
         let result = batch_operation_result(vec![success], vec![(failed, "invalid")], |detail| {

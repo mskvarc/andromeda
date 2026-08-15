@@ -7,7 +7,13 @@ use crate::{
 };
 use andromeda_http_headers::media_type::APPLICATION_LD_JSON;
 use bytes::Bytes;
-use http::{HeaderMap, HeaderValue, Method, StatusCode, header::CONTENT_TYPE};
+use http::{
+    HeaderMap,
+    HeaderValue,
+    Method,
+    StatusCode,
+    header::{CONTENT_TYPE, InvalidHeaderValue},
+};
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
@@ -62,5 +68,5 @@ pub enum JsonLdContextServerError {
     Server(#[from] CallbackServerError),
     /// The typed JSON-LD media type could not be encoded as an HTTP header.
     #[error("JSON-LD media type cannot be encoded as an HTTP header: {0}")]
-    ContentType(#[source] http::header::InvalidHeaderValue),
+    ContentType(#[source] InvalidHeaderValue),
 }

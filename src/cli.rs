@@ -1,3 +1,5 @@
+#![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
+
 use andromeda_broker_composition::config::runtime::DEFAULT_CONFIG_PATH;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use shadow_rs::shadow;

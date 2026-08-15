@@ -2,7 +2,11 @@
 
 use crate::source_scan::{is_test_only, workspace_sources};
 use quote::ToTokens;
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::{Path, PathBuf},
+};
 use syn::{
     Item,
     ItemImpl,
@@ -142,7 +146,7 @@ fn scan_test_crate_modules(root: &Path, violations: &mut Vec<String>) {
 }
 
 /// Recursively discover Rust files below one existing directory.
-fn rust_files_below(root: &Path) -> Vec<std::path::PathBuf> {
+fn rust_files_below(root: &Path) -> Vec<PathBuf> {
     if !root.exists() {
         return Vec::new();
     }

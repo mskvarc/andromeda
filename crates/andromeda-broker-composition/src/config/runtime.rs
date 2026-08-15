@@ -224,9 +224,11 @@ mod tests {
     use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
     use andromeda_postgresql_context_store::config::{DatabaseConfig, SynchronousCommit};
     use andromeda_snapshot::config::SnapshotConfig;
+    use andromeda_temporal::config::TemporalAppendMode;
     use serial_test::serial;
     use std::{
         collections::HashMap,
+        env,
         fs,
         net::IpAddr,
         path::PathBuf,
@@ -269,7 +271,7 @@ mod tests {
                 preload_contexts: preloads,
             },
             temporal: TemporalConfig {
-                append_mode: andromeda_temporal::config::TemporalAppendMode::Native,
+                append_mode: TemporalAppendMode::Native,
                 default_last_n: 19,
                 expiration_check_interval_secs: 30,
                 intent_fallback_secs: 1,
@@ -348,7 +350,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after unix epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("andromeda-config-{unique}.toml"));
+        let path = env::temp_dir().join(format!("andromeda-config-{unique}.toml"));
         fs::write(&path, contents).expect("temp config should be written");
         path
     }
@@ -380,54 +382,54 @@ mod tests {
     #[test]
     #[serial]
     fn env_overrides_default_host() {
-        unsafe { std::env::set_var("ANDROMEDA_SERVER_HOST", "192.168.1.1") };
+        unsafe { env::set_var("ANDROMEDA_SERVER_HOST", "192.168.1.1") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_SERVER_HOST") };
+        unsafe { env::remove_var("ANDROMEDA_SERVER_HOST") };
         pretty_assertions::assert_eq!(config.server.host, IpAddr::from([192, 168, 1, 1]));
     }
 
     #[test]
     #[serial]
     fn env_overrides_default_port() {
-        unsafe { std::env::set_var("ANDROMEDA_SERVER_PORT", "9999") };
+        unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "9999") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_SERVER_PORT") };
+        unsafe { env::remove_var("ANDROMEDA_SERVER_PORT") };
         pretty_assertions::assert_eq!(config.server.port, 9999);
     }
 
     #[test]
     #[serial]
     fn env_overrides_database_url() {
-        unsafe { std::env::set_var("ANDROMEDA_DATABASE_URL", "postgres://envhost/envdb") };
+        unsafe { env::set_var("ANDROMEDA_DATABASE_URL", "postgres://envhost/envdb") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_DATABASE_URL") };
+        unsafe { env::remove_var("ANDROMEDA_DATABASE_URL") };
         pretty_assertions::assert_eq!(config.database.url.as_str(), "postgres://envhost/envdb");
     }
 
     #[test]
     #[serial]
     fn env_overrides_jsonld_cache_capacity() {
-        unsafe { std::env::set_var("ANDROMEDA_JSONLD_CACHE_CAPACITY", "9999") };
+        unsafe { env::set_var("ANDROMEDA_JSONLD_CACHE_CAPACITY", "9999") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_JSONLD_CACHE_CAPACITY") };
+        unsafe { env::remove_var("ANDROMEDA_JSONLD_CACHE_CAPACITY") };
         pretty_assertions::assert_eq!(config.jsonld.cache_capacity, 9999);
     }
 
     #[test]
     #[serial]
     fn env_parses_http_response_compression_mode() {
-        unsafe { std::env::set_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION", "disabled") };
+        unsafe { env::set_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION", "disabled") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION") };
+        unsafe { env::remove_var("ANDROMEDA_HTTP_RESPONSE_COMPRESSION") };
         pretty_assertions::assert_eq!(config.http.response_compression, HttpFeatureMode::Disabled);
     }
 
     #[test]
     #[serial]
     fn env_parses_http_cors_mode() {
-        unsafe { std::env::set_var("ANDROMEDA_HTTP_CORS", "disabled") };
+        unsafe { env::set_var("ANDROMEDA_HTTP_CORS", "disabled") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_HTTP_CORS") };
+        unsafe { env::remove_var("ANDROMEDA_HTTP_CORS") };
         pretty_assertions::assert_eq!(config.http.cors, CorsMode::Disabled);
     }
 
@@ -435,13 +437,13 @@ mod tests {
     #[serial]
     fn env_parses_json_maps_for_hashmap_fields() {
         unsafe {
-            std::env::set_var(
+            env::set_var(
                 "ANDROMEDA_JSONLD_PRELOAD_CONTEXTS",
                 "{\"https://example.com/context.jsonld\":\"contexts/test.jsonld\"}",
             )
         };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_JSONLD_PRELOAD_CONTEXTS") };
+        unsafe { env::remove_var("ANDROMEDA_JSONLD_PRELOAD_CONTEXTS") };
         pretty_assertions::assert_eq!(
             config
                 .jsonld
@@ -481,9 +483,9 @@ port = 1600
 "#,
         );
 
-        unsafe { std::env::set_var("ANDROMEDA_SERVER_PORT", "1700") };
+        unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "1700") };
         let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_SERVER_PORT") };
+        unsafe { env::remove_var("ANDROMEDA_SERVER_PORT") };
         fs::remove_file(path).expect("temp config should be removed");
 
         pretty_assertions::assert_eq!(config.server.port, 1700);
@@ -492,9 +494,9 @@ port = 1600
     #[test]
     #[serial]
     fn cli_overrides_env() {
-        unsafe { std::env::set_var("ANDROMEDA_SERVER_PORT", "8888") };
+        unsafe { env::set_var("ANDROMEDA_SERVER_PORT", "8888") };
         let config = RuntimeConfig::load(Path::new(DEFAULT_CONFIG_PATH), ServerOverrides { host: None, port: Some(7777) }).expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_SERVER_PORT") };
+        unsafe { env::remove_var("ANDROMEDA_SERVER_PORT") };
 
         pretty_assertions::assert_eq!(config.server.port, 7777);
     }
@@ -502,9 +504,9 @@ port = 1600
     #[test]
     #[serial]
     fn legacy_env_names_are_ignored() {
-        unsafe { std::env::set_var("ANDROMEDA_PORT", "8888") };
+        unsafe { env::set_var("ANDROMEDA_PORT", "8888") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_PORT") };
+        unsafe { env::remove_var("ANDROMEDA_PORT") };
 
         pretty_assertions::assert_eq!(config.server.port, 1056);
     }
@@ -547,9 +549,9 @@ port = 1600
     #[test]
     #[serial]
     fn env_overrides_spatial_change_channel_capacity() {
-        unsafe { std::env::set_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY", "12345") };
+        unsafe { env::set_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY", "12345") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY") };
+        unsafe { env::remove_var("ANDROMEDA_SPATIAL_CHANGE_CHANNEL_CAPACITY") };
         pretty_assertions::assert_eq!(config.spatial.change_channel_capacity, 12345);
     }
 
@@ -580,9 +582,9 @@ port = 1600
     #[test]
     #[serial]
     fn env_overrides_batch_chunk_write_concurrency() {
-        unsafe { std::env::set_var("ANDROMEDA_ENTITY_BATCH_CHUNK_WRITE_CONCURRENCY", "9") };
+        unsafe { env::set_var("ANDROMEDA_ENTITY_BATCH_CHUNK_WRITE_CONCURRENCY", "9") };
         let config = RuntimeConfig::builder().env().load().expect("config should load");
-        unsafe { std::env::remove_var("ANDROMEDA_ENTITY_BATCH_CHUNK_WRITE_CONCURRENCY") };
+        unsafe { env::remove_var("ANDROMEDA_ENTITY_BATCH_CHUNK_WRITE_CONCURRENCY") };
         pretty_assertions::assert_eq!(config.entity.batch_chunk_write_concurrency, Some(9));
     }
 

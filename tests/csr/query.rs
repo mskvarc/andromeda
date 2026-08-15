@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! CSR query tests (NGSI-LD 5.10.2, 5.5.9)
 
 use reqwest::StatusCode;

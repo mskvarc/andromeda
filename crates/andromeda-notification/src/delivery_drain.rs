@@ -219,9 +219,10 @@ mod tests {
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
-    use futures::future::BoxFuture;
+    use futures::{executor::block_on, future::BoxFuture};
     use std::{
         collections::VecDeque,
+        fmt::Display,
         sync::{Arc, Mutex},
     };
 
@@ -267,7 +268,7 @@ mod tests {
     }
 
     /// Map a poisoned recording lock into the port's persistence category.
-    fn poisoned(error: impl std::fmt::Display) -> DeliveryLeaseError {
+    fn poisoned(error: impl Display) -> DeliveryLeaseError {
         DeliveryLeaseError::persistence(error.to_string())
     }
 
@@ -375,7 +376,7 @@ mod tests {
 
     #[test]
     fn delivered_entries_are_acknowledged_only_after_delivery() -> Result<(), NotificationError> {
-        futures::executor::block_on(async {
+        block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
@@ -390,7 +391,7 @@ mod tests {
 
     #[test]
     fn retryable_and_terminal_delivery_results_take_distinct_paths() -> Result<(), NotificationError> {
-        futures::executor::block_on(async {
+        block_on(async {
             let retry_store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(
                 retry_store.clone(),
@@ -428,7 +429,7 @@ mod tests {
 
     #[test]
     fn a_recorded_failure_diagnostic_is_truncated_to_the_configured_bound() -> Result<(), NotificationError> {
-        futures::executor::block_on(async {
+        block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(
                 store.clone(),
@@ -449,7 +450,7 @@ mod tests {
 
     #[test]
     fn claims_carry_the_configured_lease_term() -> Result<(), NotificationError> {
-        futures::executor::block_on(async {
+        block_on(async {
             let store = Arc::new(RecordingStore::with_entry(entry()?));
             drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
             let claimed_with = store
@@ -464,7 +465,7 @@ mod tests {
 
     #[test]
     fn an_expired_lease_is_reported_instead_of_acknowledged_silently() -> Result<(), NotificationError> {
-        futures::executor::block_on(async {
+        block_on(async {
             let store = Arc::new(RecordingStore::with_expired_lease(entry()?));
             let outcome = drain(store.clone(), DeliveryDisposition::Delivered)?.execute(Utc::now()).await?;
             pretty_assertions::assert_eq!(outcome.claimed, 1);
@@ -480,7 +481,7 @@ mod tests {
 
     #[test]
     fn a_lost_lease_on_a_retryable_failure_does_not_reschedule_the_delivery() -> Result<(), NotificationError> {
-        futures::executor::block_on(async {
+        block_on(async {
             let store = Arc::new(RecordingStore::with_expired_lease(entry()?));
             let outcome = drain(
                 store.clone(),

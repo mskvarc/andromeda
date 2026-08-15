@@ -39,7 +39,7 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
             let jsonld_context_value = match ctx_val {
                 Value::String(s) => Value::String(s.clone()), // clone: need owned String for new Value; original is borrowed from ContextSpec
                 Value::Array(_) | Value::Object(_) => ctx_val.clone(), // clone: need owned copy to insert into payload as jsonldContext
-                _other => Value::Null,
+                _other @ (Value::Null | Value::Bool(_) | Value::Number(_)) => Value::Null,
             };
 
             if jsonld_context_value != Value::Null
@@ -47,7 +47,7 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
             {
                 let stored = match jsonld_context_value {
                     Value::String(s) => Value::String(s),
-                    other => Value::String(other.to_string()),
+                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => Value::String(other.to_string()),
                 };
                 obj.insert("jsonldContext".to_string(), stored);
             }

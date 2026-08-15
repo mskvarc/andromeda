@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Distributed resolution of Linked Entities (NGSI-LD 4.5.23, 4.5.23.1).
 //!
 //! A Relationship that annotates its object with an `objectType` declares that

@@ -37,7 +37,8 @@ mod tests {
         Router,
         body::{Body, to_bytes},
         http::{Request, StatusCode},
-        routing::get,
+        response::Response,
+        routing::{MethodRouter, get},
     };
     use serde_json::Value;
     use tower::ServiceExt;
@@ -57,7 +58,7 @@ mod tests {
         instance.to_string()
     }
 
-    async fn response(path: &str, route: &str, handler: axum::routing::MethodRouter) -> axum::response::Response {
+    async fn response(path: &str, route: &str, handler: MethodRouter) -> Response {
         Router::new()
             .route(route, handler)
             .oneshot(Request::builder().uri(path).body(Body::empty()).expect("valid test request"))
@@ -65,7 +66,7 @@ mod tests {
             .expect("router responds")
     }
 
-    async fn body_text(response: axum::response::Response) -> String {
+    async fn body_text(response: Response) -> String {
         String::from_utf8(to_bytes(response.into_body(), usize::MAX).await.expect("body bytes").to_vec()).expect("UTF-8 body")
     }
 

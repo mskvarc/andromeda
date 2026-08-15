@@ -22,9 +22,11 @@ use crate::entity::{
     internal_error,
     reject_linked_retrieval,
 };
+use andromeda_entity::side_effect::BatchSideEffectMode;
+use andromeda_http_extraction::tenant_state;
 
 pub(crate) async fn delete_by_query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
@@ -100,11 +102,7 @@ pub(crate) async fn delete_by_query(
         }
 
         if modes.has_exclusive {
-            if let Err(e) = state
-                .entities
-                .batch_delete(&entity_ids, andromeda_entity::side_effect::BatchSideEffectMode::Inline)
-                .await
-            {
+            if let Err(e) = state.entities.batch_delete(&entity_ids, BatchSideEffectMode::Inline).await {
                 tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
             }
             return Ok(StatusCode::NO_CONTENT.into_response());
@@ -113,10 +111,10 @@ pub(crate) async fn delete_by_query(
 
     let batch = state
         .entities
-        .batch_delete(&entity_ids, andromeda_entity::side_effect::BatchSideEffectMode::Inline)
+        .batch_delete(&entity_ids, BatchSideEffectMode::Inline)
         .await
         .with_entity_instance(&uri)?;
-    let result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, crate::entity_error::classify_entity_error);
+    let result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
 
     if result.errors.is_empty() {
         Ok(StatusCode::NO_CONTENT.into_response())

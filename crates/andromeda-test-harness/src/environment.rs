@@ -1,7 +1,7 @@
 //! One isolated test execution context and its explicit cleanup lifecycle.
 
 use crate::{
-    configuration::TestRunConfiguration,
+    configuration::{ConfigurationError, TestRunConfiguration},
     database_isolation::{DatabaseIsolationError, IsolatedLease, connect_pool},
     database_reset::{DatabaseResetError, cleanup_prefix},
     identifiers::{IdentifierError, TestIdentifiers, TestSuiteName},
@@ -86,7 +86,7 @@ impl TestEnvironment {
 pub enum TestEnvironmentError {
     /// Runtime test configuration is invalid.
     #[error(transparent)]
-    Configuration(#[from] crate::configuration::ConfigurationError),
+    Configuration(#[from] ConfigurationError),
     /// Database connection or advisory-lock operation failed.
     #[error(transparent)]
     Isolation(#[from] DatabaseIsolationError),

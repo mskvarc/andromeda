@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Append entity attributes distributed operation tests.
 //!
 //! Tests for POST /entities/{entityId}/attrs with different registration modes.

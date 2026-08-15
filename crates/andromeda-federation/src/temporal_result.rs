@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use indexmap::IndexMap;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, mem::replace, slice::from_ref};
 
 /// Merge local and forwarded temporal query entities by entity identifier.
 pub fn merge_temporal_query_results(local_entities: Vec<Value>, remote_results: Vec<ForwardedTemporalEntities>) -> Vec<Value> {
@@ -82,19 +82,19 @@ fn merge_temporal_instances(local: &mut Value, remote: &Value) {
     let local_arr = match local {
         Value::Array(arr) => arr,
         Value::Object(_) => {
-            let obj = std::mem::replace(local, Value::Null);
+            let obj = replace(local, Value::Null);
             *local = Value::Array(vec![obj]);
             // Infallible: we just set `local` to `Value::Array` above.
             let Some(arr) = local.as_array_mut() else { return };
             arr
         }
-        _ => return,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => return,
     };
 
     let remote_items = match remote {
         Value::Array(arr) => arr.as_slice(),
-        Value::Object(_) => std::slice::from_ref(remote),
-        _ => return,
+        Value::Object(_) => from_ref(remote),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => return,
     };
 
     // Collect existing instanceIds for deduplication

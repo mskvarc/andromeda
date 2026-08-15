@@ -4,7 +4,7 @@ use crate::{
     endpoint::transport::EndpointTransport,
     error::TransportError,
     http::{config::HttpTransportConfig, transport::HttpTransport},
-    mqtt::{config::MqttPoolConfig, handle::MqttTransportHandle, pool::MqttTransportPool},
+    mqtt::{config::MqttPoolConfig, dial::RumqttcDialer, handle::MqttTransportHandle, pool::MqttTransportPool},
     outcome::DeliveryOutcome,
     request::DeliveryRequest,
     stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage},
@@ -84,7 +84,7 @@ impl TransportDispatcher {
     ) -> Result<TransportDispatcher, TransportError> {
         Ok(TransportDispatcher {
             http: HttpTransport::new(http_config)?,
-            mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config, Arc::new(crate::mqtt::dial::RumqttcDialer))),
+            mqtt_pool: Arc::new(MqttTransportPool::new(mqtt_config, Arc::new(RumqttcDialer))),
             sse_registry,
             ws_registry,
         })

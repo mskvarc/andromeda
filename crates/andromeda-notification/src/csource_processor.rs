@@ -1,4 +1,4 @@
-use crate::csource_processor::matching::filter_csr_for_subscription;
+use crate::{csource_processor::matching::filter_csr_for_subscription, error::NotificationError};
 use andromeda_delivery::{
     dispatch::TransportDispatcher,
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
@@ -85,7 +85,7 @@ impl CsourceNotificationProcessor {
     }
 
     /// Reload compiled context-source subscriptions after startup or an event-stream gap.
-    pub async fn reload_cache(&self) -> Result<(), crate::error::NotificationError> {
+    pub async fn reload_cache(&self) -> Result<(), NotificationError> {
         let subscriptions = self.sub_repo.list_active().await?;
         self.cache.clear();
         // A context-source notification is delivered as the change is applied
@@ -262,7 +262,7 @@ impl CsourceNotificationProcessor {
         // Fetch the CSR data (use snapshot for deletes)
         let csr_data = match event.trigger_reason {
             CsrTriggerReason::NoLongerMatching => event.csr_snapshot.clone(),
-            _ => match self.csr_repo.get(&event.csr_id).await {
+            CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated => match self.csr_repo.get(&event.csr_id).await {
                 Ok(Some(csr)) => serde_json::to_value(&csr).ok(),
                 Ok(None) => {
                     debug!("CSR {} no longer exists, skipping notification", event.csr_id);

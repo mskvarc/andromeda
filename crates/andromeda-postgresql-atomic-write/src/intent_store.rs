@@ -32,10 +32,12 @@ use sea_query::{
     SelectStatement,
     SimpleExpr,
     UpdateStatement,
+    error::Error as SeaQueryError,
 };
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
-use sqlx::{PgPool, Postgres, Row, Transaction};
+use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
+use std::fmt::Display;
 use uuid::Uuid;
 
 /// The `AS input(write_id, entity_id, base, intent)` column-list alias the
@@ -64,7 +66,7 @@ fn intent_unnest_columns() -> [UnnestColumn; 4] {
 /// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
 /// original identity enqueue no second copy of any entity's intent at a given
 /// base.
-fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<Value>) -> Result<InsertStatement, sea_query::error::Error> {
+fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<Value>) -> Result<InsertStatement, SeaQueryError> {
     let columns = intent_unnest_columns();
     let call = unnest_call([
         (&columns[0], Expr::val(ids)),
@@ -145,7 +147,7 @@ impl PostgresTemporalIntentStore {
     }
 
     /// Decode one durable queue row.
-    fn decode(row: &sqlx::postgres::PgRow) -> Result<SequencedTemporalAppendIntent, TemporalError> {
+    fn decode(row: &PgRow) -> Result<SequencedTemporalAppendIntent, TemporalError> {
         let raw_sequence: i64 = row.try_get("sequence").map_err(persistence)?;
         let sequence = TemporalIntentSequence::new(raw_sequence).map_err(|error| TemporalError::internal(error.to_string()))?;
         let payload: Value = row.try_get("intent").map_err(persistence)?;
@@ -335,7 +337,7 @@ fn retry_statement(available_at: DateTime<Utc>, last_error: &str, sequence: i64,
 }
 
 /// Classify one anchor-store failure at the temporal port boundary.
-fn persistence(error: impl std::fmt::Display) -> TemporalError {
+fn persistence(error: impl Display) -> TemporalError {
     TemporalError::persistence(error.to_string())
 }
 

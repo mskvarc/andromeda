@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Integration tests for NGSI-LD temporal aggregation (spec 4.5.19).
 //!
 //! Uses the standard Rust test harness with `#[tokio::test]` and raw `reqwest`.

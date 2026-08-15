@@ -13,6 +13,7 @@
 use crate::media_type::ResponseMediaType;
 use http::{HeaderName, HeaderValue};
 use mediatype::MediaTypeList;
+use std::iter;
 
 /// The lowercase `Accept` field name this header is sent under.
 static ACCEPT: HeaderName = HeaderName::from_static("accept");
@@ -45,7 +46,7 @@ impl headers::Header for JsonLdAccept {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let offer = OFFERED.map(|media_type| media_type.as_str()).join(", ");
         match HeaderValue::from_str(&offer) {
-            Ok(value) => values.extend(std::iter::once(value)),
+            Ok(value) => values.extend(iter::once(value)),
             Err(error) => tracing::warn!(error = %error, "failed to encode the JSON-LD context Accept header"),
         }
     }
@@ -56,6 +57,7 @@ mod tests {
     use crate::json_ld_accept::JsonLdAccept;
     use headers::Header;
     use http::HeaderValue;
+    use std::iter;
 
     /// Encode the header to its single wire value.
     fn encoded() -> HeaderValue {
@@ -72,7 +74,7 @@ mod tests {
     #[test]
     fn the_encoded_offer_decodes_back_to_the_same_header() {
         let value = encoded();
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
 
         pretty_assertions::assert_eq!(JsonLdAccept::decode(&mut values).expect("the encoded offer decodes"), JsonLdAccept);
     }
@@ -80,7 +82,7 @@ mod tests {
     #[test]
     fn decoding_rejects_a_narrower_negotiation_set() {
         let value = HeaderValue::from_static("application/json");
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
 
         assert!(JsonLdAccept::decode(&mut values).is_err());
     }
@@ -88,7 +90,7 @@ mod tests {
     #[test]
     fn decoding_rejects_the_offer_in_the_opposite_preference_order() {
         let value = HeaderValue::from_static("application/json, application/ld+json");
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
 
         assert!(JsonLdAccept::decode(&mut values).is_err());
     }
@@ -96,14 +98,14 @@ mod tests {
     #[test]
     fn decoding_rejects_an_unrecognised_media_type_in_the_set() {
         let value = HeaderValue::from_static("application/ld+json, application/json, text/html");
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
 
         assert!(JsonLdAccept::decode(&mut values).is_err());
     }
 
     #[test]
     fn decoding_rejects_an_absent_field() {
-        let mut values = std::iter::empty();
+        let mut values = iter::empty();
 
         assert!(JsonLdAccept::decode(&mut values).is_err());
     }

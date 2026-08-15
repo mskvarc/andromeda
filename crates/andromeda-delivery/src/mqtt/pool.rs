@@ -18,7 +18,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, watch},
     task::JoinHandle,
-    time::Instant,
+    time::{Instant, interval as tokio_interval},
 };
 use tracing::{debug, info};
 
@@ -80,7 +80,7 @@ impl MqttTransportPool {
         let quiet_threshold = pool.config.keepalive.as_secs() * DEGRADED_AFTER_KEEPALIVES;
 
         tokio::spawn(async move {
-            let mut tick = tokio::time::interval(interval);
+            let mut tick = tokio_interval(interval);
             loop {
                 tokio::select! {
                     _ = shutdown_rx.changed() => break,
@@ -286,6 +286,7 @@ mod tests {
     };
     use backon::ExponentialBuilder;
     use std::{
+        future::pending,
         str::FromStr,
         sync::{
             Arc,
@@ -293,6 +294,7 @@ mod tests {
         },
         time::Duration,
     };
+    use tokio::time::sleep;
     use url::Url;
 
     /// An endpoint whose broker refuses connections: port 1 on the loopback is
@@ -345,7 +347,7 @@ mod tests {
             self.calls.fetch_add(1, Ordering::Relaxed);
             Box::pin(async {
                 let (client, _eventloop) = rumqttc::AsyncClient::new(rumqttc::MqttOptions::new("scripted", "127.0.0.1", 1883), 8);
-                Ok((MqttClientVariant::V311 { client }, tokio::spawn(std::future::pending())))
+                Ok((MqttClientVariant::V311 { client }, tokio::spawn(pending())))
             })
         }
     }
@@ -401,7 +403,7 @@ mod tests {
 
         // Once the backoff elapses, a dial is permitted again (and fails on its
         // own terms — the broker is still not there).
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        sleep(Duration::from_millis(500)).await;
         let permitted = pool.get_or_create_connection(&endpoint).await.map(drop).expect_err("the broker is still down");
         assert!(!permitted.to_string().contains("backoff active"), "{permitted}");
     }
@@ -414,7 +416,7 @@ mod tests {
         // A publish waiting on its PUBACK.
         let mut ack = state.acks().register(AckKind::PubAck);
         // A stand-in event loop that never ends on its own, so only the abort can stop it.
-        let event_loop = tokio::spawn(std::future::pending::<()>());
+        let event_loop = tokio::spawn(pending::<()>());
         let connection = MqttConnection {
             client: MqttClientVariant::V311 { client },
             state: Arc::clone(&state),
@@ -432,7 +434,7 @@ mod tests {
             if connection.event_loop.is_finished() {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            sleep(Duration::from_millis(5)).await;
         }
         assert!(connection.event_loop.is_finished(), "the event loop task is aborted");
     }

@@ -13,7 +13,7 @@
 //! what a client sees run against the configured broker instead.
 
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport and persistence errors.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod notification_cleanup;
 mod notification_fan_out;

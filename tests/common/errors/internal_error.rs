@@ -11,7 +11,7 @@
 //! (e.g. a fault-injection adapter) can flip this test on without
 //! re-authoring the boilerplate.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 #[tokio::test]
 #[ignore = "No deterministic trigger for InternalError from HTTP; follow-up: introduce fault-injection adapter to force a repository failure on demand."]

@@ -162,7 +162,7 @@ impl EntityDiscoveryService {
             let entity_obj = match entity {
                 Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
                 Value::Object(obj) => Some(obj),
-                _other => None,
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
             };
 
             if let Some(map) = entity_obj {
@@ -271,7 +271,7 @@ impl EntityDiscoveryService {
                         if let Some(obj) = val.as_object_mut() {
                             obj.retain(|_, v| match v {
                                 Value::Array(arr) => !arr.is_empty(),
-                                _other => true,
+                                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => true,
                             });
                         }
                         val
@@ -362,7 +362,7 @@ impl EntityDiscoveryService {
         if let Some(obj) = expanded_obj.as_object_mut() {
             obj.retain(|_, v| match v {
                 Value::Array(arr) => !arr.is_empty(),
-                _other => true,
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => true,
             });
         }
 
@@ -404,7 +404,7 @@ fn strip_ngsild_prefix(value: &mut Value) {
                 strip_ngsild_prefix(item);
             }
         }
-        _other => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
@@ -434,7 +434,7 @@ fn ensure_array_fields(value: &mut Value, fields: &[&str]) {
                 ensure_array_fields(item, fields);
             }
         }
-        _other => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 
@@ -461,7 +461,7 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<AttributeType>> {
     let obj = match value {
         Value::Array(arr) => arr.first()?.as_object()?,
         Value::Object(obj) => obj,
-        _other => return None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => return None,
     };
 
     obj.get("@type").and_then(|t| match t {
@@ -469,6 +469,6 @@ fn extract_attribute_types(value: &Value) -> Option<Vec<AttributeType>> {
             let types: Vec<AttributeType> = arr.iter().filter_map(|v| v.as_str()).filter_map(AttributeType::from_iri_suffix).collect();
             if types.is_empty() { None } else { Some(types) }
         }
-        _other => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => None,
     })
 }

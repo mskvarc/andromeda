@@ -7,7 +7,7 @@ use crate::{
 };
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::{
-    dispatch::TransportDispatcher,
+    dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
     request::NotificationDelivery,
 };
@@ -37,7 +37,7 @@ use andromeda_subscription::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
-use futures::{StreamExt, stream};
+use futures::{StreamExt, future::BoxFuture, stream};
 use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
 use serde_json::Value;
@@ -116,7 +116,7 @@ impl NotificationProcessor {
     }
 
     /// Reload compiled subscriptions after startup or an event-stream gap.
-    pub async fn reload_cache(&self) -> Result<(), crate::error::NotificationError> {
+    pub async fn reload_cache(&self) -> Result<(), NotificationError> {
         self.cache.reload(self.sub_repo.as_ref()).await.map_err(Into::into)
     }
 
@@ -192,7 +192,7 @@ impl NotificationProcessor {
                                     Some(value) => value.clone(),
                                     None => snapshot.as_ref().clone(),
                                 },
-                                other => other.clone(),
+                                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
                             },
                             SysAttrsInclusion::Strip,
                         );
@@ -221,7 +221,7 @@ impl NotificationProcessor {
                     Some(value) => value.clone(),
                     None => snapshot.clone(),
                 },
-                other => other.clone(),
+                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
             };
             if let Some(obj) = data.as_object_mut() {
                 obj.insert(expanded_properties::DELETED_AT.as_str().to_string(), deleted_at_value);
@@ -275,7 +275,7 @@ impl NotificationProcessor {
 
         let event = Arc::new(event);
         let compaction_cache = NotificationCompactionCache::default();
-        let results: Vec<Option<andromeda_delivery::dispatch::DeliveryResult>> = stream::iter(matching)
+        let results: Vec<Option<DeliveryResult>> = stream::iter(matching)
             .map(|compiled_sub| {
                 let event = Arc::clone(&event);
                 let mut entity_data = entity_data.clone();
@@ -293,7 +293,7 @@ impl NotificationProcessor {
                         Ok(false) => return None,
                         Err(e) => {
                             debug!("Failed to claim notification slot for {}: {}", sub_id, e);
-                            return Some(andromeda_delivery::dispatch::DeliveryResult::RetryableFailure);
+                            return Some(DeliveryResult::RetryableFailure);
                         }
                     }
 
@@ -318,18 +318,18 @@ impl NotificationProcessor {
                             })
                             .await
                         }
-                        None => return Some(andromeda_delivery::dispatch::DeliveryResult::TerminalFailure),
+                        None => return Some(DeliveryResult::TerminalFailure),
                     };
                     if data.is_empty() {
                         debug!("Subscription {} produced empty notification data for entity {}", sub_id, event.entity_id);
-                        return Some(andromeda_delivery::dispatch::DeliveryResult::TerminalFailure);
+                        return Some(DeliveryResult::TerminalFailure);
                     }
 
                     let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
                         Ok(u) => u,
                         Err(_) => {
                             error!("Failed to construct notification URN for {}", sub_id);
-                            return Some(andromeda_delivery::dispatch::DeliveryResult::TerminalFailure);
+                            return Some(DeliveryResult::TerminalFailure);
                         }
                     };
                     // clone: the builder takes the id by value and `sub_id` is still needed for delivery
@@ -346,12 +346,12 @@ impl NotificationProcessor {
                         Ok(v) => v,
                         Err(e) => {
                             error!("Failed to serialize notification for {}: {}", sub_id, e);
-                            return Some(andromeda_delivery::dispatch::DeliveryResult::TerminalFailure);
+                            return Some(DeliveryResult::TerminalFailure);
                         }
                     };
 
                     let Some(endpoint_transport) = compiled_transport(&compiled_sub) else {
-                        return Some(andromeda_delivery::dispatch::DeliveryResult::TerminalFailure);
+                        return Some(DeliveryResult::TerminalFailure);
                     };
                     let request = (NotificationDelivery {
                         payload: &notification_payload,
@@ -472,7 +472,7 @@ impl NotificationProcessor {
 }
 
 impl NotificationDeliveryTransport for NotificationProcessor {
-    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> futures::future::BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
+    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
         Box::pin(async move {
             let stored = &entry.event;
             let is_deletion = matches!(stored.trigger, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted);
@@ -535,7 +535,7 @@ mod tests {
         subscription::{EntitySelector, SubscriptionStatus},
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
-    use andromeda_subscription::{matching::matches_subscription, subscription_key::SubscriptionKey};
+    use andromeda_subscription::{compilation::compile_geo_q, matching::matches_subscription, subscription_key::SubscriptionKey};
     use chrono::DateTime;
     use std::num::NonZeroU32;
     use url::Url;
@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = andromeda_subscription::compilation::compile_geo_q(
+        sub.compiled_geo_q = compile_geo_q(
             &serde_json::json!({"georel": "near;maxDistance==100000", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
             "test",
         );
@@ -870,7 +870,7 @@ mod tests {
     #[test]
     fn matches_entity_filters_geo_near_too_far() {
         let mut sub = make_sub("sub1", vec![], vec!["attributeUpdated"], None);
-        sub.compiled_geo_q = andromeda_subscription::compilation::compile_geo_q(
+        sub.compiled_geo_q = compile_geo_q(
             &serde_json::json!({"georel": "near;maxDistance==10", "geometry": "Point", "coordinates": "[8.6724, 49.3988]"}),
             "test",
         );

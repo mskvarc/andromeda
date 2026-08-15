@@ -2,7 +2,7 @@
 //!
 //! Naming convention: `expiration_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
@@ -11,6 +11,7 @@ use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use std::time::Duration;
+use tokio::time::sleep;
 
 async fn create(client: &TestClient, entity: &Value) {
     let response = client.post_entity(entity).send().await.expect("create entity failed");
@@ -373,7 +374,7 @@ async fn expiration_expires_at_updatable_via_merge_patch() {
 // prefix so the worker's actions on other tests' rows do not affect us.
 
 async fn wait_for_worker_cycle() {
-    tokio::time::sleep(Duration::from_secs(12)).await;
+    sleep(Duration::from_secs(12)).await;
 }
 
 #[tokio::test]

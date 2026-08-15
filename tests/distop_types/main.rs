@@ -6,11 +6,11 @@
 //!
 //! Naming convention: `distop_types_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
 use urlencoding::encode;
@@ -100,7 +100,7 @@ async fn delete_registration(client: &Client, id: &str) {
     let _ = client.delete(format!("{BASE_URL}/csourceRegistrations/{}", encode(id))).send().await;
 }
 
-async fn list_types(client: &Client, query: &str) -> (StatusCode, reqwest::header::HeaderMap, Value) {
+async fn list_types(client: &Client, query: &str) -> (StatusCode, HeaderMap, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/types{sep}{query}"))
@@ -117,7 +117,7 @@ fn jsonld_link_value() -> String {
     format!("<{COMPOUND_CONTEXT}>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"")
 }
 
-async fn get_type(client: &Client, type_name: &str, query: &str) -> (StatusCode, reqwest::header::HeaderMap, Value) {
+async fn get_type(client: &Client, type_name: &str, query: &str) -> (StatusCode, HeaderMap, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/types/{type_name}{sep}{query}"))
@@ -131,7 +131,7 @@ async fn get_type(client: &Client, type_name: &str, query: &str) -> (StatusCode,
     (status, headers, body)
 }
 
-fn warning_header_values(headers: &reqwest::header::HeaderMap) -> Vec<String> {
+fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()

@@ -1,7 +1,10 @@
 //! Runtime configuration validation and path normalization.
 
 use crate::config::{error::ConfigurationError, runtime::RuntimeConfig};
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+};
 
 pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), ConfigurationError> {
     config.server.validate().map_err(owner_configuration_error)?;
@@ -19,7 +22,7 @@ pub(super) fn validate_config(config: &RuntimeConfig) -> Result<(), Configuratio
     Ok(())
 }
 
-fn owner_configuration_error(error: impl std::fmt::Display) -> ConfigurationError {
+fn owner_configuration_error(error: impl Display) -> ConfigurationError {
     ConfigurationError::invalid(error.to_string())
 }
 

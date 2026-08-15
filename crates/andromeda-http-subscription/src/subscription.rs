@@ -11,10 +11,12 @@ use andromeda_http_extraction::{
     origin::request_origin,
     prefer::PreferHeader,
     query::ValidatedQuery,
+    tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
 };
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
+    headers::with_location,
     pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering,
@@ -38,7 +40,7 @@ use serde_json::Value;
 
 /// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
 pub async fn create(
-    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): SubscriptionTenantStateOrCreate,
+    ProvisionableTenantState(state): SubscriptionTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
@@ -54,15 +56,12 @@ pub async fn create(
 
     let id = service.create(payload, &context, base_url.as_ref()).await.with_subscription_instance(&uri)?;
 
-    Ok(andromeda_http_response::headers::with_location(
-        StatusCode::CREATED.into_response(),
-        format!("/ngsi-ld/v1/subscriptions/{}", id),
-    ))
+    Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/subscriptions/{}", id)))
 }
 
 /// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.
 pub async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -105,7 +104,7 @@ pub async fn get(
 
 /// GET /ngsi-ld/v1/subscriptions -- Query subscriptions.
 pub async fn query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -166,7 +165,7 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.
 pub async fn update(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
@@ -190,7 +189,7 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
 pub async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {

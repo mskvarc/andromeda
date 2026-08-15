@@ -16,7 +16,7 @@
 //!
 //! Naming convention: `context_source_info_<area>_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::{COMPOUND_CONTEXT, TEST_SUITE_CONTEXT};
 use andromeda_test_harness::environment::TestEnvironment;

@@ -7,7 +7,7 @@
 //! `clean_database()` before running. All tests create and clean up their own resources.
 
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod create;
 mod delete;
@@ -573,7 +573,7 @@ fn strip_ignored_keys(val: &mut Value, keys: &[&str]) {
                 strip_ignored_keys(v, keys);
             }
         }
-        _ => {}
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
 }
 

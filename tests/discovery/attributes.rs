@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Attribute list tests (NGSI-LD 5.5.11, 6.3.5).
 
 use reqwest::StatusCode;

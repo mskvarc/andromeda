@@ -66,52 +66,52 @@ pub struct Entity {
     pub type_: EntityTypeValue,
     /// Scopes the entity belongs to (clause 4.18).
     #[jsonld(property = "ngsi:scope", passthrough)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub scope: Option<ScopeValue>,
 
     /// Entity expiration timestamp (clause 4.22).
     #[serde(default)]
     #[jsonld(property = "ngsi:expiresAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
 
     /// Default geospatial property (clause 4.7).
     #[jsonld(property = "ngsi:location", passthrough)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub location: Option<AttributeValue>,
 
     /// Observation space geometry (clause 5.2.4).
     #[jsonld(property = "ngsi:observationSpace", passthrough)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_space: Option<AttributeValue>,
 
     /// Operation space geometry (clause 5.2.4).
     #[jsonld(property = "ngsi:operationSpace", passthrough)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operation_space: Option<AttributeValue>,
 
     /// System-generated creation timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
     #[jsonld(property = "ngsi:createdAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub created_at: Option<DateTime<Utc>>,
 
     /// System-generated modification timestamp (clause 4.8, Table 5.2.2-1).
     #[serde(default)]
     #[jsonld(property = "ngsi:modifiedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub modified_at: Option<DateTime<Utc>>,
 
     /// Deletion timestamp, output-only in notifications/temporal (clause 4.8).
     #[serde(default)]
     #[jsonld(property = "ngsi:deletedAt", coerce = "https://uri.etsi.org/ngsi-ld/DateTime")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub deleted_at: Option<DateTime<Utc>>,
 
     /// Every other attribute the entity carries, keyed by attribute name.
     #[serde(flatten)]
     #[jsonld(flatten_map)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub attrs: IndexMap<AttributeName, AttributeValue>,
 }
 

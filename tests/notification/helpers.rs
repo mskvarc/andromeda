@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
 use andromeda_test_mocks::mqtt_receiver::{MqttCredentials, MqttHost, MqttReceiver as RawMqttReceiver, MqttTopic};
@@ -6,6 +6,7 @@ use reqwest::{Client, StatusCode, header::HeaderMap};
 use rumqttc::QoS;
 use serde_json::{Value, json};
 use std::time::Duration;
+use tokio::time::sleep;
 use uuid::Uuid;
 
 pub fn client() -> Client {
@@ -373,7 +374,7 @@ pub async fn create_subscription(http_client: &Client, body: &Value) -> (StatusC
     let body = read_json_or_null(response).await;
 
     if status == StatusCode::CREATED {
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        sleep(Duration::from_millis(150)).await;
     }
 
     (status, headers, body)

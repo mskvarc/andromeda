@@ -4,7 +4,10 @@
 //! mapping parse failures to the correct `InvalidRequest` or `BadRequestData` type.
 
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::FromRequestParts,
+    http::{Uri, request::Parts},
+};
 use serde::de::DeserializeOwned;
 
 /// Axum extractor that deserializes and validates query parameters.
@@ -45,7 +48,7 @@ where
 /// Serde's "unknown field" message is stable across versions, making this heuristic
 /// reliable for distinguishing unsupported parameters (`InvalidRequest`) from
 /// invalid parameter values (`BadRequestData`).
-pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: axum::http::Uri) -> ExtractorRejection {
+pub fn classify_query_parse_error(error_str: &str, error_msg: String, uri: Uri) -> ExtractorRejection {
     // `format` and `options` are syntax-level representation selectors. Their
     // custom deserializers report invalid tokens as ordinary serde strings,
     // so preserve the clause distinction here instead of treating them like

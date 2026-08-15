@@ -1,6 +1,9 @@
 //! Which crates a layer may name, read from a crate's own manifest.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Focused test-infrastructure crate names that may only be production dependencies of one another.
 const TEST_INFRASTRUCTURE_CRATES: &[&str] = &[
@@ -175,7 +178,7 @@ pub fn assert_test_infrastructure_is_development_only(workspace_root: &str) {
 }
 
 /// Discover root and crate manifests without walking generated output.
-fn workspace_manifest_paths(root: &Path) -> Vec<std::path::PathBuf> {
+fn workspace_manifest_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths = vec![root.join("Cargo.toml")];
     for parent in [root.join("crates"), root.join("lib")] {
         if !parent.exists() {

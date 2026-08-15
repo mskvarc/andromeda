@@ -11,7 +11,7 @@
 //! Naming convention: `current_projection_<scenario>` and
 //! `narrow_entity_keys_<scenario>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod atomicity;
 mod datasets;

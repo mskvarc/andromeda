@@ -1,6 +1,6 @@
 //! The Snapshot resource and its notification payload (ETSI GS CIM 009 clauses 5.2.41 and 5.3.4).
 
-use crate::key_value_pair::KeyValuePair;
+use crate::{key_value_pair::KeyValuePair, query::body::Query};
 use andromeda_ngsi_ld_lexicon::{
     constant_string,
     ngsi_ld_urn::SnapshotNotificationId,
@@ -112,34 +112,34 @@ pub enum SnapshotPriorityParseError {
 pub struct Snapshot {
     /// Fixed resource discriminator.
     #[serde(rename = "type")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: SnapshotType,
     /// Generated identifier of this snapshot.
     pub id: Uri,
     /// Entity queries the snapshot materialises.
-    #[builder(default)]
-    pub snapshot_queries: Option<Vec<crate::query::body::Query>>,
+    #[builder(default = Default::default())]
+    pub snapshot_queries: Option<Vec<Query>>,
     /// Temporal queries the snapshot materialises.
-    #[builder(default)]
-    pub snapshot_temporal_queries: Option<Vec<crate::query::body::Query>>,
+    #[builder(default = Default::default())]
+    pub snapshot_temporal_queries: Option<Vec<Query>>,
     /// How long the snapshot stays usable after its last use.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub snapshot_lifetime: Option<Iso8601Duration>,
     /// Execution priority, `1..=10`.
     pub snapshot_priority: SnapshotPriority,
     /// Endpoint notified when the snapshot's status changes.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub endpoint: Option<Url>,
     /// Headers to send with the status notification.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub receiver_info: Option<Vec<KeyValuePair>>,
     /// Current status of the snapshot.
     pub status: SnapshotStatus,
     /// Per-entity-query execution details.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub queries_details: Option<Vec<ExecutionResultDetails>>,
     /// Per-temporal-query execution details.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// When the snapshot was requested.
     #[serde(with = "datetime")]
@@ -151,7 +151,7 @@ pub struct Snapshot {
     #[serde(with = "datetime")]
     pub expires_at: DateTime<Utc>,
     /// When it was last read, if it ever was.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     #[serde(with = "optional_datetime")]
     pub last_used_at: Option<DateTime<Utc>>,
 }
@@ -176,7 +176,7 @@ pub struct SnapshotNotification {
     pub id: SnapshotNotificationId,
     /// Always `SnapshotNotification`.
     #[serde(rename = "type")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: SnapshotNotificationType,
     /// Expiration time for the snapshot.
     #[serde(with = "datetime")]
@@ -189,12 +189,12 @@ pub struct SnapshotNotification {
     /// Priority of the snapshot (1..=10).
     pub snapshot_priority: SnapshotPriority,
     /// Per-query execution details, if available.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// Current snapshot status (one of success, partial, failure, empty).
     pub snapshot_status: SnapshotStatus,
     /// Per-temporal-query execution details, if available.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub temporal_snapshot_queries_details: Option<Vec<ExecutionResultDetails>>,
 }
 
@@ -245,10 +245,10 @@ pub struct SnapshotInput {
     pub id: Option<Uri>,
     /// Entity queries to materialise.
     #[serde(default)]
-    pub snapshot_queries: Option<Vec<crate::query::body::Query>>,
+    pub snapshot_queries: Option<Vec<Query>>,
     /// Temporal queries to materialise.
     #[serde(default)]
-    pub snapshot_temporal_queries: Option<Vec<crate::query::body::Query>>,
+    pub snapshot_temporal_queries: Option<Vec<Query>>,
     /// How long the snapshot should stay usable.
     #[serde(default)]
     pub snapshot_lifetime: Option<Iso8601Duration>,

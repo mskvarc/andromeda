@@ -18,7 +18,7 @@
 use andromeda_context_commit::write_record::WriteRecord;
 use andromeda_postgresql_schema::queue::WriteRecords;
 use chrono::{DateTime, Utc};
-use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
+use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Postgres, Transaction};
 use uuid::Uuid;
@@ -43,7 +43,7 @@ pub(crate) async fn persist_write_record(tx: &mut Transaction<'_, Postgres>, rec
 ///
 /// The conflict is on the `write_id` primary key with no update, so a replay of
 /// an already-recorded write changes nothing.
-fn persist_write_record_statement(write_id: Uuid, recorded_at: DateTime<Utc>, accepted_at: DateTime<Utc>) -> Result<InsertStatement, sea_query::error::Error> {
+fn persist_write_record_statement(write_id: Uuid, recorded_at: DateTime<Utc>, accepted_at: DateTime<Utc>) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(WriteRecords::Table)

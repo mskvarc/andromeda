@@ -4,13 +4,19 @@ use crate::{
     callback_path::{CallbackPath, CallbackPathError},
     server_config::MockServerConfig,
 };
-use axum::{Router, body::Body, extract::Request, response::Response};
+use axum::{
+    Router,
+    body::{Body, to_bytes},
+    extract::Request,
+    response::Response,
+};
 use bytes::Bytes;
 use dashmap::DashMap;
 use http::{HeaderMap, Method, StatusCode, Uri};
 use serde::de::DeserializeOwned;
 use std::{
     collections::VecDeque,
+    io::Error as IoError,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -19,8 +25,10 @@ use std::{
 };
 use thiserror::Error;
 use tokio::{
+    net::TcpListener,
     sync::{Mutex, Notify, oneshot},
-    task::JoinHandle,
+    task::{JoinError, JoinHandle},
+    time::{Instant, timeout_at},
 };
 use typed_builder::TypedBuilder;
 use url::Url;
@@ -122,13 +130,13 @@ pub struct MockResponse {
     /// HTTP response status.
     status: StatusCode,
     /// Response headers.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     headers: HeaderMap,
     /// Response body bytes.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     body: Bytes,
     /// Optional gate holding delivery after capture.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     gate: Option<ResponseGate>,
 }
 
@@ -148,7 +156,7 @@ pub struct CallbackServer {
     endpoint: Url,
     state: Arc<CallbackState>,
     shutdown: Option<oneshot::Sender<()>>,
-    task: Option<JoinHandle<Result<(), std::io::Error>>>,
+    task: Option<JoinHandle<Result<(), IoError>>>,
 }
 
 impl CallbackServer {
@@ -160,7 +168,7 @@ impl CallbackServer {
             let state = Arc::clone(&handler_state);
             async move { handle_request(state, request).await }
         });
-        let listener = tokio::net::TcpListener::bind(config.bind_address()).await.map_err(CallbackServerError::Bind)?;
+        let listener = TcpListener::bind(config.bind_address()).await.map_err(CallbackServerError::Bind)?;
         let port = listener.local_addr().map_err(CallbackServerError::LocalAddress)?.port();
         let endpoint = Url::parse(&format!("http://{}:{port}/", config.visible_host())).map_err(CallbackServerError::Endpoint)?;
         let (shutdown, shutdown_receiver) = oneshot::channel();
@@ -198,12 +206,12 @@ impl CallbackServer {
 
     /// Wait for and remove the next captured request.
     pub async fn next_request(&self, timeout: Duration) -> Result<CapturedRequest, CallbackServerError> {
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = Instant::now() + timeout;
         loop {
             if let Some(request) = self.state.captures.lock().await.pop_front() {
                 return Ok(request);
             }
-            tokio::time::timeout_at(deadline, self.state.received.notified())
+            timeout_at(deadline, self.state.received.notified())
                 .await
                 .map_err(|_| CallbackServerError::RequestTimeout(timeout))?;
         }
@@ -248,7 +256,7 @@ async fn handle_request(state: Arc<CallbackState>, request: Request) -> Response
     let method = request.method().clone(); // clone: capture and matching both need the method after the request body is consumed.
     let uri = request.uri().clone(); // clone: capture and path matching both need the URI after the request body is consumed.
     let headers = request.headers().clone(); // clone: the captured request owns headers after the Axum request is consumed.
-    let body = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
+    let body = match to_bytes(request.into_body(), usize::MAX).await {
         Ok(body) => body,
         Err(error) => return Response::new(Body::from(error.to_string())),
     };
@@ -304,10 +312,10 @@ fn status_response(status: StatusCode) -> Response<Body> {
 pub enum CallbackServerError {
     /// Listener binding failed.
     #[error("failed to bind callback listener: {0}")]
-    Bind(#[source] std::io::Error),
+    Bind(#[source] IoError),
     /// The bound listener address could not be read.
     #[error("failed to read callback listener address: {0}")]
-    LocalAddress(#[source] std::io::Error),
+    LocalAddress(#[source] IoError),
     /// The broker-visible endpoint URL could not be constructed.
     #[error("failed to construct callback endpoint URL: {0}")]
     Endpoint(#[source] url::ParseError),
@@ -319,10 +327,10 @@ pub enum CallbackServerError {
     ShutdownSignal,
     /// The spawned server task failed to join.
     #[error("callback server task failed: {0}")]
-    Join(#[source] tokio::task::JoinError),
+    Join(#[source] JoinError),
     /// Axum returned a server error.
     #[error("callback server failed: {0}")]
-    Serve(#[source] std::io::Error),
+    Serve(#[source] IoError),
     /// A concrete server supplied an invalid callback path.
     #[error(transparent)]
     Path(#[from] CallbackPathError),

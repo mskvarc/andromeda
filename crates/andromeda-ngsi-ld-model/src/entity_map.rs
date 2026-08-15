@@ -17,26 +17,26 @@ pub struct EntityMap {
     pub id: Uri,
     /// Always `EntityMap`.
     #[serde(rename = "type")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: EntityMapType,
     /// When the map stops being usable for follow-up pages.
     pub expires_at: DateTime<Utc>,
     /// Identifiers of every entity the originating query matched, in order.
     #[serde(rename = "ids")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub entity_ids: Vec<Uri>,
     /// Datasets held for each matched entity.
     ///
     /// The values are clause 4.5.5 `datasetId`s, the same type a temporal
     /// query filters on: `@none` names the default instance and anything else
     /// is a URN.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub entity_map: IndexMap<Uri, Vec<DatasetSelector>>,
     /// Maps held by context sources that contributed to the same query.
     ///
     /// Keyed by the identifier of the contributing context source, as it
     /// appears in the registration that named it (clause 5.2.39).
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub linked_maps: IndexMap<Uri, Uri>,
 }
 

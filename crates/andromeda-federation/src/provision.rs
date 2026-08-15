@@ -15,6 +15,7 @@ use andromeda_ngsi_ld_model::registration::{ContextSourceAccess, ForwardingMode}
 use futures::{StreamExt, stream};
 use headers::HeaderMapExt;
 use iri_rs::IriRefBuf;
+use reqwest::header::HeaderMap;
 use serde_json::Value;
 use tracing::{debug, warn};
 use url::Url;
@@ -280,7 +281,7 @@ impl FederationService {
 
         if let Some(body_bytes) = body {
             if forwarded_content_type(access).is_none() {
-                let mut header_map = reqwest::header::HeaderMap::new();
+                let mut header_map = HeaderMap::new();
                 header_map.typed_insert(ResponseMediaType::JsonLd);
                 request = request.headers(header_map);
             }

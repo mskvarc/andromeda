@@ -30,6 +30,7 @@ use andromeda_ngsi_ld_query::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     sync::Arc,
 };
@@ -281,11 +282,11 @@ fn matches_interval(position: Option<DateTime<Utc>>, interval: TimeInterval) -> 
 }
 
 /// Compare optional validated dataset identifiers without erasing their type.
-fn compare_dataset_ids(left: Option<&Uri>, right: Option<&Uri>) -> std::cmp::Ordering {
+fn compare_dataset_ids(left: Option<&Uri>, right: Option<&Uri>) -> Ordering {
     match (left, right) {
-        (None, None) => std::cmp::Ordering::Equal,
-        (None, Some(_)) => std::cmp::Ordering::Less,
-        (Some(_), None) => std::cmp::Ordering::Greater,
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
         (Some(left), Some(right)) => left.as_str().cmp(right.as_str()),
     }
 }

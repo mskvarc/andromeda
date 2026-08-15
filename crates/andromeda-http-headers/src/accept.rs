@@ -22,6 +22,7 @@ use crate::{
 };
 use http::{HeaderName, HeaderValue};
 use mediatype::{MediaType, MediaTypeList, ReadParams, names};
+use std::iter;
 
 /// Extract the `q` quality parameter from a media type (defaults to 1.0 per RFC 7231).
 fn extract_quality(media_type: &MediaType) -> Quality {
@@ -107,7 +108,7 @@ impl headers::Header for Accept {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let s: String = self.0.iter().map(|qv| qv.to_string()).collect::<Vec<_>>().join(", ");
         match HeaderValue::from_str(&s) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Accept header"),
         }
     }
@@ -121,7 +122,7 @@ mod tests {
     /// Helper: decode an `Accept` from a raw header string.
     fn decode_accept(raw: &str) -> Result<Accept, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         Accept::decode(&mut iter)
     }
 

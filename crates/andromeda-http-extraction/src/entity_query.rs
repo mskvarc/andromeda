@@ -54,11 +54,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::{body::Body, http::Request};
 
     #[tokio::test]
     async fn rejects_missing_filters() {
-        let req = Request::builder().uri("/ngsi-ld/v1/entities").body(axum::body::Body::empty()).unwrap();
+        let req = Request::builder().uri("/ngsi-ld/v1/entities").body(Body::empty()).unwrap();
         let (mut parts, _) = req.into_parts();
 
         let result = EntityQuery::from_request_parts(&mut parts, &()).await;
@@ -67,10 +67,7 @@ mod tests {
 
     #[tokio::test]
     async fn allows_empty_query_with_local_true() {
-        let req = Request::builder()
-            .uri("/ngsi-ld/v1/entities?local=true")
-            .body(axum::body::Body::empty())
-            .unwrap();
+        let req = Request::builder().uri("/ngsi-ld/v1/entities?local=true").body(Body::empty()).unwrap();
         let (mut parts, _) = req.into_parts();
 
         let result = EntityQuery::from_request_parts(&mut parts, &()).await;
@@ -81,7 +78,7 @@ mod tests {
     async fn rejects_unknown_parameters_as_invalid_request() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities?type=Building&invalidParam=invalidValue")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .unwrap();
         let (mut parts, _) = req.into_parts();
 
@@ -93,7 +90,7 @@ mod tests {
     async fn rejects_invalid_parameter_values_as_bad_request_data() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities?type=Building&limit=invalid")
-            .body(axum::body::Body::empty())
+            .body(Body::empty())
             .unwrap();
         let (mut parts, _) = req.into_parts();
 

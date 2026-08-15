@@ -11,6 +11,7 @@ use axum::{
     extract::{DefaultBodyLimit, MatchedPath, Request},
     http::{StatusCode, header},
     middleware,
+    response::Response,
 };
 use headers::{Header, HeaderMapExt};
 use std::{sync::Arc, time::Duration};
@@ -90,7 +91,7 @@ impl HttpStack {
                     .unwrap_or_default();
                 tracing::info!(request_id = %request_id, method = %request.method(), uri = %request.uri(), "started request");
             })
-            .on_response(|response: &axum::response::Response, latency: Duration, _span: &tracing::Span| {
+            .on_response(|response: &Response, latency: Duration, _span: &tracing::Span| {
                 let request_id = response
                     .headers()
                     .typed_get::<XRequestId>()
@@ -137,7 +138,7 @@ mod tests {
         response::Response,
         routing::get,
     };
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tokio::sync::Mutex;
     use tower::{Layer, ServiceExt};
 
@@ -189,7 +190,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scope_markers_run_in_declared_inbound_order_and_reverse_outbound_order() -> Result<(), Box<dyn std::error::Error>> {
+    async fn scope_markers_run_in_declared_inbound_order_and_reverse_outbound_order() -> Result<(), Box<dyn Error>> {
         let events = Arc::new(Mutex::new(Vec::new()));
         let handler_events = Arc::clone(&events);
         let route = Router::new()
@@ -256,7 +257,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn route_local_policy_does_not_affect_unrelated_routes() -> Result<(), Box<dyn std::error::Error>> {
+    async fn route_local_policy_does_not_affect_unrelated_routes() -> Result<(), Box<dyn Error>> {
         let events = Arc::new(Mutex::new(Vec::new()));
         let strict = Router::new()
             .route("/strict", get(|| async { StatusCode::OK }))
@@ -278,7 +279,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_stack_normalizes_paths_before_route_matching() -> Result<(), Box<dyn std::error::Error>> {
+    async fn process_stack_normalizes_paths_before_route_matching() -> Result<(), Box<dyn Error>> {
         let config = HttpStackConfig {
             request_timeout_secs: 30,
             response_compression: HttpFeatureMode::Disabled,

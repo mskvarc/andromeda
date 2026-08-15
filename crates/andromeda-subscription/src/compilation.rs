@@ -96,7 +96,11 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery
     let geometry_str = geo_obj.get("geometry").and_then(serde_json::Value::as_str)?;
     let coordinates = match geo_obj.get("coordinates")? {
         serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok()?,
-        other => other.clone(), // clone: compiled state owns its reference geometry.
+        other @ (serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::Array(_)
+        | serde_json::Value::Object(_)) => other.clone(), // clone: compiled state owns its reference geometry.
     };
     let raw_geoproperty = geo_obj
         .get("geoproperty")

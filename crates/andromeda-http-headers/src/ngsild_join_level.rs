@@ -3,7 +3,7 @@
 //! Carries join depth equivalent to the `joinLevel` query parameter.
 
 use http::{HeaderName, HeaderValue};
-use std::num::NonZeroU32;
+use std::{iter, num::NonZeroU32};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_JOIN_LEVEL: HeaderName = HeaderName::from_static("ngsild-joinlevel");
@@ -43,7 +43,7 @@ impl headers::Header for NgsiLdJoinLevel {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         match HeaderValue::from_str(&self.0.get().to_string()) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Join-Level header"),
         }
     }
@@ -56,7 +56,7 @@ mod tests {
 
     fn decode_from(raw: &str) -> Result<NgsiLdJoinLevel, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         NgsiLdJoinLevel::decode(&mut iter)
     }
 

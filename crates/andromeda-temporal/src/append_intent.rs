@@ -1,6 +1,6 @@
 //! Typed durable temporal append intents.
 
-use crate::{error::TemporalError, scope_observation::ScopeObservation};
+use crate::{error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation};
 use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
@@ -121,7 +121,7 @@ impl TemporalAppendIntent {
         record: WriteRecord,
         base: WriteOrdinal,
     ) -> Result<Option<TemporalAppendIntent>, TemporalError> {
-        crate::intent_preparation::prepare(entity_id, history, record, base)
+        prepare(entity_id, history, record, base)
     }
 
     /// Iterate only attribute-history entries with their stable intent ordinals.

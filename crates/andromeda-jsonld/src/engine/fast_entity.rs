@@ -14,6 +14,7 @@ use crate::{
 use andromeda_ngsi_ld_vocabulary::expanded::{classes, properties};
 use iri_rs::Iri;
 use serde_json::{Map, Value};
+use std::slice::from_ref;
 
 /// Expand a document holding one entity or an array of them.
 ///
@@ -84,7 +85,7 @@ fn expand_entity(entity: &Map<String, Value>, term_map: &BatchTermMap) -> Option
 /// several.
 fn expand_entity_types(value: &Value, term_map: &BatchTermMap) -> Option<Value> {
     let names: &[Value] = match value {
-        Value::String(_) => std::slice::from_ref(value),
+        Value::String(_) => from_ref(value),
         Value::Array(items) => items.as_slice(),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => return None,
     };
@@ -122,7 +123,7 @@ fn is_effective_core_context(url: &str, effective_core_url: Iri<&str>) -> bool {
 /// Expand `scope`, which clause 4.18 allows to be one path or several.
 fn expand_scope(value: &Value) -> Option<Value> {
     let paths: &[Value] = match value {
-        Value::String(_) => std::slice::from_ref(value),
+        Value::String(_) => from_ref(value),
         Value::Array(items) => items.as_slice(),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_) => return None,
     };

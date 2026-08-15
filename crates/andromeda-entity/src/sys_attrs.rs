@@ -17,7 +17,7 @@ pub fn expanded_entity_object_mut(entity: &mut Value) -> Option<&mut Map<String,
     match entity {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
         Value::Object(obj) => Some(obj),
-        _other => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     }
 }
 

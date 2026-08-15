@@ -24,9 +24,11 @@ use crate::entity::{
     has_remote_errors,
     strip_exclusive_attrs_from_value,
 };
+use andromeda_http_extraction::tenant_state;
+use axum::http::Method;
 
 pub(crate) async fn update_attrs(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -49,7 +51,7 @@ pub(crate) async fn update_attrs(
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
-            method: axum::http::Method::PATCH,
+            method: Method::PATCH,
             body: Some(&fragment_body),
             context_url,
             context: &context,

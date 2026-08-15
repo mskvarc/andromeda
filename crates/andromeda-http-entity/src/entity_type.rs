@@ -11,6 +11,7 @@ use andromeda_http_extraction::{
     prefer::PreferHeader,
     query::ValidatedQuery,
     snapshot::SnapshotHeader,
+    tenant_state,
     typed_path::TypedPath,
     via::IncomingVia,
 };
@@ -28,7 +29,7 @@ use serde_json::json;
 
 /// GET /ngsi-ld/v1/types -- Query available entity types.
 pub async fn query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -107,7 +108,7 @@ pub async fn query(
 
 /// GET /ngsi-ld/v1/types/{type_} -- Retrieve information about a specific entity type.
 pub async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,

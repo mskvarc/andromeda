@@ -28,8 +28,8 @@ mod tests {
     // resolves through its own module imports rather than this one.
     registry_conformance_tests!(
         conformance,
-        crate::stream::sse::SseNotificationEvent,
-        crate::stream::sse::SseNotificationEvent {
+        super::super::SseNotificationEvent,
+        super::super::SseNotificationEvent {
             event_id: Uri::from_str("urn:ngsi-ld:Notification:1").expect("a valid notification id"),
             data: r#"{"id":"urn:ngsi-ld:Notification:1"}"#.to_owned(),
         },

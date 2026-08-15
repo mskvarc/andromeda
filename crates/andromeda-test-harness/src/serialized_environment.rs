@@ -1,7 +1,7 @@
 //! Exclusive global-state capability for tests that require an empty broker database.
 
 use crate::{
-    configuration::TestRunConfiguration,
+    configuration::{ConfigurationError, TestRunConfiguration},
     database_isolation::{DatabaseIsolationError, SerializedLease, connect_pool},
     database_reset::{DatabaseResetError, reset_tenant},
 };
@@ -75,7 +75,7 @@ impl SerializedEnvironment {
 pub enum SerializedEnvironmentError {
     /// Runtime test configuration is invalid.
     #[error(transparent)]
-    Configuration(#[from] crate::configuration::ConfigurationError),
+    Configuration(#[from] ConfigurationError),
     /// Database connection or exclusive advisory-lock operation failed.
     #[error(transparent)]
     Isolation(#[from] DatabaseIsolationError),

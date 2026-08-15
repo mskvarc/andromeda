@@ -6,6 +6,7 @@ use andromeda_entity::{
 };
 use futures::{StreamExt, future::BoxFuture, stream};
 use std::num::NonZeroUsize;
+use tokio::task::spawn_blocking;
 
 /// Runs policy-supplied CPU work on Tokio's blocking worker pool.
 pub struct TokioBlockingExecutor;
@@ -22,7 +23,7 @@ impl BlockingExecutor for TokioBlockingExecutor {
     {
         Box::pin(async move {
             let mut outcomes = stream::iter(tasks)
-                .map(|task| tokio::task::spawn_blocking(move || task.run()))
+                .map(|task| spawn_blocking(move || task.run()))
                 .buffer_unordered(concurrency.get());
             let mut first_error = None;
             while let Some(outcome) = outcomes.next().await {

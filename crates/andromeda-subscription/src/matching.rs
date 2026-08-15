@@ -225,7 +225,7 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{error::SubscriptionError, subscription_key::SubscriptionKey};
+    use crate::{compilation::compile_geo_q, error::SubscriptionError, subscription_key::SubscriptionKey};
     use andromeda_context_commit::change_event::ChangeEvent;
     use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_query::{
@@ -377,7 +377,7 @@ mod tests {
         // request's `georel`/`geometry`/`coordinates` must compile to the same
         // value. They used to be two types, one of them stringly-typed, and
         // only one of them had an in-memory evaluator.
-        let from_subscription = crate::compilation::compile_geo_q(
+        let from_subscription = compile_geo_q(
             &serde_json::json!({
                 "georel": "near;maxDistance==1000",
                 "geometry": "Point",
@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn a_subscription_geo_filter_accepts_only_entities_inside_the_relation() -> Result<(), SubscriptionError> {
-        let geo_query = crate::compilation::compile_geo_q(
+        let geo_query = compile_geo_q(
             &serde_json::json!({
                 "georel": "near;maxDistance==1000",
                 "geometry": "Point",

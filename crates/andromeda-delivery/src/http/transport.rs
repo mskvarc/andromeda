@@ -15,8 +15,14 @@ use crate::{
 use async_trait::async_trait;
 use headers::HeaderMapExt;
 use moka::future::Cache;
-use reqwest::header::{HeaderName, HeaderValue};
-use std::time::{Duration, Instant};
+use reqwest::{
+    header::{HeaderMap, HeaderName, HeaderValue},
+    redirect::Policy,
+};
+use std::{
+    error::Error,
+    time::{Duration, Instant},
+};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -59,7 +65,7 @@ impl HttpTransport {
             // endpoint answering `302 Location: http://169.254.169.254/…` would
             // otherwise walk the delivery straight past the SSRF guard, which
             // only vets the original URI.
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(Policy::none())
             // Vet the addresses the client actually connects to, closing the
             // DNS-rebinding window between the pre-send guard's resolution and
             // reqwest's own.
@@ -141,7 +147,7 @@ impl HttpTransport {
 /// capitalisation changes that broke the previous `Display`-substring check. The
 /// text pass is only a backstop for a future wrapping that erases the type
 /// before it reaches the chain, and the unit tests pin both paths.
-fn chain_indicates_tls(error: &(dyn std::error::Error + 'static)) -> bool {
+fn chain_indicates_tls(error: &(dyn Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(source) = current {
         if source.downcast_ref::<rustls::Error>().is_some() {
@@ -155,7 +161,7 @@ fn chain_indicates_tls(error: &(dyn std::error::Error + 'static)) -> bool {
 /// Backstop for [`chain_indicates_tls`]: a case-insensitive scan of the source
 /// chain for the vocabulary `rustls` uses, for the case where the typed error is
 /// wrapped into an opaque form before it reaches the chain.
-fn chain_mentions_tls_terms(error: &(dyn std::error::Error + 'static)) -> bool {
+fn chain_mentions_tls_terms(error: &(dyn Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(source) = current {
         let text = source.to_string().to_ascii_lowercase();
@@ -194,7 +200,7 @@ impl NotificationTransport for HttpTransport {
             "delivering HTTP notification"
         );
 
-        let mut header_map = reqwest::header::HeaderMap::new();
+        let mut header_map = HeaderMap::new();
         header_map.typed_insert(req.content_type);
         if let Some(link) = req.context_link() {
             header_map.typed_insert(link);

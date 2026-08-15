@@ -4,7 +4,7 @@
 //! specific review finding through the HTTP API. Naming convention:
 //! `regression_<finding>_<scenario>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_client::header::jsonld_link_header;
 use andromeda_test_fixtures::context::{CORE_CONTEXT, TEST_SUITE_CONTEXT};

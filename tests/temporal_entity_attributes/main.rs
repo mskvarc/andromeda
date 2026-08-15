@@ -10,7 +10,7 @@
 //!
 //! Naming convention: `temporal_attrs_<operation>_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod add;
 mod delete;
@@ -20,11 +20,11 @@ mod partial_update;
 use andromeda_test_client::header::jsonld_link_header as try_jsonld_link_header;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, header::HeaderValue};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-fn jsonld_link_header(context_url: &str) -> reqwest::header::HeaderValue {
+fn jsonld_link_header(context_url: &str) -> HeaderValue {
     try_jsonld_link_header(context_url).expect("valid JSON-LD Link header")
 }
 

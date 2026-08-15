@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Distributed temporal entity retrieve tests.
 //!
 //! Tests distributed operations on single temporal entity retrieval:

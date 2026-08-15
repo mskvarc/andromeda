@@ -6,6 +6,7 @@
 
 use andromeda_http_headers::via::Via;
 use axum::{extract::FromRequestParts, http::request::Parts};
+use std::convert::Infallible;
 
 /// Axum extractor for the `Via` request header.
 ///
@@ -25,7 +26,7 @@ impl<S> FromRequestParts<S> for IncomingVia
 where
     S: Send + Sync,
 {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let via = {

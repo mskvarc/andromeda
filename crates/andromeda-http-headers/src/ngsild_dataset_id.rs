@@ -4,6 +4,7 @@
 
 use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_DATASET_ID: HeaderName = HeaderName::from_static("ngsild-dataset-id");
@@ -56,7 +57,7 @@ impl headers::Header for NgsiLdDatasetId {
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         let joined = self.0.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
         match HeaderValue::from_str(&joined) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Dataset-Id header"),
         }
     }
@@ -69,7 +70,7 @@ mod tests {
 
     fn decode_from(raw: &str) -> Result<NgsiLdDatasetId, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         NgsiLdDatasetId::decode(&mut iter)
     }
 

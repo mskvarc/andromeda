@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
 use chrono::Utc;
 use serde_json::Value;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, slice::from_ref, sync::Arc};
 
 /// What one clause 5.6.17 merge produced, beyond the write itself.
 ///
@@ -137,7 +137,7 @@ impl EntityService {
                         &entity_uri,
                         &types,
                         NotificationTrigger::AttributeDeleted,
-                        std::slice::from_ref(deleted_attr),
+                        from_ref(deleted_attr),
                         Some(&merged),
                         previous_attributes.as_ref(),
                     ));

@@ -67,9 +67,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_subscription::error::SubscriptionError;
+    use std::error::Error;
 
     #[test]
-    fn focused_subscription_categories_and_disclosure_are_stable() -> Result<(), Box<dyn std::error::Error>> {
+    fn focused_subscription_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:Subscription:1".parse::<Uri>()?;
         for (error, expected) in [
             (SubscriptionError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),

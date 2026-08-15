@@ -15,9 +15,11 @@ use crate::temporal::{
     ValidatedQuery,
     Value,
 };
+use andromeda_http_extraction::tenant_state;
+use andromeda_http_response::headers::with_location;
 
 pub async fn create_or_update(
-    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
+    tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
@@ -31,7 +33,7 @@ pub async fn create_or_update(
     let result = service.create_or_update(payload, &context).await.with_instance(&uri)?;
 
     match result {
-        CreateOrUpdateResult::Created(id) => Ok(andromeda_http_response::headers::with_location(
+        CreateOrUpdateResult::Created(id) => Ok(with_location(
             StatusCode::CREATED.into_response(),
             format!("/ngsi-ld/v1/temporal/entities/{}", id),
         )),

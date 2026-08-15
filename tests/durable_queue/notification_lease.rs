@@ -22,6 +22,7 @@ use pretty_assertions::assert_eq;
 use serial_test::serial;
 use sqlx::PgPool;
 use std::time::Duration;
+use tokio::time::sleep;
 
 /// Deliveries claimed per pass, larger than any fixture in this module.
 const BATCH_SIZE: i32 = 10;
@@ -90,7 +91,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
 
     // The lease is the shortest the term type accepts, so waiting past it is
     // the same expiry a crashed worker's row goes through.
-    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    sleep(Duration::from_millis(1_500)).await;
 
     let reclaiming = delivery_worker();
     let reclaimed = queue

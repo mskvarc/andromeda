@@ -7,7 +7,15 @@ use andromeda_federation::{
     request::{CsrModeFilter, ForwardTemporalQueryRequest},
     temporal_result::merge_temporal_query_results,
 };
-use andromeda_http_extraction::{accept::AcceptFormat, context::ContextUrl, jsonld::JsonLd, prefer::PreferHeader, snapshot::SnapshotHeader, via::IncomingVia};
+use andromeda_http_extraction::{
+    accept::AcceptFormat,
+    context::ContextUrl,
+    jsonld::JsonLd,
+    prefer::PreferHeader,
+    snapshot::SnapshotHeader,
+    tenant_state,
+    via::IncomingVia,
+};
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     content_range::build_content_range,
@@ -20,12 +28,13 @@ use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::temporal:
 use andromeda_temporal::service::TemporalQueryResult;
 use axum::{
     extract::OriginalUri,
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 
 /// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query temporal entities via POST body.
 pub async fn query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TemporalTenantState,
+    tenant_state::ExistingTenantState(state): TemporalTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -130,7 +139,7 @@ pub async fn query(
         response = response.with_total_count(count);
     }
     if any_truncated && range.is_some() {
-        response = response.with_status(axum::http::StatusCode::PARTIAL_CONTENT);
+        response = response.with_status(StatusCode::PARTIAL_CONTENT);
     }
     if let Some(range) = range
         && let Some(content_range) = build_content_range(&range.interval, range.observed, range.partition_total, range.last_n_origin)

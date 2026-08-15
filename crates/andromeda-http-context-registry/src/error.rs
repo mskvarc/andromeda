@@ -45,9 +45,10 @@ mod tests {
     use andromeda_context_registry::error::ContextRegistryError;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use std::error::Error;
 
     #[test]
-    fn focused_context_registry_categories_and_disclosure_are_stable() -> Result<(), Box<dyn std::error::Error>> {
+    fn focused_context_registry_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:Context:1".parse::<Uri>()?;
         for (error, expected) in [
             (ContextRegistryError::MissingTopLevelContext, NgsiLdErrorType::InvalidRequest),

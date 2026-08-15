@@ -45,7 +45,7 @@ mod tests {
         body::Body,
         http::{Method, Request, StatusCode},
     };
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
     struct TenantAdministration;
@@ -65,7 +65,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tenancy_fragment_owns_query_and_eviction_paths() -> Result<(), Box<dyn std::error::Error>> {
+    async fn tenancy_fragment_owns_query_and_eviction_paths() -> Result<(), Box<dyn Error>> {
         let administration = Arc::new(TenantAdministration);
         let directory: Arc<dyn TenantDirectory> = administration.clone();
         let evictor: Arc<dyn OrphanTenantEvictor> = administration;

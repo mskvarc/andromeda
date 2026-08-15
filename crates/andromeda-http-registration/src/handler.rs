@@ -10,6 +10,7 @@ use andromeda_http_extraction::{
     jsonld::JsonLd,
     prefer::PreferHeader,
     query::ValidatedQuery,
+    tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
 };
 use andromeda_http_response::{
@@ -32,7 +33,7 @@ use axum::{
 use serde_json::Value;
 
 pub(crate) async fn create(
-    andromeda_http_extraction::tenant_state::ProvisionableTenantState(state): RegistrationTenantStateOrCreate,
+    ProvisionableTenantState(state): RegistrationTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     JsonLd {
@@ -52,7 +53,7 @@ pub(crate) async fn create(
 }
 
 pub(crate) async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): RegistrationTenantState,
+    ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -72,7 +73,7 @@ pub(crate) async fn get(
 }
 
 pub(crate) async fn query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): RegistrationTenantState,
+    ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -109,7 +110,7 @@ pub(crate) async fn query(
 }
 
 pub(crate) async fn update(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): RegistrationTenantState,
+    ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(registration_id): TypedPath<Uri>,
@@ -127,7 +128,7 @@ pub(crate) async fn update(
 }
 
 pub(crate) async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): RegistrationTenantState,
+    ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(registration_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {

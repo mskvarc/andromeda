@@ -11,7 +11,7 @@ use typed_builder::TypedBuilder;
 /// per entity, after [`EntitySelection`](crate::entity_selection::EntitySelection)
 /// has decided which entities qualify.
 #[derive(Debug, Clone, TypedBuilder)]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct InstanceSelection {
     /// Expanded attribute IRIs to return history for. Empty means every
     /// attribute.

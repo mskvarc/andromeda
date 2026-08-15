@@ -290,14 +290,14 @@ mod tests {
     fn path_of(expr: &Expr) -> &AttrPath {
         match expr {
             Expr::Pred(Predicate::Equality { path, .. }) | Expr::Pred(Predicate::Ordering { path, .. }) => path.terminal(),
-            other => unreachable!("expected a comparison, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a comparison, got {other:?}"),
         }
     }
 
     fn equality_rhs(expr: &Expr) -> &CompareValue {
         match expr {
             Expr::Pred(Predicate::Equality { rhs, .. }) => rhs,
-            other => unreachable!("expected an equality comparison, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected an equality comparison, got {other:?}"),
         }
     }
 
@@ -354,7 +354,7 @@ mod tests {
                 }
                 QueryPath::Local(local) => unreachable!("expected a hop, got {local:?}"),
             },
-            other => unreachable!("expected an equality predicate, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected an equality predicate, got {other:?}"),
         }
     }
 
@@ -490,7 +490,7 @@ mod tests {
                 assert_eq!(path.terminal().attr.as_str(), "https://example.com/name");
                 assert_eq!(pattern.as_str(), "^A.*");
             }
-            other => unreachable!("expected a pattern predicate, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a pattern predicate, got {other:?}"),
         }
     }
 
@@ -502,7 +502,7 @@ mod tests {
             .expect("present");
         match expanded {
             Expr::Pred(Predicate::Ordering { op, .. }) => assert_eq!(op, OrderingOp::GreaterEq),
-            other => unreachable!("expected a comparison, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected a comparison, got {other:?}"),
         }
     }
 }

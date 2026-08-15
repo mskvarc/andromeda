@@ -50,7 +50,7 @@ fn concise_attr_value(value: Value) -> Value {
                 .into_iter()
                 .map(|item| match item {
                     Value::Object(attr_obj) => concise_single_instance(attr_obj),
-                    other => other,
+                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
                 })
                 .collect(),
         ),

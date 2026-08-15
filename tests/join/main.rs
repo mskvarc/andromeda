@@ -10,7 +10,7 @@
 //! Naming convention: `join_<scenario>_<expected_outcome>`, and
 //! `q_linked_<scenario>` for the traversal-axis cases.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod flat;
 mod geojson;

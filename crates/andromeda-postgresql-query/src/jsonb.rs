@@ -148,7 +148,30 @@ mod tests {
         let (_, Values(values)) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
         match values.into_iter().next().expect("one bound value") {
             Value::String(Some(text)) => text,
-            other => unreachable!("a lifted operand binds text: {other:?}"),
+            other @ (Value::Bool(_)
+            | Value::TinyInt(_)
+            | Value::SmallInt(_)
+            | Value::Int(_)
+            | Value::BigInt(_)
+            | Value::TinyUnsigned(_)
+            | Value::SmallUnsigned(_)
+            | Value::Unsigned(_)
+            | Value::BigUnsigned(_)
+            | Value::Float(_)
+            | Value::Double(_)
+            | Value::Enum(_)
+            | Value::Char(_)
+            | Value::Bytes(_)
+            | Value::Json(_)
+            | Value::ChronoDate(_)
+            | Value::ChronoTime(_)
+            | Value::ChronoDateTime(_)
+            | Value::ChronoDateTimeUtc(_)
+            | Value::ChronoDateTimeLocal(_)
+            | Value::ChronoDateTimeWithTimeZone(_)
+            | Value::Uuid(_)
+            | Value::Array(..)) => unreachable!("a lifted operand binds text: {other:?}"),
+            Value::String(None) => unreachable!("a lifted operand binds absent text"),
         }
     }
 

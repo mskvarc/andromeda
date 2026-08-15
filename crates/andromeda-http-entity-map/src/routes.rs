@@ -42,7 +42,7 @@ mod tests {
         http::{Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
     struct RejectingResolver;
@@ -58,7 +58,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn owns_current_and_temporal_entity_map_inventory() -> Result<(), Box<dyn std::error::Error>> {
+    async fn owns_current_and_temporal_entity_map_inventory() -> Result<(), Box<dyn Error>> {
         let routes = super::EntityMapRoutes::new(Arc::new(RejectingResolver)).into_router();
         for (method, path) in [
             (Method::GET, "/entityMaps"),

@@ -50,7 +50,7 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use andromeda_broker_composition::outcome::ProcessExitOutcome;
-    use std::{fs, process::ExitCode};
+    use std::{fs, io::Error as IoError, process::ExitCode};
 
     #[test]
     fn owner_produced_success_maps_to_process_success() {
@@ -69,7 +69,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_source_directory_contains_only_cli_and_entry_point() -> Result<(), std::io::Error> {
+    fn binary_source_directory_contains_only_cli_and_entry_point() -> Result<(), IoError> {
         let mut source_files = fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))?
             .map(|entry| entry.map(|entry| entry.file_name()))
             .collect::<Result<Vec<_>, _>>()?;

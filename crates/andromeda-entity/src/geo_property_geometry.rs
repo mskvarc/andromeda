@@ -48,7 +48,7 @@ use std::{fmt::Display, slice::from_ref};
 pub(crate) fn validate_geo_property_geometries(expanded: &Value) -> Result<(), EntityError> {
     let entities = match expanded {
         Value::Array(entities) => entities.as_slice(),
-        _other => from_ref(expanded),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => from_ref(other),
     };
 
     for entity in entities {

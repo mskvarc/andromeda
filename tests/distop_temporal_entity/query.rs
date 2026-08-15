@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Distributed temporal entity query tests: splitEntities post-merge filtering.
 
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;

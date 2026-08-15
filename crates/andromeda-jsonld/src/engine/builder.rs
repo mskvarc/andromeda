@@ -268,6 +268,7 @@ mod tests {
     use serde_json::json;
     use std::{
         collections::HashMap,
+        env,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -282,7 +283,7 @@ mod tests {
     /// collide.
     fn preloaded_file(label: &str, payload: &str) -> PathBuf {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("a clock after the epoch").as_nanos();
-        let path = std::env::temp_dir().join(format!("andromeda-jsonld-{label}-{unique}.jsonld"));
+        let path = env::temp_dir().join(format!("andromeda-jsonld-{label}-{unique}.jsonld"));
         fs::write(&path, payload).expect("the temporary directory is writable");
         path
     }

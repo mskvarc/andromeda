@@ -63,7 +63,7 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
                         }
                     }
                 }
-                _other => None,
+                _other @ (Value::Null | Value::Bool(_) | Value::Number(_)) => None,
             };
 
             if let Some(stored) = stored

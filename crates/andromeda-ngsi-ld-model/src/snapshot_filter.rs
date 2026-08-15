@@ -456,7 +456,9 @@ mod tests {
         let filter = parse_snapshot_q("endpoint==\"https://example.org/sink\"").expect("parse");
         match &filter.terms[0].value {
             SnapshotValue::Endpoint(url) => pretty_assertions::assert_eq!(url.as_str(), "https://example.org/sink"),
-            other => panic!("unexpected value: {:?}", other),
+            other @ (SnapshotValue::Id(_) | SnapshotValue::Priority(_) | SnapshotValue::Status(_) | SnapshotValue::DateTime(_)) => {
+                panic!("unexpected value: {:?}", other)
+            }
         }
     }
 
@@ -465,7 +467,9 @@ mod tests {
         let filter = parse_snapshot_q("id==urn:ngsi-ld:Snapshot:abc").expect("parse");
         match &filter.terms[0].value {
             SnapshotValue::Id(id) => pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Snapshot:abc"),
-            other => panic!("unexpected value: {:?}", other),
+            other @ (SnapshotValue::Priority(_) | SnapshotValue::Status(_) | SnapshotValue::Endpoint(_) | SnapshotValue::DateTime(_)) => {
+                panic!("unexpected value: {:?}", other)
+            }
         }
     }
 }

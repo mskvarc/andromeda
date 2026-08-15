@@ -334,6 +334,7 @@ mod tests {
     use serde_json::{Value, json};
     use std::{
         collections::HashMap,
+        env,
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
@@ -358,7 +359,7 @@ mod tests {
     /// A temporary context file and the URL it is preloaded under.
     fn preloaded_context(label: &str, payload: &str) -> (PathBuf, Url) {
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("a clock after the epoch").as_nanos();
-        let path = std::env::temp_dir().join(format!("andromeda-jsonld-{label}-{unique}.jsonld"));
+        let path = env::temp_dir().join(format!("andromeda-jsonld-{label}-{unique}.jsonld"));
         fs::write(&path, payload).expect("the temporary directory is writable");
         let url = Url::parse(&format!("https://example.com/{label}-{unique}.jsonld")).expect("valid context URL");
         (path, url)
@@ -375,7 +376,7 @@ mod tests {
                 Value::Object(members.into_iter().collect())
             }
             Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
-            other => other.clone(),
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => other.clone(),
         }
     }
 

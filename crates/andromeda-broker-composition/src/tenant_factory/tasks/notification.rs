@@ -1,6 +1,7 @@
 //! Notification task registration and runtime failure classification.
 
 use crate::tenant_factory::tasks::EntityNotificationDelivery;
+use std::future::Future;
 
 use crate::tenant_factory::error::TenantAssemblyError;
 use andromeda_context_commit::change_event::ChangeEvent;
@@ -189,7 +190,7 @@ pub(super) fn register_csource_interval_notification(
 fn register_notification_schedule<F, Fut>(supervisor: &TaskSupervisor, task_name: &'static str, operation: F) -> Result<(), TenantAssemblyError>
 where
     F: Fn() -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<usize, NotificationError>> + Send + 'static,
+    Fut: Future<Output = Result<usize, NotificationError>> + Send + 'static,
 {
     let cadence = Duration::from_secs(1);
     let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)

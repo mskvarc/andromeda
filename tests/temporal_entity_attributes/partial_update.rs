@@ -22,6 +22,7 @@ use crate::{
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 use std::time::Duration;
+use tokio::time::sleep;
 
 // ---------------------------------------------------------------------------
 // Setup helper
@@ -61,7 +62,7 @@ async fn temporal_attrs_modify_instance_success() {
         .expect("instance must be visible before modification");
     let created_at = before_instance["createdAt"].as_str().expect("createdAt must be rendered").to_owned();
     let modified_at = before_instance["modifiedAt"].as_str().expect("modifiedAt must be rendered").to_owned();
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
 
     let fragment = modify_instance_fragment();
     let (status, bytes, _) = modify_temporal_attr_instance(&c, &id, "speed", &instance_id, &fragment).await;

@@ -3,7 +3,11 @@
 use andromeda_context_registry::hit_store::ContextHitStore;
 use andromeda_jsonld::hit_counter::{HitCounter, HitDelta};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::watch,
+    task::JoinHandle,
+    time::{MissedTickBehavior, interval as tokio_interval, sleep},
+};
 
 /// A tenant-owned flush worker with an orderly final-drain protocol.
 pub struct ContextHitFlushWorker {
@@ -16,8 +20,8 @@ impl ContextHitFlushWorker {
     pub fn spawn(counter: Arc<HitCounter>, store: Arc<dyn ContextHitStore>, interval: Duration) -> ContextHitFlushWorker {
         let (shutdown, mut shutdown_rx) = watch::channel(());
         let handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut ticker = tokio_interval(interval);
+            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             ticker.tick().await;
             loop {
                 tokio::select! {
@@ -70,7 +74,7 @@ async fn flush_until_durable(counter: &HitCounter, store: &dyn ContextHitStore, 
             Err(error) => {
                 restore(counter, pending);
                 tracing::warn!(error = %error, event = "context_hit_final_flush_failed");
-                tokio::time::sleep(interval).await;
+                sleep(interval).await;
             }
         }
     }

@@ -33,10 +33,11 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use std::error::Error;
     use tower::ServiceExt;
 
     #[tokio::test]
-    async fn component_report_fragment_owns_the_version_path() -> Result<(), Box<dyn std::error::Error>> {
+    async fn component_report_fragment_owns_the_version_path() -> Result<(), Box<dyn Error>> {
         let response = ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
             version: ComponentVersion::from("16.2".to_owned()),
         }])

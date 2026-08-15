@@ -7,7 +7,7 @@
 //! `clean_database()` before running. All tests create and clean up their own resources.
 
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod add;
 mod cache_expiration;
@@ -26,6 +26,7 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
+use tokio::time::sleep;
 use uuid::Uuid;
 
 const INVALID_REQUEST_TYPE: &iri_rs::Iri<&str> = error::INVALID_REQUEST;
@@ -157,7 +158,7 @@ async fn wait_for_hits_above(client: &Client, ctx_id: &str, baseline: u64) -> u6
         if hits > baseline || Instant::now() >= deadline {
             return hits;
         }
-        tokio::time::sleep(HIT_POLL_INTERVAL).await;
+        sleep(HIT_POLL_INTERVAL).await;
     }
 }
 
@@ -307,7 +308,7 @@ async fn setup_cached_context(client: &Client) -> (ContextServer, String) {
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
     // Allow time for caching
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
 
     (server, ctx_url)
 }

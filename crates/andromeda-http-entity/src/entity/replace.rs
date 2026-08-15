@@ -22,9 +22,11 @@ use crate::entity::{
     collect_forwarded_exclusive_attrs,
     first_forwarded_status,
 };
+use andromeda_http_extraction::tenant_state;
+use axum::http::Method;
 
 pub(crate) async fn update(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -53,7 +55,7 @@ pub(crate) async fn update(
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
-            method: axum::http::Method::PUT,
+            method: Method::PUT,
             body: Some(&patch_body),
             context_url,
             context: &context,

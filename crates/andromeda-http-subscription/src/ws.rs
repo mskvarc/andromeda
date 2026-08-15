@@ -6,16 +6,17 @@
 
 use std::{sync::Arc, time::Duration};
 
+use andromeda_http_extraction::tenant_state::ExistingTenantState;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::{
         OriginalUri,
-        ws::{Message, WebSocket},
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::interval};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
 
@@ -52,10 +53,10 @@ impl Drop for WsConnectionGuard {
 /// upgrades the HTTP connection to a WebSocket that streams notification
 /// messages as they are dispatched by the notification worker.
 pub async fn stream(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTenantState(state): SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
-    ws: axum::extract::WebSocketUpgrade,
+    ws: WebSocketUpgrade,
 ) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.
     let subscription = state.subscriptions.get(&subscription_id).await.with_subscription_instance(&uri)?;
@@ -108,7 +109,7 @@ async fn handle_ws(
     ping_interval_secs: u64,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let mut ping_interval = tokio::time::interval(Duration::from_secs(ping_interval_secs));
+    let mut ping_interval = interval(Duration::from_secs(ping_interval_secs));
     // First tick completes immediately; skip it so the first ping fires after the interval.
     ping_interval.tick().await;
 

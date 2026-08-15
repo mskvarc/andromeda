@@ -105,9 +105,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use andromeda_snapshot::error::SnapshotError;
+    use std::error::Error;
 
     #[test]
-    fn focused_snapshot_categories_and_disclosure_are_stable() -> Result<(), Box<dyn std::error::Error>> {
+    fn focused_snapshot_categories_and_disclosure_are_stable() -> Result<(), Box<dyn Error>> {
         let identifier = "urn:ngsi-ld:Snapshot:1".parse::<Uri>()?;
         for (error, expected) in [
             (SnapshotError::Validation { detail: "invalid".to_string() }, NgsiLdErrorType::BadRequestData),

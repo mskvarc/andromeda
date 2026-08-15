@@ -10,7 +10,7 @@
 //! second broker instance with `tenancy.enabled = false` (or the broker
 //! gains a per-request toggle), drop `#[ignore]` and populate.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 #[tokio::test]
 #[ignore = "Shared broker is started with multi-tenancy enabled; follow-up: run a second broker instance with tenancy.enabled=false or expose a runtime toggle."]

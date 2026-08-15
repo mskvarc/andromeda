@@ -6,6 +6,7 @@ use crate::mqtt::{
     health::{ConnectionHealth, HealthCell},
     sys_topics::SysTopicData,
 };
+use rumqttc::v5::AsyncClient;
 use std::sync::{Arc, Mutex as StdMutex, MutexGuard as StdMutexGuard, PoisonError as StdPoisonError};
 use tokio::{
     sync::{Mutex, RwLock},
@@ -21,7 +22,7 @@ pub enum MqttClientVariant {
     /// An MQTT 5 client.
     V5 {
         /// The client publishes go out on.
-        client: rumqttc::v5::AsyncClient,
+        client: AsyncClient,
     },
     /// An MQTT 3.1.1 client.
     V311 {

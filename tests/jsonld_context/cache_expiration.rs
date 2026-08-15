@@ -1,6 +1,6 @@
 //! Remote `@context` cache-control integration tests (NGSI-LD 6.3.16).
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
 use andromeda_test_mocks::{callback_path::CallbackPath, jsonld_context_server::JsonLdContextServer, server_config::MockServerConfig};

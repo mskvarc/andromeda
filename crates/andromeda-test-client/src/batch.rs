@@ -1,6 +1,6 @@
 //! Batch endpoint operations.
 
-use crate::{response::TestResponse, test_client::TestClient, transport_error::RequestError};
+use crate::{header::jsonld_link_header, response::TestResponse, test_client::TestClient, transport_error::RequestError};
 use andromeda_http_headers::media_type::APPLICATION_LD_JSON;
 use http::{Method, header::CONTENT_TYPE};
 use serde_json::Value;
@@ -46,7 +46,7 @@ impl TestClient {
             request = request.header("accept", accept);
         }
         if let Some(context) = context {
-            request = request.header("link", crate::header::jsonld_link_header(context)?);
+            request = request.header("link", jsonld_link_header(context)?);
         }
         self.send(method, url, request).await.map_err(RequestError::Transport)
     }

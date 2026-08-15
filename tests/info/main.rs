@@ -2,7 +2,7 @@
 //!
 //! Naming convention: `info_<operation>_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod component_report;
 mod health;

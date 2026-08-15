@@ -3,7 +3,7 @@
 //! Maps extractor-level failures to the appropriate NGSI-LD error types
 //! (`InvalidRequest`, `BadRequestData`) as required by the specification.
 
-use crate::classified_report::ClassifiedReport;
+use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     http::{StatusCode, Uri},
@@ -33,7 +33,7 @@ pub enum ExtractorRejection {
         instance: Uri,
     },
     /// A response already classified by the policy-specific extractor that produced it.
-    Classified(crate::problem_response::ProblemResponse),
+    Classified(ProblemResponse),
 }
 
 impl ExtractorRejection {

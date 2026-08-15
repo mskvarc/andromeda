@@ -1,7 +1,7 @@
 //! The reference geometry a distance ordering measures from (clause 4.23, clause 5.2.43).
 
 use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry, geometry_type::GeometryType};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -35,7 +35,7 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     match value {
-        Value::String(raw) => serde_json::from_str(&raw).map_err(serde::de::Error::custom),
+        Value::String(raw) => serde_json::from_str(&raw).map_err(DeserializeError::custom),
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_) => Ok(value),
     }
 }
@@ -77,7 +77,7 @@ impl<'de> Deserialize<'de> for OrderingGeometry {
         });
         Geometry::from_geojson_value(&value)
             .map(OrderingGeometry::new)
-            .map_err(|error| serde::de::Error::custom(OrderingGeometryError::Geometry(error)))
+            .map_err(|error| DeserializeError::custom(OrderingGeometryError::Geometry(error)))
     }
 }
 

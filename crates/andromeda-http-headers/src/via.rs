@@ -7,6 +7,7 @@
 use crate::received_protocol::ReceivedProtocol;
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use http::{HeaderName, HeaderValue};
+use std::iter;
 use thiserror::Error;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
@@ -171,7 +172,7 @@ impl headers::Header for Via {
             .collect::<Vec<_>>()
             .join(", ");
         match HeaderValue::from_str(&s) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode Via header"),
         }
     }
@@ -183,6 +184,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
     use headers::Header;
     use http::HeaderValue;
+    use std::iter;
 
     impl Via {
         /// Iterate over the pseudonyms in the Via chain (test-only).
@@ -203,7 +205,7 @@ mod tests {
 
     fn decode_from(raw: &str) -> Result<Via, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         Via::decode(&mut iter)
     }
 

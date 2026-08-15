@@ -6,7 +6,7 @@ mod notification;
 mod temporal_retention;
 
 use crate::{
-    event::registration_change_sink::BroadcastRegistrationChangeSink,
+    event::{entity_change_sink::BroadcastEntityChangeSink, registration_change_sink::BroadcastRegistrationChangeSink},
     linked_entity_forwarding::ForwardedLinkedEntitySource,
     tenant_factory::{
         error::TenantAssemblyError,
@@ -203,7 +203,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     if entity_config.batch_async_side_effect_threshold.is_some() {
         let lease_seconds = i32::try_from(entity_config.pending_side_effects_lease_secs).unwrap_or(i32::MAX);
         let batch_size = i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX);
-        let change_sink = Arc::new(crate::event::entity_change_sink::BroadcastEntityChangeSink::new(entity.clone())) as Arc<dyn EntityChangeSink>;
+        let change_sink = Arc::new(BroadcastEntityChangeSink::new(entity.clone())) as Arc<dyn EntityChangeSink>;
         let drain = EntitySideEffectDrain::new(
             Arc::new(PendingSideEffectsRepository::new(pool)),
             Arc::clone(&writes),

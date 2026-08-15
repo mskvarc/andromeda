@@ -1,5 +1,7 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use reqwest::StatusCode;
+use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::helpers::{
     client,
@@ -7,6 +9,7 @@ use crate::helpers::{
     default_subscription,
     inactive_subscription,
     query_subscriptions,
+    reset_broker_state,
     unique_subscription_id,
     watched_attributes_subscription,
 };
@@ -34,7 +37,7 @@ async fn create_three_subscriptions(http_client: &reqwest::Client, suffix: &str)
 #[tokio::test]
 async fn subscription_query_returns_created_subscriptions_in_result_set() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let ids = create_three_subscriptions(&http_client, "all").await;
 
     let (status, _, body) = query_subscriptions(&http_client, "", true).await;
@@ -52,7 +55,7 @@ async fn subscription_query_returns_created_subscriptions_in_result_set() {
 #[tokio::test]
 async fn subscription_query_with_limit_one_offset_one_returns_single_item_and_prev_next_links() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let _ = create_three_subscriptions(&http_client, "paginate-mid").await;
 
     let (status, headers, body) = query_subscriptions(&http_client, "limit=1&offset=1", false).await;
@@ -71,7 +74,7 @@ async fn subscription_query_with_limit_one_offset_one_returns_single_item_and_pr
 #[tokio::test]
 async fn subscription_query_with_limit_one_offset_two_returns_single_item_and_prev_link_only() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let _ = create_three_subscriptions(&http_client, "paginate-last").await;
 
     let (status, headers, body) = query_subscriptions(&http_client, "limit=1&offset=2", false).await;
@@ -89,7 +92,7 @@ async fn subscription_query_with_limit_one_offset_two_returns_single_item_and_pr
 #[tokio::test]
 async fn subscription_query_with_high_limit_returns_created_subscriptions() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let ids = create_three_subscriptions(&http_client, "paginate-all").await;
 
     for _ in 0..6 {
@@ -103,7 +106,7 @@ async fn subscription_query_with_high_limit_returns_created_subscriptions() {
             return;
         }
 
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        sleep(Duration::from_millis(300)).await;
     }
 
     unreachable!("query result did not include all created subscriptions within the retry window");
@@ -113,7 +116,7 @@ async fn subscription_query_with_high_limit_returns_created_subscriptions() {
 #[tokio::test]
 async fn subscription_query_with_invalid_parameter_returns_bad_request() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
 
     let (status, _, body) = query_subscriptions(&http_client, "invalidParam=invalidValue", false).await;
 

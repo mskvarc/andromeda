@@ -19,11 +19,11 @@ use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde_json::Value;
-use sqlx::Row;
+use sqlx::{Row, postgres::PgRow};
 use url::Url;
 
 /// Convert a `context_source_registrations` row into the domain type.
-pub fn row_to_csr(row: &sqlx::postgres::PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
+pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStoreError> {
     let id_raw: String = row.get("id");
     let id: Uri = id_raw
         .parse()

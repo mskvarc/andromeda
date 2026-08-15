@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
 use moka::future::Cache;
 use std::{
     fmt::Write,
+    future::Future,
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
     time::Duration,
@@ -270,7 +271,7 @@ impl CompiledQueryCache {
     pub async fn get_or_compile<F, Fut, E>(&self, key: CompiledQueryKey, init: F) -> Result<Arc<CompiledEntityQuery>, E>
     where
         F: FnOnce() -> Fut + Send,
-        Fut: std::future::Future<Output = Result<CompiledEntityQuery, E>> + Send,
+        Fut: Future<Output = Result<CompiledEntityQuery, E>> + Send,
     {
         if let Some(cached) = self.inner.get(&key).await {
             return Ok(cached);

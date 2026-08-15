@@ -6,6 +6,7 @@
 
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_SCOPE: HeaderName = HeaderName::from_static("ngsild-scope");
@@ -40,7 +41,7 @@ impl headers::Header for NgsiLdScope {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         match HeaderValue::from_str(&self.0.to_string()) {
-            Ok(value) => values.extend(std::iter::once(value)),
+            Ok(value) => values.extend(iter::once(value)),
             Err(error) => tracing::warn!(error = %error, "failed to encode NGSILD-Scope header"),
         }
     }
@@ -52,10 +53,11 @@ mod tests {
     use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
     use headers::Header;
     use http::HeaderValue;
+    use std::iter;
 
     fn decode_from(raw: &str) -> Result<NgsiLdScope, headers::Error> {
         let value = HeaderValue::from_str(raw).expect("valid header value");
-        let mut values = std::iter::once(&value);
+        let mut values = iter::once(&value);
         NgsiLdScope::decode(&mut values)
     }
 

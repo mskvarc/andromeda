@@ -6,13 +6,14 @@
 //!
 //! Naming convention: `distop_attributes_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Client, Method, StatusCode, header::HeaderMap};
 use serde_json::{Value, json};
 use serial_test::serial;
+use std::collections::HashSet;
 use urlencoding::encode;
 use uuid::Uuid;
 
@@ -100,7 +101,7 @@ async fn delete_registration(client: &Client, id: &str) {
     let _ = client.delete(format!("{BASE_URL}/csourceRegistrations/{}", encode(id))).send().await;
 }
 
-async fn list_attributes(client: &Client, query: &str) -> (StatusCode, reqwest::header::HeaderMap, Value) {
+async fn list_attributes(client: &Client, query: &str) -> (StatusCode, HeaderMap, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
     let resp = client
         .get(format!("{BASE_URL}/attributes{sep}{query}"))
@@ -113,7 +114,7 @@ async fn list_attributes(client: &Client, query: &str) -> (StatusCode, reqwest::
     (status, headers, body)
 }
 
-async fn get_attribute(client: &Client, attr_name: &str, query: &str, context_url: Option<&str>) -> (StatusCode, reqwest::header::HeaderMap, Value) {
+async fn get_attribute(client: &Client, attr_name: &str, query: &str, context_url: Option<&str>) -> (StatusCode, HeaderMap, Value) {
     let sep = if query.is_empty() { "" } else { "?" };
     let mut request = client.get(format!("{BASE_URL}/attributes/{attr_name}{sep}{query}"));
     if let Some(ctx) = context_url {
@@ -126,7 +127,7 @@ async fn get_attribute(client: &Client, attr_name: &str, query: &str, context_ur
     (status, headers, body)
 }
 
-fn warning_header_values(headers: &reqwest::header::HeaderMap) -> Vec<String> {
+fn warning_header_values(headers: &HeaderMap) -> Vec<String> {
     headers
         .get_all("NGSILD-Warning")
         .iter()
@@ -242,7 +243,7 @@ async fn distop_attributes_deduplicates_attribute_list() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
 
     let attr_list = body.get("attributeList").and_then(|v| v.as_array()).expect("attributeList should be present");
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     for attr in attr_list {
         if let Some(s) = attr.as_str() {
             assert!(seen.insert(s), "duplicate attribute found in list: {s}");

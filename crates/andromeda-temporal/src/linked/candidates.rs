@@ -104,7 +104,7 @@ pub fn collect_candidates<'a>(entities: impl IntoIterator<Item = &'a Value>, vis
 fn instances_of(member: &Value) -> impl Iterator<Item = &Value> {
     match member {
         Value::Array(instances) => instances.iter(),
-        single => slice::from_ref(single).iter(),
+        single @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => slice::from_ref(single).iter(),
     }
 }
 

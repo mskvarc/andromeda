@@ -4,6 +4,7 @@
 //! The value is a non-negative integer.
 
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
 static NGSILD_RESULTS_COUNT: HeaderName = HeaderName::from_static("ngsild-results-count");
@@ -43,7 +44,7 @@ impl headers::Header for NgsiLdResultsCount {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         match HeaderValue::from_str(&self.0.to_string()) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Results-Count header"),
         }
     }
@@ -56,7 +57,7 @@ mod tests {
 
     fn decode_from(raw: &str) -> Result<NgsiLdResultsCount, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         NgsiLdResultsCount::decode(&mut iter)
     }
 

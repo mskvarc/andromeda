@@ -63,12 +63,8 @@ where
     D: Deserializer<'de>,
 {
     let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| {
-        value
-            .parse::<TimeRel>()
-            .map_err(|_| serde::de::Error::custom(format!("invalid timerel: '{value}'")))
-    })
-    .transpose()
+    raw.map(|value| value.parse::<TimeRel>().map_err(|_| Error::custom(format!("invalid timerel: '{value}'"))))
+        .transpose()
 }
 
 /// Deserialise the `timeproperty` query parameter as the [`TimeProp`] axis it
@@ -83,12 +79,8 @@ where
     D: Deserializer<'de>,
 {
     let raw: Option<String> = Option::deserialize(deserializer)?;
-    raw.map(|value| {
-        value
-            .parse::<TimeProp>()
-            .map_err(|_| serde::de::Error::custom(format!("invalid timeproperty: '{value}'")))
-    })
-    .transpose()
+    raw.map(|value| value.parse::<TimeProp>().map_err(|_| Error::custom(format!("invalid timeproperty: '{value}'"))))
+        .transpose()
 }
 
 /// Deserialise a temporal `format` query parameter at the request boundary.
@@ -100,7 +92,7 @@ where
     raw.map(|value| match value.as_str() {
         "temporalValues" => Ok(TemporalFormat::TemporalValues),
         "aggregatedValues" => Ok(TemporalFormat::AggregatedValues),
-        other => Err(serde::de::Error::custom(format!("invalid temporal format: {other}"))),
+        other => Err(Error::custom(format!("invalid temporal format: {other}"))),
     })
     .transpose()
 }

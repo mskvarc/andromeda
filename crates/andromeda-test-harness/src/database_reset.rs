@@ -1,6 +1,9 @@
 //! Authoritative global reset and complete prefix-owned cleanup.
 
-use crate::{database_isolation::SerializedLease, identifiers::TestIdentifiers};
+use crate::{
+    database_isolation::{DatabaseIsolationError, SerializedLease},
+    identifiers::TestIdentifiers,
+};
 use sqlx::{Executor, PgPool, Postgres, Transaction};
 use thiserror::Error;
 
@@ -85,7 +88,7 @@ async fn delete_temporal_intents(transaction: &mut Transaction<'_, Postgres>, li
 pub enum DatabaseResetError {
     /// The serialized-state capability was unavailable.
     #[error(transparent)]
-    Isolation(#[from] crate::database_isolation::DatabaseIsolationError),
+    Isolation(#[from] DatabaseIsolationError),
     /// SQLx could not execute the reset or cleanup transaction.
     #[error("test database reset failed: {0}")]
     Sqlx(#[source] sqlx::Error),

@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Distributed provision operation tests (create, delete, merge, replace).
 //!
 //! Tests for distributed entity provisioning across context sources including:

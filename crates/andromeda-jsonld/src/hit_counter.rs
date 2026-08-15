@@ -78,7 +78,7 @@ impl HitCounter {
 
 #[cfg(test)]
 mod tests {
-    use crate::hit_counter::HitCounter;
+    use crate::hit_counter::{HitCounter, HitDelta};
     use iri_rs::IriBuf;
 
     #[test]
@@ -95,19 +95,13 @@ mod tests {
 
         let mut drained = counter.drain();
         drained.sort_by(|left, right| left.url.cmp(&right.url));
-        pretty_assertions::assert_eq!(
-            drained,
-            vec![
-                crate::hit_counter::HitDelta { url: url_a.clone(), count: 5 },
-                crate::hit_counter::HitDelta { url: url_b, count: 2 },
-            ]
-        );
+        pretty_assertions::assert_eq!(drained, vec![HitDelta { url: url_a.clone(), count: 5 }, HitDelta { url: url_b, count: 2 },]);
 
         let second = counter.drain();
         assert!(second.is_empty(), "a drain of zero deltas reports nothing, got {second:?}");
 
         counter.bump(&url_a);
-        pretty_assertions::assert_eq!(counter.drain(), vec![crate::hit_counter::HitDelta { url: url_a, count: 1 }]);
+        pretty_assertions::assert_eq!(counter.drain(), vec![HitDelta { url: url_a, count: 1 }]);
     }
 
     #[test]
@@ -120,6 +114,6 @@ mod tests {
         counter.bump(&url);
         counter.requeue(pending);
 
-        pretty_assertions::assert_eq!(counter.drain(), vec![crate::hit_counter::HitDelta { url, count: 2 }]);
+        pretty_assertions::assert_eq!(counter.drain(), vec![HitDelta { url, count: 2 }]);
     }
 }

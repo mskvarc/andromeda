@@ -177,27 +177,27 @@ pub struct RegistrationCoverage {
     pub information: Vec<RegistrationInfo>,
     /// Scope values.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub scope: Option<Vec<ScopeBuf>>,
     /// Location geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub location: Option<Value>,
     /// Observation space geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_space: Option<Value>,
     /// Operation space geometry.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operation_space: Option<Value>,
     /// Interval the source's observations span (clause 5.2.11).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub observation_interval: Option<Value>,
     /// Interval the source's management data spans (clause 5.2.11).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub management_interval: Option<Value>,
 }
 
@@ -210,35 +210,35 @@ pub struct ContextSourceAccess {
     pub endpoint: Url,
     /// Preferred accept media type.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub accept: Option<MediaTypeBuf>,
     /// Forwarding mode for distributed operations.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub mode: Option<ForwardingMode>,
     /// Operations this registration supports.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub operations: Option<Vec<CsrOperation>>,
     /// Refresh rate, as an ISO 8601 duration.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub refresh_rate: Option<Iso8601Duration>,
     /// Management metadata (clause 5.2.43).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub management: Option<Value>,
     /// Context source info.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub context_source_info: Option<Vec<KeyValuePair>>,
     /// JSON-LD context for term expansion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub jsonld_context: Option<Url>,
     /// Unique pseudonym for this context source, used for Via-based loop detection (clause 5.2.9).
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub context_source_alias: Option<ContextSourcePseudonym>,
 }
 
@@ -251,19 +251,19 @@ pub struct RegistrationHealth {
     pub status: CsrStatus,
     /// Number of successful notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub times_sent: Option<i32>,
     /// Number of failed notifications.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub times_failed: Option<i32>,
     /// Timestamp of last successful notification.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub last_success: Option<DateTime<Utc>>,
     /// Timestamp of last failed notification.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub last_failure: Option<DateTime<Utc>>,
 }
 
@@ -274,7 +274,7 @@ pub struct RegistrationHealth {
 pub struct RegistrationLifecycle {
     /// Registration expiration timestamp.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
     /// Timestamp when the registration was created.
     #[serde(with = "rfc3339::datetime")]
@@ -301,19 +301,19 @@ pub struct ContextSourceRegistration {
     pub id: Uri,
     /// JSON-LD type (always `ContextSourceRegistration`).
     #[serde(rename = "type", default)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: ContextSourceRegistrationType,
     /// Human-readable name.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub registration_name: Option<String>,
     /// Human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub description: Option<String>,
     /// Tenant identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub tenant: Option<TenantName>,
     /// What the context source answers for.
     #[serde(flatten)]
@@ -332,7 +332,7 @@ pub struct ContextSourceRegistration {
     /// Declared last: it is the catch-all flatten, and it collects whatever the
     /// groups above did not claim.
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub additional_properties: Option<Value>,
 }
 

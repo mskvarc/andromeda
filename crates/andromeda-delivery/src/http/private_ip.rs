@@ -9,6 +9,7 @@
 use crate::host_port::HostPort;
 use ip_network::{Ipv4Network, Ipv6Network};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use tokio::net::lookup_host;
 
 /// Outcome of a private-IP guard lookup, cached short-term for hot endpoints.
 #[derive(Debug, Clone)]
@@ -29,7 +30,7 @@ pub enum PrivateIpCheck {
 
 /// Resolve an authority and decide whether delivery may proceed.
 pub async fn resolve_private_ip_outcome(authority: &HostPort) -> PrivateIpCheck {
-    match tokio::net::lookup_host(authority.to_string()).await {
+    match lookup_host(authority.to_string()).await {
         Ok(addrs) => {
             for resolved in addrs {
                 if is_private_ip(&resolved.ip()) {

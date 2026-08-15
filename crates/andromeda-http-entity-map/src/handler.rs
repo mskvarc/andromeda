@@ -11,6 +11,7 @@ use andromeda_http_extraction::{
     entity_query::EntityQuery,
     json_body::classify_json_body,
     prefer::PreferHeader,
+    tenant_state,
     typed_path::TypedPath,
 };
 use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
@@ -28,7 +29,7 @@ use axum::{
 
 /// GET /ngsi-ld/v1/entityMaps/{entityMapId} -- Retrieve an entity map (section 5.14.1).
 pub async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -48,7 +49,7 @@ pub async fn get(
 
 /// PATCH /ngsi-ld/v1/entityMaps/{entityMapId} -- Update an entity map (section 5.14.2).
 pub async fn update(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(entity_map_id): TypedPath<Uri>,
     body: Result<Json<UpdateEntityMapBody>, JsonRejection>,
@@ -68,7 +69,7 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/entityMaps/{entityMapId} -- Delete an entity map (section 5.14.3).
 pub async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(entity_map_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
@@ -79,7 +80,7 @@ pub async fn delete(
 
 /// GET /ngsi-ld/v1/entityMaps -- Create an entity map from query entities (section 5.14.4, section 6.34.3.1).
 pub async fn create_from_query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -118,7 +119,7 @@ pub async fn create_from_query(
 
 /// POST /ngsi-ld/v1/entityMaps -- Create an entity map from query body (section 5.14.4, section 6.34.3.2).
 pub async fn create_from_query_post(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -159,7 +160,7 @@ pub async fn create_from_query_post(
 
 /// GET /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query (section 5.14.5, section 6.35.3.1).
 pub async fn create_temporal_from_query(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -196,7 +197,7 @@ pub async fn create_temporal_from_query(
 
 /// POST /ngsi-ld/v1/temporal/entityMaps -- Create an entity map from temporal query body (section 5.14.5, section 6.35.3.2).
 pub async fn create_temporal_from_query_post(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityMapTenantState,
+    tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,

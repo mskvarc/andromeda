@@ -1,5 +1,7 @@
 //! Active-component assembly from composition metadata and selected adapters.
 
+#![expect(clippy::absolute_paths, reason = "shadow generates absolute standard-library paths")]
+
 use andromeda_component_report::{
     BuildBranch,
     BuildCommit,

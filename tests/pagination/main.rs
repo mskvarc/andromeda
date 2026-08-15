@@ -6,6 +6,6 @@
 //! subscription and registration collections, so every test runs under
 //! `#[serial(global)]` and wipes broker state on entry.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod query;

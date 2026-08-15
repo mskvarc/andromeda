@@ -24,7 +24,7 @@ pub(crate) fn mint() -> Uuid {
 #[cfg(test)]
 mod tests {
     use crate::uuid_v7_clock;
-    use std::{collections::HashSet, thread};
+    use std::{collections::HashSet, iter, thread};
     use uuid::{ContextV7, Timestamp, Uuid};
 
     /// Generators minting concurrently against the process-wide counter.
@@ -98,7 +98,7 @@ mod tests {
 
         assert!(after_rollback.iter().all(|value| value.get_version_num() == 7));
         assert!(after_rollback.iter().copied().all(is_rfc_9562_variant));
-        let minted: HashSet<Uuid> = after_rollback.iter().copied().chain(std::iter::once(before_rollback)).collect();
+        let minted: HashSet<Uuid> = after_rollback.iter().copied().chain(iter::once(before_rollback)).collect();
         assert_eq!(minted.len(), 65, "a rolled-back clock must not repeat an identity");
         assert!(
             after_rollback.iter().all(|value| *value > before_rollback),

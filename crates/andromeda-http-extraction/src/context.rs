@@ -6,7 +6,7 @@ use axum::{
     extract::FromRequestParts,
     http::{header::LINK, request::Parts},
 };
-use std::str::FromStr;
+use std::{convert::Infallible, str::FromStr};
 
 /// JSON-LD context extracted from Link header.
 #[derive(Clone, Debug, Default)]
@@ -28,7 +28,7 @@ impl<S> FromRequestParts<S> for ContextUrl
 where
     S: Send + Sync,
 {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let mut links = Vec::new();
@@ -54,6 +54,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Request;
     use iri_rs::IriRefBuf;
 
     /// A context URL as the [`IriRefBuf`] a `Link` header carries.
@@ -83,7 +84,7 @@ mod tests {
     #[tokio::test]
     async fn extracts_multiple_context_links() {
         let header = r#"<https://example.com/a.jsonld>; rel="http://www.w3.org/ns/json-ld#context", <https://example.com/b.jsonld>; rel="http://www.w3.org/ns/json-ld#context""#;
-        let request = axum::http::Request::builder().uri("/").header("Link", header).body(()).unwrap();
+        let request = Request::builder().uri("/").header("Link", header).body(()).unwrap();
         let (mut parts, _) = request.into_parts();
 
         let context = ContextUrl::from_request_parts(&mut parts, &()).await.unwrap().into_inner();
@@ -96,7 +97,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_link_header_keeps_context_spec_empty() {
-        let request = axum::http::Request::builder().uri("/").body(()).unwrap();
+        let request = Request::builder().uri("/").body(()).unwrap();
         let (mut parts, _) = request.into_parts();
 
         let context = ContextUrl::from_request_parts(&mut parts, &()).await.unwrap().into_inner();

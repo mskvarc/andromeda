@@ -13,7 +13,7 @@ pub(crate) fn extract_attribute_keys(expanded: &Value) -> Vec<AttributeName> {
     let obj = match expanded {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
-        _other => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     };
 
     obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).filter_map(|k| k.parse().ok()).collect())
@@ -24,7 +24,7 @@ pub(crate) fn extract_attribute_keys(expanded: &Value) -> Vec<AttributeName> {
 pub(crate) fn unwrap_expanded_ref(value: &Value) -> &Value {
     match value {
         Value::Array(arr) if !arr.is_empty() => &arr[0],
-        other => other,
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => other,
     }
 }
 

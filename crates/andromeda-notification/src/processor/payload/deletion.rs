@@ -83,7 +83,7 @@ pub(super) fn inject_deleted_attributes(
     let prev_obj = match prev {
         Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
         Value::Object(obj) => Some(obj),
-        _ => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     };
     let Some(prev_obj) = prev_obj else { return };
     let Some(entity_obj) = entity.as_object_mut() else { return };
@@ -97,7 +97,7 @@ pub(super) fn inject_deleted_attributes(
         if let Some(prev_attr) = prev_obj.get(attr_iri) {
             let first_instance = match prev_attr {
                 Value::Array(arr) => arr.first().cloned(),
-                other => Some(other.clone()),
+                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => Some(other.clone()),
             };
             if let Some(mut instance) = first_instance {
                 nullify_attribute_instance(&mut instance);

@@ -4,7 +4,7 @@
 // accessor alongside the grammar type below, and an item-level allow does not
 // reach macro-generated siblings. Fencing them here keeps the crate-level deny
 // live for every hand-written item in the concept's other files.
-#![allow(missing_docs)]
+#![expect(missing_docs, reason = "generated grammar items are documented by the source grammar")]
 
 use static_regular_grammar::RegularGrammar;
 

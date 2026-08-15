@@ -10,7 +10,7 @@
 //! This file, including local modifications, is distributed under the MIT License.
 
 use http::{HeaderName, HeaderValue};
-use std::{fmt, str::FromStr};
+use std::{fmt, iter, str::FromStr};
 
 /// The lowercase `Warning` field name this header is transmitted under.
 static WARNING: HeaderName = HeaderName::from_static("warning");
@@ -87,7 +87,7 @@ impl headers::Header for Warning {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         if let Ok(value) = HeaderValue::from_str(&self.to_string()) {
-            values.extend(std::iter::once(value));
+            values.extend(iter::once(value));
         }
     }
 }

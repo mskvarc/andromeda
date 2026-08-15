@@ -4,7 +4,7 @@ use crate::{
     error::{SnapshotResultExt, bad_request_data, internal_problem, invalid_request, project_purge_failure},
     state::SnapshotTenantState,
 };
-use andromeda_http_extraction::{json_body::classify_json_body, snapshot_purge::SnapshotPurgeQ, typed_path::TypedPath};
+use andromeda_http_extraction::{json_body::classify_json_body, snapshot_purge::SnapshotPurgeQ, tenant_state, typed_path::TypedPath};
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
@@ -19,7 +19,7 @@ use axum::{
 
 /// POST /ngsi-ld/v1/snapshots -- Create a new snapshot.
 pub async fn create(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SnapshotTenantState,
+    tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     input: Result<Json<SnapshotInput>, JsonRejection>,
 ) -> Result<Response, ProblemResponse> {
@@ -34,7 +34,7 @@ pub async fn create(
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
 pub async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SnapshotTenantState,
+    tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
@@ -46,7 +46,7 @@ pub async fn get(
 
 /// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
 pub async fn update(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SnapshotTenantState,
+    tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Uri>,
     patch: Result<Json<SnapshotPatch>, JsonRejection>,
@@ -61,7 +61,7 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
 pub async fn delete(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SnapshotTenantState,
+    tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
@@ -81,7 +81,7 @@ pub async fn delete(
 /// - At least one deletion failed -> 207 Multi-Status with a
 ///   [`BatchOperationResult`] body.
 pub async fn purge(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SnapshotTenantState,
+    tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     SnapshotPurgeQ(filter): SnapshotPurgeQ,
 ) -> Result<Response, ProblemResponse> {
@@ -109,7 +109,7 @@ pub async fn purge(
 
 /// POST /ngsi-ld/v1/snapshots/{snapshot_id}/clone -- Clone a snapshot.
 pub async fn clone(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): SnapshotTenantState,
+    tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {

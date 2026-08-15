@@ -38,15 +38,9 @@ pub(super) fn extract_create_params(payload: &Value) -> Result<CreateCsrParams<'
         tenant: deserialize_member::<TenantName>(payload, "tenant")?,
         observation_interval: payload.get("observationInterval"),
         management_interval: payload.get("managementInterval"),
-        location: payload.get("location").map(crate::geometry::unwrap_geo_property_to_geometry).transpose()?,
-        observation_space: payload
-            .get("observationSpace")
-            .map(crate::geometry::unwrap_geo_property_to_geometry)
-            .transpose()?,
-        operation_space: payload
-            .get("operationSpace")
-            .map(crate::geometry::unwrap_geo_property_to_geometry)
-            .transpose()?,
+        location: payload.get("location").map(unwrap_geo_property_to_geometry).transpose()?,
+        observation_space: payload.get("observationSpace").map(unwrap_geo_property_to_geometry).transpose()?,
+        operation_space: payload.get("operationSpace").map(unwrap_geo_property_to_geometry).transpose()?,
         expires_at: payload
             .get("expiresAt")
             .and_then(|v| v.as_str())

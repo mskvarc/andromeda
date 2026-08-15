@@ -11,7 +11,7 @@
 
 use chrono::{DateTime, Utc};
 use http::{HeaderName, HeaderValue};
-use std::{fmt, str::FromStr};
+use std::{fmt, iter, str::FromStr};
 
 /// The lowercase `Content-Range` field name this header is transmitted under.
 static CONTENT_RANGE: HeaderName = HeaderName::from_static("content-range");
@@ -95,7 +95,7 @@ impl headers::Header for NgsiLdContentRange {
     }
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         if let Ok(value) = HeaderValue::from_str(&self.to_string()) {
-            values.extend(std::iter::once(value));
+            values.extend(iter::once(value));
         }
     }
 }

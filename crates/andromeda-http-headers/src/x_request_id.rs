@@ -1,7 +1,7 @@
 //! Typed `X-Request-ID` correlation header.
 
 use http::{HeaderName, HeaderValue};
-use std::str::FromStr;
+use std::{iter, str::FromStr};
 
 /// The lowercase `X-Request-ID` field name this header is transmitted under.
 static X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -35,7 +35,7 @@ impl headers::Header for XRequestId {
     }
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         if let Ok(value) = HeaderValue::from_str(&self.0) {
-            values.extend(std::iter::once(value));
+            values.extend(iter::once(value));
         }
     }
 }

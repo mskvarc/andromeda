@@ -46,13 +46,13 @@ pub struct NotificationEvent {
     /// Entity whose change produced the event.
     pub entity_id: Uri,
     /// Names of the attributes the mutation changed.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub changed_attributes: Vec<AttributeName>,
     /// Expanded entity snapshot at the time of the mutation.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub entity_snapshot: Option<Value>,
     /// Entity state before the mutation, carried for `showChanges` support.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub previous_snapshot: Option<Value>,
     /// Instant at which the event was recorded.
     pub created_at: DateTime<Utc>,

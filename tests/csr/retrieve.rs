@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! CSR retrieval tests (NGSI-LD 5.10.1, 6.3.5)
 
 use crate::{

@@ -7,7 +7,7 @@
 
 use http::{HeaderName, HeaderValue};
 use mediatype::{MediaType, MediaTypeBuf, Name, names};
-use std::fmt;
+use std::{fmt, iter};
 
 /// The lowercase `Content-Type` field name this header is transmitted under.
 static CONTENT_TYPE: HeaderName = HeaderName::from_static("content-type");
@@ -123,7 +123,7 @@ impl headers::Header for ResponseMediaType {
         Self::from_media_type(&parsed_ref).ok_or_else(headers::Error::invalid)
     }
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        values.extend(std::iter::once(HeaderValue::from_static(self.as_str())));
+        values.extend(iter::once(HeaderValue::from_static(self.as_str())));
     }
 }
 

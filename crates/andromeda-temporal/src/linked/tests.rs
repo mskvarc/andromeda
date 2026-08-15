@@ -50,6 +50,7 @@ use indexmap::IndexSet;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
+    iter,
     num::NonZeroU32,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -67,7 +68,7 @@ fn ids(candidates: &[TemporalLinkedCandidate]) -> Vec<&str> {
 }
 
 fn collect(entity: &Value) -> Vec<TemporalLinkedCandidate> {
-    collect_candidates(std::iter::once(entity), &IndexSet::new())
+    collect_candidates(iter::once(entity), &IndexSet::new())
 }
 
 /// A temporal representation carries one Relationship instance per
@@ -229,7 +230,7 @@ fn a_visited_identifier_is_never_collected_again() {
     });
     let visited: IndexSet<Uri> = [uri("urn:ngsi-ld:T:A")].into_iter().collect();
 
-    let candidates = collect_candidates(std::iter::once(&entity), &visited);
+    let candidates = collect_candidates(iter::once(&entity), &visited);
 
     pretty_assertions::assert_eq!(ids(&candidates), vec!["urn:ngsi-ld:T:C"]);
 }
@@ -285,7 +286,7 @@ impl StubBroker {
             metadata: None,
             partition_total: None,
         };
-        std::iter::once(reading)
+        iter::once(reading)
             .chain(targets.iter().map(|target| TemporalHistoryRow {
                 attribute_name: "https://example.com/linksTo".parse::<AttributeName>().expect("valid attribute IRI"),
                 attribute_type: AttributeType::Relationship,

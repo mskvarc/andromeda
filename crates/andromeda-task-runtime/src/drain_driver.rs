@@ -4,6 +4,7 @@ use crate::{
     bounded_driver,
     control::DrainExecution,
     drain_task::{DrainOperation, DrainPassOutcome},
+    failure::TaskFailure,
     lifecycle_event::TaskLifecycleEvent,
     restart_policy::RestartPolicy,
     task_health::TaskHealth,
@@ -40,7 +41,7 @@ pub(crate) async fn run(
             _ = interval.tick() => {}
             signal = wake.recv() => {
                 if signal.is_none() {
-                    return DriverTerminal::Failed(crate::failure::TaskFailure::invariant_violation("drain wake channel closed while task was active"));
+                    return DriverTerminal::Failed(TaskFailure::invariant_violation("drain wake channel closed while task was active"));
                 }
             }
         }

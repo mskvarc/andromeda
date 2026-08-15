@@ -107,7 +107,7 @@ fn identifier_of(entity: &Value) -> Option<Uri> {
 fn instances_of_mut(member: &mut Value) -> impl Iterator<Item = &mut Value> {
     match member {
         Value::Array(instances) => instances.iter_mut(),
-        single => slice::from_mut(single).iter_mut(),
+        single @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => slice::from_mut(single).iter_mut(),
     }
 }
 

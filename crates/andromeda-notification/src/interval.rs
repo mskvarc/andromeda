@@ -1,6 +1,9 @@
-use crate::processor::payload::{
-    context::{context_from_url, normalize_compacted_entity},
-    filtering::filter_entity_attributes,
+use crate::{
+    error::NotificationError,
+    processor::payload::{
+        context::{context_from_url, normalize_compacted_entity},
+        filtering::filter_entity_attributes,
+    },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{
@@ -78,7 +81,7 @@ impl IntervalNotificationOperation {
     }
 
     /// Evaluate every interval subscription due at the execution boundary.
-    pub async fn execute(&self) -> Result<usize, crate::error::NotificationError> {
+    pub async fn execute(&self) -> Result<usize, NotificationError> {
         let due_subs = self.sub_repo.find_due_interval_subscriptions().await?;
         let due_count = due_subs.len();
 
@@ -191,7 +194,7 @@ impl IntervalNotificationOperation {
         Ok(due_count)
     }
 
-    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, crate::error::NotificationError> {
+    async fn fetch_matching_entities(&self, sub: &Subscription) -> Result<Vec<Value>, NotificationError> {
         let Some(selectors) = sub.selection.entities.as_ref() else {
             // No entity selectors — every entity qualifies.
             return self.collect_pages(None, |_| true).await;
@@ -232,11 +235,7 @@ impl IntervalNotificationOperation {
     /// `type_iri` narrows the read to one entity type when the selector names
     /// exactly one; otherwise every entity is a candidate and the predicate is
     /// the only filter. See [`INTERVAL_ENTITY_PAGE`] for why this pages.
-    async fn collect_pages(
-        &self,
-        entity_type: Option<&EntityTypeName>,
-        mut keep: impl FnMut(&Value) -> bool,
-    ) -> Result<Vec<Value>, crate::error::NotificationError> {
+    async fn collect_pages(&self, entity_type: Option<&EntityTypeName>, mut keep: impl FnMut(&Value) -> bool) -> Result<Vec<Value>, NotificationError> {
         let limit = i64::from(INTERVAL_ENTITY_PAGE);
         let mut kept = Vec::new();
         let mut offset = 0_i64;
@@ -246,12 +245,12 @@ impl IntervalNotificationOperation {
                     .entity_discovery
                     .get_entities_by_type(type_name, Some(limit), Some(offset))
                     .await
-                    .map_err(crate::error::NotificationError::from)?,
+                    .map_err(NotificationError::from)?,
                 None => self
                     .entity_discovery
                     .get_all_entities(Some(limit), Some(offset))
                     .await
-                    .map_err(crate::error::NotificationError::from)?,
+                    .map_err(NotificationError::from)?,
             };
             let exhausted = page.len() < usize::from(INTERVAL_ENTITY_PAGE);
             kept.extend(page.into_iter().filter(|entity| keep(entity)));
@@ -262,7 +261,7 @@ impl IntervalNotificationOperation {
         }
     }
 
-    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, crate::error::NotificationError> {
+    async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, NotificationError> {
         let mut results = Vec::new();
         for mut entity in entities {
             if sub.notification.sys_attrs.is_some_and(|include| include)
@@ -308,7 +307,7 @@ impl IntervalNotificationOperation {
                             },
                         )
                         .await
-                        .map_err(crate::error::NotificationError::from)?
+                        .map_err(NotificationError::from)?
                 }
             };
 

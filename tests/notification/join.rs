@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -13,6 +13,7 @@ use crate::helpers::{
     create_entity,
     create_subscription,
     fragment_name,
+    reset_broker_state,
     set_endpoint_uri,
     subscription_with_endpoint,
     unique_entity_id,
@@ -47,7 +48,7 @@ async fn setup_join_case(http_client: &reqwest::Client, case_id: &str, receiver:
 #[tokio::test]
 async fn notification_join_flat_includes_joined_entities_as_separate_data_entries() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
     let (entity_id, subscription_id) = setup_join_case(&http_client, "046_23", &receiver, "flat").await;
 
@@ -62,7 +63,7 @@ async fn notification_join_flat_includes_joined_entities_as_separate_data_entrie
 #[tokio::test]
 async fn notification_join_flat_with_sys_attrs_includes_system_attributes() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
     let (entity_id, subscription_id) = setup_join_case(&http_client, "046_24", &receiver, "flat").await;
 
@@ -84,7 +85,7 @@ async fn notification_join_flat_with_sys_attrs_includes_system_attributes() {
 #[tokio::test]
 async fn notification_join_flat_with_simplified_format_still_includes_joined_entities() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let city_id = "urn:ngsi-ld:City:Paris";
@@ -114,7 +115,7 @@ async fn notification_join_flat_with_simplified_format_still_includes_joined_ent
 #[tokio::test]
 async fn notification_join_flat_with_selected_attributes_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let city_id = "urn:ngsi-ld:City:Paris";
@@ -143,7 +144,7 @@ async fn notification_join_flat_with_selected_attributes_delivers_notification()
 #[tokio::test]
 async fn notification_join_inline_embeds_related_entity_information() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
     let (entity_id, subscription_id) = setup_join_case(&http_client, "046_27", &receiver, "inline").await;
 
@@ -164,7 +165,7 @@ async fn notification_join_inline_embeds_related_entity_information() {
 #[tokio::test]
 async fn notification_join_inline_with_sys_attrs_includes_system_attributes() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let city_id = "urn:ngsi-ld:City:Paris";
@@ -194,7 +195,7 @@ async fn notification_join_inline_with_sys_attrs_includes_system_attributes() {
 #[tokio::test]
 async fn notification_join_inline_with_simplified_format_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let city_id = "urn:ngsi-ld:City:Paris";
@@ -223,7 +224,7 @@ async fn notification_join_inline_with_simplified_format_delivers_notification()
 #[tokio::test]
 async fn notification_join_inline_with_selected_attributes_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let city_id = "urn:ngsi-ld:City:Paris";

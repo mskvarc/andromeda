@@ -377,7 +377,7 @@ mod tests {
             Expr::Pred(Predicate::Ordering { path, .. }) => {
                 pretty_assertions::assert_eq!(path.terminal().attr.as_str(), "https://example.com/speed");
             }
-            other => unreachable!("expected Ordering, got {other:?}"),
+            other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Ordering, got {other:?}"),
         }
     }
 }

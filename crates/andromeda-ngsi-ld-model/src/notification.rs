@@ -69,14 +69,14 @@ pub struct Notification {
     pub id: Uri,
     /// Always `Notification`.
     #[serde(rename = "type")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: NotificationType,
     /// Subscription this notification answers.
     pub subscription_id: Uri,
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The entity representations that triggered it.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub data: Vec<Value>,
 }
 
@@ -117,17 +117,17 @@ pub struct CsourceNotification {
     pub id: Uri,
     /// Always `ContextSourceNotification`.
     #[serde(rename = "type")]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: CsourceNotificationType,
     /// Subscription this notification answers.
     pub subscription_id: Uri,
     /// When the notification was generated.
     pub notified_at: DateTime<Utc>,
     /// The registration representations that triggered it.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub data: Vec<Value>,
     /// Why the notification fired.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub trigger_reason: Option<CsrTriggerReason>,
 }
 

@@ -124,7 +124,7 @@ pub(crate) fn container_of(declared_container: Option<&str>) -> Option<TermConta
 #[cfg(test)]
 mod tests {
     use crate::{
-        core_context::NGSI_LD_CORE_CONTEXT_V19_URL,
+        core_context::{NGSI_LD_CORE_CONTEXT_V19, NGSI_LD_CORE_CONTEXT_V19_URL},
         engine::{
             core_term_semantics::core_term_semantics,
             term_map::coercion::{TermCoercion, TermContainer},
@@ -174,7 +174,7 @@ mod tests {
     /// annotation — the table cannot silently drop a declaration.
     #[test]
     fn every_annotated_v1_9_term_is_derived() {
-        let document: serde_json::Value = serde_json::from_str(crate::core_context::NGSI_LD_CORE_CONTEXT_V19).expect("embedded v1.9 context parses");
+        let document: serde_json::Value = serde_json::from_str(NGSI_LD_CORE_CONTEXT_V19).expect("embedded v1.9 context parses");
         let context = document.get("@context").and_then(serde_json::Value::as_object).expect("a context object");
         let semantics = core_term_semantics(&IriBuf::new(NGSI_LD_CORE_CONTEXT_V19_URL.to_string()).expect("valid core URL"));
 

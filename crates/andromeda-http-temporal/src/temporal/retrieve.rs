@@ -32,13 +32,14 @@ use crate::{
         start_rendering,
     },
 };
+use andromeda_http_extraction::tenant_state;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::error::TemporalError;
 
 pub async fn get(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): TenantState,
+    tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,

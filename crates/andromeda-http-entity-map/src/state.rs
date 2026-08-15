@@ -8,6 +8,7 @@ use andromeda_http_extraction::{
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
 
@@ -52,7 +53,7 @@ impl TenantStateResolver<Arc<EntityMapRouteServices>> for EntityMapRouteState {
         &'a self,
         tenant: &'a TenantRef,
         creation_policy: TenantCreationPolicy,
-        instance: &'a axum::http::Uri,
+        instance: &'a Uri,
     ) -> BoxFuture<'a, Result<Arc<EntityMapRouteServices>, ProblemResponse>> {
         Box::pin(async move {
             self.resolver

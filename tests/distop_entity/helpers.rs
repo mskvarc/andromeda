@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Common helpers for distributed entity operation tests.
 
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;

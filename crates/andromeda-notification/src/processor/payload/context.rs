@@ -38,7 +38,7 @@ pub fn normalize_compacted_entity(mut entity: Value) -> Value {
                     Some(value) => value,
                     None => Value::Null,
                 },
-                other => other,
+                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) | Value::Object(_)) => other,
             };
             obj.insert("type".to_string(), normalized);
         }

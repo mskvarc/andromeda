@@ -94,9 +94,10 @@ mod tests {
     use andromeda_entity_map::error::EntityMapError;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use std::error::Error;
 
     #[test]
-    fn every_entity_map_variant_has_focused_disclosure() -> Result<(), Box<dyn std::error::Error>> {
+    fn every_entity_map_variant_has_focused_disclosure() -> Result<(), Box<dyn Error>> {
         let map_identifier = "urn:ngsi-ld:EntityMap:1".parse::<Uri>()?;
         let entity_identifier = "urn:ngsi-ld:Entity:1".parse::<Uri>()?;
         for (error, expected) in [

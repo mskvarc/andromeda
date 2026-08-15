@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! CSR deletion tests (NGSI-LD 5.9.4)
 
 use crate::{BAD_REQUEST_DATA_TYPE, client, create_registration, csr_basic_jsonld, delete_registration, request, retrieve_registration, unique_id};

@@ -9,7 +9,7 @@ use andromeda_http_headers::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::context::ContextLocation;
-use axum::http::HeaderMap;
+use axum::{http::HeaderMap, response::Response};
 use headers::HeaderMapExt;
 use iri_rs::IriRefBuf;
 
@@ -55,7 +55,7 @@ pub fn apply_common_headers(headers: &mut HeaderMap, context_links: &[IriRefBuf]
 }
 
 /// Attach a validated `Location` header to an existing response.
-pub fn with_location(mut response: axum::response::Response, location: impl AsRef<str>) -> axum::response::Response {
+pub fn with_location(mut response: Response, location: impl AsRef<str>) -> Response {
     if let Some(location) = Location::new(location) {
         response.headers_mut().typed_insert(location);
     }

@@ -2,7 +2,10 @@
 
 use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_query::{entity_selection::EntitySelection, pagination::Pagination};
+use andromeda_ngsi_ld_query::{
+    entity_selection::EntitySelection,
+    pagination::{CountPolicy, Pagination},
+};
 use serde_json::Value;
 
 /// Entity-selection predicates a temporal reader did not apply.
@@ -105,7 +108,7 @@ pub enum InvalidTemporalOutcome {
 
 /// Apply a deferred page after policy finishes residual evaluation.
 pub fn apply_deferred_page<T>(rows: Vec<T>, pagination: Pagination) -> (Vec<T>, Option<i64>) {
-    let total = (pagination.count == andromeda_ngsi_ld_query::pagination::CountPolicy::Emit).then_some(rows.len() as i64);
+    let total = (pagination.count == CountPolicy::Emit).then_some(rows.len() as i64);
     let offset = usize::try_from(pagination.offset).unwrap_or(usize::MAX);
     let limit = usize::try_from(pagination.limit).unwrap_or(usize::MAX);
     (rows.into_iter().skip(offset).take(limit).collect(), total)
@@ -116,6 +119,7 @@ mod tests {
     use crate::outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual};
     use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         filter::parser,
@@ -153,7 +157,7 @@ mod tests {
             .build()
     }
 
-    fn candidates(values: &[(andromeda_ngsi_ld_lexicon::uri::Uri, Value)], pushed: &EntitySelection) -> Vec<TemporalEntityCandidate> {
+    fn candidates(values: &[(Uri, Value)], pushed: &EntitySelection) -> Vec<TemporalEntityCandidate> {
         let pushed = ResidualFilter::over(pushed.clone());
         values
             .iter()

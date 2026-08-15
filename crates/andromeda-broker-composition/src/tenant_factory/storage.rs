@@ -24,7 +24,7 @@ use andromeda_postgresql_context_store::{
     subscription::repo::SubscriptionRepository,
     tenant_database::{configure_pool_options, migrate_tenant_db},
 };
-use andromeda_postgresql_temporal_store::repo::TemporalRepository;
+use andromeda_postgresql_temporal_store::{bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode, repo::TemporalRepository};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
@@ -91,8 +91,8 @@ pub(super) async fn initialize_storage(
         tracing::warn!(%error, event = "attribute_names_preload_failed");
     }
     let bulk_write_mode = match atomic_write_config.bulk_mode {
-        BulkWriteMode::Unnest => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::Unnest,
-        BulkWriteMode::CopyStaging => andromeda_postgresql_temporal_store::bulk_write_mode::BulkWriteMode::CopyStaging,
+        BulkWriteMode::Unnest => TemporalBulkWriteMode::Unnest,
+        BulkWriteMode::CopyStaging => TemporalBulkWriteMode::CopyStaging,
     };
     // One dictionary cache per tenant, shared by every path that resolves an
     // attribute IRI: the temporal catalogue, the entity repository's read path

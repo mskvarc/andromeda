@@ -1,7 +1,7 @@
 //! Deserialization of the clause-4.15 NGSI-LD Language Filter.
 
 use andromeda_http_headers::language::LanguageFilter;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 
 /// Deserialize an optional language filter from its query-string grammar.
 ///
@@ -13,7 +13,7 @@ where
     D: Deserializer<'de>,
 {
     Option::<String>::deserialize(deserializer)?
-        .map(|raw| LanguageFilter::parse(&raw).map_err(serde::de::Error::custom))
+        .map(|raw| LanguageFilter::parse(&raw).map_err(DeserializeError::custom))
         .transpose()
 }
 

@@ -1,6 +1,9 @@
 //! Environment-derived integration-test configuration and redacted diagnostics.
 
-use andromeda_test_client::broker_endpoint::{BROKER_ENDPOINT_ENV, BrokerEndpoint};
+use andromeda_test_client::{
+    broker_endpoint::{BROKER_ENDPOINT_ENV, BrokerEndpoint, default_broker_endpoint},
+    transport_error::EndpointError,
+};
 use std::{env, fmt};
 use thiserror::Error;
 use url::{Host, Url};
@@ -26,7 +29,7 @@ pub struct RuntimeBrokerBase;
 
 impl fmt::Display for RuntimeBrokerBase {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let configured = env::var(BROKER_ENDPOINT_ENV).unwrap_or_else(|_| andromeda_test_client::broker_endpoint::default_broker_endpoint().to_owned());
+        let configured = env::var(BROKER_ENDPOINT_ENV).unwrap_or_else(|_| default_broker_endpoint().to_owned());
         formatter.write_str(configured.trim_end_matches('/'))
     }
 }
@@ -144,7 +147,7 @@ impl fmt::Display for ConfigurationSummary<'_> {
 pub enum ConfigurationError {
     /// The broker URL is invalid.
     #[error("invalid {BROKER_ENDPOINT_ENV}: {0}")]
-    InvalidBrokerEndpoint(#[source] andromeda_test_client::transport_error::EndpointError),
+    InvalidBrokerEndpoint(#[source] EndpointError),
     /// The database URL is invalid.
     #[error("invalid {DATABASE_ENDPOINT_ENV}: {0}")]
     InvalidDatabaseEndpoint(#[source] url::ParseError),

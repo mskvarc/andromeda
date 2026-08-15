@@ -77,7 +77,7 @@ pub struct EntityTypeInfo {
     /// Fixed `EntityTypeInfo` discriminator.
     #[serde(rename = "type")]
     #[jsonld(skip)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub type_: EntityTypeInfoType,
     /// Compacted name of the entity type.
     #[jsonld(property = "ngsi:typeName", coerce = "@id")]
@@ -87,7 +87,7 @@ pub struct EntityTypeInfo {
     pub entity_count: i64,
     /// One record per attribute seen on entities of this type.
     #[jsonld(property = "ngsi:attributeDetails", nested, vec)]
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub attribute_details: Vec<AttributeDetail>,
 }
 

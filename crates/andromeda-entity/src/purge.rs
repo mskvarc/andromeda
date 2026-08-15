@@ -109,7 +109,7 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
     let obj = match &mut purged {
         Value::Array(arr) => arr.first_mut().and_then(|v| v.as_object_mut()),
         Value::Object(obj) => Some(obj),
-        _other => None,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
     };
 
     let Some(obj) = obj else {

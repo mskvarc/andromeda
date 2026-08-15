@@ -60,7 +60,7 @@ where
 mod tests {
     use crate::{error::HttpServerError, execution::serve_listener};
     use axum::{Router, routing::get};
-    use std::{io, net::SocketAddr, time::Duration};
+    use std::{io, net::SocketAddr, sync::Arc, time::Duration};
     use tokio::{
         net::TcpListener,
         sync::{Notify, oneshot},
@@ -111,15 +111,15 @@ mod tests {
     #[tokio::test]
     async fn graceful_shutdown_waits_for_an_in_flight_request_to_complete() -> Result<(), TestError> {
         let (listener, address) = ephemeral_listener().await?;
-        let started = std::sync::Arc::new(Notify::new());
-        let release = std::sync::Arc::new(Notify::new());
-        let handler_started = std::sync::Arc::clone(&started);
-        let handler_release = std::sync::Arc::clone(&release);
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let handler_started = Arc::clone(&started);
+        let handler_release = Arc::clone(&release);
         let router = Router::new().route(
             "/slow",
             get(move || {
-                let started = std::sync::Arc::clone(&handler_started);
-                let release = std::sync::Arc::clone(&handler_release);
+                let started = Arc::clone(&handler_started);
+                let release = Arc::clone(&handler_release);
                 async move {
                     started.notify_one();
                     release.notified().await;

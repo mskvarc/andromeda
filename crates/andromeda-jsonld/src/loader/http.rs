@@ -29,9 +29,10 @@ use jsonld::{LoadError, Loader, RemoteDocument};
 use jsonld_syntax::Parse;
 use mediatype::MediaTypeBuf;
 use moka::future::Cache;
-use reqwest::{Client, redirect::Policy};
+use reqwest::{Client, header::HeaderMap, redirect::Policy};
 use serde_json::Value;
 use std::{
+    str::from_utf8,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -395,7 +396,7 @@ fn ld_json_media_type() -> MediaTypeBuf {
 /// Fetch a context over HTTP and parse it, refusing anything that is not
 /// JSON-shaped or is larger than the configured limit.
 async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Result<FetchedContext, LoaderError> {
-    let mut request_headers = reqwest::header::HeaderMap::new();
+    let mut request_headers = HeaderMap::new();
     request_headers.typed_insert(JsonLdAccept);
     let response = client.get(url.as_str()).headers(request_headers).send().await.map_err(|error| LoaderError {
         url: url.clone(),
@@ -440,7 +441,7 @@ async fn fetch_and_parse(client: &Client, url: &IriBuf, max_bytes: usize) -> Res
         return Err(too_large(url.clone(), bytes.len(), max_bytes));
     }
 
-    let text = std::str::from_utf8(&bytes).map_err(|error| LoaderError {
+    let text = from_utf8(&bytes).map_err(|error| LoaderError {
         url: url.clone(),
         kind: LoaderErrorKind::Invalid(error.to_string()),
     })?;
@@ -499,6 +500,7 @@ const fn too_large(url: IriBuf, size: usize, max: usize) -> LoaderError {
 #[cfg(test)]
 mod tests {
     use crate::{
+        context_cache::{ContextCache, ContextCacheError},
         context_registry::ContextRegistry,
         engine::options::RemoteContextFetch,
         loader::http::{HttpContextLoader, cache_control_allows_storage, is_json_like},
@@ -523,11 +525,11 @@ mod tests {
     struct FixedL2(serde_json::Value);
 
     #[async_trait::async_trait]
-    impl crate::context_cache::ContextCache for FixedL2 {
-        async fn get(&self, _url: &IriBuf) -> Result<Option<serde_json::Value>, crate::context_cache::ContextCacheError> {
+    impl ContextCache for FixedL2 {
+        async fn get(&self, _url: &IriBuf) -> Result<Option<serde_json::Value>, ContextCacheError> {
             Ok(Some(self.0.clone()))
         }
-        async fn put(&self, _url: &IriBuf, _payload: &serde_json::Value) -> Result<(), crate::context_cache::ContextCacheError> {
+        async fn put(&self, _url: &IriBuf, _payload: &serde_json::Value) -> Result<(), ContextCacheError> {
             Ok(())
         }
     }

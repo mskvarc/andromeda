@@ -10,6 +10,7 @@
 use crate::error::TemporalError;
 use andromeda_ngsi_ld_model::expanded::unit_code_admission::forbidden_unit_code_family;
 use serde_json::Value;
+use std::slice::from_ref;
 
 /// Reject an expanded entity payload carrying an attribute instance whose
 /// declared family forbids the `unitCode` it carries.
@@ -19,7 +20,7 @@ use serde_json::Value;
 pub(crate) fn validate_entity_unit_code_admission(expanded: &Value) -> Result<(), TemporalError> {
     let entities = match expanded {
         Value::Array(values) => values.as_slice(),
-        other => std::slice::from_ref(other),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => from_ref(other),
     };
     for entity in entities {
         let Some(object) = entity.as_object() else {

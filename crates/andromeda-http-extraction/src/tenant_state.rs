@@ -3,7 +3,10 @@
 use crate::tenant::TenantHeader;
 use andromeda_http_response::{problem_response::ProblemResponse, tenant_state_rejection::TenantStateRejection};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
-use axum::{extract::FromRequestParts, http::request::Parts};
+use axum::{
+    extract::FromRequestParts,
+    http::{Uri, request::Parts},
+};
 use futures::future::BoxFuture;
 
 /// Resolves one binding-specific state value for a typed tenant scope.
@@ -13,7 +16,7 @@ pub trait TenantStateResolver<T>: Send + Sync {
         &'a self,
         tenant: &'a TenantRef,
         creation_policy: TenantCreationPolicy,
-        instance: &'a axum::http::Uri,
+        instance: &'a Uri,
     ) -> BoxFuture<'a, Result<T, ProblemResponse>>;
 }
 
@@ -71,7 +74,10 @@ mod tests {
         routing::get,
     };
     use futures::future::BoxFuture;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        error::Error,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use tower::ServiceExt;
 
     /// Capability whose handler invocation is observable.
@@ -104,7 +110,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tenant_resolution_rejection_is_typed_and_prevents_handler_execution() -> Result<(), Box<dyn std::error::Error>> {
+    async fn tenant_resolution_rejection_is_typed_and_prevents_handler_execution() -> Result<(), Box<dyn Error>> {
         HANDLER_CALLS.store(0, Ordering::SeqCst);
         let router = Router::new().route("/entities", get(counted_handler)).with_state(RejectingResolver);
         let response = router

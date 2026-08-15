@@ -1,9 +1,10 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Consumption: Serve @context tests (NGSI-LD 6.25.3.4)
 
 use reqwest::StatusCode;
 use serial_test::serial;
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+use tokio::time::sleep;
 
 use crate::{
     ContextServer,
@@ -210,7 +211,7 @@ async fn serve_cached_context_after_server_down() {
 
     // Stop the context server
     server.shutdown().await;
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
     // Attempt delete with reload (should fail)
     let (status, _) = crate::delete_context(&c, &cached_id, "reload=true").await;

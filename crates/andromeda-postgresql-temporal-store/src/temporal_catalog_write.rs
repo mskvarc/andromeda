@@ -30,7 +30,7 @@ use andromeda_postgresql_seaquery::{
 use chrono::{DateTime, Utc};
 use sea_query::{Cond, Expr, ExprTrait, Iden, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{AssertSqlSafe, Postgres, Row, Transaction};
+use sqlx::{AssertSqlSafe, Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -215,7 +215,7 @@ fn stream_binds<'a>(streams: &'a [TemporalStreamKey], name_to_id: &HashMap<Attri
 }
 
 /// Read back one resolved stream and the grain it answers for.
-fn decode_stream_row(row: &sqlx::postgres::PgRow) -> Result<(TemporalStreamKey, StreamId), TemporalStoreError> {
+fn decode_stream_row(row: &PgRow) -> Result<(TemporalStreamKey, StreamId), TemporalStoreError> {
     let raw_name: String = row
         .try_get("attribute_name")
         .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_names.name: {error}")))?;

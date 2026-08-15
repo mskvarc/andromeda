@@ -4,7 +4,7 @@ use andromeda_test_client::{raw_request::RawRequestError, test_client::TestClien
 use http::{Method, StatusCode};
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::sync::OnceCell;
+use tokio::{sync::OnceCell, time::sleep};
 
 static PROCESS_READINESS: OnceCell<()> = OnceCell::const_new();
 
@@ -61,7 +61,7 @@ pub async fn wait_until_ready(client: &TestClient, policy: ReadinessPolicy) -> R
             }
             Err(_source) => {}
         }
-        tokio::time::sleep(policy.interval).await;
+        sleep(policy.interval).await;
     }
 }
 

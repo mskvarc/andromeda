@@ -1,9 +1,10 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use std::time::Duration;
 
 use andromeda_test_mocks::server_config::MockServerConfig;
 use reqwest::StatusCode;
 use rumqttc::QoS;
+use tokio::time::sleep;
 
 use crate::helpers::{
     MqttReceiver,
@@ -13,6 +14,7 @@ use crate::helpers::{
     create_entity,
     create_subscription,
     fragment_air_quality_level,
+    reset_broker_state,
     set_endpoint_uri,
     subscription_with_endpoint,
     unique_entity_id,
@@ -43,11 +45,11 @@ fn callback_host() -> String {
 #[tokio::test]
 async fn notification_mqtt_endpoint_without_user_and_default_port_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_01_01");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -70,11 +72,11 @@ async fn notification_mqtt_endpoint_without_user_and_default_port_delivers_messa
 #[tokio::test]
 async fn notification_mqtt_default_qos_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_02_01");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -94,11 +96,11 @@ async fn notification_mqtt_default_qos_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_qos_1_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_02/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_02_02");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -118,11 +120,11 @@ async fn notification_mqtt_qos_1_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_qos_2_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_02_03/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::ExactlyOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_02_03");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -142,11 +144,11 @@ async fn notification_mqtt_qos_2_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_default_protocol_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_03_01");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -166,11 +168,11 @@ async fn notification_mqtt_default_protocol_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_version_3_1_1_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_02/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_03_02");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -190,11 +192,11 @@ async fn notification_mqtt_version_3_1_1_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_version_5_0_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_03_03/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_03_03");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -214,11 +216,11 @@ async fn notification_mqtt_version_5_0_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_payload_contains_metadata_and_body_envelope() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_04_01/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_04_01");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -245,12 +247,12 @@ async fn notification_mqtt_payload_contains_metadata_and_body_envelope() {
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_02/{}", uuid::Uuid::new_v4());
     let receiver =
         MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_01_02");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -271,11 +273,11 @@ async fn notification_mqtt_endpoint_with_non_default_port_and_credentials_delive
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_03/{}", uuid::Uuid::new_v4());
     let receiver = MqttReceiver::connect(MQTT_BROKER_HOST_LOCAL, MQTT_BROKER_PORT).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_01_03");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -296,12 +298,12 @@ async fn notification_mqtt_endpoint_with_username_only_delivers_message() {
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_username_and_password_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_04/{}", uuid::Uuid::new_v4());
     let receiver =
         MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_01_04");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;
@@ -322,12 +324,12 @@ async fn notification_mqtt_endpoint_with_username_and_password_delivers_message(
 #[tokio::test]
 async fn notification_mqtt_endpoint_with_username_password_and_port_delivers_message() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let topic = format!("{TOPIC_PREFIX}/058_01_05/{}", uuid::Uuid::new_v4());
     let receiver =
         MqttReceiver::connect_with_credentials(MQTT_AUTH_BROKER_HOST_LOCAL, MQTT_AUTH_BROKER_PORT, Some("user_with_password"), Some("password")).await;
     receiver.subscribe(&topic, QoS::AtLeastOnce).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    sleep(Duration::from_millis(200)).await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:058_01_05");
     let _ = create_entity(&http_client, &building_simple_entity(&entity_id)).await;

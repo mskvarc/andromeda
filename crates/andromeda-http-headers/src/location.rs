@@ -1,6 +1,7 @@
 //! Strict `Location` response header (RFC 9110, section 10.2.2).
 
 use http::{HeaderName, HeaderValue};
+use std::iter;
 
 /// The lowercase `Location` field name this header is transmitted under.
 static LOCATION: HeaderName = HeaderName::from_static("location");
@@ -33,6 +34,6 @@ impl headers::Header for Location {
         Self::new(value.to_str().map_err(|_| headers::Error::invalid())?).ok_or_else(headers::Error::invalid)
     }
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
-        values.extend(std::iter::once(self.0.clone()));
+        values.extend(iter::once(self.0.clone()));
     }
 }

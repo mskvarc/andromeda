@@ -7,6 +7,7 @@ use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, prefer::Prefe
 use andromeda_http_response::render::RenderingPreferences;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
+use std::convert::Infallible;
 
 /// Parsed Prefer request header per RFC 7240 and NGSI-LD clause 6.3.6.
 ///
@@ -28,7 +29,7 @@ impl<S> FromRequestParts<S> for PreferHeader
 where
     S: Send + Sync,
 {
-    type Rejection = std::convert::Infallible;
+    type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let prefer = parts.headers.typed_get::<Prefer>().map_or_else(PreferHeader::default, |p| PreferHeader {

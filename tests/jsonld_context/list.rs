@@ -1,9 +1,10 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Consumption: List @contexts tests (NGSI-LD 6.25.3.3)
 
 use reqwest::StatusCode;
 use serial_test::serial;
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+use tokio::time::sleep;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
@@ -526,7 +527,7 @@ async fn list_cached_contexts_with_details() {
     let (status, _) = create_entity(&c, &entity).await;
     pretty_assertions::assert_eq!(status, StatusCode::CREATED);
 
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    sleep(Duration::from_secs(1)).await;
 
     // List with details=true and kind=Cached
     let (status, contexts) = list_contexts(&c, "details=true&kind=Cached").await;

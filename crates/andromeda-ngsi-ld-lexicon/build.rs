@@ -1,10 +1,12 @@
 use std::{
     env,
+    error::Error,
     fs,
+    io,
     path::{Path, PathBuf},
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     compose_grammars()
 }
 
@@ -18,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// `static-regular-grammar` resolves `file` against `CARGO_MANIFEST_DIR`
 /// only, and its proc-macro sees `#[doc = include_str!(...)]` as raw tokens
 /// (rejecting non-literal doc attributes).
-fn compose_grammars() -> Result<(), Box<dyn std::error::Error>> {
+fn compose_grammars() -> Result<(), Box<dyn Error>> {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let grammar_dir = manifest.join("grammar");
     let unicode = fs::read_to_string(grammar_dir.join("_unicode.abnf"))?;
@@ -46,7 +48,7 @@ fn compose_grammars() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn compose_one(top: &Path, unicode: &str, out: &Path) -> std::io::Result<()> {
+fn compose_one(top: &Path, unicode: &str, out: &Path) -> io::Result<()> {
     let top_src = fs::read_to_string(top)?;
     let mut composed = String::with_capacity(top_src.len() + unicode.len() + 1);
     composed.push_str(&top_src);

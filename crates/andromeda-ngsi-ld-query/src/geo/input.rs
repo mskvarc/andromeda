@@ -11,6 +11,7 @@ use serde::{
     Deserializer,
     Serialize,
     Serializer,
+    de::Error as DeserializeError,
     ser::{Error as SerializeError, SerializeStruct},
 };
 use thiserror::Error;
@@ -56,7 +57,11 @@ impl GeoQueryInput {
         let georel = georel.parse().map_err(GeoQueryInputError::GeoRel)?;
         let coordinates = match coordinates {
             serde_json::Value::String(value) => serde_json::from_str(&value).map_err(GeoQueryInputError::Coordinates)?,
-            value => value,
+            value @ (serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::Array(_)
+            | serde_json::Value::Object(_)) => value,
         };
         let value = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
         let geometry = Geometry::from_geojson_value(&value).map_err(GeoQueryInputError::Geometry)?;
@@ -72,7 +77,7 @@ impl<'de> Deserialize<'de> for GeoQueryInput {
         D: Deserializer<'de>,
     {
         let wire = GeoQueryInputWire::deserialize(deserializer)?;
-        GeoQueryInput::from_wire(wire.georel.to_string(), wire.geometry, wire.coordinates, wire.geoproperty).map_err(serde::de::Error::custom)
+        GeoQueryInput::from_wire(wire.georel.to_string(), wire.geometry, wire.coordinates, wire.geoproperty).map_err(DeserializeError::custom)
     }
 }
 

@@ -13,7 +13,7 @@ use std::{future::Future, pin::Pin};
 /// Used for every attribute selection list the API accepts: `attrs` on entity
 /// and temporal queries, the CSR property/relationship names, and the
 /// `expandValues` / `jsonKeys` extensions.
-pub async fn expand_attrs<S: AsRef<str>>(raw: &[S], expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
+pub async fn expand_attrs<S: AsRef<str> + Sync>(raw: &[S], expander: &impl TermExpander) -> Result<Vec<IriBuf>, QueryError> {
     let mut expanded = Vec::with_capacity(raw.len());
     for term in raw {
         expanded.push(expander.expand_term(term.as_ref()).await?);

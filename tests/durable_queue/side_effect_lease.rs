@@ -22,6 +22,7 @@ use serde_json::json;
 use serial_test::serial;
 use sqlx::PgPool;
 use std::time::Duration;
+use tokio::time::sleep;
 
 /// Jobs leased per pass, larger than any fixture in this module.
 const BATCH_SIZE: i32 = 10;
@@ -71,7 +72,7 @@ async fn durable_queue_a_due_side_effect_is_leased_once_and_reclaimed_after_its_
     assert!(contended.is_empty(), "a live lease excludes every other worker");
 
     // The owner crashes: nothing acknowledges the job, and the lease runs out.
-    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    sleep(Duration::from_millis(1_500)).await;
 
     let reclaimed = repository.lease_batch(&contender, BATCH_SIZE, LEASE_SECONDS).await.expect("reclaim");
     assert_eq!(reclaimed.len(), 1, "an expired lease makes the job claimable again");

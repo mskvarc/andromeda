@@ -69,9 +69,12 @@ fn persistence_error(error: impl Display) -> SubscriptionError {
 
 /// Preserve a uniqueness race as the semantic identifier conflict.
 fn create_error(error: sqlx::Error, identifier: &Uri) -> SubscriptionError {
-    match error {
-        sqlx::Error::Database(database_error) if database_error.code().as_deref() == Some("23505") => SubscriptionError::already_exists(identifier),
-        other => persistence_error(other),
+    if let sqlx::Error::Database(database_error) = &error
+        && database_error.code().as_deref() == Some("23505")
+    {
+        SubscriptionError::already_exists(identifier)
+    } else {
+        persistence_error(error)
     }
 }
 

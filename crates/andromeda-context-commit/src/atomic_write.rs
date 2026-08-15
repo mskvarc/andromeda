@@ -23,13 +23,13 @@ pub struct AtomicWrite {
     /// Mutation of the current entity row.
     pub entity: EntityMutation,
     /// Temporal Evolution records produced by the mutation.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub history: Vec<HistoryRecord>,
     /// Subscriptions the mutation matched, each owed a notification event.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub subscription_matches: Vec<SubscriptionMatch>,
     /// Durable job used by the opt-in asynchronous batch path.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub side_effects: Option<BatchSideEffectJob>,
     /// Assumption the mutation makes about current entity state.
     #[builder(default = Precondition::None)]

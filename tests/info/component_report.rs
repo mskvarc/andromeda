@@ -1,6 +1,6 @@
 //! Active-component report integration tests.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;

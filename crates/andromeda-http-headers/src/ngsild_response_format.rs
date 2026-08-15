@@ -3,7 +3,7 @@
 //! Carries an extension token equivalent to the `format` query parameter.
 
 use http::{HeaderName, HeaderValue};
-use std::str::FromStr;
+use std::{iter, str::FromStr};
 use strum::{Display, EnumString, IntoStaticStr};
 
 /// The header name, as a `HeaderName` the `headers` trait can hand back.
@@ -52,7 +52,7 @@ impl headers::Header for NgsiLdResponseFormat {
 
     fn encode<E: Extend<HeaderValue>>(&self, values: &mut E) {
         match HeaderValue::from_str(<&'static str>::from(*self)) {
-            Ok(val) => values.extend(std::iter::once(val)),
+            Ok(val) => values.extend(iter::once(val)),
             Err(err) => tracing::warn!(error = %err, "failed to encode NGSILD-Response-Format header"),
         }
     }
@@ -65,7 +65,7 @@ mod tests {
 
     fn decode_from(raw: &str) -> Result<NgsiLdResponseFormat, headers::Error> {
         let val = HeaderValue::from_str(raw).expect("valid header value");
-        let mut iter = std::iter::once(&val);
+        let mut iter = iter::once(&val);
         NgsiLdResponseFormat::decode(&mut iter)
     }
 

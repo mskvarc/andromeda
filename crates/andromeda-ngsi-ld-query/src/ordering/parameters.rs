@@ -2,14 +2,14 @@
 
 use crate::ordering::{collation::IcuCollation, geometry::OrderingGeometry, term::OrderTerm};
 use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as DeserializeError};
 use serde_json::Value;
 use typed_builder::TypedBuilder;
 
 /// Parameters that order entity results (ETSI GS CIM 009 v1.9.1 clause 5.2.43).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, TypedBuilder)]
 #[serde(rename_all = "camelCase")]
-#[builder(field_defaults(default))]
+#[builder(field_defaults(default = Default::default()))]
 pub struct OrderingParameters {
     /// ICU collation applied to string-valued ordering members.
     #[serde(default)]
@@ -47,8 +47,8 @@ where
 {
     Option::<Value>::deserialize(deserializer)?
         .map(|value| match value {
-            Value::String(raw) => serde_json::from_str(&raw).map_err(serde::de::Error::custom),
-            other => Ok(other),
+            Value::String(raw) => serde_json::from_str(&raw).map_err(DeserializeError::custom),
+            other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => Ok(other),
         })
         .transpose()
 }
@@ -63,11 +63,11 @@ impl<'de> Deserialize<'de> for OrderingParameters {
         let wire = OrderingParametersWire::deserialize(deserializer)?;
         let geometry = match (wire.coordinates, wire.geometry) {
             (None, None) => None,
-            (None, Some(_)) => return Err(serde::de::Error::custom("orderGeometry requires orderFrom")),
+            (None, Some(_)) => return Err(DeserializeError::custom("orderGeometry requires orderFrom")),
             (Some(coordinates), geometry) => {
                 let geometry = geometry.unwrap_or(GeometryType::Point);
                 let value = serde_json::json!({ "geometry": geometry, "coordinates": coordinates });
-                Some(serde_json::from_value(value).map_err(serde::de::Error::custom)?)
+                Some(serde_json::from_value(value).map_err(DeserializeError::custom)?)
             }
         };
         Ok(OrderingParameters {
@@ -90,14 +90,14 @@ where
         Some(Value::String(raw)) => raw
             .split(',')
             .map(str::trim)
-            .map(|term| term.parse().map_err(serde::de::Error::custom))
+            .map(|term| term.parse().map_err(DeserializeError::custom))
             .collect(),
         Some(Value::Array(values)) => values
             .into_iter()
-            .map(|value| serde_json::from_value(value).map_err(serde::de::Error::custom))
+            .map(|value| serde_json::from_value(value).map_err(DeserializeError::custom))
             .collect(),
         Some(Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => {
-            Err(serde::de::Error::custom("orderBy must be a string array or comma-separated string"))
+            Err(DeserializeError::custom("orderBy must be a string array or comma-separated string"))
         }
     }
 }

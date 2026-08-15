@@ -34,9 +34,10 @@ use crate::entity_operations::{
     public_error,
     start_rendering,
 };
+use andromeda_http_extraction::tenant_state;
 
 pub(crate) async fn batch_upsert(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -105,7 +106,7 @@ pub(crate) async fn batch_upsert(
         .batch_upsert(&entities, &context, upsert_policy, mode)
         .await
         .with_entity_instance(&uri)?;
-    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, crate::entity_error::classify_entity_error);
+    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
     result.errors.append(&mut parse_errors);
 
     if result.errors.is_empty() {

@@ -33,7 +33,7 @@ use syn::{
     Lit,
     Macro,
     Type,
-    visit::{Visit, visit_item},
+    visit::{Visit, visit_expr_call, visit_expr_method_call, visit_item, visit_item_const, visit_item_static, visit_macro},
 };
 
 /// The path prefixes where hand-written dialect SQL is sanctioned.
@@ -170,14 +170,14 @@ impl<'ast> Visit<'ast> for RawSqlVisitor<'_> {
         if !is_test_only(&item.attrs) && str_constant_is_sql(&item.ty, &item.expr) {
             self.record(format!("constant {} holds SQL text", item.ident));
         }
-        syn::visit::visit_item_const(self, item);
+        visit_item_const(self, item);
     }
 
     fn visit_item_static(&mut self, item: &'ast ItemStatic) {
         if !is_test_only(&item.attrs) && str_constant_is_sql(&item.ty, &item.expr) {
             self.record(format!("static {} holds SQL text", item.ident));
         }
-        syn::visit::visit_item_static(self, item);
+        visit_item_static(self, item);
     }
 
     fn visit_expr_call(&mut self, call: &'ast ExprCall) {
@@ -188,7 +188,7 @@ impl<'ast> Visit<'ast> for RawSqlVisitor<'_> {
                 self.record(format!("{function} is built from a raw SQL string"));
             }
         }
-        syn::visit::visit_expr_call(self, call);
+        visit_expr_call(self, call);
     }
 
     fn visit_expr_method_call(&mut self, call: &'ast ExprMethodCall) {
@@ -196,7 +196,7 @@ impl<'ast> Visit<'ast> for RawSqlVisitor<'_> {
         if RAW_QUERY_FUNCTIONS.contains(&method.as_str()) && first_argument_is_raw_sql(call.args.first()) {
             self.record(format!("{method} is built from a raw SQL string"));
         }
-        syn::visit::visit_expr_method_call(self, call);
+        visit_expr_method_call(self, call);
     }
 
     fn visit_macro(&mut self, mac: &'ast Macro) {
@@ -206,15 +206,16 @@ impl<'ast> Visit<'ast> for RawSqlVisitor<'_> {
         {
             self.record(format!("{name}! assembles a SQL string"));
         }
-        syn::visit::visit_macro(self, mac);
+        visit_macro(self, mac);
     }
 }
 
 /// The bare function name a call targets, from the last path segment.
 fn call_function_name(func: &Expr) -> Option<String> {
-    match func {
-        Expr::Path(path) => path.path.segments.last().map(|segment| segment.ident.to_string()),
-        _ => None,
+    if let Expr::Path(path) = func {
+        path.path.segments.last().map(|segment| segment.ident.to_string())
+    } else {
+        None
     }
 }
 
@@ -238,9 +239,10 @@ fn str_constant_is_sql(ty: &Type, expression: &Expr) -> bool {
     if !is_str_reference(ty) {
         return false;
     }
-    match expression {
-        Expr::Lit(ExprLit { lit: Lit::Str(value), .. }) => looks_like_sql(&value.value()),
-        _ => false,
+    if let Expr::Lit(ExprLit { lit: Lit::Str(value), .. }) = expression {
+        looks_like_sql(&value.value())
+    } else {
+        false
     }
 }
 
@@ -251,30 +253,49 @@ fn is_str_reference(ty: &Type) -> bool {
 
 /// The first string literal in a macro invocation's tokens, unescaped.
 fn first_string_literal(mac: &Macro) -> Option<String> {
-    mac.tokens.clone().into_iter().find_map(|tree| match tree {
-        proc_macro2::TokenTree::Literal(literal) => match Lit::new(literal) {
-            Lit::Str(value) => Some(value.value()),
-            _ => None,
-        },
-        _ => None,
+    mac.tokens.clone().into_iter().find_map(|tree| {
+        if let proc_macro2::TokenTree::Literal(literal) = tree
+            && let Lit::Str(value) = Lit::new(literal)
+        {
+            return Some(value.value());
+        }
+        None
     })
 }
 
 /// Whether one inline item is compiled only for tests.
 fn item_is_test_only(item: &Item) -> bool {
-    match item {
-        Item::Const(item) => is_test_only(&item.attrs),
-        Item::Enum(item) => is_test_only(&item.attrs),
-        Item::Fn(item) => is_test_only(&item.attrs),
-        Item::Impl(item) => is_test_only(&item.attrs),
-        Item::Mod(item) => is_test_only(&item.attrs),
-        Item::Static(item) => is_test_only(&item.attrs),
-        Item::Struct(item) => is_test_only(&item.attrs),
-        Item::Trait(item) => is_test_only(&item.attrs),
-        Item::Type(item) => is_test_only(&item.attrs),
-        Item::Use(item) => is_test_only(&item.attrs),
-        _ => false,
+    if let Item::Const(item) = item {
+        return is_test_only(&item.attrs);
     }
+    if let Item::Enum(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Fn(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Impl(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Mod(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Static(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Struct(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Trait(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Type(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    if let Item::Use(item) = item {
+        return is_test_only(&item.attrs);
+    }
+    false
 }
 
 #[cfg(test)]

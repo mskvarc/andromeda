@@ -29,9 +29,11 @@ use crate::entity::{
     has_remote_errors,
     strip_exclusive_attrs_from_value,
 };
+use andromeda_http_extraction::tenant_state;
+use axum::http::Method;
 
 pub(crate) async fn append_attrs(
-    andromeda_http_extraction::tenant_state::ExistingTenantState(state): EntityTenantState,
+    tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -62,7 +64,7 @@ pub(crate) async fn append_attrs(
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
-            method: axum::http::Method::POST,
+            method: Method::POST,
             body: Some(&fragment_body),
             context_url,
             context: &context,
@@ -117,7 +119,7 @@ pub(crate) async fn append_attrs(
     // 207 Multi-Status for mixed results
     let mut errors = Vec::new();
     if let Err(err) = local_result {
-        errors.push(serde_json::to_value(batch_entity_error(id.clone(), &err, crate::entity_error::classify_entity_error)).with_entity_instance(&uri)?); // clone: service call and error response both own the ID
+        errors.push(serde_json::to_value(batch_entity_error(id.clone(), &err, super::super::entity_error::classify_entity_error)).with_entity_instance(&uri)?); // clone: service call and error response both own the ID
     }
     for r in &forwarded {
         if r.is_failure() {

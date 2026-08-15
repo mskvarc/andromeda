@@ -20,6 +20,7 @@ use std::{
     collections::{HashSet, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     num::NonZeroU32,
+    slice::from_ref,
     sync::Arc,
 };
 use tracing::{debug, warn};
@@ -68,7 +69,7 @@ pub(super) async fn resolve_linked_cached(
         });
     }
     let resolution = entity_query
-        .resolve_linked_entities(std::slice::from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
+        .resolve_linked_entities(from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
         .await
         .map_err(NotificationError::from)?;
     // A notification has no response to carry a clause 6.3.17 warning on, so an

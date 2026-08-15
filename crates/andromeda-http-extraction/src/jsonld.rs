@@ -73,7 +73,7 @@ fn document_has_context(document: &serde_json::Value) -> bool {
     match document {
         serde_json::Value::Object(obj) => obj.contains_key("@context"),
         serde_json::Value::Array(items) => items.iter().any(|item| item.as_object().is_some_and(|o| o.contains_key("@context"))),
-        _ => false,
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => false,
     }
 }
 
@@ -91,7 +91,11 @@ fn merge_context_values_from_document(document: &serde_json::Value) -> Option<se
                 }
             }
         }
-        other => {
+        other @ (serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_)
+        | serde_json::Value::Object(_)) => {
             let key = other.to_string();
             if seen.insert(key) {
                 merged.push(other);
@@ -112,7 +116,7 @@ fn merge_context_values_from_document(document: &serde_json::Value) -> Option<se
                 }
             }
         }
-        _ => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
 
     match merged.len() {
@@ -135,7 +139,7 @@ fn strip_context_from_value(value: &mut serde_json::Value) {
                 }
             }
         }
-        _ => {}
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
 }
 
@@ -258,15 +262,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::Request;
+    use axum::{
+        body::Body,
+        http::{Request, header::CONTENT_TYPE},
+    };
     use serde_json::Value;
 
     #[tokio::test]
     async fn rejects_unsupported_media_type() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(axum::http::header::CONTENT_TYPE, "application/xml")
-            .body(axum::body::Body::from("{}"))
+            .header(CONTENT_TYPE, "application/xml")
+            .body(Body::from("{}"))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
@@ -283,8 +290,8 @@ mod tests {
         // application/json-patch+json must NOT be accepted as application/json
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(axum::http::header::CONTENT_TYPE, "application/json-patch+json")
-            .body(axum::body::Body::from("{}"))
+            .header(CONTENT_TYPE, "application/json-patch+json")
+            .body(Body::from("{}"))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
@@ -301,8 +308,8 @@ mod tests {
         let body = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T"});
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities/urn:ngsi-ld:T:1")
-            .header(axum::http::header::CONTENT_TYPE, "application/merge-patch+json")
-            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .header(CONTENT_TYPE, "application/merge-patch+json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
@@ -313,8 +320,8 @@ mod tests {
     async fn rejects_empty_body_with_bad_request() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::empty())
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::empty())
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
@@ -325,8 +332,8 @@ mod tests {
     async fn rejects_valid_empty_array_as_bad_request_data() {
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from("[]"))
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from("[]"))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
@@ -342,8 +349,8 @@ mod tests {
         });
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(axum::http::header::CONTENT_TYPE, "application/ld+json")
-            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .header(CONTENT_TYPE, "application/ld+json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await.unwrap();
@@ -368,8 +375,8 @@ mod tests {
 
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entityOperations/create")
-            .header(axum::http::header::CONTENT_TYPE, "application/ld+json")
-            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .header(CONTENT_TYPE, "application/ld+json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await.unwrap();
@@ -384,8 +391,8 @@ mod tests {
         let body = serde_json::json!({"id": "urn:ngsi-ld:T:1", "type": "T"});
         let req = Request::builder()
             .uri("/ngsi-ld/v1/entities")
-            .header(axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8")
-            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .header(CONTENT_TYPE, "application/json; charset=utf-8")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
             .unwrap();
 
         let result = JsonLd::<Value>::from_request(req, &()).await;

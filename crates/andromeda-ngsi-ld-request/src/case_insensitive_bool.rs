@@ -1,6 +1,6 @@
 //! Reading a boolean query parameter the way clause 6.3.x spells one.
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, de::Error as DeserializeError};
 
 /// Deserialise an optional boolean query parameter case-insensitively.
 ///
@@ -22,7 +22,7 @@ where
         Some(raw) => match raw.to_lowercase().as_str() {
             "true" => Ok(Some(true)),
             "false" => Ok(Some(false)),
-            other => Err(serde::de::Error::custom(format!("invalid boolean value: '{other}'"))),
+            other => Err(DeserializeError::custom(format!("invalid boolean value: '{other}'"))),
         },
     }
 }
@@ -31,6 +31,7 @@ where
 mod tests {
     use crate::case_insensitive_bool::deserialize_option_bool_case_insensitive;
     use serde::Deserialize;
+    use serde_urlencoded::de::Error as UrlDecodeError;
 
     #[derive(Debug, Deserialize)]
     struct Wrapper {
@@ -39,7 +40,7 @@ mod tests {
         value: Option<bool>,
     }
 
-    fn parse(query: &str) -> Result<Wrapper, serde_urlencoded::de::Error> {
+    fn parse(query: &str) -> Result<Wrapper, UrlDecodeError> {
         serde_urlencoded::from_str(query)
     }
 

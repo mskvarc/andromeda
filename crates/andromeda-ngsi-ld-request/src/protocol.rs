@@ -175,7 +175,7 @@ mod tests {
     use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
     use headers::Header;
     use http::HeaderValue;
-    use std::num::NonZeroU32;
+    use std::{iter, num::NonZeroU32};
 
     fn get_params() -> GetEntityParams {
         serde_urlencoded::from_str("").expect("empty query parses")
@@ -185,13 +185,13 @@ mod tests {
     /// is exercised against a value the header crate actually validated.
     fn scope(raw: &str) -> NgsiLdScope {
         let value = HeaderValue::from_str(raw).expect("valid header value");
-        NgsiLdScope::decode(&mut std::iter::once(&value)).expect("valid scope header")
+        NgsiLdScope::decode(&mut iter::once(&value)).expect("valid scope header")
     }
 
     /// Decode an `NGSILD-Dataset-Id` header, as the extractor does.
     fn dataset_ids(raw: &str) -> NgsiLdDatasetId {
         let value = HeaderValue::from_str(raw).expect("valid header value");
-        NgsiLdDatasetId::decode(&mut std::iter::once(&value)).expect("valid dataset id header")
+        NgsiLdDatasetId::decode(&mut iter::once(&value)).expect("valid dataset id header")
     }
 
     #[test]

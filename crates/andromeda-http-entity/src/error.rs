@@ -22,7 +22,7 @@ pub trait EntityHttpClassify {
 
 impl EntityHttpClassify for EntityError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
-        crate::entity_error::classify_entity_error(self)
+        super::entity_error::classify_entity_error(self)
     }
 }
 

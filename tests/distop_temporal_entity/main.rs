@@ -8,7 +8,7 @@
 //!
 //! Naming convention: `distop_temporal_<operation>_<scenario>_<expected_outcome>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 #[path = "../support/context_source_adapter.rs"]
 pub mod context_source_adapter;

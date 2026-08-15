@@ -1,8 +1,10 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Provision: Delete @context tests (NGSI-LD 6.25.3.2)
 
 use reqwest::StatusCode;
 use serial_test::serial;
+use std::time::Duration;
+use tokio::time::sleep;
 
 use crate::{
     BAD_REQUEST_DATA_TYPE,
@@ -177,7 +179,7 @@ async fn delete_cached_reload_server_unavailable_returns_504() {
 
     // Stop the context server
     server.shutdown().await;
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
     // Attempt delete with reload -- should fail since server is down
     let (status, body) = delete_context(&c, &cached_id, "reload=true").await;

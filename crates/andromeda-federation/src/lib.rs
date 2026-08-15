@@ -35,7 +35,7 @@ pub mod temporal_result;
 pub mod transport;
 
 use crate::error::FederationError;
-use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via};
+use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via, warning::Warning};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
 use andromeda_registration::store::RegistrationStore;
@@ -95,14 +95,11 @@ impl FederationService {
     }
 
     /// Send a request and return the status and raw bytes.
-    pub(crate) async fn send_request(
-        &self,
-        request: reqwest::RequestBuilder,
-    ) -> Result<(reqwest::StatusCode, Option<andromeda_http_headers::warning::Warning>, Vec<u8>), FederationError> {
+    pub(crate) async fn send_request(&self, request: reqwest::RequestBuilder) -> Result<(reqwest::StatusCode, Option<Warning>, Vec<u8>), FederationError> {
         let response = request.send().await?;
 
         let status = response.status();
-        let warning = headers::HeaderMapExt::typed_get::<andromeda_http_headers::warning::Warning>(response.headers());
+        let warning = headers::HeaderMapExt::typed_get::<Warning>(response.headers());
 
         let bytes = response.bytes().await?;
 

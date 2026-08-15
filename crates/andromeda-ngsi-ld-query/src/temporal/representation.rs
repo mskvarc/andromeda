@@ -16,11 +16,11 @@ pub struct Representation {
     /// Normalized, `temporalValues` or `aggregatedValues`.
     pub format: TemporalFormat,
     /// Aggregation methods applied per bucket.
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub aggr_methods: Vec<AggrMethod>,
     /// Aggregation bucket width, absent when the whole range is one bucket
     /// (clause 4.5.19).
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub aggr_period_duration: Option<AggregationPeriod>,
     /// Whether `createdAt` / `modifiedAt` survive into the response.
     pub sys_attrs: SysAttrsInclusion,

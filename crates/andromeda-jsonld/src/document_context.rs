@@ -70,7 +70,7 @@ pub fn apply_context(document: Value, spec: &ContextSpec) -> Result<Value, JsonL
                 .into_iter()
                 .map(|item| match item {
                     Value::Object(object) => Value::Object(with_resolved_context(object, spec)),
-                    other => other,
+                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => other,
                 })
                 .collect(),
         )),

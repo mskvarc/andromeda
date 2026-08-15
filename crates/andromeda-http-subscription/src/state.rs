@@ -8,6 +8,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
+use axum::http::Uri;
 use futures::future::BoxFuture;
 use std::sync::Arc;
 use typed_builder::TypedBuilder;
@@ -65,7 +66,7 @@ impl TenantStateResolver<Arc<SubscriptionRouteServices>> for SubscriptionRouteSt
         &'a self,
         tenant: &'a TenantRef,
         creation_policy: TenantCreationPolicy,
-        instance: &'a axum::http::Uri,
+        instance: &'a Uri,
     ) -> BoxFuture<'a, Result<Arc<SubscriptionRouteServices>, ProblemResponse>> {
         Box::pin(async move {
             self.resolver

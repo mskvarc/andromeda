@@ -17,10 +17,10 @@ pub struct CompiledEntityQuery {
     /// Which entities match.
     pub selection: EntitySelection,
     /// Which members of a matching entity reach the response (clause 4.21).
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub projection: Projection,
     /// How matching entities are ordered (clause 4.23).
-    #[builder(default)]
+    #[builder(default = Default::default())]
     pub ordering: ResultOrdering,
     /// Result window: limit, offset, and the total-count policy.
     #[builder(default = Pagination::DEFAULT)]

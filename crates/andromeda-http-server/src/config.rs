@@ -51,11 +51,12 @@ impl ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::{ServerConfig, ServerConfigError};
+    use std::net::IpAddr;
 
     #[test]
     fn zero_listener_port_is_rejected() {
         let config = ServerConfig {
-            host: std::net::IpAddr::from([127, 0, 0, 1]),
+            host: IpAddr::from([127, 0, 0, 1]),
             port: 0,
             graceful_drain_secs: 30,
         };

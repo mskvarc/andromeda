@@ -6,7 +6,20 @@
 
 use andromeda_postgresql_schema::jsonld::JsonldContexts;
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
-use sea_query::{Alias, Condition, DeleteStatement, Expr, ExprTrait, InsertStatement, Order, Query, SelectStatement, SimpleExpr, UpdateStatement};
+use sea_query::{
+    Alias,
+    Condition,
+    DeleteStatement,
+    Expr,
+    ExprTrait,
+    InsertStatement,
+    Order,
+    Query,
+    SelectStatement,
+    SimpleExpr,
+    UpdateStatement,
+    error::Error as SeaQueryError,
+};
 use serde_json::Value;
 
 /// Match a row by either of its identities: local id or source URL.
@@ -133,7 +146,7 @@ pub fn replace_payload_update(local_id: &str, payload: Value) -> UpdateStatement
 }
 
 /// Insert a hosted or implicitly-created Context under an exact kind.
-pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str, payload: Value) -> Result<InsertStatement, sea_query::error::Error> {
+pub fn hosted_insert(local_id: &str, serving_url: Option<&str>, kind_label: &str, payload: Value) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(JsonldContexts::Table)

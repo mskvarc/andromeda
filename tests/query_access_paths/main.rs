@@ -12,7 +12,7 @@
 //!
 //! Naming convention: `<row_topic>_<scenario>`.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod column_layout;
 mod entity_plans;

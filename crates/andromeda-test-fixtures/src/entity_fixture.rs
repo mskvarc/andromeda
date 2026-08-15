@@ -14,7 +14,7 @@ pub struct EntityFixture {
     /// JSON-LD context IRIs.
     contexts: Vec<IriBuf>,
     /// Attribute members keyed by their wire names.
-    #[builder(default)]
+    #[builder(default = Map::new())]
     attributes: Map<String, Value>,
 }
 

@@ -1,4 +1,5 @@
 large-error-threshold = 256
+absolute-paths-allowed-crates = ["typed_builder"]
 
 # `expect_used`, `unwrap_used` and `panic` are denied for production code, where
 # a failed assumption is a 500. A test asserts by panicking, so the same denial

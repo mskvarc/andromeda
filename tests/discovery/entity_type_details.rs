@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 //! Entity type details tests (NGSI-LD 5.5.9).
 //! Uses `?details=true` to retrieve full `EntityType` objects with attribute names.
 

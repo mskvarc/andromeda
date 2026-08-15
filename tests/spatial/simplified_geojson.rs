@@ -4,7 +4,7 @@
 //! produce a FeatureCollection whose `properties` are flattened
 //! key-value pairs, not the normalized Property objects.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_client::header::jsonld_link_header;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;

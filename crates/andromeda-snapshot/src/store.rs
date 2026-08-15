@@ -9,6 +9,7 @@
 use crate::error::SnapshotError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
+    query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
@@ -34,9 +35,9 @@ pub struct InsertSnapshotParams<'a> {
     /// Snapshot identifier.
     pub id: &'a Uri,
     /// Typed entity query definitions, serialized by the SQL adapter.
-    pub snapshot_queries: Option<&'a [andromeda_ngsi_ld_model::query::body::Query]>,
+    pub snapshot_queries: Option<&'a [Query]>,
     /// Typed temporal query definitions, serialized by the SQL adapter.
-    pub snapshot_temporal_queries: Option<&'a [andromeda_ngsi_ld_model::query::body::Query]>,
+    pub snapshot_temporal_queries: Option<&'a [Query]>,
     /// Typed ISO-8601 duration for the snapshot's lifetime.
     pub snapshot_lifetime: Option<&'a Iso8601Duration>,
     /// Numeric encoding of [`SnapshotPriority`].

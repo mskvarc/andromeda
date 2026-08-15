@@ -86,6 +86,7 @@ pub fn decode_percent_encoded_uri(uri: &str) -> Cow<'_, str> {
 mod tests {
     use crate::uri_decoding::{decode_percent_encoded_uri, decode_percent_encoded_uris};
     use serde_json::json;
+    use std::borrow::Cow;
 
     #[test]
     fn decode_percent_encoded_relationship_object() {
@@ -99,7 +100,7 @@ mod tests {
 
     #[test]
     fn single_uri_decoding_borrows_plain_input_and_owns_decoded_input() {
-        assert!(matches!(decode_percent_encoded_uri("urn:ngsi-ld:Building:1"), std::borrow::Cow::Borrowed(_)));
+        assert!(matches!(decode_percent_encoded_uri("urn:ngsi-ld:Building:1"), Cow::Borrowed(_)));
         pretty_assertions::assert_eq!(decode_percent_encoded_uri("urn%3Angsi-ld%3ABuilding%3A1"), "urn:ngsi-ld:Building:1");
     }
 

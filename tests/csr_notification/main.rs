@@ -1,11 +1,12 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};
-use andromeda_test_mocks::{notification_server::NotificationServer, server_config::MockServerConfig};
+use andromeda_test_mocks::{callback_server::CallbackServerError, notification_server::NotificationServer, server_config::MockServerConfig};
 use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, SecondsFormat, Utc};
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::time::Duration;
+use tokio::time::sleep;
 use uuid::Uuid;
 
 fn client() -> Client {
@@ -384,10 +385,7 @@ impl NotificationReceiver {
 
     async fn wait_for_no_notification(&self, duration: Duration) {
         let result = self.server.next_request(duration).await;
-        assert!(matches!(
-            result,
-            Err(andromeda_test_mocks::callback_server::CallbackServerError::RequestTimeout(_))
-        ));
+        assert!(matches!(result, Err(CallbackServerError::RequestTimeout(_))));
     }
 }
 
@@ -521,7 +519,7 @@ async fn csr_notification_success_updates_metadata_status_ok() {
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, Some("sysAttrs")).await;
     pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
@@ -547,7 +545,7 @@ async fn csr_notification_failed_delivery_updates_metadata_status_failed() {
     let (registration_status, _) = create_registration(&http_client, &registration).await;
     pretty_assertions::assert_eq!(registration_status, StatusCode::CREATED);
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    sleep(Duration::from_secs(3)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, Some("sysAttrs")).await;
     pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);
@@ -942,7 +940,7 @@ async fn csr_notification_metadata_times_sent_increments_after_multiple_successe
 
     let _ = receiver.wait_for_notification(Duration::from_secs(5)).await;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    sleep(Duration::from_millis(500)).await;
 
     let (retrieve_status, body) = retrieve_csource_subscription(&http_client, &subscription_id, Some("sysAttrs")).await;
     pretty_assertions::assert_eq!(retrieve_status, StatusCode::OK);

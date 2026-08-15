@@ -7,6 +7,7 @@ use thiserror::Error;
 use tokio::{
     sync::{Mutex, Notify},
     task::JoinHandle,
+    time::{Instant, timeout_at},
 };
 use uuid::Uuid;
 
@@ -127,14 +128,14 @@ impl MqttReceiver {
 
     /// Wait for and remove the oldest captured message.
     pub async fn next_message(&self, timeout: Duration) -> Result<MqttMessage, MqttReceiverError> {
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = Instant::now() + timeout;
         loop {
             let mut messages = self.messages.lock().await;
             if !messages.is_empty() {
                 return Ok(messages.remove(0));
             }
             drop(messages);
-            tokio::time::timeout_at(deadline, self.notify.notified())
+            timeout_at(deadline, self.notify.notified())
                 .await
                 .map_err(|_| MqttReceiverError::Timeout(timeout))?;
         }

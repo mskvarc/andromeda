@@ -8,7 +8,19 @@ use crate::schema_contract::{
     server_requirements::verify_server_requirements,
 };
 use andromeda_postgresql_schema::tenancy::SchemaMetadata;
-use sea_query::{Alias, Expr, ExprTrait, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, UpdateStatement};
+use sea_query::{
+    Alias,
+    Expr,
+    ExprTrait,
+    InsertStatement,
+    OnConflict,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    SelectStatement,
+    UpdateStatement,
+    error::Error as SeaQueryError,
+};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 
@@ -225,7 +237,7 @@ fn applied_migrations_digest_statement(from_version: i64, up_to_version: i64) ->
 }
 
 /// Write the singleton stamp only if nothing has claimed it yet.
-fn stamp_statement(version: i32, digest: String) -> Result<InsertStatement, sea_query::error::Error> {
+fn stamp_statement(version: i32, digest: String) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(SchemaMetadata::Table)

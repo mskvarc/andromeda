@@ -137,6 +137,7 @@ impl GetEntityParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::entity::parameters::EntityQueryParameters;
 
     fn default_params() -> GetEntityParams {
         GetEntityParams {
@@ -289,9 +290,8 @@ mod tests {
 
     #[test]
     fn entity_map_lifetime_is_typed_at_deserialization() {
-        let params: crate::query::entity::parameters::EntityQueryParameters =
-            serde_urlencoded::from_str("type=Vehicle&entityMapLifetime=P1M").expect("valid duration");
+        let params: EntityQueryParameters = serde_urlencoded::from_str("type=Vehicle&entityMapLifetime=P1M").expect("valid duration");
         pretty_assertions::assert_eq!(params.entity_map_lifetime.as_ref().map(ToString::to_string).as_deref(), Some("P1M"));
-        assert!(serde_urlencoded::from_str::<crate::query::entity::parameters::EntityQueryParameters>("type=Vehicle&entityMapLifetime=bad").is_err());
+        assert!(serde_urlencoded::from_str::<EntityQueryParameters>("type=Vehicle&entityMapLifetime=bad").is_err());
     }
 }

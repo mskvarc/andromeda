@@ -42,6 +42,7 @@ impl HttpApi {
 mod tests {
     use crate::{api::HttpApi, routes::ApiRoutes};
     use andromeda_component_report::{ComponentReport, ComponentVersion};
+    use andromeda_health::aggregate::Health;
     use andromeda_http_component_report::routes::ComponentReportRoutes;
     use andromeda_http_context_registry::{
         routes::ContextRegistryRoutes,
@@ -88,10 +89,11 @@ mod tests {
     use async_trait::async_trait;
     use axum::{
         body::Body,
+        http,
         http::{Method, Request, StatusCode},
     };
     use futures::future::BoxFuture;
-    use std::sync::Arc;
+    use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
 
     macro_rules! rejecting_resolver {
@@ -134,7 +136,7 @@ mod tests {
         }
     }
 
-    fn test_api() -> Result<HttpApi, Box<dyn std::error::Error>> {
+    fn test_api() -> Result<HttpApi, Box<dyn Error>> {
         let administration = Arc::new(TenantAdministration);
         let directory: Arc<dyn TenantDirectory> = administration.clone();
         let evictor: Arc<dyn OrphanTenantEvictor> = administration;
@@ -151,7 +153,7 @@ mod tests {
                 "test".parse::<ContextSourcePseudonym>()?,
             )))
             .tenancy(TenancyRoutes::new(directory, evictor))
-            .health(HealthRoutes::new(andromeda_health::aggregate::Health::builder().build()))
+            .health(HealthRoutes::new(Health::builder().build()))
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
             }]))
@@ -166,7 +168,7 @@ mod tests {
         Ok(HttpApi::assemble(routes, &stack))
     }
 
-    fn request(method: Method, path: &str) -> Result<Request<Body>, axum::http::Error> {
+    fn request(method: Method, path: &str) -> Result<Request<Body>, http::Error> {
         Request::builder()
             .method(method)
             .uri(path)
@@ -175,7 +177,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_canonical_method_and_path_reaches_exactly_one_required_fragment() -> Result<(), Box<dyn std::error::Error>> {
+    async fn every_canonical_method_and_path_reaches_exactly_one_required_fragment() -> Result<(), Box<dyn Error>> {
         let service = test_api()?.into_service();
         for (method, path) in [
             (Method::POST, "/ngsi-ld/v1/entities"),

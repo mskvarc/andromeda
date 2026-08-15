@@ -24,13 +24,13 @@ use andromeda_ngsi_ld_model::expanded::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::{collections::HashSet, slice::from_ref};
 
 /// Reject an expanded entity carrying an attribute instance with no value.
 pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), EntityError> {
     let entities = match expanded {
         Value::Array(arr) => arr.as_slice(),
-        _other => std::slice::from_ref(expanded),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => from_ref(other),
     };
 
     for entity in entities {
@@ -57,7 +57,7 @@ pub(crate) fn validate_attribute_envelopes(expanded: &Value) -> Result<(), Entit
 fn validate_attr_instances(attr_name: &AttributeName, value: &Value) -> Result<(), EntityError> {
     let instances = match value {
         Value::Array(arr) => arr.as_slice(),
-        _other => return Ok(()),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => return Ok(()),
     };
 
     validate_instance_identities(attr_name, instances)?;

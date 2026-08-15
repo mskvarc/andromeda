@@ -80,6 +80,7 @@ mod tests {
         Subscriber,
         metadata::Metadata,
         span::{Attributes, Id, Record},
+        subscriber::with_default,
     };
 
     struct CountingSubscriber {
@@ -121,7 +122,7 @@ mod tests {
     fn internal_detail_is_always_sanitized() {
         let errors = Arc::new(AtomicUsize::new(0));
         let subscriber = CountingSubscriber { errors: Arc::clone(&errors) };
-        let report = tracing::subscriber::with_default(subscriber, || ClassifiedReport::internal(&"database db-7.internal failed"));
+        let report = with_default(subscriber, || ClassifiedReport::internal(&"database db-7.internal failed"));
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::InternalError);
         pretty_assertions::assert_eq!(report.detail(), "Internal error");
         assert!(!report.detail().contains("db-7.internal"));

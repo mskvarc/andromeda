@@ -3,19 +3,23 @@
 use crate::{
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
+    port::history_reader::TemporalHistoryReader,
     read::rendered_entity::HistoryPresence,
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService, has_explicit_context, iri_short_name},
 };
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
-use andromeda_ngsi_ld_query::{pagination::Pagination, temporal::compiled::CompiledTemporalQuery};
+use andromeda_ngsi_ld_query::{
+    pagination::{CountPolicy, Pagination},
+    temporal::compiled::CompiledTemporalQuery,
+};
 use andromeda_ngsi_ld_render::temporal::aggregation::TemporalAggregationRenderer;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_ngsi_ld_vocabulary::expanded::classes as expanded_classes;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::{collections::HashMap, slice::from_ref};
 
 impl TemporalService {
     /// Retrieve and render one temporal entity under the supplied query parameters.
@@ -33,12 +37,7 @@ impl TemporalService {
         // an entity's types, so the mandatory `type` member survives the clause
         // 5.6.6 deletion that removes current state and leaves the Temporal
         // Evolution standing.
-        let entity_types = self
-            .reader
-            .entity_types(std::slice::from_ref(entity_id))
-            .await?
-            .remove(entity_id)
-            .unwrap_or_default();
+        let entity_types = self.reader.entity_types(from_ref(entity_id)).await?.remove(entity_id).unwrap_or_default();
 
         let rendered = self.render_one_temporal_entity(entity_id, &entity_types, &compiled, context).await?;
 
@@ -259,7 +258,7 @@ impl TemporalService {
         unpaged.pagination = Pagination {
             limit: u32::MAX,
             offset: 0,
-            count: andromeda_ngsi_ld_query::pagination::CountPolicy::Omit,
+            count: CountPolicy::Omit,
         };
         ensure_aggregation_supported(self.reader.as_ref(), &unpaged.representation.aggr_methods)?;
         let outcome = self.reader.query_entity_ids(&unpaged).await?;
@@ -271,10 +270,7 @@ impl TemporalService {
 }
 
 /// Reject unsupported aggregation before invoking any reader query operation.
-fn ensure_aggregation_supported(
-    reader: &dyn crate::port::history_reader::TemporalHistoryReader,
-    requested: &[andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod],
-) -> Result<(), TemporalError> {
+fn ensure_aggregation_supported(reader: &dyn TemporalHistoryReader, requested: &[AggrMethod]) -> Result<(), TemporalError> {
     let refused = reader.refused_aggregation_methods(requested);
     if refused.is_empty() {
         Ok(())

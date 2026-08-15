@@ -176,7 +176,7 @@ mod tests {
     };
     use chrono::TimeZone;
     use futures::future::BoxFuture;
-    use std::sync::Mutex;
+    use std::{mem::take, sync::Mutex};
     use uuid::Uuid;
 
     #[derive(Clone, Copy)]
@@ -283,7 +283,7 @@ mod tests {
         {
             Box::pin(async move {
                 let mut leased = self.leased.lock().map_err(|error| EntityError::internal(error.to_string()))?;
-                Ok(std::mem::take(&mut *leased))
+                Ok(take(&mut *leased))
             })
         }
 

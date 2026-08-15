@@ -1,4 +1,4 @@
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use std::time::Duration;
 
 use reqwest::StatusCode;
@@ -23,6 +23,7 @@ use crate::helpers::{
     null_relationship_fragment,
     null_relationship_partial_fragment,
     partial_update_attr,
+    reset_broker_state,
     set_endpoint_uri,
     unique_entity_id,
     unique_subscription_id,
@@ -66,7 +67,7 @@ async fn create_attr_deleted_subscription(
 #[tokio::test]
 async fn notification_attribute_deleted_key_values_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_01");
@@ -83,7 +84,7 @@ async fn notification_attribute_deleted_key_values_delivers_notification() {
 #[tokio::test]
 async fn notification_attribute_deleted_specific_watched_attribute_key_values_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_02");
@@ -100,7 +101,7 @@ async fn notification_attribute_deleted_specific_watched_attribute_key_values_de
 #[tokio::test]
 async fn notification_deleting_non_watched_attribute_does_not_deliver_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_03");
@@ -116,7 +117,7 @@ async fn notification_deleting_non_watched_attribute_does_not_deliver_notificati
 #[tokio::test]
 async fn notification_attribute_deleted_normalized_nullifies_deleted_attribute() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_04");
@@ -133,7 +134,7 @@ async fn notification_attribute_deleted_normalized_nullifies_deleted_attribute()
 #[tokio::test]
 async fn notification_attribute_deleted_normalized_sys_attrs_adds_deleted_at_and_created_at() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_05");
@@ -151,7 +152,7 @@ async fn notification_attribute_deleted_normalized_sys_attrs_adds_deleted_at_and
 #[tokio::test]
 async fn notification_attribute_deleted_with_dataset_id_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_06");
@@ -168,7 +169,7 @@ async fn notification_attribute_deleted_with_dataset_id_delivers_notification() 
 #[tokio::test]
 async fn notification_attribute_deleted_key_values_with_dataset_id_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_07");
@@ -185,7 +186,7 @@ async fn notification_attribute_deleted_key_values_with_dataset_id_delivers_noti
 #[tokio::test]
 async fn notification_attribute_deleted_with_delete_all_delivers_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_08");
@@ -202,7 +203,7 @@ async fn notification_attribute_deleted_with_delete_all_delivers_notification() 
 #[tokio::test]
 async fn notification_ngsi_ld_null_property_via_merge_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_09_01");
@@ -219,7 +220,7 @@ async fn notification_ngsi_ld_null_property_via_merge_triggers_attribute_deleted
 #[tokio::test]
 async fn notification_ngsi_ld_null_property_via_update_attrs_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_09_02");
@@ -236,7 +237,7 @@ async fn notification_ngsi_ld_null_property_via_update_attrs_triggers_attribute_
 #[tokio::test]
 async fn notification_ngsi_ld_null_property_via_partial_update_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_09_03");
@@ -253,7 +254,7 @@ async fn notification_ngsi_ld_null_property_via_partial_update_triggers_attribut
 #[tokio::test]
 async fn notification_ngsi_ld_null_relationship_via_merge_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_10_01");
@@ -270,7 +271,7 @@ async fn notification_ngsi_ld_null_relationship_via_merge_triggers_attribute_del
 #[tokio::test]
 async fn notification_ngsi_ld_null_relationship_via_update_attrs_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_10_02");
@@ -287,7 +288,7 @@ async fn notification_ngsi_ld_null_relationship_via_update_attrs_triggers_attrib
 #[tokio::test]
 async fn notification_ngsi_ld_null_relationship_via_partial_update_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_10_03");
@@ -304,7 +305,7 @@ async fn notification_ngsi_ld_null_relationship_via_partial_update_triggers_attr
 #[tokio::test]
 async fn notification_ngsi_ld_null_language_property_via_merge_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_11_01");
@@ -324,7 +325,7 @@ async fn notification_ngsi_ld_null_language_property_via_merge_triggers_attribut
 #[tokio::test]
 async fn notification_ngsi_ld_null_language_property_via_update_attrs_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_11_02");
@@ -344,7 +345,7 @@ async fn notification_ngsi_ld_null_language_property_via_update_attrs_triggers_a
 #[tokio::test]
 async fn notification_ngsi_ld_null_language_property_via_partial_update_triggers_attribute_deleted_notification() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_11_03");
@@ -364,7 +365,7 @@ async fn notification_ngsi_ld_null_language_property_via_partial_update_triggers
 #[tokio::test]
 async fn notification_entity_deletion_with_attribute_deleted_trigger_nullifies_watched_attribute() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_12");
@@ -381,7 +382,7 @@ async fn notification_entity_deletion_with_attribute_deleted_trigger_nullifies_w
 #[tokio::test]
 async fn notification_entity_deletion_with_attribute_deleted_and_sys_attrs_includes_deleted_at() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_13");
@@ -399,7 +400,7 @@ async fn notification_entity_deletion_with_attribute_deleted_and_sys_attrs_inclu
 #[tokio::test]
 async fn notification_extension_attribute_deleted_show_changes_combines_with_previous_value_fields() {
     let http_client = client();
-    let _serialized_environment = crate::helpers::reset_broker_state().await;
+    let _serialized_environment = reset_broker_state().await;
     let receiver = NotificationReceiver::start().await;
 
     let entity_id = unique_entity_id("urn:ngsi-ld:Building:046_22_extension");

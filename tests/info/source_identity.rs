@@ -1,6 +1,6 @@
 //! Source identity retrieval tests (NGSI-LD 5.8.1, 5.5.7).
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;

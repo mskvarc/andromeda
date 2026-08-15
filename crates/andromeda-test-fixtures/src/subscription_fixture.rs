@@ -9,7 +9,7 @@ use url::Url;
 #[derive(Debug, TypedBuilder)]
 pub struct SubscriptionFixture {
     /// Optional subscription identifier.
-    #[builder(default)]
+    #[builder(default = None)]
     id: Option<IriBuf>,
     /// Entity type selected by the subscription.
     entity_type: IriBuf,

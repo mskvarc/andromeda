@@ -9,7 +9,7 @@
 //! Naming convention: `<operation>_<scope>_<scenario>_<expected_outcome>`.
 
 // Test infrastructure legitimately uses expect/unwrap to fail fast on transport errors.
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 
 mod attribute_details;
 mod attribute_info;

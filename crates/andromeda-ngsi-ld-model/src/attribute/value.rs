@@ -5,7 +5,7 @@ use andromeda_ngsi_ld_geometry::{geojson::GeometryError, geometry::Geometry};
 use andromeda_ngsi_ld_lexicon::{ngsi_ld_date::NgsiLdDate, ngsi_ld_time::NgsiLdTime, rfc3339::whole_seconds, uri::Uri};
 use chrono::{DateTime, Utc};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as DeserializeError};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -59,7 +59,7 @@ impl Serialize for NgsiLdValue {
 impl<'de> Deserialize<'de> for NgsiLdValue {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<NgsiLdValue, D::Error> {
         let value = Value::deserialize(deserializer)?;
-        if let Some(geometry) = try_geometry(&value).map_err(serde::de::Error::custom)? {
+        if let Some(geometry) = try_geometry(&value).map_err(DeserializeError::custom)? {
             return Ok(NgsiLdValue::Geometry(geometry));
         }
         if let Some(string) = value.as_str() {

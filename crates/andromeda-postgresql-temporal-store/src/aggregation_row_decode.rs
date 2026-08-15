@@ -133,7 +133,7 @@ fn boolean_extremum(counted: JsonNumber, column: &str) -> Result<AggregationMinM
     match counted {
         JsonNumber::Signed(0) => Ok(AggregationMinMax::Boolean(false)),
         JsonNumber::Signed(1) => Ok(AggregationMinMax::Boolean(true)),
-        other => Err(TemporalStoreError::Decode(format!(
+        other @ (JsonNumber::Signed(_) | JsonNumber::Unsigned(_) | JsonNumber::Double(_)) => Err(TemporalStoreError::Decode(format!(
             "{column} of a boolean attribute is {other}, which counts neither false nor true"
         ))),
     }
