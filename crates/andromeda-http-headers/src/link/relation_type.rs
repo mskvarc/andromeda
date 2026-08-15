@@ -1,4 +1,10 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Link relation types (RFC 8288 section 2.1).
+//!
+//! This file is derived from the disabled `Link` implementation in
+//! <https://github.com/hyperium/headers> and includes local modifications.
 
 use iri_rs::{Iri, IriRefBuf, iri};
 use std::{fmt, str::FromStr};

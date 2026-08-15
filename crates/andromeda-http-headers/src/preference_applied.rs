@@ -1,8 +1,11 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Typed `Preference-Applied` response header for NGSI-LD (RFC 7240, clause 6.3.6).
 //!
-//! Portions of this file are derived from [Headers](https://github.com/hyperium/headers).
-//! Licensed under the MIT License.
-//! Copyright (c) 2014-2025 Sean McArthur.
+//! Portions of this file are derived from the disabled `PreferenceApplied`
+//! implementation in <https://github.com/hyperium/headers>.
+//! This file, including local modifications, is distributed under the MIT License.
 //!
 //! The `Preference-Applied` response header may be included within a
 //! response message as an indication as to which `Prefer` header tokens were

@@ -1,8 +1,11 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Typed `Link` header for NGSI-LD (RFC 8288, ETSI GS CIM 009 clauses 6.3.5, 6.3.6, 6.3.10).
 //!
-//! Portions of this module are derived from [Headers](https://github.com/hyperium/headers).
-//! Licensed under the MIT License.
-//! Copyright (c) 2014-2025 Sean McArthur.
+//! This module is derived from the disabled `Link` implementation in
+//! <https://github.com/hyperium/headers>.
+//! This module, including local modifications, is distributed under the MIT License.
 //!
 //! Implements the subset of the HTTP `Link` header
 //! ([RFC 8288](https://datatracker.ietf.org/doc/html/rfc8288)) required by NGSI-LD:

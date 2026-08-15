@@ -1,4 +1,10 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! The `Link` header itself: a list of link-values, and how it is spelled.
+//!
+//! This file is derived from the disabled `Link` implementation in
+//! <https://github.com/hyperium/headers> and includes local modifications.
 
 use crate::link::{
     error::LinkParseError,

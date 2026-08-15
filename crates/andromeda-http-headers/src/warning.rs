@@ -1,9 +1,13 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Strict `Warning` response header (RFC 9110, section 5.5).
 //!
 //! The structure and wire-format handling are adapted from the disabled
-//! `Warning` implementation in hyperium's `headers` crate (MIT licensed,
-//! <https://github.com/hyperium/headers>). It is kept locally because that
-//! implementation is not exported by the current upstream crate.
+//! `Warning` implementation in <https://github.com/hyperium/headers>. It is
+//! kept locally because that implementation is not exported by the current
+//! upstream crate.
+//! This file, including local modifications, is distributed under the MIT License.
 
 use http::{HeaderName, HeaderValue};
 use std::{fmt, str::FromStr};

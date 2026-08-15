@@ -1,4 +1,10 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! The two operations RFC 8288's quoting rules force on a parser.
+//!
+//! This file supports the adapted `Link` implementation derived from
+//! <https://github.com/hyperium/headers> and is distributed under the MIT License.
 //!
 //! A `Link` header separates link-values with `,` and parameters with `;`, but
 //! either character may appear inside a quoted parameter value, so neither

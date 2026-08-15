@@ -1,8 +1,11 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Typed `Prefer` request header for NGSI-LD (RFC 7240, clause 6.3.6).
 //!
-//! Portions of this file are derived from [Headers](https://github.com/hyperium/headers).
-//! Licensed under the MIT License.
-//! Copyright (c) 2014-2025 Sean McArthur.
+//! Portions of this file are derived from the disabled `Prefer` implementation
+//! in <https://github.com/hyperium/headers>.
+//! This file, including local modifications, is distributed under the MIT License.
 //!
 //! Parses the `Prefer` request header to extract NGSI-LD-specific preferences:
 //! - `body=json` / `body=ld+json` for GeoJSON @context placement

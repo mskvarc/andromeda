@@ -1,9 +1,13 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Typed NGSI-LD temporal `Content-Range` response header (ETSI GS CIM 009,
 //! clause 6.3.10).
 //!
-//! The type is based on hyperium's `headers::ContentRange` implementation
-//! (MIT licensed, <https://github.com/hyperium/headers>), extended for the
-//! NGSI-LD `date-time` range unit rather than byte ranges.
+//! This file is derived from the `ContentRange` implementation in
+//! <https://github.com/hyperium/headers>, extended for the NGSI-LD `date-time`
+//! range unit rather than byte ranges.
+//! This file, including local modifications, is distributed under the MIT License.
 
 use chrono::{DateTime, Utc};
 use http::{HeaderName, HeaderValue};

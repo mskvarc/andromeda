@@ -1,8 +1,11 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Quality factors for HTTP content negotiation.
 //!
-//! Portions of this file are derived from [Headers](https://github.com/hyperium/headers).
-//! Licensed under the MIT License.
-//! Copyright (c) 2014-2025 Sean McArthur.
+//! Portions of this file are derived from the disabled quality utilities in
+//! <https://github.com/hyperium/headers>.
+//! This file, including local modifications, is distributed under the MIT License.
 //!
 //! Implements quality factors as defined in
 //! [RFC 9110 Section 12.4.2](https://www.rfc-editor.org/rfc/rfc9110#section-12.4.2)

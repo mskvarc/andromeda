@@ -1,4 +1,10 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! A single `link-value` within a `Link` header (RFC 8288 section 3).
+//!
+//! This file is derived from the disabled `Link` implementation in
+//! <https://github.com/hyperium/headers> and includes local modifications.
 
 use crate::{
     link::{error::LinkParseError, quoting::verify_and_trim, relation_type::RelationType},

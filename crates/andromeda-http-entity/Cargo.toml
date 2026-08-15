@@ -2,6 +2,7 @@
 name = "andromeda-http-entity"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 authors.workspace = true
 
 [lints]

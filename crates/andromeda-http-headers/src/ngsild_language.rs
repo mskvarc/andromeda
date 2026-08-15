@@ -1,8 +1,11 @@
+//! SPDX-FileCopyrightText: 2014-2025 Sean McArthur
+//! SPDX-License-Identifier: MIT
+//!
 //! Typed `NGSILD-Language` request header for language negotiation.
 //!
-//! Portions of this file are derived from [Headers](https://github.com/hyperium/headers).
-//! Licensed under the MIT License.
-//! Copyright (c) 2014-2025 Sean McArthur.
+//! Portions of this file are derived from the disabled `AcceptLanguage`
+//! implementation in <https://github.com/hyperium/headers>.
+//! This file, including local modifications, is distributed under the MIT License.
 //!
 //! Parses the `NGSILD-Language` header value using the same syntax as
 //! `Accept-Language` ([RFC 7231 Section 5.3.5](https://datatracker.ietf.org/doc/html/rfc7231#section-5.3.5)):
