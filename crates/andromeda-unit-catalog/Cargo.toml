@@ -16,4 +16,3 @@ thiserror = "2.0.20"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
-pretty_assertions = "1.4.1"

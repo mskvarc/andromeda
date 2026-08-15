@@ -88,7 +88,6 @@ dependencies = [
  "andromeda-entity",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
- "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
  "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
@@ -117,7 +116,6 @@ dependencies = [
  "shadow-rs",
  "sqlx",
  "tokio",
- "url",
  "urlencoding",
  "uuid",
 ]
@@ -160,22 +158,14 @@ dependencies = [
  "andromeda-http-temporal",
  "andromeda-http-tenancy",
  "andromeda-jsonld",
- "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
- "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-representation",
- "andromeda-ngsi-ld-request",
- "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
  "andromeda-postgresql-atomic-write",
  "andromeda-postgresql-attribute-dictionary",
- "andromeda-postgresql-context-query",
  "andromeda-postgresql-context-store",
- "andromeda-postgresql-encoding",
- "andromeda-postgresql-query",
- "andromeda-postgresql-temporal-query",
  "andromeda-postgresql-temporal-store",
  "andromeda-registration",
  "andromeda-snapshot",
@@ -186,43 +176,23 @@ dependencies = [
  "andromeda-tenancy",
  "async-trait",
  "chrono",
- "compact_str",
  "confique",
- "dashmap",
  "derive_more",
  "futures",
- "geo",
- "geojson",
- "indexmap 2.14.0",
- "iri-rs",
- "iso8601-duration",
- "jsonld",
- "langtag",
- "mediatype",
- "moka",
- "percent-encoding",
  "pretty_assertions",
- "regex",
- "reqwest",
- "sea-query",
- "sea-query-sqlx",
  "serde",
  "serde_json",
- "serde_urlencoded",
  "serial_test",
  "shadow-rs",
- "sonic-rs",
  "sqlx",
  "strum",
  "thiserror 2.0.20",
  "tokio",
- "tokio-util",
  "toml 1.1.4+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "typed-builder",
  "url",
- "urn-rs",
  "uuid",
 ]
 
@@ -287,7 +257,6 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "async-trait",
  "backon",
- "bytes",
  "dashmap",
  "derive_more",
  "headers",
@@ -432,7 +401,6 @@ dependencies = [
  "async-trait",
  "axum",
  "futures",
- "pretty_assertions",
  "tokio",
  "tower",
  "tower-http 0.7.0",
@@ -450,7 +418,6 @@ dependencies = [
  "axum",
  "pretty_assertions",
  "serde",
- "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tower",
@@ -524,7 +491,6 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
- "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-request",
  "andromeda-tenancy",
@@ -551,7 +517,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-render",
  "andromeda-ngsi-ld-request",
- "andromeda-ngsi-ld-vocabulary",
  "andromeda-tenancy",
  "axum",
  "futures",
@@ -578,7 +543,6 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-representation",
- "andromeda-ngsi-ld-vocabulary",
  "chrono",
  "derive_more",
  "headers",
@@ -591,7 +555,6 @@ dependencies = [
  "strum",
  "thiserror 2.0.20",
  "tracing",
- "urn-rs",
 ]
 
 [[package]]
@@ -688,7 +651,6 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
- "andromeda-ngsi-ld-request",
  "andromeda-snapshot",
  "andromeda-temporal",
  "andromeda-tenancy",
@@ -930,7 +892,6 @@ dependencies = [
  "thiserror 2.0.20",
  "typed-builder",
  "url",
- "urn-rs",
  "uuid",
 ]
 
@@ -970,7 +931,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "typed-builder",
- "urn-rs",
 ]
 
 [[package]]
@@ -995,7 +955,6 @@ dependencies = [
  "serde_json",
  "strum",
  "thiserror 2.0.20",
- "urn-rs",
  "uuid",
 ]
 
@@ -1025,14 +984,12 @@ dependencies = [
  "headers",
  "http",
  "iso8601-duration",
- "langtag",
  "pretty_assertions",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "strum",
  "thiserror 2.0.20",
- "urn-rs",
 ]
 
 [[package]]
@@ -1126,7 +1083,6 @@ dependencies = [
  "andromeda-postgresql-seaquery",
  "async-trait",
  "dashmap",
- "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",
  "serde",
@@ -1140,11 +1096,8 @@ name = "andromeda-postgresql-codes"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
- "andromeda-ngsi-ld-lexicon",
  "derive_more",
- "pretty_assertions",
  "thiserror 2.0.20",
- "urn-rs",
  "uuid",
 ]
 
@@ -1184,7 +1137,6 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
- "andromeda-ngsi-ld-vocabulary",
  "andromeda-notification",
  "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
@@ -1195,7 +1147,6 @@ dependencies = [
  "andromeda-postgresql-seaquery",
  "andromeda-registration",
  "andromeda-snapshot",
- "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-tenancy",
  "andromeda-unit-catalog",
@@ -1252,7 +1203,6 @@ dependencies = [
  "andromeda-postgresql-encoding",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
- "andromeda-unit-catalog",
  "chrono",
  "derive_more",
  "iri-rs",
@@ -1276,9 +1226,7 @@ name = "andromeda-postgresql-seaquery"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
- "chrono",
  "sea-query",
- "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1301,7 +1249,6 @@ dependencies = [
  "sea-query",
  "serde_json",
  "thiserror 2.0.20",
- "urn-rs",
 ]
 
 [[package]]
@@ -1328,18 +1275,12 @@ dependencies = [
  "async-trait",
  "cefact-units",
  "chrono",
- "const_format",
- "iri-rs",
  "pretty_assertions",
  "sea-query",
  "sea-query-sqlx",
  "serde_json",
  "sqlx",
- "strum",
  "thiserror 2.0.20",
- "tokio",
- "tracing",
- "urn-rs",
  "uuid",
 ]
 
@@ -1390,7 +1331,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "url",
  "uuid",
@@ -1406,7 +1346,6 @@ dependencies = [
  "andromeda-ngsi-ld-query",
  "andromeda-tenancy",
  "dashmap",
- "geo",
  "iri-rs",
  "parking_lot",
  "pretty_assertions",
@@ -1524,12 +1463,10 @@ dependencies = [
  "bytes",
  "http",
  "iri-rs",
- "mediatype",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "url",
  "urlencoding",
 ]
@@ -1557,7 +1494,6 @@ dependencies = [
  "futures",
  "http",
  "iri-rs",
- "serde_json",
  "sqlx",
  "thiserror 2.0.20",
  "tokio",
@@ -1594,7 +1530,6 @@ dependencies = [
  "cefact-units",
  "derive_more",
  "hex",
- "pretty_assertions",
  "thiserror 2.0.20",
 ]
 

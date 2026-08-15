@@ -16,7 +16,6 @@ andromeda-http-response.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
-andromeda-ngsi-ld-request.workspace = true
 andromeda-snapshot.workspace = true
 andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true

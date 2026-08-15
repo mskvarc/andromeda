@@ -14,7 +14,6 @@ andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-tenancy.workspace = true
 dashmap = { version = "6.2.1", features = ["inline"] }
-geo = "0.33.1"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 parking_lot = "0.12.5"
 rstar = "0.13.0"
