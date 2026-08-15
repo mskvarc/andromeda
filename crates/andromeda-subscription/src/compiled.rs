@@ -93,6 +93,14 @@ pub struct CompiledSubscription {
     pub jsonld_context: Option<Url>,
     /// Subscription expiration timestamp.
     pub expires_at: Option<DateTime<Utc>>,
+    /// When the subscription was created (clause 5.2.12 `createdAt`).
+    ///
+    /// A subscription is notified of changes that happen after it exists, so an
+    /// entity change whose `occurredAt` precedes this instant is not matched.
+    /// Without it, an entity change committed before the subscription was
+    /// created still reaches it once the notification worker processes that
+    /// change after the subscription has entered the cache.
+    pub created_at: DateTime<Utc>,
     /// Parsed entity filter expression.
     pub compiled_q: Option<Expr>,
     /// The subscription's `geoQ`, compiled to the same [`GeoQuery`] a

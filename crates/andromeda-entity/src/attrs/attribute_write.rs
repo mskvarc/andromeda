@@ -9,8 +9,9 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     entity_mutation::{EntityMutation, EntityRecord},
     history_record::HistoryRecord,
+    subscription_match::SubscriptionMatch,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use serde_json::Value;
 use std::sync::Arc;
@@ -21,11 +22,18 @@ use std::sync::Arc;
 /// [`commit_computed_write`](crate::EntityService::commit_computed_write)
 /// stamps it with the `modifiedAt` of the payload the mutation was computed
 /// from, which is what stops a concurrent writer's change being overwritten.
-pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryRecord>) -> AtomicWrite {
+///
+/// The `subscription_matches` are the durable notification records this write
+/// owes, built from the attempt that actually landed so durable delivery
+/// describes the change the store accepted rather than one an earlier attempt
+/// computed and lost. They are empty when notification recording is not
+/// configured.
+pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryRecord>, subscription_matches: Vec<SubscriptionMatch>) -> AtomicWrite {
     AtomicWrite::builder()
         .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
         .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(merged)))) // clone: Arc ref-count bump; the payload is also the change event's
         .history(history)
+        .subscription_matches(subscription_matches)
         .build()
 }
 
@@ -38,6 +46,9 @@ pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryR
 pub(super) struct UpdatedAttrs {
     /// The entity as it stands after the update.
     pub merged: Arc<Value>,
+    /// The entity's types after the update (clause 4.5.1), read off the attempt
+    /// that landed so the notification carries the stored types.
+    pub types: Vec<EntityTypeName>,
     /// The payload as it stood before, when a `showChanges` subscriber needs it.
     pub previous: Option<Value>,
     /// Attribute names the update added.
@@ -55,6 +66,9 @@ pub(super) struct UpdatedAttrs {
 pub(super) struct MutatedEntity {
     /// The entity as it stands after the mutation.
     pub merged: Arc<Value>,
+    /// The entity's types after the mutation (clause 4.5.1), read off the
+    /// attempt that landed so the notification carries the stored types.
+    pub types: Vec<EntityTypeName>,
     /// The payload as it stood before, when a `showChanges` subscriber needs it.
     pub previous: Option<Value>,
     /// Which change the mutation describes to a subscriber.

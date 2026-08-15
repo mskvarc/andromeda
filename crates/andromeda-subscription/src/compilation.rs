@@ -53,6 +53,7 @@ pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription
         notification_show_changes: sub.notification.show_changes.unwrap_or(false),
         jsonld_context: sub.delivery.jsonld_context.clone(), // clone: compiled state owns the context URL.
         expires_at: sub.lifecycle.expires_at,
+        created_at: sub.lifecycle.created_at,
         compiled_q: sub.filters.q.clone(), // clone: compiled state owns its filter AST.
         compiled_geo_q: sub.filters.geo_q.as_ref().and_then(|value| compile_geo_q(value, sub.id.as_ref())),
         compiled_scope_q: sub.filters.scope_q.clone(), // clone: compiled state owns its scope AST.

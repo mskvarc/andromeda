@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
     },
     notification::NotificationTrigger,
 };
-use std::sync::Arc;
+use std::{slice::from_ref, sync::Arc};
 
 impl EntityService {
     /// Delete one attribute, or one of its instances, from an entity
@@ -51,6 +51,7 @@ impl EntityService {
 
         let MutatedEntity {
             merged,
+            types: entity_types,
             previous: previous_attributes,
             trigger,
         } = self
@@ -72,11 +73,26 @@ impl EntityService {
                 }
 
                 let merged = Arc::new(existing);
-                let write = payload_write(&entity_uri, &merged, history);
+                let types = extract_types(&merged);
+
+                // The durable match mirrors the single Live `emit_attr_change`
+                // below: `AttributeDeleted` for the one attribute this call
+                // removed, with the same before-snapshot.
+                let subscription_matches = self.build_subscription_matches(
+                    &entity_uri,
+                    &types,
+                    NotificationTrigger::AttributeDeleted,
+                    from_ref(&expanded_attr_name),
+                    Some(&merged),
+                    previous_attributes.as_ref(),
+                );
+
+                let write = payload_write(&entity_uri, &merged, history, subscription_matches);
                 Ok((
                     write,
                     MutatedEntity {
                         merged,
+                        types,
                         previous: previous_attributes,
                         trigger: NotificationTrigger::AttributeDeleted,
                     },
@@ -84,15 +100,7 @@ impl EntityService {
             })
             .await?;
 
-        let entity_types = extract_types(&merged);
-        self.emit_attr_change(
-            entity_uri,
-            entity_types,
-            trigger,
-            vec![attr_name_of(attr_iri.as_str())?],
-            previous_attributes,
-            Some(merged),
-        );
+        self.emit_attr_change(entity_uri, entity_types, trigger, vec![expanded_attr_name], previous_attributes, Some(merged));
 
         Ok(())
     }

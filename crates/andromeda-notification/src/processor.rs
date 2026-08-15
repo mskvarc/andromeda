@@ -536,6 +536,7 @@ mod tests {
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
     use andromeda_subscription::{matching::matches_subscription, subscription_key::SubscriptionKey};
+    use chrono::DateTime;
     use std::num::NonZeroU32;
     use url::Url;
 
@@ -575,6 +576,7 @@ mod tests {
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,
+            created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q: None,
             compiled_scope_q: None,

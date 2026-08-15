@@ -23,3 +23,6 @@ pub mod partial_update;
 pub mod replace;
 /// Updating the attributes an entity already has (clause 5.6.2).
 pub mod update;
+
+#[cfg(test)]
+mod durable_match_recording;

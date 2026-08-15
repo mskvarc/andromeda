@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, slice::from_ref, sync::Arc};
 
 impl EntityService {
     /// Update the attributes an entity already carries (clause 5.6.2).
@@ -40,6 +40,7 @@ impl EntityService {
 
         let UpdatedAttrs {
             merged,
+            types: entity_types,
             previous: previous_attributes,
             created: created_attrs,
             updated: updated_attrs,
@@ -57,24 +58,63 @@ impl EntityService {
                 let deleted: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
                 let merged = Arc::new(existing);
+                let types = extract_types(&merged);
+                // clone: owned names from filtered references
+                let created: Vec<AttributeName> = all_changed.iter().filter(|name| !attrs_before.contains(name.as_str())).cloned().collect();
+                let updated: Vec<AttributeName> = all_changed.iter().filter(|name| attrs_before.contains(name.as_str())).cloned().collect();
+
+                // The durable matches mirror the three Live emits below exactly:
+                // one `AttributeDeleted` per removed instance, then a single
+                // `AttributeCreated` and `AttributeUpdated` when their groups are
+                // non-empty. Each group carries only its own attribute names.
+                let mut subscription_matches = Vec::new();
+                for deleted_attr in &deleted {
+                    subscription_matches.extend(self.build_subscription_matches(
+                        &entity_uri,
+                        &types,
+                        NotificationTrigger::AttributeDeleted,
+                        from_ref(deleted_attr),
+                        Some(&merged),
+                        previous_attributes.as_ref(),
+                    ));
+                }
+                if !created.is_empty() {
+                    subscription_matches.extend(self.build_subscription_matches(
+                        &entity_uri,
+                        &types,
+                        NotificationTrigger::AttributeCreated,
+                        &created,
+                        Some(&merged),
+                        previous_attributes.as_ref(),
+                    ));
+                }
+                if !updated.is_empty() {
+                    subscription_matches.extend(self.build_subscription_matches(
+                        &entity_uri,
+                        &types,
+                        NotificationTrigger::AttributeUpdated,
+                        &updated,
+                        Some(&merged),
+                        previous_attributes.as_ref(),
+                    ));
+                }
+
                 let history = mutation_history(&expanded, previous, &merged);
-                let write = payload_write(&entity_uri, &merged, history);
+                let write = payload_write(&entity_uri, &merged, history, subscription_matches);
                 Ok((
                     write,
                     UpdatedAttrs {
-                        // clone: owned names from filtered references
-                        created: all_changed.iter().filter(|name| !attrs_before.contains(name.as_str())).cloned().collect(),
-                        updated: all_changed.iter().filter(|name| attrs_before.contains(name.as_str())).cloned().collect(),
                         merged,
+                        types,
                         previous: previous_attributes,
+                        created,
+                        updated,
                         deleted,
                         not_updated,
                     },
                 ))
             })
             .await?;
-
-        let entity_types = extract_types(&merged);
 
         for deleted_attr in &deleted_attrs {
             self.emit_attr_change(

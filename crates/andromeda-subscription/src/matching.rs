@@ -98,6 +98,20 @@ pub fn matches_subscription(sub: &CompiledSubscription, event: &ChangeEvent) -> 
         return false;
     }
 
+    // A subscription is notified of changes that happen while it is active, not
+    // of the state that existed before it (clause 5.2.12: a subscription has no
+    // initial notification). An entity change committed before the subscription
+    // was created can still reach the notification worker after the subscription
+    // has entered the cache; matching it here would deliver a notification for a
+    // change the subscriber could never have asked to observe.
+    if event.occurred_at < sub.created_at {
+        debug!(
+            "Subscription {} skipped: event occurred at {} before the subscription was created at {}",
+            sub.id, event.occurred_at, sub.created_at
+        );
+        return false;
+    }
+
     if sub.time_interval_secs.is_some() {
         return false;
     }
@@ -220,6 +234,7 @@ mod tests {
         term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
+    use chrono::DateTime;
     use futures::executor::block_on;
     use iri_rs::IriBuf;
     use std::{fmt::Display, num::NonZeroU32, str::FromStr};
@@ -255,6 +270,7 @@ mod tests {
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,
+            created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q: None,
             compiled_scope_q: None,
@@ -275,6 +291,37 @@ mod tests {
             .origin(ChangeOrigin::Local)
             .changed_attributes(vec![parse_fixture("temperature", "attribute name")?])
             .build())
+    }
+
+    fn at(unix_seconds: i64) -> Result<DateTime<Utc>, SubscriptionError> {
+        DateTime::from_timestamp(unix_seconds, 0).ok_or_else(|| SubscriptionError::internal("fixture timestamp out of range".to_owned()))
+    }
+
+    /// Clause 5.2.12: a subscription has no initial notification, so a change
+    /// that occurred before the subscription was created never notifies it. The
+    /// notification worker can still see such a change after the subscription has
+    /// entered the cache, which is when this guard has to hold.
+    #[test]
+    fn a_change_that_occurred_before_the_subscription_was_created_is_not_matched() -> Result<(), SubscriptionError> {
+        let mut event = make_event()?;
+        event.occurred_at = at(1_000)?;
+        let mut sub = make_sub()?;
+
+        sub.created_at = at(2_000)?;
+        assert!(
+            !matches_subscription(&sub, &event),
+            "a change before the subscription's creation must not match"
+        );
+
+        sub.created_at = at(1_000)?;
+        assert!(
+            matches_subscription(&sub, &event),
+            "a change at the subscription's creation instant still matches"
+        );
+
+        sub.created_at = at(500)?;
+        assert!(matches_subscription(&sub, &event), "a change after the subscription's creation matches");
+        Ok(())
     }
 
     fn make_csource_sub() -> Result<CompiledCsrSubscription, SubscriptionError> {

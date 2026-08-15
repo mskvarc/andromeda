@@ -8,6 +8,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+mod concurrency;
 mod depth;
 mod order;
 

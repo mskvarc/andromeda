@@ -17,7 +17,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{slice::from_ref, sync::Arc};
 
 impl EntityService {
     /// Replace one attribute of an entity wholesale (clause 5.6.19).
@@ -50,8 +50,11 @@ impl EntityService {
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
+        let expanded_attr_name = attr_name_of(attr_iri.as_str())?;
+
         let MutatedEntity {
             merged,
+            types: entity_types,
             previous: previous_attributes,
             trigger,
         } = self
@@ -62,11 +65,31 @@ impl EntityService {
                 replace_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
                 let merged = Arc::new(existing);
-                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))]); // clone: Arc ref-count bump
+                let types = extract_types(&merged);
+
+                // The durable match mirrors the single Live `emit_attr_change`
+                // below: `AttributeUpdated` for the one attribute this call
+                // replaced, with the same before-snapshot.
+                let subscription_matches = self.build_subscription_matches(
+                    &entity_uri,
+                    &types,
+                    NotificationTrigger::AttributeUpdated,
+                    from_ref(&expanded_attr_name),
+                    Some(&merged),
+                    previous_attributes.as_ref(),
+                );
+
+                let write = payload_write(
+                    &entity_uri,
+                    &merged,
+                    vec![HistoryRecord::Observations(Arc::clone(&expanded))],
+                    subscription_matches,
+                ); // clone: Arc ref-count bump
                 Ok((
                     write,
                     MutatedEntity {
                         merged,
+                        types,
                         previous: previous_attributes,
                         trigger: NotificationTrigger::AttributeUpdated,
                     },
@@ -74,15 +97,7 @@ impl EntityService {
             })
             .await?;
 
-        let entity_types = extract_types(&merged);
-        self.emit_attr_change(
-            entity_uri,
-            entity_types,
-            trigger,
-            vec![attr_name_of(attr_iri.as_str())?],
-            previous_attributes,
-            Some(merged),
-        );
+        self.emit_attr_change(entity_uri, entity_types, trigger, vec![expanded_attr_name], previous_attributes, Some(merged));
 
         Ok(())
     }

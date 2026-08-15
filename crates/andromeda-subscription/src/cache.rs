@@ -256,6 +256,7 @@ mod tests {
     use super::*;
     use crate::{error::SubscriptionError, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
+    use chrono::{DateTime, Utc};
     use std::num::NonZeroU32;
     use url::Url;
 
@@ -295,6 +296,7 @@ mod tests {
             notification_show_changes: false,
             jsonld_context: None,
             expires_at: None,
+            created_at: DateTime::<Utc>::MIN_UTC,
             compiled_q: None,
             compiled_geo_q: None,
             compiled_scope_q: None,

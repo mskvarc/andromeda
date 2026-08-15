@@ -48,17 +48,38 @@ impl EntityService {
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
-        let (merged, not_appended) = self
+        let (merged, not_appended, appended_keys, entity_types) = self
             .commit_computed_write(&entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the append mutates its own copy of the stored payload
                 let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
                 let merged = Arc::new(existing);
-                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))]); // clone: Arc ref-count bump
-                Ok((write, (merged, not_appended)))
+
+                // The attributes actually appended are those the fragment
+                // carried minus the instances `noOverwrite` skipped. This is the
+                // set the change describes to `watchedAttributes` matching and to
+                // the notification's `changedAttributes`; the entity's other
+                // attributes did not change.
+                let appended_keys: Vec<AttributeName> = extract_attribute_keys(&expanded)
+                    .into_iter()
+                    .filter(|name| !not_appended.contains(name))
+                    .collect();
+                let types = extract_types(&merged);
+
+                // Append tracks no previous snapshot, so the durable match mirrors
+                // the Live `AttributeCreated` emit exactly, previous included.
+                let subscription_matches =
+                    self.build_subscription_matches(&entity_uri, &types, NotificationTrigger::AttributeCreated, &appended_keys, Some(&merged), None);
+
+                let write = payload_write(
+                    &entity_uri,
+                    &merged,
+                    vec![HistoryRecord::Observations(Arc::clone(&expanded))],
+                    subscription_matches,
+                ); // clone: Arc ref-count bump
+                Ok((write, (merged, not_appended, appended_keys, types)))
             })
             .await?;
 
-        let entity_types = extract_types(&merged);
         let attr_keys = extract_attribute_keys(&merged);
         self.emit_change(
             ChangeEvent::builder()
@@ -67,7 +88,7 @@ impl EntityService {
                 .trigger_reason(NotificationTrigger::AttributeCreated)
                 .occurred_at(Utc::now())
                 .origin(ChangeOrigin::Local)
-                .changed_attributes(attr_keys.clone()) // clone: the same names are also this operation's return value
+                .changed_attributes(appended_keys)
                 .current_payload(Some(merged))
                 .build(),
         );
