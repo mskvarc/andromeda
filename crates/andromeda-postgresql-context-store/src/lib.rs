@@ -34,6 +34,8 @@ pub mod notification_delivery;
 pub mod pending_side_effects;
 /// The schema contract one tenant database carries, and what it is checked against.
 pub mod schema_contract;
+/// Dialect DDL and session statements SeaQuery cannot express.
+pub mod schema_ddl;
 /// Persistence layer for snapshot records.
 pub mod snapshot;
 /// Filling the entity spatial index from the store.
@@ -66,6 +68,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-context-query",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-registration",
         "andromeda-snapshot",

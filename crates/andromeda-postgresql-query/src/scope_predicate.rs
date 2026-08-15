@@ -5,14 +5,30 @@
 //! bounded by the query's time window, and the boolean structure between the
 //! two is identical.
 
-use crate::{ltree::pattern_to_lquery, time_column::column_name};
+use crate::ltree::pattern_to_lquery;
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{
     scope::{pattern::ScopePattern, query::ScopeQuery},
     temporal::window::TimeInterval,
 };
-use andromeda_postgresql_seaquery::{bind::BindBuilder, column_reference::ColumnReference, ltree::ltree_matches};
-use sea_query::{Condition, Expr as SeaExpr, IntoIden, SimpleExpr};
+use andromeda_postgresql_schema::temporal::ScopeHistory;
+use andromeda_postgresql_seaquery::{column_reference::ColumnReference, ltree::ltree_matches};
+use sea_query::{Condition, Expr as SeaExpr, Iden, IntoIden, Query, SimpleExpr};
+
+/// The `scope_history` alias a temporal scope probe reads under.
+#[derive(Iden, Clone, Copy)]
+#[iden = "sh"]
+struct Sh;
+
+/// The `scope_history` axis column a `timeproperty` bounds the probe on.
+const fn scope_history_axis(timeproperty: TimeProp) -> ScopeHistory {
+    match timeproperty {
+        TimeProp::Observed => ScopeHistory::ObservedAt,
+        TimeProp::Created => ScopeHistory::CreatedAt,
+        TimeProp::Modified => ScopeHistory::ModifiedAt,
+        TimeProp::Deleted => ScopeHistory::DeletedAt,
+    }
+}
 
 /// Which relation a scope predicate is evaluated against.
 #[derive(Debug, Clone)]
@@ -86,60 +102,46 @@ pub fn condition(scope_q: &ScopeQuery, target: &ScopeTarget) -> Condition {
 fn pattern_predicate(pattern: &ScopePattern, target: &ScopeTarget) -> SimpleExpr {
     let lquery = pattern_to_lquery(pattern);
     match target {
-        // The reference is rendered from its iden here rather than stored quoted.
-        ScopeTarget::CurrentPaths { column } => ltree_matches(SeaExpr::cust(column.render()), SeaExpr::val(lquery).into()),
+        ScopeTarget::CurrentPaths { column } => ltree_matches(column.column_expr(), SeaExpr::val(lquery).into()),
         ScopeTarget::History {
             entity_key_column,
             timeproperty,
             interval,
-        } => scope_history_exists(&lquery, &entity_key_column.render(), *timeproperty, *interval),
+        } => scope_history_exists(&lquery, entity_key_column, *timeproperty, *interval),
     }
 }
 
 /// Generate an `EXISTS` subquery for a single scope pattern against
-/// `scope_history`.
-fn scope_history_exists(lquery: &str, entity_key_column: &str, timeproperty: TimeProp, interval: TimeInterval) -> SimpleExpr {
-    // The placeholders are local to this fragment; sea-query renumbers them
-    // when the enclosing statement is rendered. `$1` is the lquery pattern the
-    // EXISTS body probes with.
-    let mut binds: BindBuilder<String> = BindBuilder::default();
-    let lquery_marker = binds.bind(lquery.to_string());
-    let mut time_conditions = Vec::new();
-    // The window is measured on the requested Temporal Property alone, exactly
-    // as an attribute-history window is (clauses 4.11 and 5.2.21): a scope
-    // observation carrying no instant on that axis takes no position on it.
-    let axis = column_name(timeproperty);
+/// `scope_history`, correlated on the temporal entity key and bounded to the
+/// window on the requested axis (clauses 4.11 and 5.2.21).
+fn scope_history_exists(lquery: &str, entity_key_column: &ColumnReference, timeproperty: TimeProp, interval: TimeInterval) -> SimpleExpr {
+    let axis = scope_history_axis(timeproperty);
+    let mut probe = Query::select();
+    probe
+        .expr(SeaExpr::val(1))
+        .from_as(ScopeHistory::Table, Sh)
+        .and_where(SeaExpr::col((Sh, ScopeHistory::TemporalEntityKey)).eq(entity_key_column.column_expr()))
+        .and_where(ltree_matches(
+            SeaExpr::col((Sh, ScopeHistory::ScopePath)).into(),
+            SeaExpr::val(lquery.to_string()).into(),
+        ));
 
     match interval {
         TimeInterval::Unbounded => {}
         TimeInterval::Before(instant) => {
-            let marker = binds.bind(instant.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"{axis}\" < {marker}::timestamptz"));
+            probe.and_where(SeaExpr::col((Sh, axis)).lt(instant));
         }
         TimeInterval::After(instant) => {
-            let marker = binds.bind(instant.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"{axis}\" >= {marker}::timestamptz"));
+            probe.and_where(SeaExpr::col((Sh, axis)).gte(instant));
         }
         TimeInterval::Between { from, to } => {
-            let start = binds.bind(from.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"{axis}\" >= {start}::timestamptz"));
-            let end = binds.bind(to.to_rfc3339());
-            time_conditions.push(format!("\"sh\".\"{axis}\" < {end}::timestamptz"));
+            probe.and_where(SeaExpr::col((Sh, axis)).gte(from));
+            probe.and_where(SeaExpr::col((Sh, axis)).lt(to));
         }
     }
+    let probe = probe;
 
-    let time_clause = if time_conditions.is_empty() {
-        String::new()
-    } else {
-        format!(" AND {}", time_conditions.join(" AND "))
-    };
-
-    SeaExpr::cust_with_values(
-        format!(
-            "EXISTS (SELECT 1 FROM \"scope_history\" AS \"sh\" WHERE \"sh\".\"temporal_entity_key\" = {entity_key_column} AND \"sh\".\"scope_path\" ~ {lquery_marker}::lquery{time_clause})"
-        ),
-        binds.into_values(),
-    )
+    SeaExpr::exists(probe)
 }
 
 #[cfg(test)]

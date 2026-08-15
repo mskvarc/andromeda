@@ -9,6 +9,14 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_postgresql_schema::{
+    attribute_dictionary::AttributeNames,
+    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::pg_array::{any, text_array};
+use andromeda_postgresql_temporal_query::alias::{An, S, Te};
+use sea_query::{Alias, DeleteStatement, Expr, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_binder::SqlxBinder;
 use sqlx::Row;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -29,10 +37,8 @@ impl TemporalRepository {
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn temporal_entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalStoreError> {
-        let exists = sqlx::query_scalar(TEMPORAL_ENTITY_EXISTS_SQL)
-            .bind(entity_id.as_str())
-            .fetch_one(&self.pool)
-            .await?;
+        let (sql, values) = temporal_entity_exists_query(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+        let exists = sqlx::query_scalar_with(&sql, values).fetch_one(&self.pool).await?;
         Ok(exists)
     }
 
@@ -53,7 +59,8 @@ impl TemporalRepository {
             return Ok(HashMap::new());
         }
         let identifiers: Vec<&str> = entity_ids.iter().map(Uri::as_str).collect();
-        let rows = sqlx::query(TEMPORAL_ENTITY_TYPES_SQL).bind(&identifiers).fetch_all(&self.pool).await?;
+        let (sql, values) = temporal_entity_types_query(&identifiers).build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
         let mut types_by_entity = HashMap::with_capacity(rows.len());
         for row in rows {
             let raw_id: String = row
@@ -83,11 +90,8 @@ impl TemporalRepository {
     ///
     /// Returns [`TemporalStoreError::Database`] when the statement fails.
     pub(crate) async fn attribute_stream_exists(&self, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalStoreError> {
-        let exists = sqlx::query_scalar(ATTRIBUTE_STREAM_EXISTS_SQL)
-            .bind(entity_id.as_str())
-            .bind(attribute_name.as_str())
-            .fetch_one(&self.pool)
-            .await?;
+        let (sql, values) = attribute_stream_exists_query(entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
+        let exists = sqlx::query_scalar_with(&sql, values).fetch_one(&self.pool).await?;
         Ok(exists)
     }
 
@@ -98,11 +102,8 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
     /// [`TemporalStoreError::Decode`] when a stored discriminator is not a URI.
     pub(crate) async fn attribute_dataset_ids(&self, entity_id: &Uri, attribute_name: &AttributeName) -> Result<Vec<Option<Uri>>, TemporalStoreError> {
-        let rows = sqlx::query(ATTRIBUTE_DATASET_IDS_SQL)
-            .bind(entity_id.as_str())
-            .bind(attribute_name.as_str())
-            .fetch_all(&self.pool)
-            .await?;
+        let (sql, values) = attribute_dataset_ids_query(entity_id.as_str(), attribute_name.as_str()).build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
                 row.try_get::<Option<String>, _>("dataset_id")
@@ -123,7 +124,8 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Database`] when the statement fails and
     /// [`TemporalStoreError::Decode`] when a stored name is not an attribute IRI.
     pub(crate) async fn temporal_attribute_names(&self, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalStoreError> {
-        let rows = sqlx::query(TEMPORAL_ATTRIBUTE_NAMES_SQL).bind(entity_id.as_str()).fetch_all(&self.pool).await?;
+        let (sql, values) = temporal_attribute_names_query(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 let raw: String = row.try_get("attribute_name")?;
@@ -155,24 +157,21 @@ impl TemporalRepository {
         dataset_id: Option<&Uri>,
         scope: AttributeStreamScope,
     ) -> Result<u64, TemporalStoreError> {
-        let statement = match scope {
-            AttributeStreamScope::All => SELECT_ATTRIBUTE_STREAMS_SQL,
-            AttributeStreamScope::Single => match dataset_id {
-                Some(_) => SELECT_ATTRIBUTE_STREAMS_FOR_DATASET_SQL,
-                None => SELECT_ATTRIBUTE_STREAMS_FOR_DEFAULT_SQL,
-            },
+        let dataset_selector = match (scope, dataset_id) {
+            (AttributeStreamScope::All, _) => DatasetSelector::AllStreams,
+            (AttributeStreamScope::Single, Some(dataset_id)) => DatasetSelector::Named(dataset_id.as_str()),
+            (AttributeStreamScope::Single, None) => DatasetSelector::Default,
         };
-        let mut query = sqlx::query_scalar::<_, Uuid>(statement).bind(entity_id.as_str()).bind(attribute_name.as_str());
-        if let (AttributeStreamScope::Single, Some(dataset_id)) = (scope, dataset_id) {
-            query = query.bind(dataset_id.as_str());
-        }
+        let (select_sql, select_values) =
+            select_attribute_streams_query(entity_id.as_str(), attribute_name.as_str(), dataset_selector).build_sqlx(PostgresQueryBuilder);
         let mut tx = self.pool.begin().await?;
-        let stream_ids: Vec<Uuid> = query.fetch_all(&mut *tx).await?;
+        let stream_ids: Vec<Uuid> = sqlx::query_scalar_with(&select_sql, select_values).fetch_all(&mut *tx).await?;
         if stream_ids.is_empty() {
             tx.rollback().await?;
             return Ok(0);
         }
-        let removed = sqlx::query(DELETE_STREAM_HISTORY_SQL).bind(&stream_ids).fetch_all(&mut *tx).await?;
+        let (history_sql, history_values) = delete_stream_history_query(&stream_ids).build_sqlx(PostgresQueryBuilder);
+        let removed = sqlx::query_with(&history_sql, history_values).fetch_all(&mut *tx).await?;
         let touched_writes = removed
             .iter()
             .map(|row| {
@@ -180,123 +179,215 @@ impl TemporalRepository {
                     .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.write_id: {error}")))
             })
             .collect::<Result<Vec<Uuid>, _>>()?;
-        let streams = sqlx::query(DELETE_STREAMS_SQL).bind(&stream_ids).execute(&mut *tx).await?.rows_affected();
+        let (streams_sql, streams_values) = delete_streams_query(&stream_ids).build_sqlx(PostgresQueryBuilder);
+        let streams = sqlx::query_with(&streams_sql, streams_values).execute(&mut *tx).await?.rows_affected();
         release_named(&mut tx, &touched_writes).await?;
         tx.commit().await?;
         Ok(streams)
     }
 }
 
-const TEMPORAL_ENTITY_EXISTS_SQL: &str = "SELECT EXISTS(SELECT 1 FROM temporal_entities WHERE id = $1)";
+/// Which dataset instances of one attribute a stream selection addresses.
+#[derive(Clone, Copy)]
+enum DatasetSelector<'a> {
+    /// Every stream of the attribute.
+    AllStreams,
+    /// The one named dataset instance.
+    Named(&'a str),
+    /// The default instance, whose `datasetId` is absent.
+    Default,
+}
 
-const TEMPORAL_ENTITY_TYPES_SQL: &str = "SELECT id, types FROM temporal_entities WHERE id = ANY($1)";
+/// A bound `uuid[]` value from a batch of stream identifiers.
+///
+/// The array value owns its elements, so the slice is copied: a bound parameter
+/// cannot borrow from the caller's slice across the round trip.
+fn uuid_array(ids: &[Uuid]) -> sea_query::SimpleExpr {
+    Expr::val(ids.to_vec()).into()
+}
 
-const ATTRIBUTE_STREAM_EXISTS_SQL: &str = r#"
-SELECT EXISTS(
-    SELECT 1
-    FROM temporal_attribute_streams s
-    JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-    JOIN attribute_names an ON an.id = s.attribute_name_id
-    WHERE te.id = $1 AND an.name = $2
-)
-"#;
+/// Join a stream to its temporal entity and its attribute name.
+///
+/// Every catalogue read reaches the entity URI and the attribute IRI through
+/// this join rather than through `entities`, so a current-state deletion (clause
+/// 5.6.6) leaves the catalogue answering.
+fn stream_catalog_join(statement: &mut SelectStatement) {
+    statement
+        .from_as(TemporalAttributeStreams::Table, S)
+        .join_as(
+            JoinType::Join,
+            TemporalEntities::Table,
+            Te,
+            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .join_as(
+            JoinType::Join,
+            AttributeNames::Table,
+            An,
+            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+        );
+}
 
-const ATTRIBUTE_DATASET_IDS_SQL: &str = r#"
-SELECT s.dataset_id
-FROM temporal_attribute_streams s
-JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-JOIN attribute_names an ON an.id = s.attribute_name_id
-WHERE te.id = $1 AND an.name = $2
-"#;
+/// Whether the entity has a Temporal Evolution at all.
+fn temporal_entity_exists_query(entity_id: &str) -> SelectStatement {
+    let mut inner = Query::select();
+    inner
+        .expr(Expr::val(1))
+        .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).eq(entity_id));
+    let mut statement = Query::select();
+    statement.expr(Expr::exists(inner));
+    statement
+}
 
-const TEMPORAL_ATTRIBUTE_NAMES_SQL: &str = r#"
-SELECT DISTINCT an.name AS attribute_name
-FROM temporal_attribute_streams s
-JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-JOIN attribute_names an ON an.id = s.attribute_name_id
-WHERE te.id = $1
-"#;
+/// The identifier and types of every entity in `ids`.
+fn temporal_entity_types_query(ids: &[&str]) -> SelectStatement {
+    Query::select()
+        .columns([TemporalEntities::Id, TemporalEntities::Types])
+        .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).eq(any(text_array(ids))))
+        .to_owned()
+}
 
-const SELECT_ATTRIBUTE_STREAMS_SQL: &str = r#"
-SELECT s.id
-FROM temporal_attribute_streams s
-JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-JOIN attribute_names an ON an.id = s.attribute_name_id
-WHERE te.id = $1 AND an.name = $2
-FOR UPDATE OF s
-"#;
+/// Whether the entity records any stream for the named attribute.
+fn attribute_stream_exists_query(entity_id: &str, attribute_name: &str) -> SelectStatement {
+    let mut inner = Query::select();
+    inner.expr(Expr::val(1));
+    stream_catalog_join(&mut inner);
+    inner
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(attribute_name));
+    let mut statement = Query::select();
+    statement.expr(Expr::exists(inner));
+    statement
+}
 
-const SELECT_ATTRIBUTE_STREAMS_FOR_DATASET_SQL: &str = r#"
-SELECT s.id
-FROM temporal_attribute_streams s
-JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-JOIN attribute_names an ON an.id = s.attribute_name_id
-WHERE te.id = $1 AND an.name = $2 AND s.dataset_id = $3
-FOR UPDATE OF s
-"#;
+/// The `datasetId` of every stream the entity records for one attribute.
+fn attribute_dataset_ids_query(entity_id: &str, attribute_name: &str) -> SelectStatement {
+    let mut statement = Query::select();
+    statement.column((S, TemporalAttributeStreams::DatasetId));
+    stream_catalog_join(&mut statement);
+    statement
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(attribute_name));
+    statement
+}
 
-const SELECT_ATTRIBUTE_STREAMS_FOR_DEFAULT_SQL: &str = r#"
-SELECT s.id
-FROM temporal_attribute_streams s
-JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-JOIN attribute_names an ON an.id = s.attribute_name_id
-WHERE te.id = $1 AND an.name = $2 AND s.dataset_id IS NULL
-FOR UPDATE OF s
-"#;
+/// Every distinct attribute IRI the entity records a stream for.
+fn temporal_attribute_names_query(entity_id: &str) -> SelectStatement {
+    let mut statement = Query::select();
+    statement
+        .distinct()
+        .expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
+    stream_catalog_join(&mut statement);
+    statement.and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id));
+    statement
+}
 
-const DELETE_STREAM_HISTORY_SQL: &str = "DELETE FROM attribute_history WHERE stream_id = ANY($1) RETURNING write_id";
+/// The identifiers of the streams a deletion addresses, locked for update.
+///
+/// The default instance is addressed by the absence of a `datasetId`, never by
+/// a sentinel value, so a stream with no dataset is matched by `IS NULL`.
+fn select_attribute_streams_query(entity_id: &str, attribute_name: &str, dataset: DatasetSelector<'_>) -> SelectStatement {
+    let mut statement = Query::select();
+    statement.column((S, TemporalAttributeStreams::Id));
+    stream_catalog_join(&mut statement);
+    statement
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(attribute_name));
+    match dataset {
+        DatasetSelector::AllStreams => {}
+        DatasetSelector::Named(dataset_id) => {
+            statement.and_where(Expr::col((S, TemporalAttributeStreams::DatasetId)).eq(dataset_id));
+        }
+        DatasetSelector::Default => {
+            statement.and_where(Expr::col((S, TemporalAttributeStreams::DatasetId)).is_null());
+        }
+    }
+    statement.lock_with_tables(LockType::Update, [S]);
+    statement
+}
 
-const DELETE_STREAMS_SQL: &str = "DELETE FROM temporal_attribute_streams WHERE id = ANY($1)";
+/// Remove every observation of the addressed streams, returning the write
+/// identity each removed row belonged to.
+fn delete_stream_history_query(stream_ids: &[Uuid]) -> DeleteStatement {
+    Query::delete()
+        .from_table(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::StreamId).eq(any(uuid_array(stream_ids))))
+        .returning_col(AttributeHistory::WriteId)
+        .to_owned()
+}
+
+/// Remove the addressed streams themselves.
+fn delete_streams_query(stream_ids: &[Uuid]) -> DeleteStatement {
+    Query::delete()
+        .from_table(TemporalAttributeStreams::Table)
+        .and_where(Expr::col(TemporalAttributeStreams::Id).eq(any(uuid_array(stream_ids))))
+        .to_owned()
+}
 
 #[cfg(test)]
 mod tests {
     use crate::temporal_catalog_read::{
-        ATTRIBUTE_DATASET_IDS_SQL,
-        ATTRIBUTE_STREAM_EXISTS_SQL,
-        DELETE_STREAM_HISTORY_SQL,
-        DELETE_STREAMS_SQL,
-        SELECT_ATTRIBUTE_STREAMS_FOR_DATASET_SQL,
-        SELECT_ATTRIBUTE_STREAMS_FOR_DEFAULT_SQL,
-        SELECT_ATTRIBUTE_STREAMS_SQL,
-        TEMPORAL_ATTRIBUTE_NAMES_SQL,
-        TEMPORAL_ENTITY_EXISTS_SQL,
+        DatasetSelector,
+        attribute_dataset_ids_query,
+        attribute_stream_exists_query,
+        delete_stream_history_query,
+        delete_streams_query,
+        select_attribute_streams_query,
+        temporal_attribute_names_query,
+        temporal_entity_exists_query,
     };
+    use sea_query::PostgresQueryBuilder;
+    use uuid::Uuid;
 
-    const CATALOGUE_READS: [&str; 5] = [
-        TEMPORAL_ENTITY_EXISTS_SQL,
-        ATTRIBUTE_STREAM_EXISTS_SQL,
-        ATTRIBUTE_DATASET_IDS_SQL,
-        TEMPORAL_ATTRIBUTE_NAMES_SQL,
-        SELECT_ATTRIBUTE_STREAMS_SQL,
-    ];
+    fn read_sql() -> Vec<String> {
+        vec![
+            temporal_entity_exists_query("urn:x").to_string(PostgresQueryBuilder),
+            attribute_stream_exists_query("urn:x", "https://ex/speed").to_string(PostgresQueryBuilder),
+            attribute_dataset_ids_query("urn:x", "https://ex/speed").to_string(PostgresQueryBuilder),
+            temporal_attribute_names_query("urn:x").to_string(PostgresQueryBuilder),
+            select_attribute_streams_query("urn:x", "https://ex/speed", DatasetSelector::AllStreams).to_string(PostgresQueryBuilder),
+        ]
+    }
 
     #[test]
     fn no_catalogue_question_is_answered_from_current_state() {
-        for statement in CATALOGUE_READS {
-            assert!(!statement.contains("FROM entities"));
-            assert!(!statement.contains("JOIN entities"));
-            assert!(!statement.contains("temporal_entity_attributes"));
+        for statement in read_sql() {
+            assert!(!statement.contains("\"entities\""), "{statement}");
+            assert!(!statement.contains("temporal_entity_attributes"), "{statement}");
         }
     }
 
     #[test]
     fn the_default_instance_is_addressed_by_absence_rather_than_by_a_value() {
-        assert!(SELECT_ATTRIBUTE_STREAMS_FOR_DEFAULT_SQL.contains("s.dataset_id IS NULL"));
-        assert!(SELECT_ATTRIBUTE_STREAMS_FOR_DATASET_SQL.contains("s.dataset_id = $3"));
+        let default = select_attribute_streams_query("urn:x", "a", DatasetSelector::Default).to_string(PostgresQueryBuilder);
+        let named = select_attribute_streams_query("urn:x", "a", DatasetSelector::Named("urn:d")).to_string(PostgresQueryBuilder);
+        assert!(default.contains("\"dataset_id\" IS NULL"), "{default}");
+        assert!(named.contains("\"dataset_id\" ="), "{named}");
+    }
+
+    #[test]
+    fn a_stream_selection_locks_the_streams_for_update() {
+        let sql = select_attribute_streams_query("urn:x", "a", DatasetSelector::AllStreams).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("FOR UPDATE OF \"s\""), "{sql}");
     }
 
     #[test]
     fn attribute_deletion_removes_the_observations_before_the_stream_holding_them() {
-        assert!(DELETE_STREAM_HISTORY_SQL.starts_with("DELETE FROM attribute_history"));
-        assert!(DELETE_STREAM_HISTORY_SQL.contains("RETURNING write_id"));
-        assert!(DELETE_STREAMS_SQL.starts_with("DELETE FROM temporal_attribute_streams"));
+        let history = delete_stream_history_query(&[Uuid::nil()]).to_string(PostgresQueryBuilder);
+        let streams = delete_streams_query(&[Uuid::nil()]).to_string(PostgresQueryBuilder);
+        assert!(history.starts_with("DELETE FROM \"attribute_history\""), "{history}");
+        assert!(history.contains("RETURNING \"write_id\""), "{history}");
+        assert!(streams.starts_with("DELETE FROM \"temporal_attribute_streams\""), "{streams}");
     }
 
     #[test]
     fn attribute_deletion_records_no_tombstone() {
-        for statement in [DELETE_STREAM_HISTORY_SQL, DELETE_STREAMS_SQL] {
-            assert!(!statement.contains("INSERT"));
-            assert!(!statement.contains("deleted_at"));
+        for statement in [delete_stream_history_query(&[Uuid::nil()]), delete_streams_query(&[Uuid::nil()])] {
+            let sql = statement.to_string(PostgresQueryBuilder);
+            assert!(!sql.contains("INSERT"), "{sql}");
+            assert!(!sql.contains("deleted_at"), "{sql}");
         }
     }
 }

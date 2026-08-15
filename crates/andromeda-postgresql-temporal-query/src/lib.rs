@@ -16,6 +16,7 @@
 pub mod aggregation;
 pub mod aggregation_group;
 pub mod alias;
+pub mod axis;
 pub mod history;
 pub mod stage1;
 

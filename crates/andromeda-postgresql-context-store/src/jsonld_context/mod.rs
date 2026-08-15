@@ -19,3 +19,5 @@ pub mod registry_store;
 pub mod repo;
 /// Row structures for JSON-LD context documents.
 pub mod rows;
+/// SeaQuery statement builders for the `jsonld_contexts` relation.
+pub mod statement;

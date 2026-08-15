@@ -1,6 +1,7 @@
 //! The generic SQL operators sea-query has no native form for: array
 //! containment, POSIX regex, and the presence-and-value conjunction.
 
+use crate::pg_operator::PgBinaryOperator;
 use sea_query::{Expr, SimpleExpr};
 
 /// Combine a presence test with a value test.
@@ -9,8 +10,8 @@ use sea_query::{Expr, SimpleExpr};
 /// hold for a row that lacks the value entirely. Every rendering that tests a
 /// value builds its predicate here, which is what stops one of them disjoining
 /// presence instead.
-pub fn present_and(presence_sql: &str, value_sql: &str) -> String {
-    format!("({presence_sql} AND {value_sql})")
+pub fn present_and(presence: SimpleExpr, value: SimpleExpr) -> SimpleExpr {
+    presence.and(value)
 }
 
 /// Array membership: `array_col @> ARRAY(SELECT value)`.
@@ -32,7 +33,7 @@ pub fn array_contains(array_col: SimpleExpr, value: SimpleExpr) -> SimpleExpr {
 
 /// Regex: `col ~ pattern` - tests if column matches POSIX regex.
 pub fn regex_match(col: SimpleExpr, pattern: SimpleExpr) -> SimpleExpr {
-    Expr::cust_with_exprs("$1 ~ $2", [col, pattern])
+    col.posix_matches(pattern)
 }
 
 #[cfg(test)]
@@ -53,7 +54,10 @@ mod tests {
 
     #[test]
     fn a_value_test_is_always_conjoined_with_presence() {
-        assert_eq!(present_and("x IS NOT NULL", "NOT (x ~ $1)"), "(x IS NOT NULL AND NOT (x ~ $1))");
+        let presence = Expr::col("stored").is_not_null();
+        let value = Expr::col("stored").eq("x");
+        let sql = Query::select().expr(present_and(presence, value)).to_owned().to_string(PostgresQueryBuilder);
+        assert!(sql.contains(" IS NOT NULL AND "), "presence is conjoined, never disjoined: {sql}");
     }
 
     #[test]

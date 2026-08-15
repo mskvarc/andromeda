@@ -104,23 +104,52 @@
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pattern::Pattern;
+use andromeda_postgresql_schema::{
+    attribute_dictionary::AttributeNames,
+    csr::{Csr, RegistrationInformation},
+};
+use andromeda_postgresql_seaquery::{cast::cast, literal::int_literal, pg_array::array_of_subquery, pg_operator::PgBinaryOperator, pg_type::PostgresType};
 use iri_rs::IriBuf;
-use sea_query::{Expr as SeaExpr, SimpleExpr};
+use sea_query::{Alias, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
-/// The correlated header shared by every projection subquery.
+/// The alias every projection subquery reads `registration_information` under.
+fn ri() -> Alias {
+    Alias::new("ri")
+}
+
+/// A `"ri"."column"` reference into the correlated projection scan.
+fn ri_col(column: RegistrationInformation) -> SimpleExpr {
+    SeaExpr::col((ri(), column)).into()
+}
+
+/// The correlated scan shared by every projection subquery, optionally narrowed
+/// by one branch predicate.
 ///
 /// Correlation is written against the unaliased `context_source_registrations`
 /// relation because both the discovery statement and the coverage statement
 /// select from it under its own name.
-const CORRELATED_PREFIX: &str = "SELECT 1 FROM \"registration_information\" ri \
-     WHERE ri.\"registration_id\" = \"context_source_registrations\".\"id\"";
+fn correlated_scan(branch: Option<SimpleExpr>) -> SelectStatement {
+    let mut scan = Query::select();
+    scan.expr(int_literal(1))
+        .from_as(RegistrationInformation::Table, ri())
+        .and_where(SeaExpr::col((ri(), RegistrationInformation::RegistrationId)).eq(SeaExpr::col((Csr::Table, Csr::Id))));
+    if let Some(branch) = branch {
+        scan.and_where(branch);
+    }
+    scan
+}
 
 /// Whether the registration contributes no projection rows at all.
 ///
 /// A registration that restricts no dimension projects nothing, so this test is
 /// the open-registration escape hatch every dimension predicate disjoins with.
 fn no_projection_rows() -> SimpleExpr {
-    SeaExpr::cust(format!("NOT EXISTS ({CORRELATED_PREFIX})"))
+    Condition::all().add(SeaExpr::exists(correlated_scan(None))).not().into()
+}
+
+/// Whether some projection row satisfies a branch predicate.
+fn any_row(branch: SimpleExpr) -> SimpleExpr {
+    SeaExpr::exists(correlated_scan(Some(branch)))
 }
 
 /// Disjoin the branches of one dimension with the open-registration escape hatch.
@@ -135,43 +164,24 @@ where
     branches.into_iter().fold(no_projection_rows(), SimpleExpr::or)
 }
 
-/// The correlated `EXISTS` around one branch's row predicate.
-fn exists_clause(branch_predicate: &str) -> String {
-    format!("EXISTS ({CORRELATED_PREFIX} AND ({branch_predicate}))")
-}
-
-/// Whether some projection row satisfies a branch predicate that binds nothing.
-fn any_row(branch_predicate: &str) -> SimpleExpr {
-    SeaExpr::cust(exists_clause(branch_predicate))
-}
-
-/// Whether some projection row satisfies a branch predicate that binds values.
-///
-/// `branch_predicate` is the row-level SQL fragment, written against the `ri`
-/// alias, and receives `values` as its own `$1`-based placeholders. Each branch
-/// binds its own copy, so a fragment reused across two branches is bound twice.
-fn any_row_with_values<V, I>(branch_predicate: &str, values: I) -> SimpleExpr
-where
-    V: Into<sea_query::Value>,
-    I: IntoIterator<Item = V>,
-{
-    SeaExpr::cust_with_values(exists_clause(branch_predicate), values)
-}
-
 /// Registrations that may declare `entity_type`, by the routing projection.
 ///
 /// Rows that constrain no type are admitted, as is any row whose type set
-/// contains the expanded type IRI the query was compiled against. The two are
+/// overlaps the expanded type IRI the query was compiled against. The two are
 /// separate branches: the overlap one is what
 /// `idx_registration_information_entity_types` serves, and it only serves it
-/// standing alone.
+/// standing alone. The requested type is collected by `ARRAY(SELECT $1::TEXT)`
+/// rather than bound as a `text[]` value, so a single scalar crosses the bind
+/// boundary rather than an array `sea-query-binder` would have to encode.
 pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
-    // The requested type is wrapped by `ARRAY(SELECT ...)` rather than by an
-    // array literal: sea-query's tokenizer reads `[` as a quoting delimiter, so
-    // a placeholder written inside brackets is emitted verbatim and never bound.
+    let requested = || {
+        let mut single = Query::select();
+        single.expr(cast(SeaExpr::val(entity_type.as_str()).into(), PostgresType::Text));
+        array_of_subquery(single)
+    };
     candidate([
-        any_row("ri.\"entity_types\" IS NULL"),
-        any_row_with_values("ri.\"entity_types\" && ARRAY(SELECT $1::TEXT)", [entity_type.as_str().to_string()]),
+        any_row(SeaExpr::expr(ri_col(RegistrationInformation::EntityTypes)).is_null()),
+        any_row(ri_col(RegistrationInformation::EntityTypes).array_overlaps(requested())),
     ])
 }
 
@@ -186,9 +196,13 @@ pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
 /// whose partial predicate is exactly the test that branch makes.
 pub fn entity_id_candidate(entity_id: &Uri) -> SimpleExpr {
     candidate([
-        any_row("ri.\"entity_id\" IS NULL AND ri.\"entity_id_pattern\" IS NULL"),
-        any_row_with_values("ri.\"entity_id\" = $1", [entity_id.as_str().to_string()]),
-        any_row("ri.\"entity_id_pattern\" IS NOT NULL"),
+        any_row(
+            SeaExpr::expr(ri_col(RegistrationInformation::EntityId))
+                .is_null()
+                .and(SeaExpr::expr(ri_col(RegistrationInformation::EntityIdPattern)).is_null()),
+        ),
+        any_row(SeaExpr::expr(ri_col(RegistrationInformation::EntityId)).eq(entity_id.as_str())),
+        any_row(SeaExpr::expr(ri_col(RegistrationInformation::EntityIdPattern)).is_not_null()),
     ])
 }
 
@@ -200,8 +214,8 @@ pub fn entity_id_candidate(entity_id: &Uri) -> SimpleExpr {
 /// admitted, on their own branch.
 pub fn id_pattern_candidate(id_pattern: &Pattern) -> SimpleExpr {
     candidate([
-        any_row("ri.\"entity_id_pattern\" IS NULL"),
-        any_row_with_values("ri.\"entity_id_pattern\" = $1", [id_pattern.as_str().to_string()]),
+        any_row(SeaExpr::expr(ri_col(RegistrationInformation::EntityIdPattern)).is_null()),
+        any_row(SeaExpr::expr(ri_col(RegistrationInformation::EntityIdPattern)).eq(id_pattern.as_str())),
     ])
 }
 
@@ -219,16 +233,25 @@ pub fn id_pattern_candidate(id_pattern: &Pattern) -> SimpleExpr {
 /// small: the resolution is an index lookup per name against a dictionary the
 /// planner treats as a constant array for the overlap.
 pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
-    let placeholders = (1..=attribute_names.len())
-        .map(|position| format!("${position}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let requested_keys = format!("ARRAY(SELECT an.\"id\" FROM \"attribute_names\" an WHERE an.\"name\" IN ({placeholders}))::INTEGER[]");
-    let names = || attribute_names.iter().map(|name| name.as_str().to_string());
+    // Each overlap branch resolves the dictionary independently, so the keys
+    // subquery is rebuilt — and its names rebound — per branch.
+    let requested_keys = || {
+        let names: Vec<String> = attribute_names.iter().map(|name| name.as_str().to_string()).collect();
+        let mut dictionary = Query::select();
+        dictionary
+            .expr(SeaExpr::col((Alias::new("an"), AttributeNames::Id)))
+            .from_as(AttributeNames::Table, Alias::new("an"))
+            .and_where(SeaExpr::col((Alias::new("an"), AttributeNames::Name)).is_in(names));
+        cast(array_of_subquery(dictionary), PostgresType::IntegerArray)
+    };
     candidate([
-        any_row("ri.\"property_name_ids\" IS NULL AND ri.\"relationship_name_ids\" IS NULL"),
-        any_row_with_values(&format!("ri.\"property_name_ids\" && {requested_keys}"), names()),
-        any_row_with_values(&format!("ri.\"relationship_name_ids\" && {requested_keys}"), names()),
+        any_row(
+            SeaExpr::expr(ri_col(RegistrationInformation::PropertyNameIds))
+                .is_null()
+                .and(SeaExpr::expr(ri_col(RegistrationInformation::RelationshipNameIds)).is_null()),
+        ),
+        any_row(ri_col(RegistrationInformation::PropertyNameIds).array_overlaps(requested_keys())),
+        any_row(ri_col(RegistrationInformation::RelationshipNameIds).array_overlaps(requested_keys())),
     ])
 }
 
@@ -256,10 +279,14 @@ mod tests {
     /// How many correlated subqueries over the projection a predicate emits.
     ///
     /// One per branch plus the emptiness test, which is what distinguishes the
-    /// split shape from the single-subquery one it replaced.
+    /// split shape from the single-subquery one it replaced. Each subquery names
+    /// the routing projection exactly once.
     fn projection_subqueries(sql: &str) -> usize {
-        sql.matches("SELECT 1 FROM \"registration_information\" ri").count()
+        sql.matches("\"registration_information\"").count()
     }
+
+    /// The correlation every subquery carries.
+    const CORRELATION: &str = "\"ri\".\"registration_id\" = \"context_source_registrations\".\"id\"";
 
     #[test]
     fn every_dimension_keeps_a_registration_without_projection_rows_a_candidate() {
@@ -271,21 +298,22 @@ mod tests {
             render(id_pattern_candidate(&Pattern::parse("urn:ngsi-ld:.*").expect("valid pattern"))),
             render(attribute_name_candidate(&[iri("https://example.com/speed")])),
         ] {
-            assert!(sql.contains("NOT EXISTS (SELECT 1 FROM \"registration_information\""), "{sql}");
+            assert!(sql.contains("NOT EXISTS("), "the emptiness escape hatch is present: {sql}");
+            assert!(sql.contains("\"registration_information\""), "{sql}");
         }
     }
 
     #[test]
     fn every_dimension_correlates_on_the_registration_identifier() {
         let sql = render(entity_type_candidate(&iri("https://example.com/Vehicle")));
-        assert!(sql.contains("ri.\"registration_id\" = \"context_source_registrations\".\"id\""), "{sql}");
+        assert!(sql.contains(CORRELATION), "{sql}");
     }
 
     #[test]
     fn the_type_dimension_overlaps_the_stored_type_set_and_admits_rows_that_constrain_no_type() {
         let sql = render(entity_type_candidate(&iri("https://example.com/Vehicle")));
-        assert!(sql.contains("(ri.\"entity_types\" IS NULL)"), "{sql}");
-        assert!(sql.contains("(ri.\"entity_types\" && ARRAY(SELECT "), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_types\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_types\" && "), "{sql}");
         assert!(sql.contains("'https://example.com/Vehicle'"), "{sql}");
     }
 
@@ -294,32 +322,30 @@ mod tests {
         // Clause 4.9 regular expressions are decided by the residual, never by
         // PostgreSQL: a pattern row is a candidate whatever it holds.
         let sql = render(entity_id_candidate(&uri("urn:ngsi-ld:Vehicle:1")));
-        assert!(sql.contains("(ri.\"entity_id_pattern\" IS NOT NULL)"), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_id_pattern\" IS NOT NULL"), "{sql}");
         assert!(!sql.contains(" ~ "), "the preselect must not run a regular expression: {sql}");
     }
 
     #[test]
     fn the_identifier_dimension_admits_rows_that_constrain_neither_identifier_nor_pattern() {
         let sql = render(entity_id_candidate(&uri("urn:ngsi-ld:Vehicle:1")));
-        assert!(sql.contains("(ri.\"entity_id\" IS NULL AND ri.\"entity_id_pattern\" IS NULL)"), "{sql}");
-        assert!(sql.contains("(ri.\"entity_id\" = "), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_id\" IS NULL AND \"ri\".\"entity_id_pattern\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_id\" = "), "{sql}");
     }
 
     #[test]
     fn the_pattern_dimension_compares_the_pattern_text_rather_than_evaluating_it() {
         let sql = render(id_pattern_candidate(&Pattern::parse("urn:ngsi-ld:.*").expect("valid pattern")));
-        assert!(sql.contains("(ri.\"entity_id_pattern\" IS NULL)"), "{sql}");
-        assert!(sql.contains("(ri.\"entity_id_pattern\" = "), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_id_pattern\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"ri\".\"entity_id_pattern\" = "), "{sql}");
         assert!(sql.contains("'urn:ngsi-ld:.*'"), "{sql}");
     }
 
     #[test]
     fn the_attribute_dimension_resolves_names_through_the_dictionary_in_one_statement() {
         let sql = render(attribute_name_candidate(&[iri("https://example.com/speed"), iri("https://example.com/temp")]));
-        assert!(
-            sql.contains("ARRAY(SELECT an.\"id\" FROM \"attribute_names\" an WHERE an.\"name\" IN ("),
-            "{sql}"
-        );
+        assert!(sql.contains("\"attribute_names\""), "{sql}");
+        assert!(sql.contains("\"an\".\"name\" IN ("), "{sql}");
         assert!(sql.contains("'https://example.com/speed'"), "{sql}");
         assert!(sql.contains("'https://example.com/temp'"), "{sql}");
     }
@@ -331,18 +357,19 @@ mod tests {
         // whose two arrays are `NULL` declared nothing and stays a candidate.
         let sql = render(attribute_name_candidate(&[iri("https://example.com/speed")]));
         assert!(
-            sql.contains("(ri.\"property_name_ids\" IS NULL AND ri.\"relationship_name_ids\" IS NULL)"),
+            sql.contains("\"ri\".\"property_name_ids\" IS NULL AND \"ri\".\"relationship_name_ids\" IS NULL"),
             "{sql}"
         );
-        assert!(sql.contains("(ri.\"property_name_ids\" && ARRAY("), "{sql}");
-        assert!(sql.contains("(ri.\"relationship_name_ids\" && ARRAY("), "{sql}");
+        assert!(sql.contains("\"ri\".\"property_name_ids\" && "), "{sql}");
+        assert!(sql.contains("\"ri\".\"relationship_name_ids\" && "), "{sql}");
     }
 
     #[test]
     fn no_dimension_puts_an_unindexable_disjunction_inside_a_single_subquery() {
         // The defect this shape exists to fix: `col IS NULL OR col && …` inside
         // one `EXISTS` is not indexable as a whole, so the planner reads every
-        // projection row. Each disjunct has to be its own subquery.
+        // projection row. Each disjunct has to be its own subquery, so a column's
+        // `IS NULL` is never immediately disjoined with another test of it.
         for sql in [
             render(entity_type_candidate(&iri("https://example.com/Vehicle"))),
             render(entity_id_candidate(&uri("urn:ngsi-ld:Vehicle:1"))),
@@ -350,11 +377,10 @@ mod tests {
             render(attribute_name_candidate(&[iri("https://example.com/speed")])),
         ] {
             for unindexable in [
-                "ri.\"entity_types\" IS NULL OR",
-                "ri.\"entity_id_pattern\" IS NULL OR",
-                "ri.\"entity_id_pattern\" IS NULL) OR ri.",
-                "IS NULL) OR ri.\"entity_id\" =",
-                "IS NULL) OR ri.\"property_name_ids\" &&",
+                "\"entity_types\" IS NULL OR",
+                "\"entity_id_pattern\" IS NULL OR \"ri\"",
+                "\"entity_id\" IS NULL OR",
+                "\"property_name_ids\" IS NULL OR",
             ] {
                 assert!(!sql.contains(unindexable), "a dimension disjunction leaked into one subquery: {sql}");
             }
@@ -384,11 +410,7 @@ mod tests {
             render(id_pattern_candidate(&Pattern::parse("urn:ngsi-ld:.*").expect("valid pattern"))),
             render(attribute_name_candidate(&[iri("https://example.com/speed")])),
         ] {
-            pretty_assertions::assert_eq!(
-                sql.matches("ri.\"registration_id\" = \"context_source_registrations\".\"id\"").count(),
-                projection_subqueries(&sql),
-                "{sql}"
-            );
+            pretty_assertions::assert_eq!(sql.matches(CORRELATION).count(), projection_subqueries(&sql), "{sql}");
         }
     }
 

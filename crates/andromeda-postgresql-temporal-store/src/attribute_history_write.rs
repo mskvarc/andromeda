@@ -12,11 +12,99 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::StreamId, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_schema::temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    pg_type::PostgresType,
+    placeholder::external_placeholder,
+    postgis::validated_geom_from_ewkb,
+    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
+use sea_query::{CaseStatement, Expr, Iden, JoinType, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
+
+/// The `UNNEST` staging alias, `d`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "d"]
+struct D;
+
+/// The `temporal_attribute_streams` alias a targeted row's incoming stream is
+/// resolved to its `(entity, attribute)` scope through.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s1"]
+struct S1;
+
+/// The `temporal_attribute_streams` alias that enumerates the sibling streams of
+/// that scope.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s2"]
+struct S2;
+
+/// The `temporal_attribute_streams` alias the claim insert reads the scope from.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s"]
+struct S;
+
+/// The two staging columns of the verbatim-dedup and claim statements.
+#[derive(Iden, Clone, Copy)]
+enum DedupStaged {
+    /// The stream each targeted row extends.
+    StreamId,
+    /// The verbatim identifier each targeted row carries.
+    VerbatimInstanceId,
+}
+
+/// The staging columns of an attribute-history row, named as the `AS d(…)` alias
+/// spells them rather than as the `attribute_history` columns they land in.
+#[derive(Iden, Clone, Copy)]
+enum HistoryStaged {
+    /// Write clock of the row.
+    RecordedAt,
+    /// Atomic write the row belongs to.
+    WriteId,
+    /// Stream the row extends.
+    StreamId,
+    /// Position of the row within its atomic write.
+    WriteOrdinal,
+    /// Attribute family the row was written as.
+    AttributeKind,
+    /// Stored value shape of the row.
+    ValueKind,
+    /// Client-declared observation instant.
+    ObservedAt,
+    /// Instant the instance was first recorded at.
+    CreatedAt,
+    /// Instant the instance was last altered at.
+    ModifiedAt,
+    /// Deletion instant, present only on a tombstone.
+    DeletedAt,
+    /// Timestamp value.
+    ValueDatetime,
+    /// Broker-minted instance identifier.
+    GeneratedInstanceUuid,
+    /// Catalog identity of the instance's unit.
+    UnitCodeId,
+    /// Boolean value.
+    ValueBool,
+    /// Instance identifier stored exactly as received.
+    VerbatimInstanceId,
+    /// Arbitrary-precision value as the decimal literal `NUMERIC` parses.
+    ValueNumber,
+    /// String value.
+    ValueString,
+    /// Geometry value as EWKB.
+    ValueGeo,
+    /// Structured value.
+    ValueObject,
+    /// URI value.
+    ValueUri,
+    /// Retained expanded members.
+    Metadata,
+}
 
 impl TemporalRepository {
     /// Bulk-insert attribute-history rows in the caller's transaction.
@@ -109,12 +197,14 @@ async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, targets: 
     if targets.ids.is_empty() {
         return Ok(());
     }
-    sqlx::query(HISTORY_VERBATIM_DEDUP_SQL)
+    let history_dedup_sql = history_verbatim_dedup_sql();
+    sqlx::query(&history_dedup_sql)
         .bind(&targets.streams)
         .bind(&targets.ids)
         .execute(&mut **tx)
         .await?;
-    sqlx::query(CLAIM_VERBATIM_DEDUP_DELETE_SQL)
+    let claim_dedup_sql = claim_verbatim_dedup_delete_sql();
+    sqlx::query(&claim_dedup_sql)
         .bind(&targets.streams)
         .bind(&targets.ids)
         .execute(&mut **tx)
@@ -139,7 +229,8 @@ async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &
     if targets.ids.is_empty() {
         return Ok(());
     }
-    sqlx::query(CLAIM_VERBATIM_INSTANCES_SQL)
+    let claim_sql = claim_verbatim_instances_sql()?;
+    sqlx::query(&claim_sql)
         .bind(&targets.streams)
         .bind(&targets.ids)
         .execute(&mut **tx)
@@ -148,27 +239,111 @@ async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &
     Ok(())
 }
 
-const HISTORY_VERBATIM_DEDUP_SQL: &str = "DELETE FROM attribute_history ah \
-     USING UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
-     JOIN temporal_attribute_streams s1 ON s1.id = d.stream_id \
-     WHERE ah.verbatim_instance_id = d.verbatim_instance_id \
-       AND ah.stream_id IN ( \
-           SELECT s2.id FROM temporal_attribute_streams s2 \
-           WHERE s2.temporal_entity_key = s1.temporal_entity_key AND s2.attribute_name_id = s1.attribute_name_id \
-       )";
+/// The two staging columns the verbatim-dedup and claim statements read.
+fn dedup_staging_columns() -> [UnnestColumn; 2] {
+    [
+        UnnestColumn::new(DedupStaged::StreamId, PostgresType::UuidArray),
+        UnnestColumn::new(DedupStaged::VerbatimInstanceId, PostgresType::TextArray),
+    ]
+}
 
-const CLAIM_VERBATIM_DEDUP_DELETE_SQL: &str = "DELETE FROM attribute_history_instance_claims c \
-     USING UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
-     JOIN temporal_attribute_streams s1 ON s1.id = d.stream_id \
-     WHERE c.verbatim_instance_id = d.verbatim_instance_id \
-       AND c.temporal_entity_key = s1.temporal_entity_key \
-       AND c.attribute_name_id = s1.attribute_name_id";
+/// The `UNNEST($1::uuid[], $2::text[])` staging call the dedup/claim statements
+/// share; the two arrays bind through the caller's chain.
+fn dedup_unnest() -> sea_query::FunctionCall {
+    let columns = dedup_staging_columns();
+    unnest_call([(&columns[0], external_placeholder(1)), (&columns[1], external_placeholder(2))])
+}
 
-const CLAIM_VERBATIM_INSTANCES_SQL: &str = "INSERT INTO attribute_history_instance_claims \
-     (temporal_entity_key, attribute_name_id, verbatim_instance_id) \
-     SELECT s.temporal_entity_key, s.attribute_name_id, d.verbatim_instance_id \
-     FROM UNNEST($1::uuid[], $2::text[]) AS d(stream_id, verbatim_instance_id) \
-     JOIN temporal_attribute_streams s ON s.id = d.stream_id";
+/// Remove the history rows a verbatim-identified batch supersedes, across every
+/// sibling `datasetId` stream of the incoming row's `(entity, attribute)`.
+///
+/// `DELETE … USING … JOIN` is expressed as a correlated `EXISTS`, since
+/// sea-query has no `USING`.
+fn history_verbatim_dedup_sql() -> String {
+    let sibling_streams = Query::select()
+        .column((S2, TemporalAttributeStreams::Id))
+        .from_as(TemporalAttributeStreams::Table, S2)
+        .and_where(Expr::col((S2, TemporalAttributeStreams::TemporalEntityKey)).equals((S1, TemporalAttributeStreams::TemporalEntityKey)))
+        .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameId)).equals((S1, TemporalAttributeStreams::AttributeNameId)))
+        .to_owned();
+    let matches = Query::select()
+        .expr(Expr::val(1))
+        .from_function(dedup_unnest(), D)
+        .join_as(
+            JoinType::InnerJoin,
+            TemporalAttributeStreams::Table,
+            S1,
+            Expr::col((S1, TemporalAttributeStreams::Id)).equals((D, DedupStaged::StreamId)),
+        )
+        .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId)).equals((D, DedupStaged::VerbatimInstanceId)))
+        .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamId)).in_subquery(sibling_streams))
+        .to_owned();
+    let sql = Query::delete()
+        .from_table(AttributeHistory::Table)
+        .and_where(Expr::exists(matches))
+        .to_owned()
+        .to_string(PostgresQueryBuilder);
+    apply_column_alias(sql, &D, &dedup_staging_columns())
+}
+
+/// Release the claims the same batch is about to re-stake, scoped to the
+/// `(entity, attribute)` the claim table is keyed by rather than to the stream.
+fn claim_verbatim_dedup_delete_sql() -> String {
+    let matches = Query::select()
+        .expr(Expr::val(1))
+        .from_function(dedup_unnest(), D)
+        .join_as(
+            JoinType::InnerJoin,
+            TemporalAttributeStreams::Table,
+            S1,
+            Expr::col((S1, TemporalAttributeStreams::Id)).equals((D, DedupStaged::StreamId)),
+        )
+        .and_where(
+            Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::VerbatimInstanceId)).equals((D, DedupStaged::VerbatimInstanceId)),
+        )
+        .and_where(
+            Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey))
+                .equals((S1, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .and_where(
+            Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameId))
+                .equals((S1, TemporalAttributeStreams::AttributeNameId)),
+        )
+        .to_owned();
+    let sql = Query::delete()
+        .from_table(AttributeHistoryInstanceClaims::Table)
+        .and_where(Expr::exists(matches))
+        .to_owned()
+        .to_string(PostgresQueryBuilder);
+    apply_column_alias(sql, &D, &dedup_staging_columns())
+}
+
+/// Stake this batch's claim on every `(entity, attribute, verbatim instanceId)`
+/// triple it carries; the primary key refuses a duplicate, so this insert
+/// carries no `ON CONFLICT`.
+fn claim_verbatim_instances_sql() -> Result<String, TemporalStoreError> {
+    let select = Query::select()
+        .expr(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)))
+        .expr(Expr::col((S, TemporalAttributeStreams::AttributeNameId)))
+        .expr(Expr::col((D, DedupStaged::VerbatimInstanceId)))
+        .from_function(dedup_unnest(), D)
+        .join_as(
+            JoinType::InnerJoin,
+            TemporalAttributeStreams::Table,
+            S,
+            Expr::col((S, TemporalAttributeStreams::Id)).equals((D, DedupStaged::StreamId)),
+        )
+        .to_owned();
+    let mut insert = Query::insert();
+    insert.into_table(AttributeHistoryInstanceClaims::Table).columns([
+        AttributeHistoryInstanceClaims::TemporalEntityKey,
+        AttributeHistoryInstanceClaims::AttributeNameId,
+        AttributeHistoryInstanceClaims::VerbatimInstanceId,
+    ]);
+    insert.select_from(select).map_err(|error| TemporalStoreError::Validation(error.to_string()))?;
+    let sql = insert.to_string(PostgresQueryBuilder);
+    Ok(apply_column_alias(sql, &D, &dedup_staging_columns()))
+}
 
 /// Column-major binds for one attribute-history batch.
 struct AttributeHistoryBinds<'a> {
@@ -267,35 +442,125 @@ fn attribute_history_binds<'a>(rows: &'a [AttributeHistoryRow]) -> Result<Attrib
     Ok(binds)
 }
 
-const ATTRIBUTE_HISTORY_INSERT_SQL: &str = r#"
-INSERT INTO attribute_history (
-    recorded_at, write_id, stream_id, write_ordinal, attribute_kind, value_kind,
-    observed_at, created_at, modified_at, deleted_at, value_datetime,
-    generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id,
-    value_number, value_string, value_geo, value_object, value_uri, metadata
-)
-SELECT d.recorded_at, d.write_id, d.stream_id, d.write_ordinal, d.attribute_kind, d.value_kind,
-       d.observed_at, d.created_at, d.modified_at, d.deleted_at, d.value_datetime,
-       d.generated_instance_uuid, d.unit_code_id, d.value_bool, d.verbatim_instance_id,
-       d.value_number::numeric, d.value_string,
-       CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END,
-       d.value_object, d.value_uri, d.metadata
-FROM UNNEST(
-    $1::timestamptz[], $2::uuid[], $3::uuid[], $4::integer[], $5::smallint[], $6::smallint[],
-    $7::timestamptz[], $8::timestamptz[], $9::timestamptz[], $10::timestamptz[], $11::timestamptz[],
-    $12::uuid[], $13::smallint[], $14::boolean[], $15::text[],
-    $16::text[], $17::text[], $18::bytea[], $19::jsonb[], $20::text[], $21::jsonb[]
-) AS d(recorded_at, write_id, stream_id, write_ordinal, attribute_kind, value_kind,
-       observed_at, created_at, modified_at, deleted_at, value_datetime,
-       generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id,
-       value_number, value_string, value_geo, value_object, value_uri, metadata)
-ON CONFLICT ON CONSTRAINT uq_attribute_history_write DO NOTHING
-"#;
+/// The twenty-one staging columns of an attribute-history row, in bind order.
+fn history_staging_columns() -> [UnnestColumn; 21] {
+    [
+        UnnestColumn::new(HistoryStaged::RecordedAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::WriteId, PostgresType::UuidArray),
+        UnnestColumn::new(HistoryStaged::StreamId, PostgresType::UuidArray),
+        UnnestColumn::new(HistoryStaged::WriteOrdinal, PostgresType::IntegerArray),
+        UnnestColumn::new(HistoryStaged::AttributeKind, PostgresType::SmallintArray),
+        UnnestColumn::new(HistoryStaged::ValueKind, PostgresType::SmallintArray),
+        UnnestColumn::new(HistoryStaged::ObservedAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::CreatedAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::ModifiedAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::DeletedAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::ValueDatetime, PostgresType::TimestamptzArray),
+        UnnestColumn::new(HistoryStaged::GeneratedInstanceUuid, PostgresType::UuidArray),
+        UnnestColumn::new(HistoryStaged::UnitCodeId, PostgresType::SmallintArray),
+        UnnestColumn::new(HistoryStaged::ValueBool, PostgresType::BooleanArray),
+        UnnestColumn::new(HistoryStaged::VerbatimInstanceId, PostgresType::TextArray),
+        UnnestColumn::new(HistoryStaged::ValueNumber, PostgresType::TextArray),
+        UnnestColumn::new(HistoryStaged::ValueString, PostgresType::TextArray),
+        UnnestColumn::new(HistoryStaged::ValueGeo, PostgresType::ByteaArray),
+        UnnestColumn::new(HistoryStaged::ValueObject, PostgresType::JsonbArray),
+        UnnestColumn::new(HistoryStaged::ValueUri, PostgresType::TextArray),
+        UnnestColumn::new(HistoryStaged::Metadata, PostgresType::JsonbArray),
+    ]
+}
+
+/// A staging column reference, `d.<column>`.
+fn staged(column: HistoryStaged) -> SimpleExpr {
+    Expr::col((D, column)).into()
+}
+
+/// The bulk attribute-history insert.
+///
+/// The value number reaches the arbitrary-precision column as its decimal
+/// literal cast `::numeric`, never widened to a double; the geometry is
+/// validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL
+/// geometry. The conflict target names the columns `uq_attribute_history_write`
+/// covers, so a row replayed under its original write identity is a no-op.
+fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
+    let columns = history_staging_columns();
+    let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
+
+    let geometry: SimpleExpr = CaseStatement::new()
+        .case(
+            Expr::col((D, HistoryStaged::ValueGeo)).is_not_null(),
+            validated_geom_from_ewkb(staged(HistoryStaged::ValueGeo)),
+        )
+        .finally(Keyword::Null)
+        .into();
+
+    let mut select = Query::select();
+    select
+        .expr(staged(HistoryStaged::RecordedAt))
+        .expr(staged(HistoryStaged::WriteId))
+        .expr(staged(HistoryStaged::StreamId))
+        .expr(staged(HistoryStaged::WriteOrdinal))
+        .expr(staged(HistoryStaged::AttributeKind))
+        .expr(staged(HistoryStaged::ValueKind))
+        .expr(staged(HistoryStaged::ObservedAt))
+        .expr(staged(HistoryStaged::CreatedAt))
+        .expr(staged(HistoryStaged::ModifiedAt))
+        .expr(staged(HistoryStaged::DeletedAt))
+        .expr(staged(HistoryStaged::ValueDatetime))
+        .expr(staged(HistoryStaged::GeneratedInstanceUuid))
+        .expr(staged(HistoryStaged::UnitCodeId))
+        .expr(staged(HistoryStaged::ValueBool))
+        .expr(staged(HistoryStaged::VerbatimInstanceId))
+        .expr(cast(staged(HistoryStaged::ValueNumber), PostgresType::Numeric))
+        .expr(staged(HistoryStaged::ValueString))
+        .expr(geometry)
+        .expr(staged(HistoryStaged::ValueObject))
+        .expr(staged(HistoryStaged::ValueUri))
+        .expr(staged(HistoryStaged::Metadata))
+        .from_function(call, D);
+    let select = select;
+
+    let mut insert = Query::insert();
+    insert.into_table(AttributeHistory::Table).columns([
+        AttributeHistory::RecordedAt,
+        AttributeHistory::WriteId,
+        AttributeHistory::StreamId,
+        AttributeHistory::WriteOrdinal,
+        AttributeHistory::AttributeKind,
+        AttributeHistory::ValueKind,
+        AttributeHistory::ObservedAt,
+        AttributeHistory::CreatedAt,
+        AttributeHistory::ModifiedAt,
+        AttributeHistory::DeletedAt,
+        AttributeHistory::ValueDatetime,
+        AttributeHistory::GeneratedInstanceUuid,
+        AttributeHistory::UnitCodeId,
+        AttributeHistory::ValueBool,
+        AttributeHistory::VerbatimInstanceId,
+        AttributeHistory::ValueNumber,
+        AttributeHistory::ValueString,
+        AttributeHistory::ValueGeo,
+        AttributeHistory::ValueObject,
+        AttributeHistory::ValueUri,
+        AttributeHistory::Metadata,
+    ]);
+    insert
+        .select_from(select)
+        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
+        .on_conflict(
+            OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
+                .do_nothing()
+                .to_owned(),
+        );
+
+    let sql = insert.to_string(PostgresQueryBuilder);
+    Ok(apply_column_alias(sql, &D, &columns))
+}
 
 /// Insert one batch by binding parallel arrays and expanding them with `UNNEST`.
 async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
     let binds = attribute_history_binds(rows)?;
-    sqlx::query(ATTRIBUTE_HISTORY_INSERT_SQL)
+    let sql = attribute_history_insert_sql()?;
+    sqlx::query(&sql)
         .bind(&binds.recorded_ats)
         .bind(&binds.write_ids)
         .bind(&binds.stream_ids)
@@ -325,83 +590,72 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, r
 #[cfg(test)]
 mod tests {
     use crate::attribute_history_write::{
-        ATTRIBUTE_HISTORY_INSERT_SQL,
-        CLAIM_VERBATIM_DEDUP_DELETE_SQL,
-        CLAIM_VERBATIM_INSTANCES_SQL,
-        HISTORY_VERBATIM_DEDUP_SQL,
+        attribute_history_insert_sql,
+        claim_verbatim_dedup_delete_sql,
+        claim_verbatim_instances_sql,
+        history_verbatim_dedup_sql,
     };
 
     #[test]
     fn deduplication_addresses_one_identity_column_and_never_the_generated_one() {
-        assert!(HISTORY_VERBATIM_DEDUP_SQL.contains("ah.verbatim_instance_id = d.verbatim_instance_id"));
-        assert!(!HISTORY_VERBATIM_DEDUP_SQL.contains("generated_instance_uuid"));
+        let sql = history_verbatim_dedup_sql();
+        assert!(
+            sql.contains(r#""attribute_history"."verbatim_instance_id" = "d"."verbatim_instance_id""#),
+            "{sql}"
+        );
+        assert!(!sql.contains("generated_instance_uuid"), "{sql}");
     }
 
-    /// The claim table is keyed by entity and attribute, not by stream, so its
-    /// dedup delete must resolve the incoming stream to that scope through the
-    /// same catalogue join the history dedup delete uses -- not by stream
-    /// identity, which would only free a claim on the exact stream being
-    /// rewritten and leave a sibling-stream claim stuck.
     #[test]
     fn the_claim_dedup_delete_is_scoped_to_the_entity_and_attribute_not_the_stream() {
-        assert!(CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("DELETE FROM attribute_history_instance_claims"));
-        assert!(CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("c.temporal_entity_key = s1.temporal_entity_key"));
-        assert!(CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("c.attribute_name_id = s1.attribute_name_id"));
-        assert!(!CLAIM_VERBATIM_DEDUP_DELETE_SQL.contains("c.stream_id"));
+        let sql = claim_verbatim_dedup_delete_sql();
+        assert!(sql.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#), "{sql}");
+        assert!(
+            sql.contains(r#""attribute_history_instance_claims"."temporal_entity_key" = "s1"."temporal_entity_key""#),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""attribute_history_instance_claims"."attribute_name_id" = "s1"."attribute_name_id""#),
+            "{sql}"
+        );
     }
 
-    /// The claim insert carries no `ON CONFLICT`: a duplicate triple, whether
-    /// from two rows in the same batch or from a concurrent batch, must reach
-    /// `attribute_history_instance_claims`'s primary key and fail the
-    /// statement, not be silently absorbed.
     #[test]
     fn the_claim_insert_lets_a_duplicate_triple_fail_the_statement() {
-        assert!(CLAIM_VERBATIM_INSTANCES_SQL.contains("INSERT INTO attribute_history_instance_claims"));
-        assert!(CLAIM_VERBATIM_INSTANCES_SQL.contains("temporal_entity_key, attribute_name_id, verbatim_instance_id"));
-        assert!(!CLAIM_VERBATIM_INSTANCES_SQL.contains("ON CONFLICT"));
+        let sql = claim_verbatim_instances_sql().expect("the fixed claim insert builds");
+        assert!(sql.starts_with(r#"INSERT INTO "attribute_history_instance_claims""#), "{sql}");
+        assert!(sql.contains(r#"("temporal_entity_key", "attribute_name_id", "verbatim_instance_id")"#), "{sql}");
+        assert!(!sql.contains("ON CONFLICT"), "{sql}");
     }
 
-    /// Clause 4.5.7 makes `instanceId` unique to one attribute instance, not
-    /// to one dataset stream of it, so the delete must reach every sibling
-    /// stream of the incoming row's `(entity, attribute)` rather than only
-    /// the stream it targets — the same scope the instance PATCH and DELETE
-    /// lookups already search (`temporal_attribute_streams` joined on
-    /// `temporal_entity_key` and `attribute_name_id`, not on `stream_id`
-    /// alone).
     #[test]
     fn deduplication_is_widened_to_every_sibling_stream_of_the_entity_and_attribute() {
-        assert!(HISTORY_VERBATIM_DEDUP_SQL.contains("s2.temporal_entity_key = s1.temporal_entity_key"));
-        assert!(HISTORY_VERBATIM_DEDUP_SQL.contains("s2.attribute_name_id = s1.attribute_name_id"));
-        assert!(!HISTORY_VERBATIM_DEDUP_SQL.contains("ah.stream_id = d.stream_id"));
+        let sql = history_verbatim_dedup_sql();
+        assert!(sql.contains(r#""s2"."temporal_entity_key" = "s1"."temporal_entity_key""#), "{sql}");
+        assert!(sql.contains(r#""s2"."attribute_name_id" = "s1"."attribute_name_id""#), "{sql}");
     }
 
-    /// A row-level delete keyed only on `observedAt` cannot tell a replay of
-    /// its own write apart from a different write that legitimately shares an
-    /// instant on the same stream, so it must not exist alongside row-level
-    /// `ON CONFLICT ... DO NOTHING` idempotency: only the verbatim-instance
-    /// pass, which is keyed on a client-stable identity, is left running
-    /// before the insert.
     #[test]
     fn no_delete_pass_is_keyed_on_observed_at_alone() {
-        assert!(!HISTORY_VERBATIM_DEDUP_SQL.contains("observed_at"));
+        assert!(!history_verbatim_dedup_sql().contains("observed_at"));
     }
 
     #[test]
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {
-        assert!(ATTRIBUTE_HISTORY_INSERT_SQL.contains("recorded_at, write_id, stream_id, write_ordinal"));
+        let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
+        assert!(sql.contains(r#"("recorded_at", "write_id", "stream_id", "write_ordinal""#), "{sql}");
     }
 
-    /// A commit replayed under its original write identity re-inserts every
-    /// row it already wrote; the row-level conflict clause is what makes that
-    /// second insert a no-op instead of a duplicate or an error.
     #[test]
     fn a_row_replayed_under_its_original_write_identity_is_not_duplicated() {
-        assert!(ATTRIBUTE_HISTORY_INSERT_SQL.contains("ON CONFLICT ON CONSTRAINT uq_attribute_history_write DO NOTHING"));
+        let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
+        assert!(sql.contains(r#"ON CONFLICT ("recorded_at", "write_id", "write_ordinal") DO NOTHING"#), "{sql}");
     }
 
     #[test]
     fn the_numeric_value_reaches_storage_as_a_decimal_literal_rather_than_a_double() {
-        assert!(ATTRIBUTE_HISTORY_INSERT_SQL.contains("d.value_number::numeric"));
-        assert!(!ATTRIBUTE_HISTORY_INSERT_SQL.contains("double precision"));
+        let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
+        assert!(sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
+        assert!(!sql.contains("double precision"), "{sql}");
     }
 }

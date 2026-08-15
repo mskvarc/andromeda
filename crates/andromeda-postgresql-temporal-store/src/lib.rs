@@ -96,6 +96,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-query",
         "andromeda-temporal",
@@ -103,7 +104,7 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["sqlx", "tokio"],
+    allow_production_dependencies: ["sea-query", "sea-query-binder", "sqlx", "tokio"],
 }
 
 #[cfg(test)]

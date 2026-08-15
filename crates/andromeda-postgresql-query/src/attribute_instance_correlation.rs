@@ -11,14 +11,8 @@
 
 use crate::attribute_name_id::AttributeNameId;
 use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
-use sea_query::Iden;
-
-/// The name an unaliased `entities` row is qualified by.
-///
-/// A table used without an alias is still addressable by its own name, which is
-/// what lets every correlation state its outer row even where the enclosing
-/// statement introduced no alias.
-const ENTITIES_TABLE: &str = "entities";
+use andromeda_postgresql_seaquery::literal::int_literal;
+use sea_query::{Alias, Expr as SeaExpr, IntoIden, Query, SelectStatement, SimpleExpr};
 
 /// The `entities` row a correlated subquery binds back to.
 ///
@@ -46,9 +40,9 @@ impl<'a> CorrelatedEntityRow<'a> {
         CorrelatedEntityRow { alias: Some(alias) }
     }
 
-    /// Quote one of the row's columns, always qualified by the name the
-    /// enclosing statement knows the row under: an aliased `e` and `location`
-    /// give `"e"."location"`, an unaliased row gives `"entities"."location"`.
+    /// One of the row's columns, always qualified by the name the enclosing
+    /// statement knows the row under: an aliased `e` and `location` give
+    /// `"e"."location"`, an unaliased row gives `"entities"."location"`.
     ///
     /// The qualification is what makes the correlation a correlation. A
     /// subquery over `current_attribute_values` has an `entity_key` column of
@@ -56,64 +50,84 @@ impl<'a> CorrelatedEntityRow<'a> {
     /// that offers one, so `"cav"."entity_key" = "entity_key"` is not a
     /// reference to the outer row at all — it compares the subquery's column
     /// with itself and silently admits every instance in the tenant.
-    pub fn column(&self, column: &str) -> String {
-        let qualifier = self.alias.unwrap_or(ENTITIES_TABLE);
-        format!("\"{qualifier}\".\"{column}\"")
+    pub fn column(&self, column: impl IntoIden) -> SimpleExpr {
+        match self.alias {
+            Some(alias) => SeaExpr::col((Alias::new(alias), column.into_iden())).into(),
+            None => SeaExpr::col((Entities::Table, column.into_iden())).into(),
+        }
+    }
+
+    /// The row's `entity_key`, the surrogate a correlated subquery binds against.
+    pub fn entity_key_column(&self) -> SimpleExpr {
+        self.column(Entities::EntityKey)
     }
 }
 
-/// The `FROM`/`WHERE` fragment selecting one entity's geometry-valued instances
-/// of one attribute, written so that a further conjunct can be appended.
+/// A `current_attribute_values` scan selecting one entity's geometry-valued
+/// instances of one attribute, correlated to the outer row and left open so a
+/// caller can add its projection and any further condition.
 ///
 /// `subquery_alias` names the `current_attribute_values` occurrence inside the
 /// subquery; each caller passes its own so two correlated subqueries nested in
 /// one statement cannot capture each other's rows.
 ///
-/// The dictionary key is a broker-minted `INTEGER` rather than request text, so
-/// interpolating it cannot carry an injection. Both of the equality columns and
-/// the `value_geo IS NOT NULL` restriction are covered by the partial btree
-/// index `idx_cav_attr_entity_geo (attribute_name_id, entity_key)`, so the
-/// fragment is an index probe rather than a scan of every instance of the
-/// attribute.
+/// Both of the equality columns and the `value_geo IS NOT NULL` restriction are
+/// covered by the partial btree index `idx_cav_attr_entity_geo
+/// (attribute_name_id, entity_key)`, so the scan is an index probe rather than a
+/// scan of every instance of the attribute.
 ///
 /// The correlation reads the outer row's `entity_key`: the projection is owned
 /// by the `entities` row through the surrogate key, and the entity URI it used
 /// to carry is not a column of this relation at all.
-pub fn geometry_instances_of(outer: CorrelatedEntityRow<'_>, subquery_alias: &str, attribute_id: AttributeNameId) -> String {
-    let table = CurrentAttributeValues::Table.to_string();
-    let entity_key = CurrentAttributeValues::EntityKey.to_string();
-    let attribute_name_id = CurrentAttributeValues::AttributeNameId.to_string();
-    let value_geo = CurrentAttributeValues::ValueGeo.to_string();
-    let outer_entity_key = outer.column(&Entities::EntityKey.to_string());
-    format!(
-        "FROM \"{table}\" AS \"{subquery_alias}\" \
-         WHERE \"{subquery_alias}\".\"{entity_key}\" = {outer_entity_key} \
-           AND \"{subquery_alias}\".\"{attribute_name_id}\" = {attribute} \
-           AND \"{subquery_alias}\".\"{value_geo}\" IS NOT NULL",
-        attribute = attribute_id.get(),
-    )
+pub fn geometry_instances_of(outer: CorrelatedEntityRow<'_>, subquery_alias: &str, attribute_id: AttributeNameId) -> SelectStatement {
+    let alias = Alias::new(subquery_alias);
+    let mut scan = Query::select();
+    scan.from_as(CurrentAttributeValues::Table, alias.clone())
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
+        .and_where(SeaExpr::col((alias.clone(), CurrentAttributeValues::AttributeNameId)).eq(attribute_id.get()))
+        .and_where(SeaExpr::col((alias, CurrentAttributeValues::ValueGeo)).is_not_null());
+    scan
 }
 
-/// Quote one of the subquery's geometry columns: the `value_geo` of the
-/// instance rows [`geometry_instances_of`] selects.
-pub fn instance_geometry_column(subquery_alias: &str) -> String {
-    let value_geo = CurrentAttributeValues::ValueGeo.to_string();
-    format!("\"{subquery_alias}\".\"{value_geo}\"")
+/// The subquery's geometry column: the `value_geo` of the instance rows
+/// [`geometry_instances_of`] selects.
+pub fn instance_geometry_column(subquery_alias: &str) -> SimpleExpr {
+    SeaExpr::col((Alias::new(subquery_alias), CurrentAttributeValues::ValueGeo)).into()
+}
+
+/// A `SELECT 1` marker for a correlated `EXISTS` built over
+/// [`geometry_instances_of`], kept beside the scan so both crates that wrap the
+/// scan in an existential spell the marker the same way.
+pub fn existence_marker() -> SimpleExpr {
+    int_literal(1)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        attribute_instance_correlation::{CorrelatedEntityRow, geometry_instances_of, instance_geometry_column},
+        attribute_instance_correlation::{CorrelatedEntityRow, existence_marker, geometry_instances_of, instance_geometry_column},
         attribute_name_id::AttributeNameId,
     };
+    use sea_query::{PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+
+    /// Render one correlated scan to its SQL, giving it the `SELECT 1` marker
+    /// each real caller supplies.
+    fn render(mut scan: SelectStatement) -> String {
+        scan.expr(existence_marker());
+        scan.to_string(PostgresQueryBuilder)
+    }
+
+    /// Render one column expression to its SQL alone.
+    fn render_column(expr: SimpleExpr) -> String {
+        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
 
     /// Every column reference carries a qualifier: the statement's alias where
     /// there is one, and the table's own name where there is not.
     #[test]
     fn a_column_is_qualified_by_the_alias_or_by_the_table_name() {
-        pretty_assertions::assert_eq!(CorrelatedEntityRow::aliased("e").column("location_geo"), "\"e\".\"location_geo\"");
-        pretty_assertions::assert_eq!(CorrelatedEntityRow::unaliased().column("location_geo"), "\"entities\".\"location_geo\"");
+        assert!(render_column(CorrelatedEntityRow::aliased("e").column(sea_query::Alias::new("location_geo"))).contains("\"e\".\"location_geo\""));
+        assert!(render_column(CorrelatedEntityRow::unaliased().column(sea_query::Alias::new("location_geo"))).contains("\"entities\".\"location_geo\""));
     }
 
     /// The correlation names the outer relation explicitly, so a join added to
@@ -122,10 +136,18 @@ mod tests {
     /// it into a tautology over every instance in the tenant.
     #[test]
     fn the_correlation_binds_the_outer_row_it_was_given() {
-        let bare = geometry_instances_of(CorrelatedEntityRow::unaliased(), "geo_instance", AttributeNameId::from(42_i32));
+        let bare = render(geometry_instances_of(
+            CorrelatedEntityRow::unaliased(),
+            "geo_instance",
+            AttributeNameId::from(42_i32),
+        ));
         assert!(bare.contains("\"geo_instance\".\"entity_key\" = \"entities\".\"entity_key\""), "{bare}");
 
-        let aliased = geometry_instances_of(CorrelatedEntityRow::aliased("e"), "geo_instance", AttributeNameId::from(42_i32));
+        let aliased = render(geometry_instances_of(
+            CorrelatedEntityRow::aliased("e"),
+            "geo_instance",
+            AttributeNameId::from(42_i32),
+        ));
         assert!(aliased.contains("\"geo_instance\".\"entity_key\" = \"e\".\"entity_key\""), "{aliased}");
     }
 
@@ -135,7 +157,7 @@ mod tests {
     #[test]
     fn no_correlation_leaves_the_outer_reference_unqualified() {
         for row in [CorrelatedEntityRow::unaliased(), CorrelatedEntityRow::aliased("e")] {
-            let sql = geometry_instances_of(row, "geo_instance", AttributeNameId::from(42_i32));
+            let sql = render(geometry_instances_of(row, "geo_instance", AttributeNameId::from(42_i32)));
             assert!(!sql.contains("= \"entity_key\""), "{sql}");
         }
     }
@@ -144,19 +166,26 @@ mod tests {
     /// so the entity URI appears nowhere in the correlation.
     #[test]
     fn the_correlation_reads_the_surrogate_key_and_never_the_entity_uri() {
-        let sql = geometry_instances_of(CorrelatedEntityRow::aliased("e"), "geo_instance", AttributeNameId::from(42_i32));
+        let sql = render(geometry_instances_of(
+            CorrelatedEntityRow::aliased("e"),
+            "geo_instance",
+            AttributeNameId::from(42_i32),
+        ));
         assert!(!sql.contains("entity_id"), "{sql}");
         assert!(!sql.contains("attribute_current"), "{sql}");
     }
 
-    /// Clause 4.10 reads the instances of one named GeoProperty, so the
-    /// fragment restricts on the dictionary key and on the geometry column
-    /// being populated — the two halves the supporting partial index is built
-    /// on.
+    /// Clause 4.10 reads the instances of one named GeoProperty, so the scan
+    /// restricts on the dictionary key and on the geometry column being
+    /// populated — the two halves the supporting partial index is built on.
     #[test]
     fn the_correlation_restricts_to_the_geometry_instances_of_one_attribute() {
-        let sql = geometry_instances_of(CorrelatedEntityRow::unaliased(), "geo_order", AttributeNameId::from(7_i32));
-        assert!(sql.starts_with("FROM \"current_attribute_values\" AS \"geo_order\""), "{sql}");
+        let sql = render(geometry_instances_of(
+            CorrelatedEntityRow::unaliased(),
+            "geo_order",
+            AttributeNameId::from(7_i32),
+        ));
+        assert!(sql.contains("FROM \"current_attribute_values\" AS \"geo_order\""), "{sql}");
         assert!(sql.contains("\"geo_order\".\"attribute_name_id\" = 7"), "{sql}");
         assert!(sql.contains("\"geo_order\".\"value_geo\" IS NOT NULL"), "{sql}");
     }
@@ -165,10 +194,18 @@ mod tests {
     /// neither can capture the other's rows.
     #[test]
     fn each_caller_names_its_own_subquery_alias() {
-        let first = geometry_instances_of(CorrelatedEntityRow::unaliased(), "geo_instance", AttributeNameId::from(1_i32));
-        let second = geometry_instances_of(CorrelatedEntityRow::unaliased(), "geo_order", AttributeNameId::from(1_i32));
+        let first = render(geometry_instances_of(
+            CorrelatedEntityRow::unaliased(),
+            "geo_instance",
+            AttributeNameId::from(1_i32),
+        ));
+        let second = render(geometry_instances_of(
+            CorrelatedEntityRow::unaliased(),
+            "geo_order",
+            AttributeNameId::from(1_i32),
+        ));
         assert!(!first.contains("geo_order"), "{first}");
         assert!(!second.contains("geo_instance"), "{second}");
-        pretty_assertions::assert_eq!(instance_geometry_column("geo_order"), "\"geo_order\".\"value_geo\"");
+        assert!(render_column(instance_geometry_column("geo_order")).contains("\"geo_order\".\"value_geo\""));
     }
 }

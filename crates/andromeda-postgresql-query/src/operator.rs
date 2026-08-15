@@ -1,52 +1,82 @@
 //! How clause 4.9's comparison and pattern operators are spelled in PostgreSQL.
 
 use andromeda_ngsi_ld_query::filter::predicate::{CmpOp, PatternPolarity};
+use andromeda_postgresql_seaquery::pg_operator::PgBinaryOperator;
+use sea_query::{BinOper, Expr, SimpleExpr};
 
-/// The SQL operator a clause 4.9 comparison renders to.
+/// Build a clause 4.9 comparison between two already-lifted operands.
 ///
-/// Shared by every rendering of clause 4.9, so a predicate cannot compile to
-/// one operator against `current_attribute_values`, another against the payload and a
-/// third against a registration's properties. It differs from the clause 4.9
-/// token only at `==`, which SQL spells `=`.
-pub const fn comparison(op: CmpOp) -> &'static str {
+/// Shared by every rendering of clause 4.9, so a predicate cannot compare with
+/// one operator against `current_attribute_values`, another against the payload
+/// and a third against a registration's properties. The operator token differs
+/// from the clause 4.9 spelling only at `==`, which SQL writes `=`, and `!=`,
+/// which is kept over the equivalent `<>` so a converted statement reads exactly
+/// as it did before.
+pub fn compare(lhs: SimpleExpr, op: CmpOp, rhs: SimpleExpr) -> SimpleExpr {
+    let lhs = Expr::expr(lhs);
     match op {
-        CmpOp::Equal => "=",
-        CmpOp::Unequal => "!=",
-        CmpOp::Greater => ">",
-        CmpOp::GreaterEq => ">=",
-        CmpOp::Less => "<",
-        CmpOp::LessEq => "<=",
+        CmpOp::Equal => lhs.eq(rhs),
+        CmpOp::Unequal => lhs.binary(BinOper::Custom("!="), rhs),
+        CmpOp::Greater => lhs.gt(rhs),
+        CmpOp::GreaterEq => lhs.gte(rhs),
+        CmpOp::Less => lhs.lt(rhs),
+        CmpOp::LessEq => lhs.lte(rhs),
     }
 }
 
-/// The POSIX regex operator a clause 4.9 pattern predicate renders to.
-pub const fn pattern_match(polarity: PatternPolarity) -> &'static str {
+/// Build a clause 4.9 pattern predicate between a target and a POSIX regex.
+pub fn pattern(lhs: SimpleExpr, polarity: PatternPolarity, rhs: SimpleExpr) -> SimpleExpr {
     match polarity {
-        PatternPolarity::Match => "~",
-        PatternPolarity::NotMatch => "!~",
+        PatternPolarity::Match => lhs.posix_matches(rhs),
+        PatternPolarity::NotMatch => lhs.posix_not_matches(rhs),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_ngsi_ld_query::filter::predicate::{OrderingOp, SetMembership};
+    use sea_query::{PostgresQueryBuilder, Query};
+
+    fn render(expr: SimpleExpr) -> String {
+        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    fn operands() -> (SimpleExpr, SimpleExpr) {
+        (Expr::col(sea_query::Alias::new("stored")).into(), Expr::val("x").into())
+    }
 
     #[test]
     fn equality_is_the_one_operator_sql_spells_differently_from_clause_4_9() {
-        use andromeda_ngsi_ld_query::filter::predicate::{OrderingOp, SetMembership};
-        // The comparison primitive spells `==` as SQL `=`; every other
-        // operator's SQL spelling matches its clause 4.9 token.
-        assert_eq!(comparison(SetMembership::Within.as_cmp_op()), "=");
+        let (lhs, rhs) = operands();
+        assert!(render(compare(lhs, SetMembership::Within.as_cmp_op(), rhs)).contains(" = "));
         assert_eq!(SetMembership::Within.ngsi_token(), "==");
-        assert_eq!(comparison(SetMembership::Outside.as_cmp_op()), SetMembership::Outside.ngsi_token());
-        for op in [OrderingOp::Greater, OrderingOp::GreaterEq, OrderingOp::Less, OrderingOp::LessEq] {
-            assert_eq!(comparison(op.as_cmp_op()), op.ngsi_token(), "{op:?}");
+    }
+
+    #[test]
+    fn inequality_keeps_the_bang_equals_spelling() {
+        let (lhs, rhs) = operands();
+        assert!(render(compare(lhs, SetMembership::Outside.as_cmp_op(), rhs)).contains(" != "));
+    }
+
+    #[test]
+    fn each_ordering_operator_renders_its_own_token() {
+        for (op, token) in [
+            (OrderingOp::Greater, " > "),
+            (OrderingOp::GreaterEq, " >= "),
+            (OrderingOp::Less, " < "),
+            (OrderingOp::LessEq, " <= "),
+        ] {
+            let (lhs, rhs) = operands();
+            assert!(render(compare(lhs, op.as_cmp_op(), rhs)).contains(token), "{op:?}");
         }
     }
 
     #[test]
     fn a_pattern_predicate_renders_the_posix_operator_of_its_polarity() {
-        assert_eq!(pattern_match(PatternPolarity::Match), "~");
-        assert_eq!(pattern_match(PatternPolarity::NotMatch), "!~");
+        let (lhs, rhs) = operands();
+        assert!(render(pattern(lhs, PatternPolarity::Match, rhs)).contains(" ~ "));
+        let (lhs, rhs) = operands();
+        assert!(render(pattern(lhs, PatternPolarity::NotMatch, rhs)).contains(" !~ "));
     }
 }

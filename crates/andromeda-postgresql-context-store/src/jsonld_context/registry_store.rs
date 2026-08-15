@@ -4,6 +4,17 @@ use crate::jsonld_context::{
     mapper::{row_to_identifier, row_to_metadata},
     repo::JsonLdContextRepository,
     rows::{ContextMetadataRow, ContextSummaryRow},
+    statement::{
+        delete_by_identifier,
+        hosted_insert,
+        metadata_by_identifier_query,
+        metadata_page_query,
+        payload_by_identifier_query,
+        record_access_update,
+        replace_payload_update,
+        stored_context_query,
+        summary_page_query,
+    },
 };
 use andromeda_context_registry::{
     creation_kind::ContextCreationKind,
@@ -19,6 +30,8 @@ use andromeda_context_registry::{
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::jsonld_context::{ContextKind, ContextMetadata};
 use iri_rs::IriBuf;
+use sea_query::PostgresQueryBuilder;
+use sea_query_binder::SqlxBinder;
 use serde_json::Value;
 use sqlx::types::Json;
 use std::fmt::Display;
@@ -35,25 +48,11 @@ impl ContextRegistryStore for JsonLdContextRepository {
         Box::pin(async move {
             let after = query.after.map(Uri::as_str);
             let limit = i64::from(query.limit);
+            let kind = query.kind.map(<&str>::from);
             match query.detail_level {
                 ContextDetailLevel::Full => {
-                    let rows: Vec<ContextMetadataRow> = sqlx::query_as(
-                        r#"
-                        SELECT id AS local_id, url, kind::text AS kind, created_at,
-                               expires_at, last_usage, number_of_hits, extra_info
-                        FROM jsonld_contexts
-                        WHERE ($1::text IS NULL OR kind = $1::jsonld_context_kind)
-                          AND ($2::text IS NULL OR id > $2)
-                        ORDER BY id
-                        LIMIT $3
-                        "#,
-                    )
-                    .bind(query.kind.map(<&str>::from))
-                    .bind(after)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(persistence_error)?;
+                    let (sql, values) = metadata_page_query(kind, after, limit).build_sqlx(PostgresQueryBuilder);
+                    let rows: Vec<ContextMetadataRow> = sqlx::query_as_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
                     let metadata = rows
                         .into_iter()
                         .map(row_to_metadata)
@@ -62,22 +61,8 @@ impl ContextRegistryStore for JsonLdContextRepository {
                     Ok(ListedContexts::Detailed(metadata))
                 }
                 ContextDetailLevel::Summary => {
-                    let rows: Vec<ContextSummaryRow> = sqlx::query_as(
-                        r#"
-                        SELECT id, url
-                        FROM jsonld_contexts
-                        WHERE ($1::text IS NULL OR kind = $1::jsonld_context_kind)
-                          AND ($2::text IS NULL OR id > $2)
-                        ORDER BY id
-                        LIMIT $3
-                        "#,
-                    )
-                    .bind(query.kind.map(<&str>::from))
-                    .bind(after)
-                    .bind(limit)
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(persistence_error)?;
+                    let (sql, values) = summary_page_query(kind, after, limit).build_sqlx(PostgresQueryBuilder);
+                    let rows: Vec<ContextSummaryRow> = sqlx::query_as_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
                     let identifiers = rows
                         .into_iter()
                         .map(row_to_identifier)
@@ -93,27 +78,14 @@ impl ContextRegistryStore for JsonLdContextRepository {
         Box::pin(async move {
             match detail_level {
                 ContextDetailLevel::Full => {
-                    let row: Option<ContextMetadataRow> = sqlx::query_as(
-                        r#"
-                        SELECT id AS local_id, url, kind::text AS kind, created_at,
-                               expires_at, last_usage, number_of_hits, extra_info
-                        FROM jsonld_contexts
-                        WHERE id = $1 OR url = $1
-                        "#,
-                    )
-                    .bind(identifier.as_str())
-                    .fetch_optional(&self.pool)
-                    .await
-                    .map_err(persistence_error)?;
+                    let (sql, values) = metadata_by_identifier_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
+                    let row: Option<ContextMetadataRow> = sqlx::query_as_with(&sql, values).fetch_optional(&self.pool).await.map_err(persistence_error)?;
                     let metadata = row.map(row_to_metadata).transpose().map_err(persistence_error)?;
                     Ok(metadata.map(|value| FetchedContext::Detailed(Box::new(value))))
                 }
                 ContextDetailLevel::Summary => {
-                    let row: Option<(Json<Value>,)> = sqlx::query_as("SELECT payload FROM jsonld_contexts WHERE id = $1 OR url = $1")
-                        .bind(identifier.as_str())
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(persistence_error)?;
+                    let (sql, values) = payload_by_identifier_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
+                    let row: Option<(Json<Value>,)> = sqlx::query_as_with(&sql, values).fetch_optional(&self.pool).await.map_err(persistence_error)?;
                     Ok(row.map(|value| FetchedContext::Payload(value.0.0)))
                 }
             }
@@ -122,23 +94,17 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn record_access<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let result = sqlx::query("UPDATE jsonld_contexts SET last_usage = NOW(), number_of_hits = number_of_hits + 1 WHERE id = $1 OR url = $1")
-                .bind(identifier.as_str())
-                .execute(&self.pool)
-                .await
-                .map_err(persistence_error)?;
+            let (sql, values) = record_access_update(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
+            let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
             Ok(mutation(result.rows_affected()))
         })
     }
 
     fn lookup<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, Option<StoredContext>> {
         Box::pin(async move {
+            let (sql, values) = stored_context_query(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
             let row: Option<(String, String, Option<String>)> =
-                sqlx::query_as("SELECT id, kind::text AS kind, url FROM jsonld_contexts WHERE id = $1 OR url = $1")
-                    .bind(identifier.as_str())
-                    .fetch_optional(&self.pool)
-                    .await
-                    .map_err(persistence_error)?;
+                sqlx::query_as_with(&sql, values).fetch_optional(&self.pool).await.map_err(persistence_error)?;
             row.map(|(identifier, kind, source_url)| {
                 let identifier = identifier.parse::<Uri>().map_err(persistence_error)?;
                 let kind = kind.parse::<ContextKind>().map_err(persistence_error)?;
@@ -153,23 +119,16 @@ impl ContextRegistryStore for JsonLdContextRepository {
 
     fn delete<'a>(&'a self, identifier: &'a Uri) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let result = sqlx::query("DELETE FROM jsonld_contexts WHERE id = $1 OR url = $1")
-                .bind(identifier.as_str())
-                .execute(&self.pool)
-                .await
-                .map_err(persistence_error)?;
+            let (sql, values) = delete_by_identifier(identifier.as_str()).build_sqlx(PostgresQueryBuilder);
+            let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
             Ok(mutation(result.rows_affected()))
         })
     }
 
     fn replace_payload<'a>(&'a self, identifier: &'a Uri, payload: Value) -> ContextRegistryFuture<'a, ContextMutation> {
         Box::pin(async move {
-            let result = sqlx::query("UPDATE jsonld_contexts SET payload = $2, last_usage = NOW() WHERE id = $1")
-                .bind(identifier.as_str())
-                .bind(payload)
-                .execute(&self.pool)
-                .await
-                .map_err(persistence_error)?;
+            let (sql, values) = replace_payload_update(identifier.as_str(), payload).build_sqlx(PostgresQueryBuilder);
+            let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
             Ok(mutation(result.rows_affected()))
         })
     }
@@ -196,16 +155,9 @@ async fn insert_context(
         ContextCreationKind::Hosted => "Hosted",
         ContextCreationKind::ImplicitlyCreated => "ImplicitlyCreated",
     };
-    sqlx::query(
-        "INSERT INTO jsonld_contexts (id, url, kind, payload, created_at, last_usage, number_of_hits) VALUES ($1, $2, $3::jsonld_context_kind, $4, NOW(), NOW(), 0)",
-    )
-    .bind(local_id.to_string())
-    .bind(serving_url.as_ref().map(Url::as_str))
-    .bind(kind_label)
-    .bind(payload)
-    .execute(&repository.pool)
-    .await
-    .map_err(persistence_error)?;
+    let statement = hosted_insert(local_id.as_ref(), serving_url.as_ref().map(Url::as_str), kind_label, payload).map_err(persistence_error)?;
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(&sql, values).execute(&repository.pool).await.map_err(persistence_error)?;
     Ok(local_id)
 }
 

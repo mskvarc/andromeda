@@ -11,7 +11,11 @@
 //! moment the other two passes were not looking.
 
 use crate::error::ContextStoreError;
+use andromeda_postgresql_schema::notification::{NotificationDeliveries, NotificationEvents};
+use andromeda_postgresql_seaquery::pg_array::any;
 use chrono::{DateTime, Utc};
+use sea_query::{DeleteStatement, Expr, PostgresQueryBuilder, Query};
+use sea_query_binder::SqlxBinder;
 use sqlx::postgres::PgPool;
 
 /// Remove deliveries completed before `cutoff`, and any event left unreferenced.
@@ -35,29 +39,13 @@ use sqlx::postgres::PgPool;
 /// fails.
 pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
     let mut tx = pool.begin().await?;
-    let events: Vec<i64> = sqlx::query_scalar(
-        r#"
-        DELETE FROM notification_deliveries
-        WHERE delivered_at IS NOT NULL AND delivered_at < $1
-        RETURNING event_id
-        "#,
-    )
-    .bind(cutoff)
-    .fetch_all(&mut *tx)
-    .await?;
+    let (sql, values) = purge_delivered_statement(cutoff).build_sqlx(PostgresQueryBuilder);
+    let events: Vec<i64> = sqlx::query_scalar_with(&sql, values).fetch_all(&mut *tx).await?;
     let removed = events.len() as u64;
 
     if !events.is_empty() {
-        sqlx::query(
-            r#"
-            DELETE FROM notification_events e
-            WHERE e.id = ANY($1)
-              AND NOT EXISTS (SELECT 1 FROM notification_deliveries d WHERE d.event_id = e.id)
-            "#,
-        )
-        .bind(&events)
-        .execute(&mut *tx)
-        .await?;
+        let (sql, values) = purge_orphan_events_among_statement(&events).build_sqlx(PostgresQueryBuilder);
+        sqlx::query_with(&sql, values).execute(&mut *tx).await?;
     }
 
     tx.commit().await?;
@@ -92,20 +80,8 @@ pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Res
 ///
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>, max_attempts: i32) -> Result<u64, ContextStoreError> {
-    let result = sqlx::query(
-        r#"
-        DELETE FROM notification_deliveries d
-        USING notification_events e
-        WHERE d.event_id = e.id
-          AND d.delivered_at IS NULL
-          AND d.attempt_count >= $1
-          AND e.created_at < $2
-        "#,
-    )
-    .bind(max_attempts)
-    .bind(cutoff)
-    .execute(pool)
-    .await?;
+    let (sql, values) = purge_exhausted_statement(cutoff, max_attempts).build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(&sql, values).execute(pool).await?;
     Ok(result.rows_affected())
 }
 
@@ -131,15 +107,117 @@ pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>, max_at
 ///
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn purge_orphan_events_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
-    let result = sqlx::query(
-        r#"
-        DELETE FROM notification_events e
-        WHERE e.created_at < $1
-          AND NOT EXISTS (SELECT 1 FROM notification_deliveries d WHERE d.event_id = e.id)
-        "#,
-    )
-    .bind(cutoff)
-    .execute(pool)
-    .await?;
+    let (sql, values) = purge_orphan_events_before_statement(cutoff).build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(&sql, values).execute(pool).await?;
     Ok(result.rows_affected())
+}
+
+/// Delete deliveries acknowledged before `cutoff`, returning the events they
+/// referenced so orphanhood can be re-tested against the post-deletion table.
+fn purge_delivered_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
+    Query::delete()
+        .from_table(NotificationDeliveries::Table)
+        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_not_null())
+        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).lt(cutoff))
+        .returning_col(NotificationDeliveries::EventId)
+        .to_owned()
+}
+
+/// Delete the events among `event_ids` that no delivery references any longer.
+///
+/// The candidate set is exactly the events whose last delivery the paired
+/// [`purge_delivered_statement`] just removed, so this pass never scans the
+/// whole events table for the common case.
+fn purge_orphan_events_among_statement(event_ids: &[i64]) -> DeleteStatement {
+    let referencing_delivery = Query::select()
+        .expr(Expr::val(1))
+        .from(NotificationDeliveries::Table)
+        .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventId)).equals((NotificationEvents::Table, NotificationEvents::Id)))
+        .to_owned();
+    Query::delete()
+        .from_table(NotificationEvents::Table)
+        .and_where(Expr::col(NotificationEvents::Id).eq(any(Expr::val(event_ids.to_vec()).into())))
+        .and_where(Expr::exists(referencing_delivery).not())
+        .to_owned()
+}
+
+/// Delete undelivered deliveries at or past the attempt ceiling whose event
+/// predates `cutoff`.
+///
+/// The original `DELETE ... USING notification_events` is expressed as a
+/// correlated `EXISTS`: the join to the event exists only to read its
+/// `created_at`, and a delivery is removed exactly when an event older than the
+/// cutoff answers it, which is what the existence test asserts.
+fn purge_exhausted_statement(cutoff: DateTime<Utc>, max_attempts: i32) -> DeleteStatement {
+    let dead_event = Query::select()
+        .expr(Expr::val(1))
+        .from(NotificationEvents::Table)
+        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::Id)).equals((NotificationDeliveries::Table, NotificationDeliveries::EventId)))
+        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::CreatedAt)).lt(cutoff))
+        .to_owned();
+    Query::delete()
+        .from_table(NotificationDeliveries::Table)
+        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
+        .and_where(Expr::col(NotificationDeliveries::AttemptCount).gte(max_attempts))
+        .and_where(Expr::exists(dead_event))
+        .to_owned()
+}
+
+/// Delete events predating `cutoff` that no delivery references.
+fn purge_orphan_events_before_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
+    let referencing_delivery = Query::select()
+        .expr(Expr::val(1))
+        .from(NotificationDeliveries::Table)
+        .and_where(Expr::col((NotificationDeliveries::Table, NotificationDeliveries::EventId)).equals((NotificationEvents::Table, NotificationEvents::Id)))
+        .to_owned();
+    Query::delete()
+        .from_table(NotificationEvents::Table)
+        .and_where(Expr::col(NotificationEvents::CreatedAt).lt(cutoff))
+        .and_where(Expr::exists(referencing_delivery).not())
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::notification_delivery::cleanup::{
+        purge_delivered_statement,
+        purge_exhausted_statement,
+        purge_orphan_events_among_statement,
+        purge_orphan_events_before_statement,
+    };
+    use chrono::Utc;
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn the_delivered_reap_returns_the_events_it_freed() {
+        let sql = purge_delivered_statement(Utc::now()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"DELETE FROM "notification_deliveries""#), "{sql}");
+        assert!(sql.contains(r#""delivered_at" IS NOT NULL"#), "{sql}");
+        assert!(sql.contains(r#"RETURNING "event_id""#), "{sql}");
+    }
+
+    #[test]
+    fn the_orphan_reap_among_freed_events_requires_no_referencing_delivery() {
+        let sql = purge_orphan_events_among_statement(&[1, 2]).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"DELETE FROM "notification_events""#), "{sql}");
+        assert!(sql.contains("= ANY("), "{sql}");
+        assert!(sql.contains("NOT EXISTS"), "{sql}");
+    }
+
+    #[test]
+    fn the_exhausted_reap_removes_dead_deliveries_older_than_the_cutoff() {
+        let sql = purge_exhausted_statement(Utc::now(), 5).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"DELETE FROM "notification_deliveries""#), "{sql}");
+        assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
+        assert!(sql.contains(r#""attempt_count" >= 5"#), "{sql}");
+        assert!(sql.contains("EXISTS") && !sql.contains("NOT EXISTS"), "{sql}");
+    }
+
+    #[test]
+    fn the_standalone_orphan_reap_scans_events_by_age() {
+        let sql = purge_orphan_events_before_statement(Utc::now()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"DELETE FROM "notification_events""#), "{sql}");
+        assert!(sql.contains(r#""created_at" <"#), "{sql}");
+        assert!(sql.contains("NOT EXISTS"), "{sql}");
+    }
 }

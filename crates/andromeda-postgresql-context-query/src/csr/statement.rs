@@ -4,6 +4,7 @@ use crate::csr::{
     coverage::entity_type_coverage,
     filter::csr_expr_to_condition,
     projection::{attribute_name_candidate, id_pattern_candidate},
+    unnesting::{ent, entities_of_item, info, information_covers},
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, temporal::window::TimeInterval};
@@ -14,8 +15,29 @@ use andromeda_postgresql_query::{
     q_predicate::attribute_names::ResolvedAttributeNames,
 };
 use andromeda_postgresql_schema::csr::Csr;
-use andromeda_postgresql_seaquery::{bind::sea_values_to_bind_values, built::BuiltQuery};
-use sea_query::{Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::{cast, cast_compound},
+    jsonb::{jsonb_array_elements, jsonb_array_elements_text},
+    literal::{int_literal, text_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    postgis::geometry_as_geojson,
+};
+use sea_query::{Alias, Condition, Expr as SeaExpr, Func, Order, Query, SelectStatement, SimpleExpr};
+
+/// A compiled CSR discovery query: the paginated result statement and its count,
+/// each a statement tree the store binds and executes on its own.
+///
+/// A CSR discovery always reports a total, and a paginated result and its
+/// unpaginated count cannot share one placeholder sequence, so the two are
+/// separate statements.
+pub struct CsrQuery {
+    /// The paginated statement selecting the matching registrations.
+    pub select: SelectStatement,
+    /// The `COUNT` over the same filter.
+    pub count: SelectStatement,
+}
 
 /// Builds a parameterized SQL query to discover Context Source Registrations.
 ///
@@ -23,7 +45,7 @@ use sea_query::{Condition, Expr as SeaExpr, Order, PostgresQueryBuilder, Query};
 /// `q` expressions, geo location, and temporal intervals. CSR-specific semantics
 /// apply: registrations without a location or temporal interval still match
 /// geo/temporal filters (per NGSI-LD 5.10.2).
-pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, RenderError> {
+pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError> {
     let condition = build_csr_conditions(query)?;
 
     let mut select = Query::select();
@@ -36,13 +58,13 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
         .column(Csr::Tenant)
         .column(Csr::ObservationInterval)
         .column(Csr::ManagementInterval)
-        .expr_as(SeaExpr::cust("ST_AsGeoJSON(\"location\")::JSONB"), Csr::Location)
-        .expr_as(SeaExpr::cust("ST_AsGeoJSON(\"observation_space\")::JSONB"), Csr::ObservationSpace)
-        .expr_as(SeaExpr::cust("ST_AsGeoJSON(\"operation_space\")::JSONB"), Csr::OperationSpace)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::Location).into()), Csr::Location)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::ObservationSpace).into()), Csr::ObservationSpace)
+        .expr_as(geometry_as_geojson(SeaExpr::col(Csr::OperationSpace).into()), Csr::OperationSpace)
         .column(Csr::ExpiresAt)
         .column(Csr::Endpoint)
         .column(Csr::Accept)
-        .expr_as(SeaExpr::cust("\"mode\"::text"), Csr::Mode)
+        .expr_as(cast(SeaExpr::col(Csr::Mode).into(), PostgresType::Text), Csr::Mode)
         .column(Csr::Operations)
         .column(Csr::Scope)
         .column(Csr::RefreshRate)
@@ -50,7 +72,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
         .column(Csr::ContextSourceInfo)
         .column(Csr::JsonldContext)
         .column(Csr::ContextSourceAlias)
-        .expr_as(SeaExpr::cust("\"status\"::text"), Csr::Status)
+        .expr_as(cast(SeaExpr::col(Csr::Status).into(), PostgresType::Text), Csr::Status)
         .column(Csr::TimesSent)
         .column(Csr::TimesFailed)
         .column(Csr::LastSuccess)
@@ -69,18 +91,13 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<BuiltQuery<'static>, 
         .limit(query.pagination.limit as u64)
         .offset(query.pagination.offset as u64);
 
-    let (sql, values) = select.build(PostgresQueryBuilder);
-    let bind_values = sea_values_to_bind_values(values)?;
-
     // Count query always generated for CSR
-    let mut count_select = Query::select();
-    count_select.expr(SeaExpr::cust("COUNT(*)")).from(Csr::Table).cond_where(condition);
-    let (count_sql, _) = count_select.build(PostgresQueryBuilder);
+    let mut count = Query::select();
+    count.expr(count_all()).from(Csr::Table).cond_where(condition);
 
-    Ok(BuiltQuery {
-        sql,
-        count_sql: Some(count_sql),
-        bind_values,
+    Ok(CsrQuery {
+        select: select.take(),
+        count: count.take(),
     })
 }
 
@@ -106,13 +123,11 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // it, so the unnesting below remains what decides the match.
     if let Some(id_pattern) = &query.id_pattern {
         condition = condition.add(id_pattern_candidate(id_pattern));
-        condition = condition.add(SeaExpr::cust_with_values(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
-             WHERE NOT jsonb_exists(info, 'entities') \
-                OR info->'entities' = '[]'::jsonb \
-                OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'idPattern' = $1))",
-            [id_pattern.as_str().to_string()],
-        ));
+        // Discovery advertises a stored `idPattern` by comparing its text, so the
+        // entry-level predicate is an exact match, not a regex evaluation.
+        let mut entities_match = entities_of_item();
+        entities_match.and_where(SeaExpr::expr(ent().json_get_text(text_literal("idPattern"))).eq(id_pattern.as_str()));
+        condition = condition.add(information_covers(entities_match));
     }
 
     // Attrs filter: match against information[].propertyNames /
@@ -120,16 +135,8 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // dictionary the projection interns them with; the unnesting decides.
     if !query.attrs.is_empty() {
         condition = condition.add(attribute_name_candidate(&query.attrs));
-        let attrs = &query.attrs;
-        let placeholders: Vec<String> = (1..=attrs.len()).map(|i| format!("${}", i)).collect();
-        let any_list = placeholders.join(", ");
-        let sql = format!(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info WHERE \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'propertyNames', '[]'::jsonb)) AS pn WHERE pn IN ({any_list})) OR \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(info->'relationshipNames', '[]'::jsonb)) AS rn WHERE rn IN ({any_list})))"
-        );
-        let names: Vec<String> = attrs.iter().map(|iri| iri.as_str().to_string()).collect();
-        condition = condition.add(SeaExpr::cust_with_values(sql, names));
+        let names: Vec<String> = query.attrs.iter().map(|iri| iri.as_str().to_string()).collect();
+        condition = condition.add(attribute_names_declared(&names));
     }
 
     // Q expression filter against additional_properties JSONB column
@@ -151,13 +158,14 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     if let Some(temporal) = &query.temporal {
         let timeprop = temporal.timeproperty.unwrap_or(TimeProp::Observed);
         let interval_col = match timeprop {
-            TimeProp::Created | TimeProp::Modified => "management_interval",
-            TimeProp::Observed | TimeProp::Deleted => "observation_interval",
+            TimeProp::Created | TimeProp::Modified => Csr::ManagementInterval,
+            TimeProp::Observed | TimeProp::Deleted => Csr::ObservationInterval,
         };
 
         // Clause 5.10.2: a registration that declares no interval may still
         // serve the window, which is why every bounded arm below disjoins
         // `IS NULL` rather than requiring the column to be present.
+        let missing_interval = || SeaExpr::expr(SeaExpr::col(interval_col)).is_null();
         match temporal.interval {
             // An unbounded filter narrows nothing, so it emits no predicate at
             // all. Discovery cannot reach this today — a temporal filter is
@@ -165,36 +173,70 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
             // interval type admits it and the arm says what it would mean.
             TimeInterval::Unbounded => {}
             TimeInterval::Before(instant) => {
-                condition = condition.add(SeaExpr::cust_with_values(
-                    format!(
-                        "(\"{col}\" IS NULL OR (\"{col}\"->>'startAt')::timestamptz < $1::timestamptz)",
-                        col = interval_col
-                    ),
-                    [instant.to_rfc3339()],
-                ));
+                condition = condition.add(
+                    Condition::any()
+                        .add(missing_interval())
+                        .add(SeaExpr::expr(interval_bound(interval_col, "startAt")).lt(interval_instant(instant.to_rfc3339()))),
+                );
             }
             TimeInterval::After(instant) => {
-                condition = condition.add(SeaExpr::cust_with_values(
-                    format!(
-                        "(\"{col}\" IS NULL OR (\"{col}\"->>'endAt')::timestamptz > $1::timestamptz)",
-                        col = interval_col
-                    ),
-                    [instant.to_rfc3339()],
-                ));
+                condition = condition.add(
+                    Condition::any()
+                        .add(missing_interval())
+                        .add(SeaExpr::expr(interval_bound(interval_col, "endAt")).gt(interval_instant(instant.to_rfc3339()))),
+                );
             }
             TimeInterval::Between { from, to } => {
-                condition = condition.add(SeaExpr::cust_with_values(
-                    format!(
-                        "(\"{col}\" IS NULL OR ((\"{col}\"->>'startAt')::timestamptz <= $2::timestamptz AND (\"{col}\"->>'endAt')::timestamptz >= $1::timestamptz))",
-                        col = interval_col
+                condition = condition.add(
+                    Condition::any().add(missing_interval()).add(
+                        Condition::all()
+                            .add(SeaExpr::expr(interval_bound(interval_col, "startAt")).lte(interval_instant(to.to_rfc3339())))
+                            .add(SeaExpr::expr(interval_bound(interval_col, "endAt")).gte(interval_instant(from.to_rfc3339()))),
                     ),
-                    [from.to_rfc3339(), to.to_rfc3339()],
-                ));
+                );
             }
         }
     }
 
     Ok(condition)
+}
+
+/// One bound of a registration's stored interval, lifted to `timestamptz`:
+/// `("interval_col"->>'member')::timestamptz`.
+fn interval_bound(interval_col: Csr, member: &str) -> SimpleExpr {
+    cast_compound(
+        SimpleExpr::from(SeaExpr::col(interval_col)).json_get_text(text_literal(member)),
+        PostgresType::Timestamptz,
+    )
+}
+
+/// A filter instant bound as RFC 3339 text and cast in the statement, so it
+/// compares as `timestamptz` against a lifted interval bound.
+fn interval_instant(rfc3339: String) -> SimpleExpr {
+    cast(SeaExpr::val(rfc3339).into(), PostgresType::Timestamptz)
+}
+
+/// Whether some `information` item declares one of `names` as a property or a
+/// relationship name.
+///
+/// Each information item's `propertyNames` and `relationshipNames` arrays are
+/// unnested and tested for membership in the requested set; a missing array is
+/// coalesced to an empty one so an item that names nothing on an axis is simply
+/// no match rather than a NULL that aborts the test.
+fn attribute_names_declared(names: &[String]) -> SimpleExpr {
+    let member_of = |member: &'static str, alias: &'static str| {
+        let coalesced = Func::coalesce([info().json_get(text_literal(member)), cast(text_literal("[]"), PostgresType::Jsonb)]);
+        let mut scan = Query::select();
+        scan.expr(int_literal(1))
+            .from_function(jsonb_array_elements_text(coalesced.into()), Alias::new(alias))
+            .and_where(SeaExpr::expr(SeaExpr::col(Alias::new(alias))).is_in(names.to_vec()));
+        SeaExpr::exists(scan)
+    };
+    let mut scan = Query::select();
+    scan.expr(int_literal(1))
+        .from_function(jsonb_array_elements(SeaExpr::col(Csr::Information).into()), Alias::new("info"))
+        .cond_where(Condition::any().add(member_of("propertyNames", "pn")).add(member_of("relationshipNames", "rn")));
+    SeaExpr::exists(scan)
 }
 
 #[cfg(test)]
@@ -205,6 +247,22 @@ mod tests {
     use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrTemporalFilter, filter::parser, geo::query::GeoQuery, pattern::Pattern};
     use chrono::{DateTime, Utc};
     use iri_rs::IriBuf;
+    use sea_query::PostgresQueryBuilder;
+
+    /// A built CSR discovery rendered with its values inlined: the paginated
+    /// statement and its always-present count.
+    struct Built {
+        sql: String,
+        count_sql: String,
+    }
+
+    fn build(query: &CompiledCsrQuery) -> Built {
+        let csr = build_csr_query(query).unwrap();
+        Built {
+            sql: csr.select.to_string(PostgresQueryBuilder),
+            count_sql: csr.count.to_string(PostgresQueryBuilder),
+        }
+    }
 
     fn ids(raw: &[&str]) -> Vec<Uri> {
         raw.iter().map(|id| id.parse().expect("valid URI")).collect()
@@ -233,7 +291,7 @@ mod tests {
     #[test]
     fn build_empty_query_returns_base_sql() {
         let q = empty_query();
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("context_source_registrations"));
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
@@ -244,13 +302,13 @@ mod tests {
         // The `Iden` enum must render byte-identically to the hand-quoted column
         // list it replaced: plain columns quoted, geometry columns as GeoJSON,
         // and the enum columns cast to text, each with the same output alias.
-        let built = build_csr_query(&empty_query()).unwrap();
+        let built = build(&empty_query());
         for column in ["\"id\"", "\"type\"", "\"registration_name\"", "\"jsonld_context\"", "\"additional_properties\""] {
             assert!(built.sql.contains(column), "missing {column}: {}", built.sql);
         }
-        assert!(built.sql.contains("ST_AsGeoJSON(\"location\")::JSONB AS \"location\""), "{}", built.sql);
+        assert!(built.sql.contains("ST_AsGeoJSON(\"location\")::jsonb AS \"location\""), "{}", built.sql);
         assert!(
-            built.sql.contains("ST_AsGeoJSON(\"observation_space\")::JSONB AS \"observation_space\""),
+            built.sql.contains("ST_AsGeoJSON(\"observation_space\")::jsonb AS \"observation_space\""),
             "{}",
             built.sql
         );
@@ -264,7 +322,7 @@ mod tests {
         // not straddle a page boundary inconsistently across executions, so the
         // `created_at` order is broken by the `id` tiebreaker.
         let q = empty_query();
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("ORDER BY \"created_at\" ASC, \"id\" ASC"), "{}", built.sql);
     }
 
@@ -272,15 +330,15 @@ mod tests {
     fn build_with_entity_type() {
         let mut q = empty_query();
         q.entity_type = Some(iri("https://example.com/Vehicle"));
-        let built = build_csr_query(&q).unwrap();
-        assert!(built.sql.contains("ent->>'type' ="));
+        let built = build(&q);
+        assert!(built.sql.contains("'type'"), "{}", built.sql);
     }
 
     #[test]
     fn build_with_ids() {
         let mut q = empty_query();
         q.ids = ids(&["urn:a", "urn:b"]);
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("\"id\" IN"));
     }
 
@@ -288,15 +346,15 @@ mod tests {
     fn build_with_id_pattern() {
         let mut q = empty_query();
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
-        let built = build_csr_query(&q).unwrap();
-        assert!(built.sql.contains("ent->>'idPattern' ="));
+        let built = build(&q);
+        assert!(built.sql.contains("'idPattern'"), "{}", built.sql);
     }
 
     #[test]
     fn build_with_attrs() {
         let mut q = empty_query();
         q.attrs = vec![iri("https://example.com/speed"), iri("https://example.com/temp")];
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("propertyNames"));
         assert!(built.sql.contains("relationshipNames"));
     }
@@ -311,10 +369,10 @@ mod tests {
         q.entity_type = Some(iri("https://example.com/Vehicle"));
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build_csr_query(&q).unwrap();
-        assert!(built.sql.contains("ri.\"entity_types\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains("ri.\"entity_id_pattern\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains("ri.\"property_name_ids\" IS NULL"), "{}", built.sql);
+        let built = build(&q);
+        assert!(built.sql.contains("\"ri\".\"entity_types\" IS NULL"), "{}", built.sql);
+        assert!(built.sql.contains("\"ri\".\"entity_id_pattern\" IS NULL"), "{}", built.sql);
+        assert!(built.sql.contains("\"ri\".\"property_name_ids\" IS NULL"), "{}", built.sql);
         assert!(built.sql.contains("jsonb_array_elements(\"information\")"), "{}", built.sql);
     }
 
@@ -322,7 +380,7 @@ mod tests {
     fn a_query_without_selective_filters_reads_no_projection() {
         // Nothing to narrow: an unfiltered discovery must not pay for a
         // semi-join that would admit every registration anyway.
-        let built = build_csr_query(&empty_query()).unwrap();
+        let built = build(&empty_query());
         assert!(!built.sql.contains("registration_information"), "{}", built.sql);
     }
 
@@ -332,9 +390,8 @@ mod tests {
         // from, so both statements share one condition.
         let mut q = empty_query();
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build_csr_query(&q).unwrap();
-        let count_sql = built.count_sql.expect("count statement is always generated");
-        assert!(count_sql.contains("registration_information"), "{count_sql}");
+        let built = build(&q);
+        assert!(built.count_sql.contains("registration_information"), "{}", built.count_sql);
     }
 
     #[test]
@@ -345,7 +402,7 @@ mod tests {
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         // Clause 5.10.2: a registration with no location still matches.
         assert!(built.sql.contains("\"location\" IS NULL"), "{}", built.sql);
         assert!(built.sql.contains("ST_Within"), "{}", built.sql);
@@ -360,7 +417,7 @@ mod tests {
                 .timeproperty(None)
                 .build(),
         );
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("observation_interval\" IS NULL"));
         assert!(built.sql.contains("startAt"));
     }
@@ -374,7 +431,7 @@ mod tests {
                 .timeproperty(Some(TimeProp::Created))
                 .build(),
         );
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("management_interval\" IS NULL"));
         assert!(built.sql.contains("endAt"));
     }
@@ -391,7 +448,7 @@ mod tests {
                 .timeproperty(None)
                 .build(),
         );
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("startAt"));
         assert!(built.sql.contains("endAt"));
     }
@@ -400,16 +457,15 @@ mod tests {
     fn build_with_q_existence() {
         let mut q = empty_query();
         q.q_expr = Some(parser::parse("temperature").unwrap());
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("\"additional_properties\" ?"));
     }
 
     #[test]
     fn build_count_sql_always_present() {
         let q = empty_query();
-        let built = build_csr_query(&q).unwrap();
-        assert!(built.count_sql.is_some());
-        assert!(built.count_sql.unwrap().contains("COUNT(*)"));
+        let built = build(&q);
+        assert!(built.count_sql.contains("COUNT(*)"), "{}", built.count_sql);
     }
 
     #[test]
@@ -417,7 +473,7 @@ mod tests {
         let mut q = empty_query();
         q.pagination.limit = 50;
         q.pagination.offset = 100;
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
     }
@@ -428,7 +484,7 @@ mod tests {
         q.entity_type = Some(iri("https://example.com/Vehicle"));
         q.ids = ids(&["urn:a"]);
         q.attrs = vec![iri("https://example.com/speed")];
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains(" AND "));
     }
 
@@ -448,7 +504,7 @@ mod tests {
             geometry: Geometry::from_geojson_value(&ring).expect("polygon parses"),
             geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
         });
-        let built = build_csr_query(&q).unwrap();
+        let built = build(&q);
         assert!(built.sql.contains("ST_Within"), "{}", built.sql);
         assert!(built.sql.contains("ST_GeomFromEWKB"), "{}", built.sql);
     }

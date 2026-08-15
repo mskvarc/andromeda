@@ -12,6 +12,7 @@
 pub mod architecture;
 pub mod dependencies;
 pub mod raw_constant;
+pub mod raw_sql;
 mod source_scan;
 pub mod sql;
 

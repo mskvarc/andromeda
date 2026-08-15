@@ -1,0 +1,91 @@
+//! PostgreSQL server and extension introspection sea-query has no form for.
+//!
+//! Reading the running server's version, a loaded extension's version, or a
+//! runtime setting means calling system functions (`current_setting`) and
+//! querying system catalogs (`pg_extension`) that are not part of any
+//! application schema. Those calls are spelled here, in the one crate
+//! sanctioned to write a hand-formed fragment, with every catalog name and
+//! setting name passed as a bound value or a named iden rather than
+//! interpolated into a statement string.
+
+use sea_query::{Alias, Expr, Func, Iden, SelectStatement, SimpleExpr};
+
+/// The `pg_extension` system catalog.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_extension"]
+struct PgExtension;
+
+/// `current_setting(name)` - the value of a runtime configuration setting.
+///
+/// The setting name is bound rather than interpolated. This form errors if the
+/// setting is unknown; use [`current_setting_missing_ok`] for settings that may
+/// be absent.
+pub fn current_setting(name: &str) -> SimpleExpr {
+    Func::cust(CurrentSetting).args([SimpleExpr::from(Expr::val(name.to_owned()))]).into()
+}
+
+/// `current_setting(name, true)` - the value of a runtime setting, or `NULL`
+/// when the setting is not defined.
+///
+/// The `missing_ok` argument spares the caller a failed statement for an
+/// optional setting, such as a license marker an extension only sets when
+/// loaded.
+pub fn current_setting_missing_ok(name: &str) -> SimpleExpr {
+    Func::cust(CurrentSetting)
+        .args([SimpleExpr::from(Expr::val(name.to_owned())), SimpleExpr::from(Expr::val(true))])
+        .into()
+}
+
+/// `(SELECT extversion FROM pg_extension WHERE extname = name)` - the installed
+/// version of one extension, or `NULL` when it is not installed.
+///
+/// The extension name is bound. The scalar subquery yields a single row because
+/// `pg_extension.extname` is unique.
+pub fn extension_version(name: &str) -> SimpleExpr {
+    let subquery = SelectStatement::new()
+        .expr(Expr::col(Alias::new("extversion")))
+        .from(PgExtension)
+        .and_where(Expr::col(Alias::new("extname")).eq(name.to_owned()))
+        .to_owned();
+    SimpleExpr::SubQuery(None, Box::new(subquery.into_sub_query_statement()))
+}
+
+/// The `current_setting` system function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "current_setting"]
+struct CurrentSetting;
+
+#[cfg(test)]
+mod tests {
+    use crate::introspection::{current_setting, current_setting_missing_ok, extension_version};
+    use sea_query::{Alias, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn current_setting_binds_the_setting_name() {
+        let (sql, values) = Query::select()
+            .expr_as(current_setting("server_version"), Alias::new("v"))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(sql.contains("current_setting($1)"), "{sql}");
+        assert_eq!(values.0.len(), 1, "{sql}");
+    }
+
+    #[test]
+    fn a_missing_setting_is_tolerated_with_the_second_argument() {
+        let sql = Query::select()
+            .expr_as(current_setting_missing_ok("timescaledb.license"), Alias::new("v"))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("current_setting('timescaledb.license', TRUE)"), "{sql}");
+    }
+
+    #[test]
+    fn an_extension_version_reads_the_catalog_by_name() {
+        let sql = Query::select()
+            .expr_as(extension_version("postgis"), Alias::new("v"))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("SELECT \"extversion\" FROM \"pg_extension\""), "{sql}");
+        assert!(sql.contains("\"extname\" = 'postgis'"), "{sql}");
+    }
+}

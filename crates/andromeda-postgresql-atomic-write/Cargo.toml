@@ -14,16 +14,21 @@ andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-schema.workspace = true
+andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-temporal.workspace = true
 async-trait = "0.1.89"
 chrono = { version = "0.4.44", features = ["serde"] }
 confique = "0.4.0"
+sea-query = { version = "0.32.7", features = ["backend-postgres", "postgres-array", "with-chrono", "with-json", "with-uuid"] }
+sea-query-binder = { version = "0.7.0", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-chrono", "with-json", "with-uuid"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }
 tracing = "0.1.44"
+uuid = { version = "1.23.1", features = ["v4"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

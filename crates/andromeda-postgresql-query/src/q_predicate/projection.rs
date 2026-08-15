@@ -4,7 +4,7 @@
 use crate::{
     attribute_name_id::AttributeNameId,
     error::RenderError,
-    operator::{comparison, pattern_match},
+    operator::{compare, pattern as pattern_predicate},
     q_predicate::{
         attribute_names::ResolvedAttributeNames,
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
@@ -24,17 +24,20 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
-    bind::BindBuilder,
-    column_reference::{qualified, quoted},
+    cast::cast,
+    literal::{false_literal, int_literal},
+    pg_type::PostgresType,
 };
-use sea_query::{Alias, Condition, Expr as SeaExpr, Value as SeaValue};
+use sea_query::{Condition, Expr as SeaExpr, Iden, Query, SimpleExpr};
 
-/// Alias of the projection scan every value probe reads.
-const PROBE_ALIAS: &str = "cav";
+/// The alias every value probe reads the `current_attribute_values` scan under.
+#[derive(Iden, Clone, Copy)]
+#[iden = "cav"]
+struct Cav;
 
-/// Quoted `"cav"."column"` reference into the probe's projection scan.
-fn probe_column(column: CurrentAttributeValues) -> String {
-    qualified(&Alias::new(PROBE_ALIAS), &column)
+/// A `"cav"."column"` reference into the probe's projection scan.
+fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
+    SeaExpr::col((Cav, column)).into()
 }
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
@@ -165,7 +168,7 @@ fn compare_value_exceeds_precision(rhs: &CompareValue) -> bool {
 
 /// A predicate that no row can satisfy.
 fn unsatisfiable() -> Condition {
-    Condition::all().add(SeaExpr::cust("FALSE"))
+    Condition::all().add(false_literal())
 }
 
 // ---------------------------------------------------------------------------
@@ -195,89 +198,67 @@ fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttri
         return unsatisfiable();
     };
 
-    // The markers are local to one `cust_with_values` fragment; sea-query
-    // renumbers them when the enclosing statement is rendered.
-    let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
-    let attr = binds.bind(id.get());
-    let sql = format!(
-        "EXISTS (SELECT 1 FROM {projection} AS \"{PROBE_ALIAS}\" \
-         WHERE {attr_column} = {attr} AND {key_column} = {corr})",
-        projection = quoted(&CurrentAttributeValues::Table),
-        attr_column = probe_column(CurrentAttributeValues::AttributeNameId),
-        attr = attr,
-        key_column = probe_column(CurrentAttributeValues::EntityKey),
-        corr = target.entity_key_column(),
-    );
-    Condition::all().add(SeaExpr::cust_with_values(sql, binds.into_values()))
+    let mut probe = Query::select();
+    probe
+        .expr(int_literal(1))
+        .from_as(CurrentAttributeValues::Table, Cav)
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(target.entity_key_column()));
+    Condition::all().add(SeaExpr::exists(probe))
 }
 
 // ---------------------------------------------------------------------------
 // Comparisons against the projection
 // ---------------------------------------------------------------------------
 
-/// Wrap a rendered value predicate — already accompanied by its binds — in the
-/// correlated `current_attribute_values` probe.
-fn projection_condition(attr: String, value_sql: String, binds: BindBuilder<SeaValue>, target: &QFilterTarget) -> Condition {
-    Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
+/// Wrap a value condition in the correlated `current_attribute_values` probe.
+///
+/// The probe is an `EXISTS` over the projection, narrowed to the attribute's
+/// dictionary key and the value condition, and correlated on the enclosing
+/// statement's entity key. The attribute-name test is added before the value so
+/// its dictionary key binds ahead of the value's operands, and the correlation
+/// is added last so it binds nothing after them.
+fn exists_on_projection(id: AttributeNameId, value: Condition, target: &QFilterTarget) -> Condition {
+    let mut probe = Query::select();
+    probe
+        .expr(int_literal(1))
+        .from_as(CurrentAttributeValues::Table, Cav)
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
+        .cond_where(value)
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(target.entity_key_column()));
+    Condition::all().add(SeaExpr::exists(probe))
 }
 
 /// Compile an equality comparison (`==`/`!=`) against the typed columns of
 /// `current_attribute_values`.
 fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget) -> Condition {
-    // The markers are local to one `cust_with_values` fragment; sea-query
-    // renumbers them when the enclosing statement is rendered.
-    let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
-    let attr = binds.bind(id.get());
-
-    let value_sql = match rhs {
-        CompareValue::Scalar(scalar) => scalar_condition(scalar, membership.as_cmp_op(), &mut binds),
+    let value = match rhs {
+        CompareValue::Scalar(scalar) => Condition::all().add(scalar_condition(scalar, membership.as_cmp_op())),
         CompareValue::Range { min, max } => match membership {
-            SetMembership::Within => {
-                let lower = scalar_condition(min, CmpOp::GreaterEq, &mut binds);
-                let upper = scalar_condition(max, CmpOp::LessEq, &mut binds);
-                format!("({lower} AND {upper})")
-            }
-            SetMembership::Outside => {
-                let below = scalar_condition(min, CmpOp::Less, &mut binds);
-                let above = scalar_condition(max, CmpOp::Greater, &mut binds);
-                format!("({below} OR {above})")
-            }
+            SetMembership::Within => Condition::all()
+                .add(scalar_condition(min, CmpOp::GreaterEq))
+                .add(scalar_condition(max, CmpOp::LessEq)),
+            SetMembership::Outside => Condition::any()
+                .add(scalar_condition(min, CmpOp::Less))
+                .add(scalar_condition(max, CmpOp::Greater)),
         },
         CompareValue::ValueList(values) => {
-            let arms: Vec<String> = values.iter().map(|value| scalar_condition(value, CmpOp::Equal, &mut binds)).collect();
-            let joined = arms.join(" OR ");
+            let arms = values
+                .iter()
+                .fold(Condition::any(), |cond, value| cond.add(scalar_condition(value, CmpOp::Equal)));
             match membership {
-                SetMembership::Within => format!("({joined})"),
-                SetMembership::Outside => format!("NOT ({joined})"),
+                SetMembership::Within => arms,
+                SetMembership::Outside => arms.not(),
             }
         }
     };
-
-    projection_condition(attr, value_sql, binds, target)
+    exists_on_projection(id, value, target)
 }
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
 /// of `current_attribute_values`.
 fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget) -> Condition {
-    let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
-    let attr = binds.bind(id.get());
-    let value_sql = scalar_condition(rhs, op.as_cmp_op(), &mut binds);
-    projection_condition(attr, value_sql, binds, target)
-}
-
-/// Wrap a value predicate in the correlated `current_attribute_values` probe.
-fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilterTarget) -> String {
-    format!(
-        "EXISTS (SELECT 1 FROM {projection} AS \"{PROBE_ALIAS}\" \
-         WHERE {attr_column} = {attr} AND ({value}) \
-         AND {key_column} = {corr})",
-        projection = quoted(&CurrentAttributeValues::Table),
-        attr_column = probe_column(CurrentAttributeValues::AttributeNameId),
-        attr = attr_placeholder,
-        value = value_sql,
-        key_column = probe_column(CurrentAttributeValues::EntityKey),
-        corr = target.entity_key_column(),
-    )
+    exists_on_projection(id, Condition::all().add(scalar_condition(rhs, op.as_cmp_op())), target)
 }
 
 /// Compare one scalar against the typed column that holds values of its kind.
@@ -309,61 +290,52 @@ fn exists_on_projection(attr_placeholder: &str, value_sql: &str, target: &QFilte
 ///   in the one canonical, fixed-width form their clause 4.6.3 types define, so
 ///   byte-wise order over the column is chronological order and an ordering
 ///   comparison against the bound canonical text is a temporal comparison.
-fn scalar_condition(scalar: &Scalar, op: CmpOp, binds: &mut BindBuilder<SeaValue>) -> String {
-    let operator = comparison(op);
+fn scalar_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
     match scalar {
         Scalar::Number(number) => match number.as_f64() {
-            Some(value) => {
-                let placeholder = binds.bind(value);
-                let column = probe_column(CurrentAttributeValues::ValueNumber);
-                format!("{column} {operator} {placeholder}::numeric")
-            }
+            // The operand is bound as `double precision` and cast back to
+            // `numeric`, so the comparison stays `numeric`-to-`numeric` and the
+            // typed partial index still applies.
+            Some(value) => compare(
+                probe_column(CurrentAttributeValues::ValueNumber),
+                op,
+                cast(SeaExpr::val(value).into(), PostgresType::Numeric),
+            ),
             // A `serde_json::Number` that fits no f64 cannot be carried to the
             // projection at all, and one that large is out of range for
             // `scalar_exceeds_precision` to have admitted a comparison anyway.
-            None => "FALSE".to_string(),
+            None => false_literal(),
         },
-        Scalar::Bool(value) => {
-            let placeholder = binds.bind(*value);
-            let column = probe_column(CurrentAttributeValues::ValueBool);
-            format!("{column} {operator} {placeholder}")
-        }
+        Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value).into()),
         Scalar::Str(value) => {
-            let string_placeholder = binds.bind(value.as_str());
-            let string_column = probe_column(CurrentAttributeValues::ValueString);
-            let string_test = format!("{string_column} {operator} {string_placeholder}");
+            let string_test = compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value.as_str()).into());
             match relationship_object_is_comparable(op) {
                 RelationshipObjects::Comparable => {
-                    let uri_placeholder = binds.bind(value.as_str());
-                    let uri_column = probe_column(CurrentAttributeValues::ValueUri);
-                    format!("({string_test} OR {uri_column} {operator} {uri_placeholder})")
+                    let uri_test = compare(probe_column(CurrentAttributeValues::ValueUri), op, SeaExpr::val(value.as_str()).into());
+                    string_test.or(uri_test)
                 }
-                RelationshipObjects::NonMatching => format!("({string_test})"),
+                RelationshipObjects::NonMatching => string_test,
             }
         }
-        Scalar::DateTime(value) => {
-            let placeholder = binds.bind(*value);
-            let column = probe_column(CurrentAttributeValues::ValueDatetime);
-            format!("{column} {operator} {placeholder}")
-        }
-        Scalar::Date(value) => {
-            let placeholder = binds.bind(NgsiLdDate::from(*value).to_string());
-            let column = probe_column(CurrentAttributeValues::ValueString);
-            format!("{column} {operator} {placeholder}")
-        }
+        Scalar::DateTime(value) => compare(probe_column(CurrentAttributeValues::ValueDatetime), op, SeaExpr::val(*value).into()),
+        Scalar::Date(value) => compare(
+            probe_column(CurrentAttributeValues::ValueString),
+            op,
+            SeaExpr::val(NgsiLdDate::from(*value).to_string()).into(),
+        ),
         // The operand is rendered in the same canonical form the write path
         // stores, rather than in the clause 4.9 serialisation the client wrote:
         // `12:00:00+01:00` and `11:00:00Z` are one time of day, and only the
         // canonical text of both compares against the stored column.
         Scalar::Time(value) => match NgsiLdTime::normalise(*value) {
-            Ok(canonical) => {
-                let placeholder = binds.bind(canonical.to_string());
-                let column = probe_column(CurrentAttributeValues::ValueString);
-                format!("{column} {operator} {placeholder}")
-            }
+            Ok(canonical) => compare(
+                probe_column(CurrentAttributeValues::ValueString),
+                op,
+                SeaExpr::val(canonical.to_string()).into(),
+            ),
             // A time of day with no canonical form is one no write path could
             // have stored, so nothing can compare equal to it.
-            Err(_) => "FALSE".to_string(),
+            Err(_) => false_literal(),
         },
     }
 }
@@ -433,15 +405,12 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
         return unsatisfiable();
     };
 
-    // The markers are local to one `cust_with_values` fragment; sea-query
-    // renumbers them when the enclosing statement is rendered.
-    let mut binds: BindBuilder<SeaValue> = BindBuilder::default();
-    let attr = binds.bind(id.get());
-    let operator = pattern_match(polarity);
-    let string_placeholder = binds.bind(pattern.as_str());
-    let string_column = probe_column(CurrentAttributeValues::ValueString);
-    let value_sql = format!("({string_column} {operator} {string_placeholder})");
-    Condition::all().add(SeaExpr::cust_with_values(exists_on_projection(&attr, &value_sql, target), binds.into_values()))
+    let value = Condition::all().add(pattern_predicate(
+        probe_column(CurrentAttributeValues::ValueString),
+        polarity,
+        SeaExpr::val(pattern.as_str()).into(),
+    ));
+    exists_on_projection(id, value, target)
 }
 
 #[cfg(test)]
@@ -449,8 +418,7 @@ mod tests {
     use super::*;
     use andromeda_ngsi_ld_query::filter::parser;
     use andromeda_postgresql_schema::current::Entities;
-    use andromeda_postgresql_seaquery::bind::{BindValue, sea_values_to_bind_values};
-    use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use sea_query::{Alias, PostgresQueryBuilder, Query, Value};
 
     const SPEED: &str = "https://example.com/speed";
 
@@ -484,11 +452,11 @@ mod tests {
 
     /// Render a compiled condition the way a real query would, so the assertions
     /// see the final placeholder numbering.
-    fn render(q: &str) -> (String, Vec<BindValue<'static>>) {
+    fn render(q: &str) -> (String, Vec<Value>) {
         render_with(q, &names(), &QFilterTarget::entities())
     }
 
-    fn render_with(q: &str, names: &ResolvedAttributeNames, target: &QFilterTarget) -> (String, Vec<BindValue<'static>>) {
+    fn render_with(q: &str, names: &ResolvedAttributeNames, target: &QFilterTarget) -> (String, Vec<Value>) {
         let expr = parser::parse(q).expect("parse q");
         let condition = compile(&expr, target, names).expect("compile q");
         let (sql, values) = Query::select()
@@ -496,7 +464,7 @@ mod tests {
             .from(Entities::Table)
             .cond_where(condition)
             .build(PostgresQueryBuilder);
-        (sql, sea_values_to_bind_values(values).expect("bind values"))
+        (sql, values.0)
     }
 
     fn quoted(iri: &str) -> String {
@@ -511,9 +479,9 @@ mod tests {
         assert!(sql.contains("EXISTS"), "{sql}");
         assert!(sql.contains("\"current_attribute_values\""), "{sql}");
         assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
-        assert!(matches!(binds[0], BindValue::I32(7)), "attribute id binds as int4: {binds:?}");
+        assert!(matches!(binds[0], Value::Int(Some(7))), "attribute id binds as int4: {binds:?}");
         assert!(
-            matches!(binds[1], BindValue::F64(value) if (value - 50.0).abs() < f64::EPSILON),
+            matches!(binds[1], Value::Double(Some(value)) if (value - 50.0).abs() < f64::EPSILON),
             "numeric literal binds as float8: {binds:?}"
         );
     }
@@ -525,7 +493,7 @@ mod tests {
         // coerced instead, which both rounds it and makes the typed partial
         // index inapplicable.
         let (sql, _) = render(&format!("{}>50", quoted(SPEED)));
-        assert!(sql.contains("\"cav\".\"value_number\" > $2::numeric"), "{sql}");
+        assert!(sql.contains("\"cav\".\"value_number\" > ($2::numeric)"), "{sql}");
     }
 
     #[test]
@@ -621,14 +589,14 @@ mod tests {
     fn boolean_comparison_binds_native_boolean() {
         let (sql, binds) = render("\"https://example.com/active\"==true");
         assert!(sql.contains("\"cav\".\"value_bool\" ="), "{sql}");
-        assert!(binds.iter().any(|b| matches!(b, BindValue::Bool(true))), "{binds:?}");
+        assert!(binds.iter().any(|b| matches!(b, Value::Bool(Some(true)))), "{binds:?}");
     }
 
     #[test]
     fn datetime_comparison_binds_native_timestamp() {
         let (sql, binds) = render("\"https://example.com/observed\">=2017-12-24T12:00:00Z");
         assert!(sql.contains("\"cav\".\"value_datetime\" >="), "{sql}");
-        assert!(binds.iter().any(|b| matches!(b, BindValue::Timestamp(_))), "{binds:?}");
+        assert!(binds.iter().any(|b| matches!(b, Value::ChronoDateTimeUtc(_))), "{binds:?}");
     }
 
     #[test]
@@ -645,7 +613,9 @@ mod tests {
         // same rendering or an offset-bearing operand matches nothing.
         let (_, binds) = render("\"https://example.com/d\"==\"13:00:00+01:00\"");
         assert!(
-            binds.iter().any(|bind| matches!(bind, BindValue::String(text) if text == "12:00:00.000000Z")),
+            binds
+                .iter()
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "12:00:00.000000Z")),
             "{binds:?}"
         );
     }
@@ -657,7 +627,9 @@ mod tests {
         let (sql, binds) = render("\"https://example.com/d\">\"09:30:00.5Z\"");
         assert!(sql.contains("\"cav\".\"value_string\" >"), "{sql}");
         assert!(
-            binds.iter().any(|bind| matches!(bind, BindValue::String(text) if text == "09:30:00.500000Z")),
+            binds
+                .iter()
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "09:30:00.500000Z")),
             "{binds:?}"
         );
     }
@@ -668,9 +640,9 @@ mod tests {
         assert_eq!(sql.matches("EXISTS").count(), 1, "one probe, not two: {sql}");
         assert!(sql.contains("\"cav\".\"value_number\" >="), "{sql}");
         assert!(sql.contains("\"cav\".\"value_number\" <="), "{sql}");
-        assert!(matches!(binds[0], BindValue::I32(12)));
-        assert!(matches!(binds[1], BindValue::F64(value) if (value - 10.0).abs() < f64::EPSILON));
-        assert!(matches!(binds[2], BindValue::F64(value) if (value - 20.0).abs() < f64::EPSILON));
+        assert!(matches!(binds[0], Value::Int(Some(12))));
+        assert!(matches!(binds[1], Value::Double(Some(value)) if (value - 10.0).abs() < f64::EPSILON));
+        assert!(matches!(binds[2], Value::Double(Some(value)) if (value - 20.0).abs() < f64::EPSILON));
     }
 
     #[test]
@@ -747,11 +719,11 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS (SELECT 1 FROM "current_attribute_values" AS "cav" "#,
+                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
                 r#"WHERE "cav"."attribute_name_id" = $1 AND "cav"."entity_key" = "entities"."entity_key")"#,
             )
         );
-        assert!(matches!(binds[0], BindValue::I32(7)), "{binds:?}");
+        assert!(matches!(binds[0], Value::Int(Some(7))), "{binds:?}");
     }
 
     #[test]
@@ -814,10 +786,10 @@ mod tests {
         assert!(sql.contains("\"cav\".\"entity_key\" = \"le1\".\"entity_key\""), "{sql}");
         assert!(sql.contains("\"cav\".\"value_string\" ="), "{sql}");
         assert!(
-            matches!(binds[0], BindValue::I32(19)),
+            matches!(binds[0], Value::Int(Some(19))),
             "the relationship's dictionary key binds first: {binds:?}"
         );
-        assert!(matches!(binds[1], BindValue::I32(20)), "then the inner attribute's: {binds:?}");
+        assert!(matches!(binds[1], Value::Int(Some(20))), "then the inner attribute's: {binds:?}");
     }
 
     #[test]
@@ -839,26 +811,26 @@ mod tests {
         pretty_assertions::assert_eq!(
             sql,
             concat!(
-                r#"SELECT "id" FROM "entities" WHERE EXISTS (SELECT 1 FROM "current_attribute_values" AS "cav_ln1" "#,
+                r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav_ln1" "#,
                 r#"JOIN "entities" AS "le1" ON "le1"."id" = "cav_ln1"."value_uri" "#,
                 r#"WHERE "cav_ln1"."entity_key" = "entities"."entity_key" "#,
                 r#"AND "cav_ln1"."attribute_name_id" = $1 "#,
                 r#"AND (("le1"."types" @> ARRAY(SELECT $2::TEXT)) OR ("le1"."types" @> ARRAY(SELECT $3::TEXT))) "#,
-                r#"AND (EXISTS (SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_id" = $4 AND (("cav"."value_string" = $5 OR "cav"."value_uri" = $6)) "#,
-                r#"AND "cav"."entity_key" = "le1"."entity_key")))"#,
+                r#"AND EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
+                r#"WHERE "cav"."attribute_name_id" = $4 AND ("cav"."value_string" = $5 OR "cav"."value_uri" = $6) "#,
+                r#"AND "cav"."entity_key" = "le1"."entity_key"))"#,
             )
         );
         assert!(
             binds
                 .iter()
-                .any(|bind| matches!(bind, BindValue::String(text) if text == "https://example.com/Building")),
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "https://example.com/Building")),
             "{binds:?}"
         );
         assert!(
             binds
                 .iter()
-                .any(|bind| matches!(bind, BindValue::String(text) if text == "https://example.com/Store")),
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "https://example.com/Store")),
             "{binds:?}"
         );
     }

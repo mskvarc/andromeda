@@ -35,6 +35,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-schema",
+        "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-store",
         "andromeda-temporal",
     ],
@@ -42,7 +44,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-model",
     ],
-    allow_production_dependencies: ["confique", "sqlx"],
+    allow_production_dependencies: ["confique", "sea-query", "sea-query-binder", "sqlx"],
 }
 
 #[cfg(test)]

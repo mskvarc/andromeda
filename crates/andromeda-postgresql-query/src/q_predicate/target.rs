@@ -2,7 +2,7 @@
 
 use andromeda_postgresql_schema::current::Entities;
 use andromeda_postgresql_seaquery::column_reference::ColumnReference;
-use sea_query::IntoIden;
+use sea_query::{IntoIden, SimpleExpr};
 
 /// Where a compiled `q` predicate reads the row it is filtering.
 ///
@@ -53,35 +53,39 @@ impl QFilterTarget {
         }
     }
 
-    /// Quoted SQL reference to the entity key an `EXISTS` probe correlates against.
-    pub fn entity_key_column(&self) -> String {
-        self.entity_key_column.render()
+    /// Column expression for the entity key an `EXISTS` probe correlates against.
+    pub fn entity_key_column(&self) -> SimpleExpr {
+        self.entity_key_column.column_expr()
     }
 
-    /// Quoted SQL reference to the JSONB payload column used by the fallback.
-    pub fn payload_column(&self) -> String {
-        self.payload_column.render()
+    /// Column expression for the JSONB payload column used by the fallback.
+    pub fn payload_column(&self) -> SimpleExpr {
+        self.payload_column.column_expr()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::q_predicate::target::QFilterTarget;
-    use sea_query::Alias;
+    use sea_query::{Alias, PostgresQueryBuilder, Query, SimpleExpr};
+
+    fn render(expr: SimpleExpr) -> String {
+        Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
 
     #[test]
     fn the_entities_target_correlates_on_the_surrogate_key_not_the_uri() {
         let target = QFilterTarget::entities();
-        assert_eq!(target.entity_key_column(), "\"entities\".\"entity_key\"");
-        assert_eq!(target.payload_column(), "\"payload\"");
+        assert!(render(target.entity_key_column()).contains("\"entities\".\"entity_key\""));
+        assert!(render(target.payload_column()).contains("\"payload\""));
     }
 
     #[test]
     fn a_correlated_target_renders_the_quoted_reference_from_its_idens() {
         // The caller passes the `(alias, column)` idens its statement declares;
-        // the quoted SQL reference is derived here rather than hand-written.
+        // the quoted column expression is derived here rather than hand-written.
         let target = QFilterTarget::correlated((Alias::new("ce"), Alias::new("entity_key")), (Alias::new("ce"), Alias::new("payload")));
-        assert_eq!(target.entity_key_column(), "\"ce\".\"entity_key\"");
-        assert_eq!(target.payload_column(), "\"ce\".\"payload\"");
+        assert!(render(target.entity_key_column()).contains("\"ce\".\"entity_key\""));
+        assert!(render(target.payload_column()).contains("\"ce\".\"payload\""));
     }
 }

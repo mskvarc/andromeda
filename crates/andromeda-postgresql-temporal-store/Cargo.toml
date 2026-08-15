@@ -19,6 +19,7 @@ andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
 andromeda-temporal.workspace = true
@@ -28,6 +29,8 @@ cefact-units = "0.1.0"
 chrono = { version = "0.4.44", features = ["serde"] }
 const_format = "0.2.34"
 iri-rs = { version = "3.4.0", features = ["serde", "static"] }
+sea-query = { version = "0.32.7", features = ["backend-postgres", "postgres-array", "with-chrono", "with-json", "with-uuid"] }
+sea-query-binder = { version = "0.7.0", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-chrono", "with-json", "with-uuid"] }
 serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
 strum = { version = "0.28.0", features = ["derive"] }

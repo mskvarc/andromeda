@@ -16,10 +16,54 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_codes::{stream_id::StreamId, temporal_entity_key::TemporalEntityKey};
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_schema::{
+    attribute_dictionary::AttributeNames,
+    temporal::{TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    placeholder::external_placeholder,
+    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+};
 use chrono::{DateTime, Utc};
+use sea_query::{Cond, Expr, Iden, JoinType, OnConflict, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_binder::SqlxBinder;
 use sqlx::{Postgres, Row, Transaction};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+/// The `UNNEST` staging alias, `d`.
+#[derive(Iden, Clone, Copy)]
+#[iden = "d"]
+struct D;
+
+/// The `temporal_attribute_streams` alias the read-back resolves grains against.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s"]
+struct S;
+
+/// The `attribute_names` alias the read-back resolves each stream's IRI through.
+#[derive(Iden, Clone, Copy)]
+#[iden = "an"]
+struct An;
+
+/// The `attribute_name` output column of the read-back.
+#[derive(Iden, Clone, Copy)]
+#[iden = "attribute_name"]
+struct AttributeNameColumn;
+
+/// The staging columns of one requested stream grain.
+#[derive(Iden, Clone, Copy)]
+enum StreamStaged {
+    /// Identifier a stream is created with, ignored where one already exists.
+    Id,
+    /// Dictionary identity of the stream's attribute name.
+    AttributeNameId,
+    /// Multi-attribute discriminator of the stream.
+    DatasetId,
+}
 
 impl TemporalRepository {
     /// Establish the catalogue rows one write's history rows are stored against.
@@ -55,9 +99,22 @@ impl TemporalRepository {
             .await
             .map_err(|error| TemporalStoreError::AttributeLookup(error.to_string()))?;
         let binds = stream_binds(&upsert.streams, &name_to_id)?;
-        let rows = sqlx::query(STREAM_UPSERT_SQL)
+        // The data-modifying CTE the single statement used is rebuilt as an
+        // insert followed by a read in the same transaction: the insert's rows
+        // are visible to the read that follows it, so every requested grain —
+        // freshly created or already present — resolves in one read without the
+        // `RETURNING`-plus-`UNION ALL` the single command needed.
+        let insert_sql = stream_insert_sql()?;
+        sqlx::query(&insert_sql)
             .bind(entity_key.get())
             .bind(&binds.ids)
+            .bind(&binds.attribute_name_ids)
+            .bind(&binds.dataset_ids)
+            .execute(&mut **tx)
+            .await?;
+        let read_sql = stream_read_sql();
+        let rows = sqlx::query(&read_sql)
+            .bind(entity_key.get())
             .bind(&binds.attribute_name_ids)
             .bind(&binds.dataset_ids)
             .fetch_all(&mut **tx)
@@ -89,17 +146,16 @@ async fn upsert_temporal_entity(
 ) -> Result<TemporalEntityKey, TemporalStoreError> {
     if !upsert.types.is_empty() {
         let types = upsert.types.iter().map(EntityTypeName::as_str).collect::<Vec<_>>();
-        sqlx::query(TEMPORAL_ENTITY_UPSERT_SQL)
+        let upsert_sql = temporal_entity_upsert_sql()?;
+        sqlx::query(&upsert_sql)
             .bind(upsert.entity_id.as_str())
             .bind(recorded_at)
             .bind(&types)
             .execute(&mut **tx)
             .await?;
     }
-    let located = sqlx::query(TEMPORAL_ENTITY_KEY_SQL)
-        .bind(upsert.entity_id.as_str())
-        .fetch_optional(&mut **tx)
-        .await?;
+    let (key_sql, key_values) = temporal_entity_key_statement(upsert.entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+    let located = sqlx::query_with(&key_sql, key_values).fetch_optional(&mut **tx).await?;
     let Some(row) = located else {
         return Err(TemporalStoreError::NotFound(format!(
             "Temporal evolution of {} does not exist and the write declares no entity type to create it with",
@@ -184,56 +240,134 @@ fn decode_stream_row(row: &sqlx::postgres::PgRow) -> Result<(TemporalStreamKey, 
 ///
 /// `created_at` is set once and never moved: the conflict clause advances only
 /// `modified_at` and the declared types, so the instant the Temporal Evolution
-/// began survives every later write (clause 4.8).
-const TEMPORAL_ENTITY_UPSERT_SQL: &str = r#"
-INSERT INTO temporal_entities (id, created_at, modified_at, types)
-VALUES ($1, $2, $2, $3::text[])
-ON CONFLICT (id) DO UPDATE
-SET modified_at = EXCLUDED.modified_at, types = EXCLUDED.types
-"#;
+/// began survives every later write (clause 4.8). `$2` is bound once and read
+/// for both `created_at` and `modified_at`.
+fn temporal_entity_upsert_sql() -> Result<String, TemporalStoreError> {
+    let mut insert = Query::insert();
+    insert.into_table(TemporalEntities::Table).columns([
+        TemporalEntities::Id,
+        TemporalEntities::CreatedAt,
+        TemporalEntities::ModifiedAt,
+        TemporalEntities::Types,
+    ]);
+    insert
+        .values([
+            external_placeholder(1),
+            external_placeholder(2),
+            external_placeholder(2),
+            cast(external_placeholder(3), PostgresType::TextArray),
+        ])
+        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
+        .on_conflict(
+            OnConflict::column(TemporalEntities::Id)
+                .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::Types])
+                .to_owned(),
+        );
+    Ok(insert.to_string(PostgresQueryBuilder))
+}
 
-const TEMPORAL_ENTITY_KEY_SQL: &str = r#"
-SELECT entity_key FROM temporal_entities WHERE id = $1
-"#;
+/// Read the narrow key of the temporal entity named by `id`.
+fn temporal_entity_key_statement(id: &str) -> SelectStatement {
+    Query::select()
+        .column(TemporalEntities::EntityKey)
+        .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).eq(id))
+        .to_owned()
+}
 
-/// The streams one write needs, created where absent and read back where present.
+/// The staging columns of the stream-catalogue insert.
+fn stream_insert_columns() -> [UnnestColumn; 3] {
+    [
+        UnnestColumn::new(StreamStaged::Id, PostgresType::UuidArray),
+        UnnestColumn::new(StreamStaged::AttributeNameId, PostgresType::IntegerArray),
+        UnnestColumn::new(StreamStaged::DatasetId, PostgresType::TextArray),
+    ]
+}
+
+/// Create the streams one write needs, leaving any that already exist.
 ///
-/// A statement's own `INSERT` is invisible to the `SELECT` beside it in the same
-/// command, so the rows this call created are reported from the `RETURNING`
-/// clause and only the grains it did not create are read from the table.
-const STREAM_UPSERT_SQL: &str = r#"
-WITH input AS (
-    SELECT d.id, d.attribute_name_id, d.dataset_id
-    FROM UNNEST($2::uuid[], $3::integer[], $4::text[]) AS d(id, attribute_name_id, dataset_id)
-),
-inserted AS (
-    INSERT INTO temporal_attribute_streams (id, temporal_entity_key, attribute_name_id, dataset_id)
-    SELECT i.id, $1, i.attribute_name_id, i.dataset_id FROM input i
-    ON CONFLICT (temporal_entity_key, attribute_name_id, dataset_id) DO NOTHING
-    RETURNING id, attribute_name_id, dataset_id
-)
-SELECT ins.id, an.name AS attribute_name, ins.dataset_id
-FROM inserted ins
-JOIN attribute_names an ON an.id = ins.attribute_name_id
-UNION ALL
-SELECT s.id, an.name AS attribute_name, s.dataset_id
-FROM input i
-JOIN temporal_attribute_streams s
-    ON s.temporal_entity_key = $1
-   AND s.attribute_name_id = i.attribute_name_id
-   AND s.dataset_id IS NOT DISTINCT FROM i.dataset_id
-JOIN attribute_names an ON an.id = s.attribute_name_id
-WHERE NOT EXISTS (
-    SELECT 1 FROM inserted ins
-    WHERE ins.attribute_name_id = i.attribute_name_id
-      AND ins.dataset_id IS NOT DISTINCT FROM i.dataset_id
-)
-"#;
+/// `$1` is the narrow entity key, `$2`..`$4` the requested-grain arrays. The
+/// conflict target is the grain the catalogue is keyed by.
+fn stream_insert_sql() -> Result<String, TemporalStoreError> {
+    let columns = stream_insert_columns();
+    let call = unnest_call([
+        (&columns[0], external_placeholder(2)),
+        (&columns[1], external_placeholder(3)),
+        (&columns[2], external_placeholder(4)),
+    ]);
+    let mut select = Query::select();
+    select
+        .expr(Expr::col((D, StreamStaged::Id)))
+        .expr(external_placeholder(1))
+        .expr(Expr::col((D, StreamStaged::AttributeNameId)))
+        .expr(Expr::col((D, StreamStaged::DatasetId)))
+        .from_function(call, D);
+    let select = select;
+
+    let mut insert = Query::insert();
+    insert.into_table(TemporalAttributeStreams::Table).columns([
+        TemporalAttributeStreams::Id,
+        TemporalAttributeStreams::TemporalEntityKey,
+        TemporalAttributeStreams::AttributeNameId,
+        TemporalAttributeStreams::DatasetId,
+    ]);
+    insert
+        .select_from(select)
+        .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
+        .on_conflict(
+            OnConflict::columns([
+                TemporalAttributeStreams::TemporalEntityKey,
+                TemporalAttributeStreams::AttributeNameId,
+                TemporalAttributeStreams::DatasetId,
+            ])
+            .do_nothing()
+            .to_owned(),
+        );
+
+    let sql = insert.to_string(PostgresQueryBuilder);
+    Ok(apply_column_alias(sql, &D, &columns))
+}
+
+/// Read back the stream every requested grain resolves to, after the insert has
+/// created any that were absent.
+///
+/// `$1` is the narrow entity key, `$2`/`$3` the requested attribute-name and
+/// dataset arrays; the `datasetId` match treats two absent identifiers as one.
+fn stream_read_sql() -> String {
+    let columns = [
+        UnnestColumn::new(StreamStaged::AttributeNameId, PostgresType::IntegerArray),
+        UnnestColumn::new(StreamStaged::DatasetId, PostgresType::TextArray),
+    ];
+    let call = unnest_call([(&columns[0], external_placeholder(2)), (&columns[1], external_placeholder(3))]);
+
+    let stream_match = Cond::all()
+        .add(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).eq(external_placeholder(1)))
+        .add(Expr::col((S, TemporalAttributeStreams::AttributeNameId)).equals((D, StreamStaged::AttributeNameId)))
+        .add(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(Expr::col((D, StreamStaged::DatasetId)).into()));
+
+    let mut select = Query::select();
+    select
+        .expr(Expr::col((S, TemporalAttributeStreams::Id)))
+        .expr_as(Expr::col((An, AttributeNames::Name)), AttributeNameColumn)
+        .expr(Expr::col((S, TemporalAttributeStreams::DatasetId)))
+        .from_function(call, D)
+        .join_as(JoinType::InnerJoin, TemporalAttributeStreams::Table, S, stream_match)
+        .join_as(
+            JoinType::InnerJoin,
+            AttributeNames::Table,
+            An,
+            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+        );
+    let select = select;
+
+    let sql = select.to_string(PostgresQueryBuilder);
+    apply_column_alias(sql, &D, &columns)
+}
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        temporal_catalog_write::{STREAM_UPSERT_SQL, TEMPORAL_ENTITY_UPSERT_SQL, distinct_attribute_names, stream_binds},
+        temporal_catalog_write::{distinct_attribute_names, stream_binds, stream_insert_sql, stream_read_sql, temporal_entity_upsert_sql},
         temporal_stream::TemporalStreamKey,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
@@ -283,20 +417,37 @@ mod tests {
 
     #[test]
     fn the_stream_conflict_target_is_the_grain_the_catalogue_is_keyed_by() {
-        assert!(STREAM_UPSERT_SQL.contains("ON CONFLICT (temporal_entity_key, attribute_name_id, dataset_id) DO NOTHING"));
+        let sql = stream_insert_sql().expect("the fixed stream insert builds");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("temporal_entity_key", "attribute_name_id", "dataset_id") DO NOTHING"#),
+            "{sql}"
+        );
     }
 
     #[test]
     fn a_repeated_write_never_moves_the_instant_the_evolution_began() {
-        assert!(TEMPORAL_ENTITY_UPSERT_SQL.contains("SET modified_at = EXCLUDED.modified_at, types = EXCLUDED.types"));
-        assert!(!TEMPORAL_ENTITY_UPSERT_SQL.contains("SET created_at"));
+        let sql = temporal_entity_upsert_sql().expect("the fixed entity upsert builds");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("id") DO UPDATE SET "modified_at" = "excluded"."modified_at", "types" = "excluded"."types""#),
+            "{sql}"
+        );
+        assert!(!sql.contains(r#""created_at" = "excluded""#), "{sql}");
+    }
+
+    #[test]
+    fn the_read_back_resolves_a_null_dataset_grain_to_a_null_one() {
+        let sql = stream_read_sql();
+        assert!(sql.contains("IS NOT DISTINCT FROM"), "{sql}");
+        assert!(sql.contains(r#"AS "attribute_name""#), "{sql}");
+        assert!(sql.contains("AS d(attribute_name_id, dataset_id)"), "{sql}");
     }
 
     #[test]
     fn the_catalogue_names_no_legacy_relation_and_no_current_state_table() {
-        for statement in [TEMPORAL_ENTITY_UPSERT_SQL, STREAM_UPSERT_SQL] {
-            assert!(!statement.contains("temporal_entity_attributes"));
-            assert!(!statement.contains(" entities"));
+        let insert = stream_insert_sql().expect("the fixed stream insert builds");
+        for statement in [temporal_entity_upsert_sql().expect("the fixed entity upsert builds"), insert, stream_read_sql()] {
+            assert!(!statement.contains("temporal_entity_attributes"), "{statement}");
+            assert!(!statement.contains(r#""entities""#), "{statement}");
         }
     }
 }

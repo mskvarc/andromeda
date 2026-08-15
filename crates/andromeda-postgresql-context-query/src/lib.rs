@@ -4,9 +4,8 @@
 //! 5.6.3 and 5.9 define how it and the context source registrations that shadow
 //! it are queried. This crate assembles those two `SELECT` statements from the
 //! fragments `andromeda-postgresql-query` renders, and does nothing else: it
-//! opens no connection, holds no pool, and returns a
-//! [`BuiltQuery`](andromeda_postgresql_seaquery::built::BuiltQuery) for the store
-//! to bind and execute.
+//! opens no connection, holds no pool, and returns `sea_query` statement trees
+//! for the store to bind through `sea-query-binder` and execute.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]

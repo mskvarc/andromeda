@@ -20,10 +20,14 @@
 //! unnesting (see [`crate::csr::projection`]), conjoining it leaves the result
 //! set unchanged and only spares the unnesting the rows it would have rejected.
 
-use crate::csr::projection::{entity_id_candidate, entity_type_candidate};
+use crate::csr::{
+    projection::{entity_id_candidate, entity_type_candidate},
+    unnesting::{ent, entities_of_item, information_covers, lacks_key},
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_seaquery::{jsonb::jsonb_exists, literal::text_literal, operator::regex_match, pg_operator::PgBinaryOperator};
 use iri_rs::IriBuf;
-use sea_query::{Expr as SeaExpr, SimpleExpr};
+use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
 
 /// Whether a registration's `information[].entities[]` covers `entity_type`.
 ///
@@ -35,13 +39,9 @@ use sea_query::{Expr as SeaExpr, SimpleExpr};
 /// The projection preselect narrows the candidates the unnesting has to read;
 /// the unnesting decides coverage.
 pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
-    entity_type_candidate(entity_type).and(SeaExpr::cust_with_values(
-        "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
-         WHERE NOT jsonb_exists(info, 'entities') \
-            OR info->'entities' = '[]'::jsonb \
-            OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE ent->>'type' = $1))",
-        [entity_type.as_str().to_string()],
-    ))
+    let mut entities_match = entities_of_item();
+    entities_match.and_where(SeaExpr::expr(ent().json_get_text(text_literal("type"))).eq(entity_type.as_str()));
+    entity_type_candidate(entity_type).and(information_covers(entities_match))
 }
 
 /// Whether a registration's `information[].entities[]` covers `entity_id`.
@@ -58,16 +58,17 @@ pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
 /// looking at the pattern, so the regular expression is evaluated exactly once,
 /// here, where the coverage decision is made.
 pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
-    entity_id_candidate(entity_id).and(SeaExpr::cust_with_values(
-        "EXISTS (SELECT 1 FROM jsonb_array_elements(\"information\") AS info \
-         WHERE NOT jsonb_exists(info, 'entities') \
-            OR info->'entities' = '[]'::jsonb \
-            OR EXISTS (SELECT 1 FROM jsonb_array_elements(info->'entities') AS ent WHERE \
-                   (NOT jsonb_exists(ent, 'id') AND NOT jsonb_exists(ent, 'idPattern')) \
-                OR ent->>'id' = $1 \
-                OR (jsonb_exists(ent, 'idPattern') AND $1 ~ (ent->>'idPattern'))))",
-        [entity_id.as_str().to_string()],
-    ))
+    let mut entities_match = entities_of_item();
+    entities_match.cond_where(
+        Condition::any()
+            .add(Condition::all().add(lacks_key(ent(), "id")).add(lacks_key(ent(), "idPattern")))
+            .add(SeaExpr::expr(ent().json_get_text(text_literal("id"))).eq(entity_id.as_str()))
+            .add(Condition::all().add(jsonb_exists(ent(), text_literal("idPattern"))).add(regex_match(
+                SeaExpr::val(entity_id.as_str()).into(),
+                ent().json_get_text(text_literal("idPattern")),
+            ))),
+    );
+    entity_id_candidate(entity_id).and(information_covers(entities_match))
 }
 
 #[cfg(test)]
@@ -96,8 +97,10 @@ mod tests {
         // A registration with no `entities` (the first two disjuncts) covers any
         // type, and one that declares entities covers a type it names.
         let sql = render(entity_type_coverage(&iri("https://example.com/Vehicle")));
-        assert!(sql.contains("NOT jsonb_exists(info, 'entities')"), "{sql}");
-        assert!(sql.contains("ent->>'type' ="), "{sql}");
+        assert!(sql.contains("jsonb_exists("), "the no-entities disjunct tests key presence: {sql}");
+        assert!(sql.contains("'entities'"), "{sql}");
+        assert!(sql.contains("'type'"), "{sql}");
+        assert!(sql.contains("'https://example.com/Vehicle'"), "{sql}");
     }
 
     #[test]
@@ -106,10 +109,10 @@ mod tests {
         // an `idPattern` covers only the ids it matches. The regex disjunct is
         // what stops an idPattern-only entry from covering every id.
         let sql = render(entity_id_coverage(&uri("urn:ngsi-ld:Vehicle:1")));
-        assert!(sql.contains("NOT jsonb_exists(ent, 'id') AND NOT jsonb_exists(ent, 'idPattern')"), "{sql}");
-        assert!(sql.contains("ent->>'id' ="), "{sql}");
-        assert!(sql.contains("jsonb_exists(ent, 'idPattern') AND"), "{sql}");
-        assert!(sql.contains("~ (ent->>'idPattern')"), "the idPattern regex disjunct must be present: {sql}");
+        assert!(sql.contains("'id'"), "{sql}");
+        assert!(sql.contains("'idPattern'"), "{sql}");
+        assert!(sql.contains("'urn:ngsi-ld:Vehicle:1'"), "the exact-id disjunct binds the identifier: {sql}");
+        assert!(sql.contains(" ~ "), "the idPattern regex disjunct must be present: {sql}");
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! for it — references it by the same iden the query builder uses, so a renamed
 //! column moves the reference with it rather than leaving a hand-quoted string.
 
-use sea_query::{DynIden, Iden, IntoIden};
+use sea_query::{DynIden, Expr, Iden, IntoIden, SimpleExpr};
 
 /// Quote one identifier: `"name"`.
 pub fn quoted(identifier: &dyn Iden) -> String {
@@ -52,6 +52,16 @@ impl ColumnReference {
         match self {
             ColumnReference::Bare(column) => quoted(&**column),
             ColumnReference::Qualified(relation, column) => qualified(&**relation, &**column),
+        }
+    }
+
+    /// The reference as a sea-query column expression, so a predicate that used
+    /// to interpolate [`render`](Self::render) into a fragment can name the
+    /// column through the builder instead.
+    pub fn column_expr(&self) -> SimpleExpr {
+        match self {
+            ColumnReference::Bare(column) => Expr::col(column.clone()).into(),
+            ColumnReference::Qualified(relation, column) => Expr::col((relation.clone(), column.clone())).into(),
         }
     }
 }

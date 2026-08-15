@@ -25,6 +25,7 @@ andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-query.workspace = true
 andromeda-postgresql-encoding.workspace = true
 andromeda-postgresql-query.workspace = true
+andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-registration.workspace = true
 andromeda-snapshot.workspace = true
@@ -41,8 +42,8 @@ iri-rs = { version = "3.4.0", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
-sea-query = { version = "0.32.7", features = ["backend-postgres", "with-chrono"] }
-sea-query-binder = { version = "0.7.0", features = ["runtime-tokio", "sqlx-postgres", "with-chrono"] }
+sea-query = { version = "0.32.7", features = ["backend-postgres", "postgres-array", "with-chrono", "with-json", "with-uuid"] }
+sea-query-binder = { version = "0.7.0", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-chrono", "with-json", "with-uuid"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"

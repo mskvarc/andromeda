@@ -2,7 +2,7 @@
 //! subscriptions.
 //!
 //! The `SubscriptionStore` trait, the `SubscriptionFields` type it references,
-//! and the `create` / `update` SQL belong here because they depend on
+//! and the `create` / `update` statements belong here because they depend on
 //! binary-side service types. The repository struct definitions and the shared
 //! mapper live in the context-store crate.
 
@@ -16,14 +16,51 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::{Subscription, SubscriptionStatus};
+use andromeda_postgresql_schema::subscriptions::Subscriptions;
+use andromeda_postgresql_seaquery::{
+    aggregate::count_all,
+    cast::cast,
+    clock::now,
+    interval::make_interval_secs,
+    literal::text_literal,
+    pg_type::PostgresType,
+    placeholder::external_placeholder,
+};
 use andromeda_subscription::{
     error::SubscriptionError,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
 };
-use sqlx::{Row, postgres::PgArguments, query::Query, types::Json};
+use sea_query::{Cond, Expr, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_binder::SqlxBinder;
+use sqlx::{Row, postgres::PgArguments, query::Query as SqlxQuery, types::Json};
 use std::fmt::Display;
 use url::Url;
+
+/// Which subscription family a repository serves; both share the `subscriptions`
+/// table and are told apart by `kind`.
+#[derive(Clone, Copy)]
+enum StoredKind {
+    /// An entity subscription (clause 5.8), which narrows by `datasetId`.
+    Entity,
+    /// A context-source subscription (clause 5.11), which does not.
+    Csource,
+}
+
+impl StoredKind {
+    /// The `kind` token a row of this family carries.
+    const fn wire(self) -> &'static str {
+        match self {
+            StoredKind::Entity => "entity",
+            StoredKind::Csource => "csource",
+        }
+    }
+
+    /// Whether this family stores a `datasetId` column.
+    const fn has_dataset_id(self) -> bool {
+        matches!(self, StoredKind::Entity)
+    }
+}
 
 /// Flatten an adapter failure at the policy boundary.
 fn persistence_error(error: impl Display) -> SubscriptionError {
@@ -38,132 +75,88 @@ fn create_error(error: sqlx::Error, identifier: &Uri) -> SubscriptionError {
     }
 }
 
-/// Generates a `SubscriptionStore` implementation backed by the `subscriptions` table.
-macro_rules! impl_subscription_store {
-    ($type:ty, kind: $kind:literal, columns: $columns:literal, has_dataset_id: $hdi:expr, create_sql: $create:expr, update_sql: $update:expr, create_binds: $create_fn:expr, update_binds: $update_fn:expr) => {
-        #[async_trait::async_trait]
-        impl SubscriptionStore for $type {
-            async fn get(&self, id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
-                let pg_row = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id.as_str())
-                    .fetch_optional(&self.pool)
-                    .await.map_err(persistence_error)?;
-                match pg_row {
-                    Some(pg) => {
-                        let row = row_from_pg(&pg, $hdi).map_err(persistence_error)?;
-                        Ok(Some(row_to_stored_subscription(row).map_err(persistence_error)?))
-                    }
-                    None => Ok(None),
-                }
-            }
+/// The `status::text AS status` read cast: a query decodes the enum as text.
+fn status_as_text() -> SimpleExpr {
+    cast(Expr::col(Subscriptions::Status).into(), PostgresType::Text)
+}
 
-            async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
-                let limit = limit.unwrap_or(100);
-                let offset = offset.unwrap_or(0);
-                let count_row: (i64,) = sqlx::query_as(concat!("SELECT COUNT(*) FROM subscriptions WHERE kind = '", $kind, "'"))
-                    .fetch_one(&self.pool).await.map_err(persistence_error)?;
-                let pg_rows = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE kind = '", $kind, "' ORDER BY created_at ASC LIMIT $1 OFFSET $2"))
-                    .bind(limit).bind(offset).fetch_all(&self.pool).await.map_err(persistence_error)?;
-                // A listing renders resources, so the surrogate key each row
-                // carries is dropped rather than threaded into the response.
-                let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(persistence_error)?
-                    .into_iter()
-                    .map(|stored| stored.subscription)
-                    .collect();
-                Ok((subscriptions, count_row.0))
-            }
+/// The predicate confining a statement to one subscription family, inline like
+/// the fixed token it is rather than bound.
+fn of_kind(kind: StoredKind) -> SimpleExpr {
+    Expr::col(Subscriptions::Kind).eq(text_literal(kind.wire()))
+}
 
-            async fn delete(&self, id: &Uri) -> Result<u64, SubscriptionError> {
-                let result = sqlx::query(concat!("DELETE FROM subscriptions WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id.as_str()).execute(&self.pool).await.map_err(persistence_error)?;
-                Ok(result.rows_affected())
-            }
+/// Add the stored-subscription projection to `select`, in the column set the
+/// mapper reads by name; `dataset_id` only for the family that stores it.
+fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
+    select
+        .column(Subscriptions::Id)
+        .column(Subscriptions::SubscriptionKey)
+        .column(Subscriptions::Type)
+        .column(Subscriptions::SubscriptionName)
+        .column(Subscriptions::Description)
+        .column(Subscriptions::Entities)
+        .column(Subscriptions::WatchedAttributes)
+        .column(Subscriptions::NotificationTrigger)
+        .column(Subscriptions::TimeInterval)
+        .column(Subscriptions::Q)
+        .column(Subscriptions::GeoQ)
+        .column(Subscriptions::ScopeQ)
+        .column(Subscriptions::Csf)
+        .column(Subscriptions::IsActive)
+        .column(Subscriptions::Notification)
+        .column(Subscriptions::ExpiresAt)
+        .column(Subscriptions::Throttling)
+        .expr_as(status_as_text(), Subscriptions::Status)
+        .column(Subscriptions::TemporalQ)
+        .column(Subscriptions::Lang)
+        .column(Subscriptions::JsonldContext)
+        .column(Subscriptions::LocalOnly)
+        .column(Subscriptions::TimesSent)
+        .column(Subscriptions::LastNotification)
+        .column(Subscriptions::LastSuccess)
+        .column(Subscriptions::LastFailure)
+        .column(Subscriptions::CreatedAt)
+        .column(Subscriptions::ModifiedAt);
+    if kind.has_dataset_id() {
+        select.column(Subscriptions::DatasetId);
+    }
+}
 
-            async fn exists(&self, id: &Uri) -> Result<bool, SubscriptionError> {
-                let row: (bool,) = sqlx::query_as(concat!("SELECT EXISTS(SELECT 1 FROM subscriptions WHERE id = $1 AND kind = '", $kind, "')"))
-                    .bind(id.as_str()).fetch_one(&self.pool).await.map_err(persistence_error)?;
-                Ok(row.0)
-            }
+/// A projecting select of one family, ready for a caller's `WHERE`.
+fn projected_select(kind: StoredKind) -> SelectStatement {
+    let mut select = Query::select();
+    project_subscription(&mut select, kind);
+    select.from(Subscriptions::Table);
+    select
+}
 
-            async fn list_active(&self) -> Result<Vec<StoredSubscription>, SubscriptionError> {
-                let pg_rows = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE status = 'active' AND kind = '", $kind, "'"))
-                    .fetch_all(&self.pool).await.map_err(persistence_error)?;
-                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
-            }
+/// `NOW() - make_interval(secs => time_interval)`: the instant a periodic
+/// subscription of the row's interval last became due.
+fn interval_deadline() -> SimpleExpr {
+    Expr::expr(now()).sub(make_interval_secs(Expr::col(Subscriptions::TimeInterval).into()))
+}
 
-            async fn claim_notification_slot(&self, id: &Uri, earliest_allowed_last_notification: Option<chrono::DateTime<chrono::Utc>>) -> Result<bool, SubscriptionError> {
-                let result = if let Some(ceiling) = earliest_allowed_last_notification {
-                    sqlx::query(concat!("UPDATE subscriptions SET times_sent = times_sent + 1, last_notification = NOW(), modified_at = NOW() WHERE id = $1 AND status = 'active' AND kind = '", $kind, "' AND (last_notification IS NULL OR last_notification <= $2)"))
-                        .bind(id.as_str()).bind(ceiling).execute(&self.pool).await.map_err(persistence_error)?
-                } else {
-                    sqlx::query(concat!("UPDATE subscriptions SET times_sent = times_sent + 1, last_notification = NOW(), modified_at = NOW() WHERE id = $1 AND status = 'active' AND kind = '", $kind, "'"))
-                        .bind(id.as_str()).execute(&self.pool).await.map_err(persistence_error)?
-                };
-                Ok(result.rows_affected() > 0)
-            }
-
-            async fn mark_success(&self, id: &Uri) -> Result<(), SubscriptionError> {
-                sqlx::query(concat!("UPDATE subscriptions SET last_success = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id.as_str()).execute(&self.pool).await.map_err(persistence_error)?;
-                Ok(())
-            }
-
-            async fn mark_failure(&self, id: &Uri) -> Result<(), SubscriptionError> {
-                sqlx::query(concat!("UPDATE subscriptions SET last_failure = NOW(), modified_at = NOW() WHERE id = $1 AND kind = '", $kind, "'"))
-                    .bind(id.as_str()).execute(&self.pool).await.map_err(persistence_error)?;
-                Ok(())
-            }
-
-            async fn expire_due(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Uri>, SubscriptionError> {
-                let rows = sqlx::query(concat!("UPDATE subscriptions SET status = 'expired', is_active = false, modified_at = $1 WHERE status != 'expired' AND expires_at IS NOT NULL AND expires_at <= $1 AND kind = '", $kind, "' RETURNING id"))
-                    .bind(cutoff).fetch_all(&self.pool).await.map_err(persistence_error)?;
-                rows.iter()
-                    .map(|row| {
-                        row.try_get::<String, _>("id")
-                            .map_err(persistence_error)
-                            .and_then(|raw| stored_subscription_uri(raw).map_err(persistence_error))
-                    })
-                    .collect()
-            }
-
-            async fn create_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), SubscriptionError> {
-                let query = sqlx::query($create);
-                let query = ($create_fn)(query, id, fields, status);
-                query.execute(&self.pool).await.map_err(|error| create_error(error, id))?;
-                tracing::info!(concat!("Created ", $kind, " subscription: {}"), id);
-                Ok(())
-            }
-
-            async fn update_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<u64, SubscriptionError> {
-                let query = sqlx::query($update);
-                let query = ($update_fn)(query, id, fields, status);
-                let result = query.execute(&self.pool).await.map_err(persistence_error)?;
-                Ok(result.rows_affected())
-            }
-
-            async fn find_due_interval_subscriptions(&self) -> Result<Vec<Subscription>, SubscriptionError> {
-                let pg_rows = sqlx::query(concat!("SELECT ", $columns, " FROM subscriptions WHERE status = 'active' AND kind = '", $kind, "' AND time_interval IS NOT NULL AND ((last_notification IS NULL AND created_at <= NOW() - make_interval(secs => time_interval)) OR (last_notification IS NOT NULL AND last_notification <= NOW() - make_interval(secs => time_interval)))"))
-                    .fetch_all(&self.pool).await.map_err(persistence_error)?;
-                // An interval notification is sent straight to the endpoint and
-                // never enqueues a delivery, so it needs no surrogate key.
-                Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
-                    .map_err(persistence_error)?
-                    .into_iter()
-                    .map(|stored| stored.subscription)
-                    .collect())
-            }
-        }
-    };
+/// The due-interval predicate: an active periodic subscription whose interval
+/// has elapsed since its last notification, or since creation if never sent.
+fn interval_elapsed() -> Cond {
+    let deadline = interval_deadline();
+    let never_sent = Cond::all()
+        .add(Expr::col(Subscriptions::LastNotification).is_null())
+        .add(Expr::col(Subscriptions::CreatedAt).lte(interval_deadline()));
+    let since_last = Cond::all()
+        .add(Expr::col(Subscriptions::LastNotification).is_not_null())
+        .add(Expr::col(Subscriptions::LastNotification).lte(deadline));
+    Cond::any().add(never_sent).add(since_last)
 }
 
 /// Bind an entity-subscription create command in statement order.
 fn bind_entity_create<'q>(
-    query: Query<'q, sqlx::Postgres, PgArguments>,
+    query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
-) -> Query<'q, sqlx::Postgres, PgArguments> {
+) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
         .bind(id.as_str())
         .bind(fields.subscription_name)
@@ -198,11 +191,11 @@ fn bind_entity_create<'q>(
 
 /// Bind an entity-subscription update command in statement order.
 fn bind_entity_update<'q>(
-    query: Query<'q, sqlx::Postgres, PgArguments>,
+    query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
-) -> Query<'q, sqlx::Postgres, PgArguments> {
+) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
         .bind(id.as_str())
         .bind(fields.subscription_name)
@@ -236,11 +229,11 @@ fn bind_entity_update<'q>(
 
 /// Bind a context-source-subscription create command in statement order.
 fn bind_csource_create<'q>(
-    query: Query<'q, sqlx::Postgres, PgArguments>,
+    query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
-) -> Query<'q, sqlx::Postgres, PgArguments> {
+) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
         .bind(id.as_str())
         .bind(fields.subscription_name)
@@ -273,11 +266,11 @@ fn bind_csource_create<'q>(
 
 /// Bind a context-source-subscription update command in statement order.
 fn bind_csource_update<'q>(
-    query: Query<'q, sqlx::Postgres, PgArguments>,
+    query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
-) -> Query<'q, sqlx::Postgres, PgArguments> {
+) -> SqlxQuery<'q, sqlx::Postgres, PgArguments> {
     query
         .bind(id.as_str())
         .bind(fields.subscription_name)
@@ -307,99 +300,414 @@ fn bind_csource_update<'q>(
         .bind(fields.jsonld_context.map(Url::as_str))
 }
 
-/// Entity-subscription insertion statement.
-const ENTITY_CREATE_SQL: &str = r#"
-INSERT INTO subscriptions (
-    id, kind, type, subscription_name, description, entities,
-    watched_attributes, notification_trigger, time_interval,
-    q, geo_q, scope_q, csf, dataset_id, is_active, notification,
-    expires_at, throttling, status, temporal_q, lang,
-    jsonld_context, local_only, created_at, modified_at
-) VALUES (
-    $1, 'entity', 'Subscription', $2, $3, $4,
-    $5, $6, $7,
-    $8, $9, $10, $11, $12, $13, $14,
-    $15, $16, $17::subscription_status, $18, $19,
-    $20, $21, NOW(), NOW()
-)
-"#;
+/// The entity-subscription insert, its field values bound by
+/// [`bind_entity_create`] in the marker order this emits.
+fn entity_create_sql() -> Result<String, SubscriptionError> {
+    let mut insert = Query::insert();
+    insert.into_table(Subscriptions::Table).columns([
+        Subscriptions::Id,
+        Subscriptions::Kind,
+        Subscriptions::Type,
+        Subscriptions::SubscriptionName,
+        Subscriptions::Description,
+        Subscriptions::Entities,
+        Subscriptions::WatchedAttributes,
+        Subscriptions::NotificationTrigger,
+        Subscriptions::TimeInterval,
+        Subscriptions::Q,
+        Subscriptions::GeoQ,
+        Subscriptions::ScopeQ,
+        Subscriptions::Csf,
+        Subscriptions::DatasetId,
+        Subscriptions::IsActive,
+        Subscriptions::Notification,
+        Subscriptions::ExpiresAt,
+        Subscriptions::Throttling,
+        Subscriptions::Status,
+        Subscriptions::TemporalQ,
+        Subscriptions::Lang,
+        Subscriptions::JsonldContext,
+        Subscriptions::LocalOnly,
+        Subscriptions::CreatedAt,
+        Subscriptions::ModifiedAt,
+    ]);
+    insert
+        .values([
+            external_placeholder(1),
+            text_literal("entity"),
+            text_literal("Subscription"),
+            external_placeholder(2),
+            external_placeholder(3),
+            external_placeholder(4),
+            external_placeholder(5),
+            external_placeholder(6),
+            external_placeholder(7),
+            external_placeholder(8),
+            external_placeholder(9),
+            external_placeholder(10),
+            external_placeholder(11),
+            external_placeholder(12),
+            external_placeholder(13),
+            external_placeholder(14),
+            external_placeholder(15),
+            external_placeholder(16),
+            cast(external_placeholder(17), PostgresType::SubscriptionStatus),
+            external_placeholder(18),
+            external_placeholder(19),
+            external_placeholder(20),
+            external_placeholder(21),
+            now(),
+            now(),
+        ])
+        .map_err(persistence_error)?;
+    Ok(insert.to_string(PostgresQueryBuilder))
+}
 
-/// Entity-subscription replacement statement.
-const ENTITY_UPDATE_SQL: &str = r#"
-UPDATE subscriptions SET
-    subscription_name = $2, description = $3, entities = $4,
-    watched_attributes = $5, notification_trigger = $6, time_interval = $7,
-    q = $8, geo_q = $9, scope_q = $10, csf = $11, dataset_id = $12,
-    is_active = $13, notification = $14, expires_at = $15, throttling = $16,
-    status = $17::subscription_status, lang = $18, jsonld_context = $19,
-    local_only = $20, modified_at = NOW()
-WHERE id = $1 AND kind = 'entity'
-"#;
+/// The entity-subscription replacement, bound by [`bind_entity_update`].
+fn entity_update_sql() -> String {
+    let mut update = Query::update();
+    update
+        .table(Subscriptions::Table)
+        .values([
+            (Subscriptions::SubscriptionName, external_placeholder(2)),
+            (Subscriptions::Description, external_placeholder(3)),
+            (Subscriptions::Entities, external_placeholder(4)),
+            (Subscriptions::WatchedAttributes, external_placeholder(5)),
+            (Subscriptions::NotificationTrigger, external_placeholder(6)),
+            (Subscriptions::TimeInterval, external_placeholder(7)),
+            (Subscriptions::Q, external_placeholder(8)),
+            (Subscriptions::GeoQ, external_placeholder(9)),
+            (Subscriptions::ScopeQ, external_placeholder(10)),
+            (Subscriptions::Csf, external_placeholder(11)),
+            (Subscriptions::DatasetId, external_placeholder(12)),
+            (Subscriptions::IsActive, external_placeholder(13)),
+            (Subscriptions::Notification, external_placeholder(14)),
+            (Subscriptions::ExpiresAt, external_placeholder(15)),
+            (Subscriptions::Throttling, external_placeholder(16)),
+            (Subscriptions::Status, cast(external_placeholder(17), PostgresType::SubscriptionStatus)),
+            (Subscriptions::Lang, external_placeholder(18)),
+            (Subscriptions::JsonldContext, external_placeholder(19)),
+            (Subscriptions::LocalOnly, external_placeholder(20)),
+            (Subscriptions::ModifiedAt, now()),
+        ])
+        .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
+        .and_where(of_kind(StoredKind::Entity));
+    update.to_string(PostgresQueryBuilder)
+}
 
-/// Context-source-subscription insertion statement.
-const CSOURCE_CREATE_SQL: &str = r#"
-INSERT INTO subscriptions (
-    id, kind, type, subscription_name, description, entities,
-    watched_attributes, notification_trigger, time_interval,
-    q, geo_q, scope_q, csf, is_active, notification,
-    expires_at, throttling, status, temporal_q, lang,
-    jsonld_context, created_at, modified_at
-) VALUES (
-    $1, 'csource', 'Subscription', $2, $3, $4,
-    $5, $6, $7,
-    $8, $9, $10, $11, $12, $13,
-    $14, $15, $16::subscription_status, $17, $18,
-    $19, NOW(), NOW()
-)
-"#;
+/// The context-source-subscription insert, bound by [`bind_csource_create`].
+fn csource_create_sql() -> Result<String, SubscriptionError> {
+    let mut insert = Query::insert();
+    insert.into_table(Subscriptions::Table).columns([
+        Subscriptions::Id,
+        Subscriptions::Kind,
+        Subscriptions::Type,
+        Subscriptions::SubscriptionName,
+        Subscriptions::Description,
+        Subscriptions::Entities,
+        Subscriptions::WatchedAttributes,
+        Subscriptions::NotificationTrigger,
+        Subscriptions::TimeInterval,
+        Subscriptions::Q,
+        Subscriptions::GeoQ,
+        Subscriptions::ScopeQ,
+        Subscriptions::Csf,
+        Subscriptions::IsActive,
+        Subscriptions::Notification,
+        Subscriptions::ExpiresAt,
+        Subscriptions::Throttling,
+        Subscriptions::Status,
+        Subscriptions::TemporalQ,
+        Subscriptions::Lang,
+        Subscriptions::JsonldContext,
+        Subscriptions::CreatedAt,
+        Subscriptions::ModifiedAt,
+    ]);
+    insert
+        .values([
+            external_placeholder(1),
+            text_literal("csource"),
+            text_literal("Subscription"),
+            external_placeholder(2),
+            external_placeholder(3),
+            external_placeholder(4),
+            external_placeholder(5),
+            external_placeholder(6),
+            external_placeholder(7),
+            external_placeholder(8),
+            external_placeholder(9),
+            external_placeholder(10),
+            external_placeholder(11),
+            external_placeholder(12),
+            external_placeholder(13),
+            external_placeholder(14),
+            external_placeholder(15),
+            cast(external_placeholder(16), PostgresType::SubscriptionStatus),
+            external_placeholder(17),
+            external_placeholder(18),
+            external_placeholder(19),
+            now(),
+            now(),
+        ])
+        .map_err(persistence_error)?;
+    Ok(insert.to_string(PostgresQueryBuilder))
+}
 
-/// Context-source-subscription replacement statement.
-const CSOURCE_UPDATE_SQL: &str = r#"
-UPDATE subscriptions SET
-    subscription_name = $2, description = $3, entities = $4,
-    watched_attributes = $5, notification_trigger = $6, time_interval = $7,
-    q = $8, geo_q = $9, scope_q = $10, csf = $11,
-    is_active = $12, notification = $13, expires_at = $14, throttling = $15,
-    status = $16::subscription_status, lang = $17, jsonld_context = $18,
-    modified_at = NOW()
-WHERE id = $1 AND kind = 'csource'
-"#;
+/// The context-source-subscription replacement, bound by [`bind_csource_update`].
+fn csource_update_sql() -> String {
+    let mut update = Query::update();
+    update
+        .table(Subscriptions::Table)
+        .values([
+            (Subscriptions::SubscriptionName, external_placeholder(2)),
+            (Subscriptions::Description, external_placeholder(3)),
+            (Subscriptions::Entities, external_placeholder(4)),
+            (Subscriptions::WatchedAttributes, external_placeholder(5)),
+            (Subscriptions::NotificationTrigger, external_placeholder(6)),
+            (Subscriptions::TimeInterval, external_placeholder(7)),
+            (Subscriptions::Q, external_placeholder(8)),
+            (Subscriptions::GeoQ, external_placeholder(9)),
+            (Subscriptions::ScopeQ, external_placeholder(10)),
+            (Subscriptions::Csf, external_placeholder(11)),
+            (Subscriptions::IsActive, external_placeholder(12)),
+            (Subscriptions::Notification, external_placeholder(13)),
+            (Subscriptions::ExpiresAt, external_placeholder(14)),
+            (Subscriptions::Throttling, external_placeholder(15)),
+            (Subscriptions::Status, cast(external_placeholder(16), PostgresType::SubscriptionStatus)),
+            (Subscriptions::Lang, external_placeholder(17)),
+            (Subscriptions::JsonldContext, external_placeholder(18)),
+            (Subscriptions::ModifiedAt, now()),
+        ])
+        .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
+        .and_where(of_kind(StoredKind::Csource));
+    update.to_string(PostgresQueryBuilder)
+}
+
+/// Generates a `SubscriptionStore` implementation backed by the `subscriptions`
+/// table, its statements built through sea-query.
+macro_rules! impl_subscription_store {
+    ($type:ty, kind: $kind:expr, has_dataset_id: $hdi:expr, create_sql: $create:path, update_sql: $update:path, create_binds: $create_fn:path, update_binds: $update_fn:path) => {
+        #[async_trait::async_trait]
+        impl SubscriptionStore for $type {
+            async fn get(&self, id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+                let mut select = projected_select($kind);
+                select.and_where(Expr::col(Subscriptions::Id).eq(id.as_str())).and_where(of_kind($kind));
+                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let pg_row = sqlx::query_with(&sql, values)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
+                match pg_row {
+                    Some(pg) => {
+                        let row = row_from_pg(&pg, $hdi).map_err(persistence_error)?;
+                        Ok(Some(row_to_stored_subscription(row).map_err(persistence_error)?))
+                    }
+                    None => Ok(None),
+                }
+            }
+
+            async fn list(&self, limit: Option<i64>, offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+                let limit = limit.unwrap_or(100);
+                let offset = offset.unwrap_or(0);
+                let count = Query::select()
+                    .expr(count_all())
+                    .from(Subscriptions::Table)
+                    .and_where(of_kind($kind))
+                    .to_owned();
+                let (count_sql, count_values) = count.build_sqlx(PostgresQueryBuilder);
+                let count_row: (i64,) = sqlx::query_as_with(&count_sql, count_values)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(persistence_error)?;
+
+                let mut select = projected_select($kind);
+                select
+                    .and_where(of_kind($kind))
+                    .order_by(Subscriptions::CreatedAt, Order::Asc)
+                    .limit(limit.max(0) as u64)
+                    .offset(offset.max(0) as u64);
+                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let pg_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                // A listing renders resources, so the surrogate key each row
+                // carries is dropped rather than threaded into the response.
+                let subscriptions = rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
+                    .into_iter()
+                    .map(|stored| stored.subscription)
+                    .collect();
+                Ok((subscriptions, count_row.0))
+            }
+
+            async fn delete(&self, id: &Uri) -> Result<u64, SubscriptionError> {
+                let statement = Query::delete()
+                    .from_table(Subscriptions::Table)
+                    .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
+                    .and_where(of_kind($kind))
+                    .to_owned();
+                let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+                let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                Ok(result.rows_affected())
+            }
+
+            async fn exists(&self, id: &Uri) -> Result<bool, SubscriptionError> {
+                let inner = Query::select()
+                    .expr(Expr::val(1))
+                    .from(Subscriptions::Table)
+                    .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
+                    .and_where(of_kind($kind))
+                    .to_owned();
+                let statement = Query::select().expr(Expr::exists(inner)).to_owned();
+                let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+                let row: (bool,) = sqlx::query_as_with(&sql, values).fetch_one(&self.pool).await.map_err(persistence_error)?;
+                Ok(row.0)
+            }
+
+            async fn list_active(&self) -> Result<Vec<StoredSubscription>, SubscriptionError> {
+                let mut select = projected_select($kind);
+                select
+                    .and_where(Expr::col(Subscriptions::Status).eq(text_literal("active")))
+                    .and_where(of_kind($kind));
+                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let pg_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                rows_to_stored_subscriptions(&pg_rows, $hdi).map_err(persistence_error)
+            }
+
+            async fn claim_notification_slot(
+                &self,
+                id: &Uri,
+                earliest_allowed_last_notification: Option<chrono::DateTime<chrono::Utc>>,
+            ) -> Result<bool, SubscriptionError> {
+                let mut statement = Query::update();
+                statement
+                    .table(Subscriptions::Table)
+                    .value(Subscriptions::TimesSent, Expr::col(Subscriptions::TimesSent).add(1))
+                    .value(Subscriptions::LastNotification, now())
+                    .value(Subscriptions::ModifiedAt, now())
+                    .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
+                    .and_where(Expr::col(Subscriptions::Status).eq(text_literal("active")))
+                    .and_where(of_kind($kind));
+                if let Some(ceiling) = earliest_allowed_last_notification {
+                    statement.cond_where(
+                        Cond::any()
+                            .add(Expr::col(Subscriptions::LastNotification).is_null())
+                            .add(Expr::col(Subscriptions::LastNotification).lte(ceiling)),
+                    );
+                }
+                let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+                let result = sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                Ok(result.rows_affected() > 0)
+            }
+
+            async fn mark_success(&self, id: &Uri) -> Result<(), SubscriptionError> {
+                let (sql, values) = mark_statement(Subscriptions::LastSuccess, id, $kind).build_sqlx(PostgresQueryBuilder);
+                sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                Ok(())
+            }
+
+            async fn mark_failure(&self, id: &Uri) -> Result<(), SubscriptionError> {
+                let (sql, values) = mark_statement(Subscriptions::LastFailure, id, $kind).build_sqlx(PostgresQueryBuilder);
+                sqlx::query_with(&sql, values).execute(&self.pool).await.map_err(persistence_error)?;
+                Ok(())
+            }
+
+            async fn expire_due(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+                let statement = Query::update()
+                    .table(Subscriptions::Table)
+                    .value(Subscriptions::Status, cast(text_literal("expired"), PostgresType::SubscriptionStatus))
+                    .value(Subscriptions::IsActive, Expr::val(false))
+                    .value(Subscriptions::ModifiedAt, Expr::val(cutoff))
+                    .and_where(Expr::col(Subscriptions::Status).ne(text_literal("expired")))
+                    .and_where(Expr::col(Subscriptions::ExpiresAt).is_not_null())
+                    .and_where(Expr::col(Subscriptions::ExpiresAt).lte(cutoff))
+                    .and_where(of_kind($kind))
+                    .returning(Query::returning().column(Subscriptions::Id))
+                    .to_owned();
+                let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+                let rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                rows.iter()
+                    .map(|row| {
+                        row.try_get::<String, _>("id")
+                            .map_err(persistence_error)
+                            .and_then(|raw| stored_subscription_uri(raw).map_err(persistence_error))
+                    })
+                    .collect()
+            }
+
+            async fn create_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<(), SubscriptionError> {
+                let sql = $create()?;
+                let query = ($create_fn)(sqlx::query(&sql), id, fields, status);
+                query.execute(&self.pool).await.map_err(|error| create_error(error, id))?;
+                tracing::info!("Created {} subscription: {}", $kind.wire(), id);
+                Ok(())
+            }
+
+            async fn update_subscription(&self, id: &Uri, fields: &SubscriptionFields<'_>, status: SubscriptionStatus) -> Result<u64, SubscriptionError> {
+                let sql = $update();
+                let query = ($update_fn)(sqlx::query(&sql), id, fields, status);
+                let result = query.execute(&self.pool).await.map_err(persistence_error)?;
+                Ok(result.rows_affected())
+            }
+
+            async fn find_due_interval_subscriptions(&self) -> Result<Vec<Subscription>, SubscriptionError> {
+                let mut select = projected_select($kind);
+                select
+                    .and_where(Expr::col(Subscriptions::Status).eq(text_literal("active")))
+                    .and_where(of_kind($kind))
+                    .and_where(Expr::col(Subscriptions::TimeInterval).is_not_null())
+                    .cond_where(interval_elapsed());
+                let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+                let pg_rows = sqlx::query_with(&sql, values).fetch_all(&self.pool).await.map_err(persistence_error)?;
+                // An interval notification is sent straight to the endpoint and
+                // never enqueues a delivery, so it needs no surrogate key.
+                Ok(rows_to_stored_subscriptions(&pg_rows, $hdi)
+                    .map_err(persistence_error)?
+                    .into_iter()
+                    .map(|stored| stored.subscription)
+                    .collect())
+            }
+        }
+    };
+}
+
+/// The `SET last_* = NOW(), modified_at = NOW() WHERE id AND kind` touch shared
+/// by `mark_success` and `mark_failure`.
+fn mark_statement(column: Subscriptions, id: &Uri, kind: StoredKind) -> sea_query::UpdateStatement {
+    Query::update()
+        .table(Subscriptions::Table)
+        .value(column, now())
+        .value(Subscriptions::ModifiedAt, now())
+        .and_where(Expr::col(Subscriptions::Id).eq(id.as_str()))
+        .and_where(of_kind(kind))
+        .to_owned()
+}
 
 impl_subscription_store!(
     SubscriptionRepository,
-    kind: "entity",
-    columns: "id, subscription_key, type, subscription_name, description, entities, \
-              watched_attributes, notification_trigger, time_interval, \
-              q, geo_q, scope_q, csf, dataset_id, is_active, notification, \
-              expires_at, throttling, status::text AS status, temporal_q, lang, \
-              jsonld_context, local_only, times_sent, last_notification, \
-              last_success, last_failure, created_at, modified_at",
+    kind: StoredKind::Entity,
     has_dataset_id: DatasetIdPresence::Present,
-    create_sql: ENTITY_CREATE_SQL,
-    update_sql: ENTITY_UPDATE_SQL,
+    create_sql: entity_create_sql,
+    update_sql: entity_update_sql,
     create_binds: bind_entity_create,
     update_binds: bind_entity_update
 );
 
 impl_subscription_store!(
     CsourceSubscriptionRepository,
-    kind: "csource",
-    columns: "id, subscription_key, type, subscription_name, description, entities, \
-              watched_attributes, notification_trigger, time_interval, \
-              q, geo_q, scope_q, csf, is_active, notification, \
-              expires_at, throttling, status::text AS status, temporal_q, lang, \
-              jsonld_context, local_only, times_sent, last_notification, \
-              last_success, last_failure, created_at, modified_at",
+    kind: StoredKind::Csource,
     has_dataset_id: DatasetIdPresence::Absent,
-    create_sql: CSOURCE_CREATE_SQL,
-    update_sql: CSOURCE_UPDATE_SQL,
+    create_sql: csource_create_sql,
+    update_sql: csource_update_sql,
     create_binds: bind_csource_create,
     update_binds: bind_csource_update
 );
 
 #[cfg(test)]
 mod tests {
-    use crate::{csource_subscription::repo::CsourceSubscriptionRepository, subscription::repo::SubscriptionRepository};
+    use crate::{
+        csource_subscription::repo::CsourceSubscriptionRepository,
+        subscription::repo::SubscriptionRepository,
+        subscription_store::postgresql::{csource_create_sql, entity_create_sql, entity_update_sql},
+    };
     use andromeda_subscription::store::SubscriptionStore;
 
     fn assert_subscription_store<T: SubscriptionStore>() {}
@@ -412,5 +720,35 @@ mod tests {
     #[test]
     fn csource_subscription_repository_implements_the_policy_port_directly() {
         assert_subscription_store::<CsourceSubscriptionRepository>();
+    }
+
+    #[test]
+    fn the_entity_create_carries_its_kind_type_and_status_cast_with_contiguous_markers() {
+        let sql = entity_create_sql().expect("the fixed entity insert builds");
+        assert!(sql.contains("'entity'") && sql.contains("'Subscription'"), "{sql}");
+        assert!(sql.contains("$17::subscription_status"), "{sql}");
+        assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
+        for marker in 1..=21 {
+            assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
+        }
+        assert!(!sql.contains("$22"), "the create binds exactly twenty-one values: {sql}");
+    }
+
+    #[test]
+    fn the_csource_create_omits_the_dataset_and_local_only_columns() {
+        let sql = csource_create_sql().expect("the fixed context-source insert builds");
+        assert!(sql.contains("'csource'"), "{sql}");
+        assert!(sql.contains("$16::subscription_status"), "{sql}");
+        assert!(!sql.contains("$20"), "the context-source create binds nineteen values: {sql}");
+        assert!(!sql.contains("dataset_id"), "a context-source subscription stores no datasetId: {sql}");
+    }
+
+    #[test]
+    fn the_entity_update_pins_the_row_by_id_and_kind() {
+        let sql = entity_update_sql();
+        assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
+        assert!(sql.contains("'entity'"), "{sql}");
+        assert!(sql.contains("$17::subscription_status"), "{sql}");
+        assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
     }
 }

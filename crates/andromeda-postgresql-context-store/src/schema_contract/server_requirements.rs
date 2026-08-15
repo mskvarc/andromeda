@@ -1,6 +1,13 @@
 //! The server and extension versions the tenant schema depends on.
 
 use crate::schema_contract::error::SchemaContractError;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    introspection::{current_setting, extension_version},
+    pg_type::PostgresType,
+};
+use sea_query::{Alias, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_binder::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// The PostgreSQL version the tenant schema requires.
@@ -127,13 +134,8 @@ pub enum ExtensionVersionError {
 
 /// Refuse a tenant whose server or extensions are below what the schema needs.
 pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContractError> {
-    let row = sqlx::query(
-        "SELECT current_setting('server_version_num')::INTEGER AS server_version_num, \
-            (SELECT extversion FROM pg_extension WHERE extname = 'postgis') AS postgis_version, \
-            (SELECT extversion FROM pg_extension WHERE extname = 'timescaledb') AS timescaledb_version",
-    )
-    .fetch_one(pool)
-    .await?;
+    let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(&sql, values).fetch_one(pool).await?;
 
     check_postgres(PostgresVersion::new(row.get("server_version_num")))?;
     check_extension(
@@ -146,6 +148,23 @@ pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContr
         ExtensionPresence::try_from(row.get::<Option<String>, _>("timescaledb_version"))?,
         |required, found| SchemaContractError::TimescaleDbBelowMinimum { required, found },
     )
+}
+
+/// Read the server's `server_version_num` and the PostGIS and TimescaleDB
+/// extension versions.
+///
+/// Every column is a system-function call or a `pg_extension` lookup, so the
+/// statement names no application relation and binds the setting and extension
+/// names it reads.
+fn server_requirements_statement() -> SelectStatement {
+    Query::select()
+        .expr_as(
+            cast(current_setting("server_version_num"), PostgresType::Integer),
+            Alias::new("server_version_num"),
+        )
+        .expr_as(extension_version("postgis"), Alias::new("postgis_version"))
+        .expr_as(extension_version("timescaledb"), Alias::new("timescaledb_version"))
+        .to_owned()
 }
 
 /// Compare the server against its floor.
@@ -186,8 +205,21 @@ mod tests {
             REQUIRED_TIMESCALEDB_VERSION,
             check_extension,
             check_postgres,
+            server_requirements_statement,
         },
     };
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn the_requirements_query_casts_the_server_version_and_reads_both_extensions() {
+        let sql = server_requirements_statement().to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"current_setting('server_version_num')::integer AS "server_version_num""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""pg_extension""#), "{sql}");
+        assert!(sql.contains(r#"AS "postgis_version""#) && sql.contains(r#"AS "timescaledb_version""#), "{sql}");
+    }
 
     #[test]
     fn a_server_below_the_nulls_not_distinct_floor_is_refused_naming_both_versions() {

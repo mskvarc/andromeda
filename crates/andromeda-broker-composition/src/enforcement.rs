@@ -79,6 +79,7 @@ andromeda_architecture_checks::dependency_boundary! {
 andromeda_architecture_checks::workspace_architecture! {
     workspace_root: "../..",
     no_raw_iri_or_media_constants,
+    no_raw_sql,
     retired_architecture,
 }
 

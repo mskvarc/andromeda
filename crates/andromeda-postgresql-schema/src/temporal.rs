@@ -21,6 +21,10 @@ pub enum TemporalEntities {
     Id,
     /// Array of entity type IRIs
     Types,
+    /// Instant the Temporal Evolution began (clause 4.8 `createdAt`), never moved
+    CreatedAt,
+    /// Instant the Temporal Evolution was last extended (clause 4.8 `modifiedAt`)
+    ModifiedAt,
 }
 
 /// The `temporal_attribute_streams` table - the stable grain a history row belongs to.
@@ -45,22 +49,96 @@ pub enum AttributeHistory {
     Table,
     /// Foreign key to `temporal_attribute_streams`
     StreamId,
+    /// Write identity of the mutation that produced the row (clause 5.6.7)
+    WriteId,
+    /// Ordinal of the row within its write, part of the replay-collision key
+    WriteOrdinal,
+    /// Operational instant the row was written, never rewritten
+    RecordedAt,
+    /// Instant the row was first recorded at (clause 4.8 `createdAt`)
+    CreatedAt,
+    /// NGSI-LD `modifiedAt` axis (clause 4.8), advanced by a modification
+    ModifiedAt,
+    /// Observation instant the instance declares (clause 4.8 `observedAt`)
+    ObservedAt,
+    /// Instant a tombstone row records the instance ended, when it does
+    DeletedAt,
+    /// Bare UUID of a broker-minted `instanceId`
+    GeneratedInstanceUuid,
+    /// Verbatim text of a client-supplied `instanceId`
+    VerbatimInstanceId,
+    /// Attribute family code of the stored instance
+    AttributeKind,
+    /// Value shape code, pinning which typed value column is populated
+    ValueKind,
+    /// Numeric value, when `value_kind` selects it
+    ValueNumber,
+    /// String value, when `value_kind` selects it
+    ValueString,
+    /// Boolean value, when `value_kind` selects it
+    ValueBool,
+    /// Geometry value, when `value_kind` selects it
+    ValueGeo,
+    /// JSON object or array value, when `value_kind` selects it
+    ValueObject,
+    /// DateTime value, when `value_kind` selects it
+    ValueDatetime,
+    /// URI value, when `value_kind` selects it
+    ValueUri,
+    /// Expanded instance metadata, without the `unitCode` member
+    Metadata,
+    /// The instance's `unitCode` catalog identity, carrying no foreign key
+    UnitCodeId,
 }
 
-/// The `attribute_names` table - normalized attribute name storage.
+/// The `attribute_history_instance_claims` table - the uniqueness reservations a
+/// client-supplied `instanceId` holds so a verbatim identifier stays singular.
 #[derive(Iden, Clone, Copy)]
-pub enum AttributeNames {
-    /// Table name: `attribute_names`
+pub enum AttributeHistoryInstanceClaims {
+    /// Table name: `attribute_history_instance_claims`
     Table,
-    /// Primary key
-    Id,
-    /// Expanded attribute IRI
-    Name,
+    /// The verbatim `instanceId` the claim reserves
+    VerbatimInstanceId,
+    /// Foreign key to `temporal_entities`
+    TemporalEntityKey,
+    /// Foreign key to `attribute_names`
+    AttributeNameId,
+}
+
+/// The `scope_history` table - the temporal evolution of an entity's scopes.
+#[derive(Iden, Clone, Copy)]
+pub enum ScopeHistory {
+    /// Table name: `scope_history`
+    Table,
+    /// Operational instant the row was written, the hypertable partition column
+    RecordedAt,
+    /// Foreign key to `temporal_entities`
+    TemporalEntityKey,
+    /// Write identity of the mutation that produced the row (clause 5.6.7)
+    WriteId,
+    /// Ordinal of the row within its write, part of the replay-collision key
+    WriteOrdinal,
+    /// Value shape code of the scope observation
+    ValueKind,
+    /// Observation instant the row declares (clause 4.8 `observedAt`)
+    ObservedAt,
+    /// Instant the row was first recorded at (clause 4.8 `createdAt`)
+    CreatedAt,
+    /// Instant the row was last altered at (clause 4.8 `modifiedAt`)
+    ModifiedAt,
+    /// Deletion instant, present only on a tombstone row
+    DeletedAt,
+    /// Bare UUID of a broker-minted `instanceId`
+    GeneratedInstanceUuid,
+    /// Verbatim text of a client-supplied `instanceId`
+    VerbatimInstanceId,
+    /// The scope as an `ltree` label path, absent on a tombstone
+    ScopePath,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::{AttributeHistory, AttributeNames, TemporalAttributeStreams, TemporalEntities};
+    use crate::temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities};
     use sea_query::Iden;
 
     #[test]
@@ -83,11 +161,5 @@ mod tests {
     fn attribute_history_names() {
         pretty_assertions::assert_eq!(AttributeHistory::Table.to_string(), "attribute_history");
         pretty_assertions::assert_eq!(AttributeHistory::StreamId.to_string(), "stream_id");
-    }
-
-    #[test]
-    fn attribute_names_names() {
-        pretty_assertions::assert_eq!(AttributeNames::Table.to_string(), "attribute_names");
-        pretty_assertions::assert_eq!(AttributeNames::Name.to_string(), "name");
     }
 }

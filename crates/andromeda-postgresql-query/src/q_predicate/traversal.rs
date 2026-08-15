@@ -18,11 +18,8 @@
 use crate::{attribute_name_id::AttributeNameId, q_predicate::target::QFilterTarget};
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_schema::current::{CurrentAttributeValues, Entities};
-use andromeda_postgresql_seaquery::{
-    column_reference::{qualified, quoted},
-    operator::array_contains,
-};
-use sea_query::{Alias, Condition, Expr as SeaExpr, SimpleExpr};
+use andromeda_postgresql_seaquery::{literal::int_literal, operator::array_contains};
+use sea_query::{Alias, Condition, Expr as SeaExpr, JoinType, Query, SimpleExpr};
 
 /// One hop of a traversal: the relations its probe introduces, and the probe
 /// itself.
@@ -67,45 +64,35 @@ impl LinkedHop {
     /// A deleted Relationship needs no exclusion: the projection holds no
     /// tombstone row, so an instance that is present names an entity.
     pub(crate) fn probe(&self, relationship_id: AttributeNameId, guard_types: &[AttributeName], outer: &QFilterTarget, inner: Condition) -> Condition {
-        let attribute_alias = self.attribute_alias.as_str();
-        let linked_alias = self.linked_alias.as_str();
-        // The markers are positional over the expressions collected below, not bind
-        // placeholders: sea-query renders each expression in turn, so the guard and
-        // the inner condition contribute their own binds where they are written.
-        //
-        // Both substituted conditions are parenthesised. A multi-type guard renders
-        // as a bare `a OR b`, and spliced unparenthesised into this `AND` chain its
-        // second disjunct would escape the correlation and the attribute-name test
-        // entirely — the probe would match whenever *any* entity in the tenant
-        // carried the second type. The inner condition is wrapped for the same
-        // reason, before some future compilation of it renders a top-level `OR` too.
-        let mut operands: Vec<SimpleExpr> = vec![SeaExpr::val(relationship_id.get()).into()];
-        let guard = if guard_types.is_empty() {
-            String::new()
-        } else {
-            operands.push(type_guard(guard_types, linked_alias));
-            format!(" AND (${})", operands.len())
-        };
-        let inner_marker = format!("(${})", operands.len() + 1);
-        operands.push(inner.into());
+        // Fresh alias handles rather than clones: each names the same relation
+        // the hop introduced.
+        let hop = || Alias::new(self.attribute_alias.as_str());
+        let linked = || Alias::new(self.linked_alias.as_str());
 
-        let hop_alias = Alias::new(attribute_alias);
-        let linked = Alias::new(linked_alias);
-        let sql = format!(
-            "EXISTS (SELECT 1 FROM {projection} AS \"{attribute_alias}\" \
-             JOIN {entities} AS \"{linked_alias}\" ON {linked_id} = {object} \
-             WHERE {hop_key} = {corr} \
-             AND {hop_attr} = $1{guard} \
-             AND {inner_marker})",
-            projection = quoted(&CurrentAttributeValues::Table),
-            entities = quoted(&Entities::Table),
-            linked_id = qualified(&linked, &Entities::Id),
-            object = qualified(&hop_alias, &CurrentAttributeValues::ValueUri),
-            hop_key = qualified(&hop_alias, &CurrentAttributeValues::EntityKey),
-            hop_attr = qualified(&hop_alias, &CurrentAttributeValues::AttributeNameId),
-            corr = outer.entity_key_column(),
-        );
-        Condition::all().add(SeaExpr::cust_with_exprs(sql, operands))
+        // The Relationship's object is the linked Entity's URI (clause 4.5.3), so
+        // the projection's `value_uri` joins to `entities.id`.
+        let join_on = SeaExpr::col((linked(), Entities::Id)).equals((hop(), CurrentAttributeValues::ValueUri));
+
+        let mut probe = Query::select();
+        probe
+            .expr(int_literal(1))
+            .from_as(CurrentAttributeValues::Table, hop())
+            .join_as(JoinType::Join, Entities::Table, linked(), join_on)
+            // The correlation is added first — it binds nothing, so the
+            // Relationship's dictionary key is still the probe's first bound
+            // value, ahead of the guard's types and the inner predicate's operands.
+            .and_where(SeaExpr::col((hop(), CurrentAttributeValues::EntityKey)).eq(outer.entity_key_column()))
+            .and_where(SeaExpr::col((hop(), CurrentAttributeValues::AttributeNameId)).eq(relationship_id.get()));
+        // A multi-type guard is a disjunction; adding it as one condition keeps it
+        // parenthesised so a second alternative cannot escape the correlation and
+        // the attribute-name test to match any entity in the tenant that carries it.
+        if !guard_types.is_empty() {
+            probe.and_where(type_guard(guard_types, self.linked_alias.as_str()));
+        }
+        // The inner predicate is added as its own condition for the same reason,
+        // before any future compilation of it renders a top-level `OR`.
+        probe.cond_where(inner);
+        Condition::all().add(SeaExpr::exists(probe))
     }
 }
 

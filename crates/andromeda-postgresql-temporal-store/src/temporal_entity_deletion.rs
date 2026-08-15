@@ -16,9 +16,48 @@
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
+use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_seaquery::aggregate::count_all;
+use sea_query::{DeleteStatement, Expr, Iden, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_binder::SqlxBinder;
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::collections::BTreeSet;
 use uuid::Uuid;
+
+/// The `attribute_history` alias in the orphan audit.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ah"]
+struct Ah;
+
+/// The `temporal_attribute_streams` alias in the orphan audit.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s"]
+struct S;
+
+/// The `scope_history` alias in the orphan audit.
+#[derive(Iden, Clone, Copy)]
+#[iden = "sh"]
+struct Sh;
+
+/// The `temporal_entities` alias in the orphan audit.
+#[derive(Iden, Clone, Copy)]
+#[iden = "te"]
+struct Te;
+
+/// The count of attribute-history rows whose stream is gone.
+#[derive(Iden, Clone, Copy)]
+#[iden = "orphaned_attribute_history_rows"]
+struct OrphanedAttributeHistoryRows;
+
+/// The count of scope-history rows whose temporal entity is gone.
+#[derive(Iden, Clone, Copy)]
+#[iden = "orphaned_scope_history_rows"]
+struct OrphanedScopeHistoryRows;
+
+/// The count of streams whose temporal entity is gone.
+#[derive(Iden, Clone, Copy)]
+#[iden = "orphaned_streams"]
+struct OrphanedStreams;
 
 /// What one Temporal Evolution deletion removed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,14 +101,12 @@ impl TemporalRepository {
     pub async fn delete_temporal_evolution(&self, entity_id: &Uri) -> Result<TemporalEvolutionDeletion, TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
         let entity_key = locate_temporal_entity(&mut tx, entity_id).await?;
-        let attribute_writes = delete_returning_write_ids(&mut tx, DELETE_ATTRIBUTE_HISTORY_SQL, entity_key).await?;
-        let scope_writes = delete_returning_write_ids(&mut tx, DELETE_SCOPE_HISTORY_SQL, entity_key).await?;
-        let streams = sqlx::query(DELETE_ATTRIBUTE_STREAMS_SQL)
-            .bind(entity_key.get())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        sqlx::query(DELETE_TEMPORAL_ENTITY_SQL).bind(entity_key.get()).execute(&mut *tx).await?;
+        let attribute_writes = delete_returning_write_ids(&mut tx, delete_attribute_history_statement(entity_key)).await?;
+        let scope_writes = delete_returning_write_ids(&mut tx, delete_scope_history_statement(entity_key)).await?;
+        let (streams_sql, streams_values) = delete_attribute_streams_statement(entity_key).build_sqlx(PostgresQueryBuilder);
+        let streams = sqlx::query_with(&streams_sql, streams_values).execute(&mut *tx).await?.rows_affected();
+        let (entity_sql, entity_values) = delete_temporal_entity_statement(entity_key).build_sqlx(PostgresQueryBuilder);
+        sqlx::query_with(&entity_sql, entity_values).execute(&mut *tx).await?;
         let touched_writes = attribute_writes.iter().chain(scope_writes.iter()).copied().collect::<BTreeSet<Uuid>>();
         let touched_writes = touched_writes.into_iter().collect::<Vec<Uuid>>();
         let released_write_records = release_named(&mut tx, &touched_writes).await?;
@@ -94,7 +131,8 @@ impl TemporalRepository {
     /// and [`TemporalStoreError::Decode`] when a returned count does not carry
     /// the expected type.
     pub async fn audit_orphaned_temporal_rows(&self) -> Result<OrphanedTemporalRows, TemporalStoreError> {
-        let row = sqlx::query(AUDIT_ORPHANED_TEMPORAL_ROWS_SQL).fetch_one(&self.pool).await?;
+        let (sql, values) = audit_orphaned_statement().build_sqlx(PostgresQueryBuilder);
+        let row = sqlx::query_with(&sql, values).fetch_one(&self.pool).await?;
         Ok(OrphanedTemporalRows {
             attribute_history_rows: count(&row, "orphaned_attribute_history_rows")?,
             scope_history_rows: count(&row, "orphaned_scope_history_rows")?,
@@ -111,7 +149,8 @@ fn count(row: &PgRow, column: &str) -> Result<i64, TemporalStoreError> {
 
 /// Resolve and lock the temporal entity one deletion addresses.
 async fn locate_temporal_entity(tx: &mut Transaction<'_, Postgres>, entity_id: &Uri) -> Result<TemporalEntityKey, TemporalStoreError> {
-    let located = sqlx::query(LOCK_TEMPORAL_ENTITY_SQL).bind(entity_id.as_str()).fetch_optional(&mut **tx).await?;
+    let (sql, values) = lock_temporal_entity_statement(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+    let located = sqlx::query_with(&sql, values).fetch_optional(&mut **tx).await?;
     let Some(row) = located else {
         return Err(TemporalStoreError::NotFound(format!("Temporal evolution of {entity_id} not found")));
     };
@@ -122,12 +161,9 @@ async fn locate_temporal_entity(tx: &mut Transaction<'_, Postgres>, entity_id: &
 }
 
 /// Run one deletion statement, collecting the write identity of every removed row.
-async fn delete_returning_write_ids(
-    tx: &mut Transaction<'_, Postgres>,
-    statement: &str,
-    entity_key: TemporalEntityKey,
-) -> Result<Vec<Uuid>, TemporalStoreError> {
-    let rows = sqlx::query(statement).bind(entity_key.get()).fetch_all(&mut **tx).await?;
+async fn delete_returning_write_ids(tx: &mut Transaction<'_, Postgres>, statement: DeleteStatement) -> Result<Vec<Uuid>, TemporalStoreError> {
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let rows = sqlx::query_with(&sql, values).fetch_all(&mut **tx).await?;
     rows.into_iter()
         .map(|row| {
             row.try_get("write_id")
@@ -136,92 +172,189 @@ async fn delete_returning_write_ids(
         .collect()
 }
 
-const LOCK_TEMPORAL_ENTITY_SQL: &str = r#"
-SELECT entity_key FROM temporal_entities WHERE id = $1 FOR UPDATE
-"#;
+/// Lock the addressed temporal entity before anything is removed.
+fn lock_temporal_entity_statement(id: &str) -> SelectStatement {
+    Query::select()
+        .column(TemporalEntities::EntityKey)
+        .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::Id).eq(id))
+        .lock(LockType::Update)
+        .to_owned()
+}
 
-const DELETE_ATTRIBUTE_HISTORY_SQL: &str = r#"
-DELETE FROM attribute_history
-WHERE stream_id IN (SELECT s.id FROM temporal_attribute_streams s WHERE s.temporal_entity_key = $1)
-RETURNING write_id
-"#;
+/// Remove one entity's attribute history, reporting each removed write identity.
+fn delete_attribute_history_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+    let owned_streams = Query::select()
+        .column((S, TemporalAttributeStreams::Id))
+        .from_as(TemporalAttributeStreams::Table, S)
+        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key.get()))
+        .to_owned();
+    Query::delete()
+        .from_table(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::StreamId).in_subquery(owned_streams))
+        .returning(Query::returning().column(AttributeHistory::WriteId))
+        .to_owned()
+}
 
-const DELETE_SCOPE_HISTORY_SQL: &str = r#"
-DELETE FROM scope_history WHERE temporal_entity_key = $1 RETURNING write_id
-"#;
+/// Remove one entity's scope history, reporting each removed write identity.
+fn delete_scope_history_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+    Query::delete()
+        .from_table(ScopeHistory::Table)
+        .and_where(Expr::col(ScopeHistory::TemporalEntityKey).eq(entity_key.get()))
+        .returning(Query::returning().column(ScopeHistory::WriteId))
+        .to_owned()
+}
 
-// The stream's foreign key cascades from `temporal_entities`, so this statement
-// is not what keeps the catalogue consistent. It is stated anyway to keep the
-// order of the sequence explicit and to report what the deletion removed.
-const DELETE_ATTRIBUTE_STREAMS_SQL: &str = r#"
-DELETE FROM temporal_attribute_streams WHERE temporal_entity_key = $1
-"#;
+/// Remove one entity's attribute streams.
+///
+/// The stream's foreign key cascades from `temporal_entities`, so this is not
+/// what keeps the catalogue consistent; it is stated anyway to keep the sequence
+/// explicit and to report what the deletion removed.
+fn delete_attribute_streams_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+    Query::delete()
+        .from_table(TemporalAttributeStreams::Table)
+        .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).eq(entity_key.get()))
+        .to_owned()
+}
 
-const DELETE_TEMPORAL_ENTITY_SQL: &str = r#"
-DELETE FROM temporal_entities WHERE entity_key = $1
-"#;
+/// Remove the temporal entity itself.
+fn delete_temporal_entity_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+    Query::delete()
+        .from_table(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::EntityKey).eq(entity_key.get()))
+        .to_owned()
+}
 
-const AUDIT_ORPHANED_TEMPORAL_ROWS_SQL: &str = r#"
-SELECT
-    (SELECT count(*) FROM attribute_history ah
-        LEFT JOIN temporal_attribute_streams s ON s.id = ah.stream_id
-        WHERE s.id IS NULL) AS orphaned_attribute_history_rows,
-    (SELECT count(*) FROM scope_history sh
-        LEFT JOIN temporal_entities te ON te.entity_key = sh.temporal_entity_key
-        WHERE te.entity_key IS NULL) AS orphaned_scope_history_rows,
-    (SELECT count(*) FROM temporal_attribute_streams s
-        LEFT JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-        WHERE te.entity_key IS NULL) AS orphaned_streams
-"#;
+/// The orphan-count subquery of one dangling reference: rows of `child` whose
+/// `parent` no longer exists, via a left join that keeps the unmatched rows.
+fn orphan_count(child: SelectStatement) -> SimpleExpr {
+    SimpleExpr::SubQuery(None, Box::new(child.into_sub_query_statement()))
+}
+
+/// The audit that stands in for the foreign keys the hypertables do not carry:
+/// one orphan count per reference no constraint enforces.
+fn audit_orphaned_statement() -> SelectStatement {
+    let orphaned_history = Query::select()
+        .expr(count_all())
+        .from_as(AttributeHistory::Table, Ah)
+        .join_as(
+            JoinType::LeftJoin,
+            TemporalAttributeStreams::Table,
+            S,
+            Expr::col((S, TemporalAttributeStreams::Id)).equals((Ah, AttributeHistory::StreamId)),
+        )
+        .and_where(Expr::col((S, TemporalAttributeStreams::Id)).is_null())
+        .to_owned();
+    let orphaned_scope = Query::select()
+        .expr(count_all())
+        .from_as(ScopeHistory::Table, Sh)
+        .join_as(
+            JoinType::LeftJoin,
+            TemporalEntities::Table,
+            Te,
+            Expr::col((Te, TemporalEntities::EntityKey)).equals((Sh, ScopeHistory::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((Te, TemporalEntities::EntityKey)).is_null())
+        .to_owned();
+    let orphaned_streams = Query::select()
+        .expr(count_all())
+        .from_as(TemporalAttributeStreams::Table, S)
+        .join_as(
+            JoinType::LeftJoin,
+            TemporalEntities::Table,
+            Te,
+            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((Te, TemporalEntities::EntityKey)).is_null())
+        .to_owned();
+    Query::select()
+        .expr_as(orphan_count(orphaned_history), OrphanedAttributeHistoryRows)
+        .expr_as(orphan_count(orphaned_scope), OrphanedScopeHistoryRows)
+        .expr_as(orphan_count(orphaned_streams), OrphanedStreams)
+        .to_owned()
+}
 
 #[cfg(test)]
 mod tests {
     use crate::temporal_entity_deletion::{
-        AUDIT_ORPHANED_TEMPORAL_ROWS_SQL,
-        DELETE_ATTRIBUTE_HISTORY_SQL,
-        DELETE_ATTRIBUTE_STREAMS_SQL,
-        DELETE_SCOPE_HISTORY_SQL,
-        DELETE_TEMPORAL_ENTITY_SQL,
-        LOCK_TEMPORAL_ENTITY_SQL,
+        audit_orphaned_statement,
+        delete_attribute_history_statement,
+        delete_attribute_streams_statement,
+        delete_scope_history_statement,
+        delete_temporal_entity_statement,
+        lock_temporal_entity_statement,
     };
+    use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
+    use sea_query::PostgresQueryBuilder;
+
+    fn key() -> TemporalEntityKey {
+        TemporalEntityKey::try_from(1).expect("a positive key")
+    }
 
     #[test]
     fn the_addressed_temporal_entity_is_locked_before_anything_is_removed() {
-        assert!(LOCK_TEMPORAL_ENTITY_SQL.contains("FROM temporal_entities WHERE id = $1"));
-        assert!(LOCK_TEMPORAL_ENTITY_SQL.contains("FOR UPDATE"));
+        let sql = lock_temporal_entity_statement("urn:ngsi-ld:Vehicle:1").to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"FROM "temporal_entities" WHERE "id" ="#), "{sql}");
+        assert!(sql.contains("FOR UPDATE"), "{sql}");
     }
 
     #[test]
     fn history_removal_reports_the_write_identity_of_every_removed_row() {
-        assert!(DELETE_ATTRIBUTE_HISTORY_SQL.contains("RETURNING write_id"));
-        assert!(DELETE_SCOPE_HISTORY_SQL.contains("RETURNING write_id"));
+        assert!(
+            delete_attribute_history_statement(key())
+                .to_string(PostgresQueryBuilder)
+                .contains(r#"RETURNING "write_id""#)
+        );
+        assert!(
+            delete_scope_history_statement(key())
+                .to_string(PostgresQueryBuilder)
+                .contains(r#"RETURNING "write_id""#)
+        );
     }
 
     #[test]
     fn the_sequence_reaches_every_relation_the_evolution_occupies() {
-        assert!(DELETE_ATTRIBUTE_HISTORY_SQL.contains("DELETE FROM attribute_history"));
-        assert!(DELETE_SCOPE_HISTORY_SQL.contains("DELETE FROM scope_history"));
-        assert!(DELETE_ATTRIBUTE_STREAMS_SQL.contains("DELETE FROM temporal_attribute_streams"));
-        assert!(DELETE_TEMPORAL_ENTITY_SQL.contains("DELETE FROM temporal_entities"));
+        assert!(
+            delete_attribute_history_statement(key())
+                .to_string(PostgresQueryBuilder)
+                .starts_with(r#"DELETE FROM "attribute_history""#)
+        );
+        assert!(
+            delete_scope_history_statement(key())
+                .to_string(PostgresQueryBuilder)
+                .starts_with(r#"DELETE FROM "scope_history""#)
+        );
+        assert!(
+            delete_attribute_streams_statement(key())
+                .to_string(PostgresQueryBuilder)
+                .starts_with(r#"DELETE FROM "temporal_attribute_streams""#)
+        );
+        assert!(
+            delete_temporal_entity_statement(key())
+                .to_string(PostgresQueryBuilder)
+                .starts_with(r#"DELETE FROM "temporal_entities""#)
+        );
     }
 
     #[test]
     fn the_audit_covers_both_references_no_foreign_key_enforces() {
-        assert!(AUDIT_ORPHANED_TEMPORAL_ROWS_SQL.contains("orphaned_attribute_history_rows"));
-        assert!(AUDIT_ORPHANED_TEMPORAL_ROWS_SQL.contains("orphaned_scope_history_rows"));
-        assert!(AUDIT_ORPHANED_TEMPORAL_ROWS_SQL.contains("orphaned_streams"));
+        let sql = audit_orphaned_statement().to_string(PostgresQueryBuilder);
+        for column in ["orphaned_attribute_history_rows", "orphaned_scope_history_rows", "orphaned_streams"] {
+            assert!(sql.contains(column), "missing {column}: {sql}");
+        }
+        assert_eq!(sql.matches("COUNT(*)").count(), 3, "{sql}");
     }
 
     #[test]
     fn no_statement_records_a_tombstone_for_a_temporal_evolution_deletion() {
-        for statement in [
-            DELETE_ATTRIBUTE_HISTORY_SQL,
-            DELETE_SCOPE_HISTORY_SQL,
-            DELETE_ATTRIBUTE_STREAMS_SQL,
-            DELETE_TEMPORAL_ENTITY_SQL,
+        for sql in [
+            delete_attribute_history_statement(key()).to_string(PostgresQueryBuilder),
+            delete_scope_history_statement(key()).to_string(PostgresQueryBuilder),
+            delete_attribute_streams_statement(key()).to_string(PostgresQueryBuilder),
+            delete_temporal_entity_statement(key()).to_string(PostgresQueryBuilder),
         ] {
-            assert!(!statement.contains("INSERT"));
-            assert!(!statement.contains("deleted_at"));
+            assert!(!sql.contains("INSERT"), "{sql}");
+            assert!(!sql.contains("deleted_at"), "{sql}");
         }
     }
 }

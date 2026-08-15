@@ -7,9 +7,12 @@
 use crate::{
     error::ContextStoreError,
     schema_contract::{contract::SchemaContract, schema_metadata::ensure_schema_contract},
+    schema_ddl::{database::create_database, session::set_synchronous_commit},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
 use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNamePrefix};
+use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
+use sea_query_binder::SqlxBinder;
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use url::Url;
@@ -27,7 +30,7 @@ use url::Url;
 pub fn configure_pool_options(max_connections: u32, synchronous_commit_setting: &'static str) -> PgPoolOptions {
     PgPoolOptions::new().max_connections(max_connections).after_connect(move |conn, _meta| {
         Box::pin(async move {
-            let stmt = format!("SET synchronous_commit = '{synchronous_commit_setting}'");
+            let stmt = set_synchronous_commit(synchronous_commit_setting);
             conn.execute(stmt.as_str()).await?;
             Ok(())
         })
@@ -108,17 +111,26 @@ pub async fn create_database_if_missing(base_url: &DatabaseUrl, db_name: &Tenant
     let admin_url = base_url.with_db_name(&admin_database);
     let db_name = db_name.as_str();
     let mut conn = PgConnection::connect(admin_url.as_str()).await?;
-    let exists = sqlx::query("SELECT 1 FROM pg_database WHERE datname = $1")
-        .bind(db_name)
-        .fetch_optional(&mut conn)
-        .await?
-        .is_some();
+    let (sql, values) = database_exists_statement(db_name).build_sqlx(PostgresQueryBuilder);
+    let exists = sqlx::query_with(&sql, values).fetch_optional(&mut conn).await?.is_some();
     if !exists {
-        let sql = format!("CREATE DATABASE \"{}\"", db_name.replace('"', ""));
+        let sql = create_database(db_name);
         conn.execute(sql.as_str()).await?;
     }
     conn.close().await?;
     Ok(())
+}
+
+/// The `SELECT 1 FROM pg_database WHERE datname = $1` existence probe.
+///
+/// `pg_database` is a PostgreSQL system catalog, not part of the application
+/// schema, so it is named by aliases; the database name is a bound value.
+fn database_exists_statement(db_name: &str) -> sea_query::SelectStatement {
+    Query::select()
+        .expr(Expr::val(1))
+        .from(Alias::new("pg_database"))
+        .and_where(Expr::col(Alias::new("datname")).eq(db_name))
+        .to_owned()
 }
 
 /// Run tenant and platform migrations against the given pool.
@@ -172,8 +184,18 @@ pub async fn migrate_single_tenant_db(
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_database::DatabaseUrl;
+    use crate::tenant_database::{DatabaseUrl, database_exists_statement};
     use andromeda_tenancy::database_name::TenantDatabaseName;
+    use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn the_existence_probe_reads_the_catalog_by_bound_name() {
+        let (sql, values) = database_exists_statement("andromeda_acme").build(PostgresQueryBuilder);
+        assert!(sql.contains(r#"FROM "pg_database""#), "{sql}");
+        assert!(sql.contains(r#""datname" = $2"#), "{sql}");
+        // The constant `1` and the database name are both bound values.
+        assert_eq!(values.0.len(), 2, "the name is bound, not interpolated: {sql}");
+    }
 
     #[test]
     fn database_url_newtype_roundtrip() {

@@ -7,6 +7,9 @@ use crate::schema_contract::{
     schema_version::SchemaVersion,
     server_requirements::verify_server_requirements,
 };
+use andromeda_postgresql_schema::tenancy::SchemaMetadata;
+use sea_query::{Alias, Expr, InsertStatement, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, UpdateStatement};
+use sea_query_binder::SqlxBinder;
 use sqlx::{PgPool, Row};
 
 /// Refuse a tenant whose schema is not the one this binary was built against,
@@ -108,18 +111,8 @@ async fn applied_migrations_digest_between(
     from_version: SchemaVersion,
     up_to_version: SchemaVersion,
 ) -> Result<MigrationsDigest, SchemaContractError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT version, description, checksum
-        FROM _sqlx_migrations
-        WHERE success AND version >= $1 AND version <= $2
-        ORDER BY version
-        "#,
-    )
-    .bind(i64::from(from_version.get()))
-    .bind(i64::from(up_to_version.get()))
-    .fetch_all(pool)
-    .await?;
+    let (sql, values) = applied_migrations_digest_statement(i64::from(from_version.get()), i64::from(up_to_version.get())).build_sqlx(PostgresQueryBuilder);
+    let rows = sqlx::query_with(&sql, values).fetch_all(pool).await?;
     let records = rows
         .iter()
         .map(|row| {
@@ -180,17 +173,10 @@ fn refuse_on_mismatch(stamped: &StampedContract, contract: &SchemaContract) -> R
 /// verifies like any other pre-existing stamp — a race resolves to a refusal
 /// on mismatch, never to two stamps clobbering each other.
 async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
-    sqlx::query(
-        r#"
-        INSERT INTO schema_metadata (applied_at, schema_version, singleton, migrations_sha256)
-        VALUES (NOW(), $1, TRUE, $2)
-        ON CONFLICT (singleton) DO NOTHING
-        "#,
-    )
-    .bind(contract.version().get())
-    .bind(contract.digest().to_string())
-    .execute(pool)
-    .await?;
+    let statement = stamp_statement(contract.version().get(), contract.digest().to_string())
+        .map_err(|error| SchemaContractError::Database(sqlx::Error::Protocol(error.to_string())))?;
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(&sql, values).execute(pool).await?;
     Ok(())
 }
 
@@ -205,31 +191,74 @@ async fn stamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaCon
 /// lost race here converges on the same values rather than clobbering a
 /// competing write with a different one.
 async fn restamp(pool: &PgPool, contract: &SchemaContract) -> Result<(), SchemaContractError> {
-    sqlx::query(
-        r#"
-        UPDATE schema_metadata
-        SET applied_at = NOW(), schema_version = $1, migrations_sha256 = $2
-        WHERE singleton
-        "#,
-    )
-    .bind(contract.version().get())
-    .bind(contract.digest().to_string())
-    .execute(pool)
-    .await?;
+    let (sql, values) = restamp_statement(contract.version().get(), contract.digest().to_string()).build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(&sql, values).execute(pool).await?;
     Ok(())
 }
 
 /// Read the singleton, if the tenant carries one.
 async fn read_stamp(pool: &PgPool) -> Result<Option<StampedContract>, SchemaContractError> {
-    let Some(row) = sqlx::query("SELECT schema_version, migrations_sha256 FROM schema_metadata WHERE singleton")
-        .fetch_optional(pool)
-        .await?
-    else {
+    let (sql, values) = read_stamp_statement().build_sqlx(PostgresQueryBuilder);
+    let Some(row) = sqlx::query_with(&sql, values).fetch_optional(pool).await? else {
         return Ok(None);
     };
     let version = SchemaVersion::try_from(i64::from(row.get::<i32, _>("schema_version")))?;
     let digest = MigrationsDigest::try_from(row.get::<String, _>("migrations_sha256").as_str())?;
     Ok(Some(StampedContract { version, digest }))
+}
+
+/// Read the migration history sqlx itself recorded, bounded to one set's range.
+///
+/// `_sqlx_migrations` is sqlx's own table, not part of the application schema,
+/// so it is named by aliases rather than a schema iden.
+fn applied_migrations_digest_statement(from_version: i64, up_to_version: i64) -> SelectStatement {
+    Query::select()
+        .column(Alias::new("version"))
+        .column(Alias::new("description"))
+        .column(Alias::new("checksum"))
+        .from(Alias::new("_sqlx_migrations"))
+        .and_where(Expr::col(Alias::new("success")).eq(true))
+        .and_where(Expr::col(Alias::new("version")).gte(from_version))
+        .and_where(Expr::col(Alias::new("version")).lte(up_to_version))
+        .order_by(Alias::new("version"), Order::Asc)
+        .to_owned()
+}
+
+/// Write the singleton stamp only if nothing has claimed it yet.
+fn stamp_statement(version: i32, digest: String) -> Result<InsertStatement, sea_query::error::Error> {
+    let mut statement = Query::insert();
+    statement
+        .into_table(SchemaMetadata::Table)
+        .columns([
+            SchemaMetadata::AppliedAt,
+            SchemaMetadata::SchemaVersion,
+            SchemaMetadata::Singleton,
+            SchemaMetadata::MigrationsSha256,
+        ])
+        .values([Expr::current_timestamp().into(), version.into(), true.into(), digest.into()])?
+        .on_conflict(OnConflict::column(SchemaMetadata::Singleton).do_nothing().to_owned());
+    Ok(statement.to_owned())
+}
+
+/// Advance the existing singleton stamp to the contract just migrated to.
+fn restamp_statement(version: i32, digest: String) -> UpdateStatement {
+    Query::update()
+        .table(SchemaMetadata::Table)
+        .value(SchemaMetadata::AppliedAt, Expr::current_timestamp())
+        .value(SchemaMetadata::SchemaVersion, version)
+        .value(SchemaMetadata::MigrationsSha256, digest)
+        .and_where(Expr::col(SchemaMetadata::Singleton).eq(true))
+        .to_owned()
+}
+
+/// Read the singleton stamp's version and digest.
+fn read_stamp_statement() -> SelectStatement {
+    Query::select()
+        .column(SchemaMetadata::SchemaVersion)
+        .column(SchemaMetadata::MigrationsSha256)
+        .from(SchemaMetadata::Table)
+        .and_where(Expr::col(SchemaMetadata::Singleton).eq(true))
+        .to_owned()
 }
 
 /// What one tenant's `schema_metadata` row claims about its schema.
@@ -251,10 +280,41 @@ mod tests {
         contract::SchemaContract,
         error::SchemaContractError,
         migrations_digest::MigrationsDigest,
-        schema_metadata::{StampedContract, refuse_on_mismatch},
+        schema_metadata::{StampedContract, applied_migrations_digest_statement, read_stamp_statement, refuse_on_mismatch, restamp_statement, stamp_statement},
     };
+    use sea_query::PostgresQueryBuilder;
     use sqlx::migrate::{Migration, MigrationType, Migrator};
     use std::borrow::Cow;
+
+    #[test]
+    fn the_history_digest_reads_one_sets_range_of_successful_migrations() {
+        let sql = applied_migrations_digest_statement(10, 20).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"FROM "_sqlx_migrations""#), "{sql}");
+        assert!(sql.contains(r#""success" = TRUE"#), "{sql}");
+        assert!(sql.contains(r#""version" >= 10"#) && sql.contains(r#""version" <= 20"#), "{sql}");
+        assert!(sql.contains(r#"ORDER BY "version""#), "{sql}");
+    }
+
+    #[test]
+    fn the_first_stamp_yields_to_a_concurrent_writer() {
+        let sql = stamp_statement(5, "digest".to_owned()).expect("arity").to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"INTO "schema_metadata""#), "{sql}");
+        assert!(sql.contains(r#"ON CONFLICT ("singleton") DO NOTHING"#), "{sql}");
+    }
+
+    #[test]
+    fn a_restamp_advances_the_single_row() {
+        let sql = restamp_statement(6, "digest".to_owned()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"UPDATE "schema_metadata""#), "{sql}");
+        assert!(sql.contains(r#""singleton" = TRUE"#), "{sql}");
+    }
+
+    #[test]
+    fn the_stamp_read_targets_the_singleton() {
+        let sql = read_stamp_statement().to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""schema_version""#) && sql.contains(r#""migrations_sha256""#), "{sql}");
+        assert!(sql.contains(r#""singleton" = TRUE"#), "{sql}");
+    }
 
     /// Build one resolved migration with the shape `migrate!()` produces.
     fn migration(version: i64, description: &'static str, sql: &'static str) -> Migration {

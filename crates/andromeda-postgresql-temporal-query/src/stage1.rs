@@ -9,7 +9,10 @@
 //! what makes "no current state" mean "matches no current-state filter" rather
 //! than "history disappears".
 
-use crate::alias::{Ah, An, CE_ALIAS, Ce, EntityIdColumn, S};
+use crate::{
+    alias::{Ah, An, CE_ALIAS, Ce, EntityIdColumn, S},
+    axis::axis_column,
+};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     entity_selection::EntitySelector,
@@ -23,64 +26,67 @@ use andromeda_postgresql_query::{
     geo_predicate::GeometrySource,
     q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
     scope_predicate::{ScopeTarget, condition as scope_condition},
-    time_column::history_column,
     type_predicate::{TypesColumn, condition as type_condition},
 };
 use andromeda_postgresql_schema::{
+    attribute_dictionary::AttributeNames,
     current::{E, Entities},
-    temporal::{AttributeHistory, AttributeNames, TemporalAttributeStreams, TemporalEntities},
+    temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{bind::sea_values_to_bind_values, built::BuiltQuery, operator::regex_match};
+use andromeda_postgresql_seaquery::{literal::int_literal, operator::regex_match};
 use iri_rs::IriBuf;
-use sea_query::{Condition, Expr as SeaExpr, Func, JoinType, Order, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Condition, Expr as SeaExpr, Func, JoinType, Order, SelectStatement};
+
+/// The Stage 1 statement and its optional count, each a statement tree the store
+/// binds and executes on its own.
+///
+/// The result and the count carry the same entity predicate but different tails
+/// (the result paginates and orders, the count neither), so each owns its own
+/// placeholder sequence rather than sharing one, which is what a paginated
+/// result and an unpaginated count cannot do.
+pub struct Stage1Query {
+    /// The paginated statement that selects the matching entity ids.
+    pub select: SelectStatement,
+    /// The unpaginated `COUNT`, present when clause 5.5.9 asks for a total.
+    pub count: Option<SelectStatement>,
+}
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
-pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<BuiltQuery<'static>, RenderError> {
+pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
     let entity_conditions = build_entity_conditions_for_temporal(compiled, attribute_names)?;
 
-    let temporal_match = temporal_match_subquery(compiled)?;
-
-    // Build the main SELECT
-    let mut select = Query::select();
+    let mut select = SelectStatement::new();
     select
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
-        .from_as(TemporalEntities::Table, E);
-
-    select
-        .cond_where(entity_conditions.clone()) // clone: count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match))
+        .from_as(TemporalEntities::Table, E)
+        .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
+        .cond_where(SeaExpr::exists(temporal_match_subquery(compiled)?))
         .order_by((E, TemporalEntities::Id), Order::Asc)
         .limit(compiled.pagination.limit as u64)
         .offset(compiled.pagination.offset as u64);
 
-    // Build main query SQL
-    let (sql, values) = select.build(PostgresQueryBuilder);
-    let bind_values = sea_values_to_bind_values(values)?;
-
-    // Build count query if requested
-    let count_sql = if compiled.pagination.count == CountPolicy::Emit {
-        let mut count_select = Query::select();
+    let count = if compiled.pagination.count == CountPolicy::Emit {
+        let mut count_select = SelectStatement::new();
         count_select
             .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
             .from_as(TemporalEntities::Table, E)
             .cond_where(entity_conditions)
             .cond_where(SeaExpr::exists(temporal_match_subquery(compiled)?));
-        let (count_sql_str, _) = count_select.build(PostgresQueryBuilder);
-        Some(count_sql_str)
+        Some(count_select.take())
     } else {
         None
     };
 
-    Ok(BuiltQuery { sql, count_sql, bind_values })
+    Ok(Stage1Query { select: select.take(), count })
 }
 
 /// Build the correlated stream/history predicate shared by result and count.
 fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectStatement, RenderError> {
     let temporal_conditions = build_temporal_stage1_conditions(compiled)?;
-    let mut select = Query::select();
+    let mut select = SelectStatement::new();
     select
-        .expr(SeaExpr::val(1))
+        .expr(int_literal(1))
         .from_as(TemporalAttributeStreams::Table, S)
         .join_as(
             JoinType::Join,
@@ -99,7 +105,7 @@ fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectSta
             SeaExpr::col((Ah, AttributeHistory::StreamId)).equals((S, TemporalAttributeStreams::Id)),
         );
     }
-    Ok(select.to_owned())
+    Ok(select.take())
 }
 
 /// Build entity-level conditions for temporal queries (using "e" alias for
@@ -160,13 +166,13 @@ fn current_state_probe(compiled: &CompiledTemporalQuery, attribute_names: &Resol
         )?);
     }
 
-    let mut probe = Query::select();
+    let mut probe = SelectStatement::new();
     probe
-        .expr(SeaExpr::val(1))
+        .expr(int_literal(1))
         .from_as(Entities::Table, Ce)
         .cond_where(SeaExpr::col((Ce, Entities::Id)).equals((E, TemporalEntities::Id)))
         .cond_where(current_conditions);
-    Ok(Some(probe.to_owned()))
+    Ok(Some(probe.take()))
 }
 
 /// Render one selector's identifier, pattern and type predicates against the
@@ -197,7 +203,7 @@ fn temporal_selector_condition(selector: &EntitySelector) -> Condition {
 fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
-    // Attribute filter: an.name = ANY($N)
+    // Attribute filter: an.name IN (...).
     if !compiled.instances.attr_filter.is_empty() {
         let names: Vec<&str> = compiled.instances.attr_filter.iter().map(IriBuf::as_str).collect();
         condition = condition.add(SeaExpr::col((An, AttributeNames::Name)).is_in(names));
@@ -205,30 +211,25 @@ fn build_temporal_stage1_conditions(compiled: &CompiledTemporalQuery) -> Result<
 
     // datasetId filter (clause 4.5.5): the default instance is stored as a
     // NULL `dataset_id`, so it is tested separately from the named ones.
-    let dataset_column = SeaExpr::col((S, TemporalAttributeStreams::DatasetId));
     condition = match DatasetFilter::from_selectors(&compiled.instances.dataset_id_filter) {
         DatasetFilter::Unfiltered => condition,
-        DatasetFilter::DefaultOnly => condition.add(dataset_column.is_null()),
-        DatasetFilter::NamedOnly(named) => condition.add(dataset_column.is_in(named.iter().map(ToString::to_string))),
+        DatasetFilter::DefaultOnly => condition.add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
+        DatasetFilter::NamedOnly(named) => condition.add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string))),
         DatasetFilter::DefaultOrNamed(named) => condition.add(
             Condition::any()
                 .add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_in(named.iter().map(ToString::to_string)))
-                .add(dataset_column.is_null()),
+                .add(SeaExpr::col((S, TemporalAttributeStreams::DatasetId)).is_null()),
         ),
     };
 
     // Temporal filters (timerel + time_at), on the requested axis alone.
-    let time_col = history_column(compiled.window.timeproperty);
-    let bound =
-        |sql: &'static str, instant: &chrono::DateTime<chrono::Utc>| SeaExpr::cust_with_exprs(sql, [SeaExpr::cust(time_col), SeaExpr::val(*instant).into()]);
+    let axis = axis_column(compiled.window.timeproperty);
     match &compiled.window.interval {
         TimeInterval::Unbounded => {}
-        TimeInterval::Before(instant) => condition = condition.add(bound("$1 < $2", instant)),
-        TimeInterval::After(instant) => condition = condition.add(bound("$1 >= $2", instant)),
+        TimeInterval::Before(instant) => condition = condition.add(SeaExpr::col((Ah, axis)).lt(*instant)),
+        TimeInterval::After(instant) => condition = condition.add(SeaExpr::col((Ah, axis)).gte(*instant)),
         TimeInterval::Between { from, to } => {
-            let lower = bound("$1 >= $2", from);
-            let upper = bound("$1 < $2", to);
-            condition = condition.add(lower).add(upper);
+            condition = condition.add(SeaExpr::col((Ah, axis)).gte(*from)).add(SeaExpr::col((Ah, axis)).lt(*to));
         }
     }
 
@@ -257,8 +258,8 @@ mod tests {
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
-    use andromeda_postgresql_seaquery::bind::BindValue;
     use chrono::{DateTime, Utc};
+    use sea_query::{PostgresQueryBuilder, Value, Values};
 
     fn instant(raw: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&Utc)
@@ -293,6 +294,26 @@ mod tests {
             .build()
     }
 
+    /// The Stage 1 result statement, rendered with `$N` placeholders and its
+    /// bound values, which is what the store hands to the driver.
+    fn built(compiled: &CompiledTemporalQuery, names: &ResolvedAttributeNames) -> (String, Values) {
+        build_stage1_entity_ids(compiled, names).unwrap().select.build(PostgresQueryBuilder)
+    }
+
+    /// The same for the count statement, panicking when no count was requested.
+    fn built_count(compiled: &CompiledTemporalQuery, names: &ResolvedAttributeNames) -> String {
+        build_stage1_entity_ids(compiled, names)
+            .unwrap()
+            .count
+            .expect("count requested")
+            .build(PostgresQueryBuilder)
+            .0
+    }
+
+    fn has_timestamp(values: &Values) -> bool {
+        values.0.iter().any(|value| matches!(value, Value::ChronoDateTimeUtc(_)))
+    }
+
     #[test]
     fn build_entity_id_selection_with_type() {
         let mut compiled = minimal_compiled();
@@ -301,11 +322,11 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))))
                 .build(),
         ];
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(!result.sql.contains("SELECT DISTINCT"));
-        assert!(result.sql.contains("EXISTS(SELECT"));
-        assert!(result.sql.contains("\"e\".\"types\""));
-        assert!(result.sql.contains("JOIN \"attribute_names\""));
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(!sql.contains("SELECT DISTINCT"), "{sql}");
+        assert!(sql.contains("EXISTS(SELECT"), "{sql}");
+        assert!(sql.contains("\"e\".\"types\""), "{sql}");
+        assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
     }
 
     /// Clause 5.6.6 leaves the temporal evolution standing when the current
@@ -314,11 +335,11 @@ mod tests {
     #[test]
     fn the_statement_drives_from_the_temporal_catalogue_and_never_joins_entities() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("FROM \"temporal_entities\" AS \"e\""), "{}", result.sql);
-        assert!(result.sql.contains("\"temporal_attribute_streams\""), "{}", result.sql);
-        assert!(!result.sql.contains("\"entities\""), "{}", result.sql);
-        assert!(!result.sql.contains("temporal_entity_attributes"), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("FROM \"temporal_entities\" AS \"e\""), "{sql}");
+        assert!(sql.contains("\"temporal_attribute_streams\""), "{sql}");
+        assert!(!sql.contains("\"entities\""), "{sql}");
+        assert!(!sql.contains("temporal_entity_attributes"), "{sql}");
     }
 
     /// The stream catalogue carries the grain, so the correlation is on the
@@ -326,8 +347,8 @@ mod tests {
     #[test]
     fn the_stream_probe_correlates_on_the_temporal_entity_key() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("\"s\".\"temporal_entity_key\" = \"e\".\"entity_key\""), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("\"s\".\"temporal_entity_key\" = \"e\".\"entity_key\""), "{sql}");
     }
 
     #[test]
@@ -335,15 +356,15 @@ mod tests {
         // The driving temporal catalogue emits one row per id, and ordered
         // paging keeps clause 5.5.9 result pages stable.
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("ORDER BY \"e\".\"id\""), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("ORDER BY \"e\".\"id\""), "{sql}");
     }
 
     #[test]
     fn stage1_projects_the_entity_uri_as_entity_id() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("\"e\".\"id\" AS \"entity_id\""), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("\"e\".\"id\" AS \"entity_id\""), "{sql}");
     }
 
     #[test]
@@ -352,14 +373,14 @@ mod tests {
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
+        let (sql, values) = built(&compiled, &ResolvedAttributeNames::default());
 
         assert!(
-            !result.sql.contains("< $1"),
-            "time placeholder must not collide with earlier id-filter placeholders"
+            !sql.contains("< $1"),
+            "time placeholder must not collide with earlier id-filter placeholders: {sql}"
         );
-        assert!(!result.sql.contains("::timestamptz"));
-        assert!(result.bind_values.iter().any(|bind| matches!(bind, BindValue::Timestamp(_))));
+        assert!(!sql.contains("::timestamptz"), "{sql}");
+        assert!(has_timestamp(&values), "the window instant is bound: {values:?}");
     }
 
     /// Clause 4.11 defaults the selector to `observedAt` and clause 5.2.21
@@ -377,10 +398,10 @@ mod tests {
             let mut compiled = minimal_compiled();
             compiled.window.timeproperty = prop;
             compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
-            let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-            assert!(result.sql.contains(column), "{prop}: {}", result.sql);
-            assert!(!result.sql.contains("COALESCE"), "{prop}: {}", result.sql);
-            assert!(!result.sql.contains("recorded_at"), "{prop}: {}", result.sql);
+            let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+            assert!(sql.contains(column), "{prop}: {sql}");
+            assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
+            assert!(!sql.contains("recorded_at"), "{prop}: {sql}");
         }
     }
 
@@ -389,13 +410,13 @@ mod tests {
     #[test]
     fn the_history_hypertable_is_joined_only_for_a_bounded_window() {
         let compiled = minimal_compiled();
-        let unbounded = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(!unbounded.sql.contains("attribute_history"), "{}", unbounded.sql);
+        let (unbounded, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(!unbounded.contains("attribute_history"), "{unbounded}");
 
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
-        let bounded = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(bounded.sql.contains("\"ah\".\"stream_id\" = \"s\".\"id\""), "{}", bounded.sql);
+        let (bounded, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(bounded.contains("\"ah\".\"stream_id\" = \"s\".\"id\""), "{bounded}");
     }
 
     #[test]
@@ -405,29 +426,29 @@ mod tests {
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        let count_sql = result.count_sql.expect("count SQL is requested");
+        let (_, values) = built(&compiled, &ResolvedAttributeNames::default());
+        let count_sql = built_count(&compiled, &ResolvedAttributeNames::default());
 
         assert!(count_sql.contains("EXISTS(SELECT"), "{count_sql}");
         assert!(count_sql.contains("$1"), "{count_sql}");
         assert!(count_sql.contains("$2"), "{count_sql}");
-        assert!(result.bind_values.iter().any(|bind| matches!(bind, BindValue::Timestamp(_))));
+        assert!(has_timestamp(&values), "the window instant is bound: {values:?}");
     }
 
     #[test]
     fn stage1_includes_attribute_names_join() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("JOIN \"attribute_names\""));
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
     }
 
     #[test]
     fn stage1_includes_scope_q_filter() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/Gardens").expect("valid scope query"));
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("scope_history"), "SQL should reference scope_history table");
-        assert!(result.sql.contains("lquery"), "SQL should contain lquery cast");
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("scope_history"), "SQL should reference scope_history table: {sql}");
+        assert!(sql.contains("lquery"), "SQL should contain lquery cast: {sql}");
     }
 
     /// Scope history hangs off the temporal entity, so the probe correlates on
@@ -436,17 +457,17 @@ mod tests {
     fn scope_history_correlates_on_the_temporal_entity_key() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("\"e\".\"entity_key\""), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("\"e\".\"entity_key\""), "{sql}");
     }
 
     #[test]
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes");
-        assert!(result.sql.contains("OR"), "SQL should contain OR for comma-separated scopes");
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes: {sql}");
+        assert!(sql.contains("OR"), "SQL should contain OR for comma-separated scopes: {sql}");
     }
 
     #[test]
@@ -457,9 +478,9 @@ mod tests {
             from: instant("2024-01-01T00:00:00Z"),
             to: instant("2024-06-01T00:00:00Z"),
         };
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains(">="), "Between should bound the scope probe from below");
-        assert!(result.sql.contains("<"), "Between should bound the scope probe from above");
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains(">="), "Between should bound the scope probe from below: {sql}");
+        assert!(sql.contains("<"), "Between should bound the scope probe from above: {sql}");
     }
 
     #[test]
@@ -467,14 +488,14 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
         compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
         // /A;/B -> AND, ,/C -> OR
-        assert!(result.sql.contains("AND"), "Semicolon scopes produce AND");
-        assert!(result.sql.contains("OR"), "Comma scopes produce OR");
+        assert!(sql.contains("AND"), "Semicolon scopes produce AND: {sql}");
+        assert!(sql.contains("OR"), "Comma scopes produce OR: {sql}");
         // Each scope term has its own EXISTS subquery, inside the stream
         // catalogue EXISTS predicate.
-        let exists_count = result.sql.matches("EXISTS").count();
-        pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate wraps three scope predicates");
+        let exists_count = sql.matches("EXISTS").count();
+        pretty_assertions::assert_eq!(exists_count, 4, "The catalogue predicate wraps three scope predicates: {sql}");
     }
 
     /// Clause 4.9: a `q` expression is a statement about current state, so it is
@@ -487,21 +508,21 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
         let names = ResolvedAttributeNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameId::from(7))]);
-        let result = build_stage1_entity_ids(&compiled, &names).unwrap();
-        assert!(result.sql.contains("FROM \"entities\" AS \"ce\""), "{}", result.sql);
-        assert!(result.sql.contains("\"ce\".\"id\" = \"e\".\"id\""), "{}", result.sql);
-        assert!(result.sql.contains("\"current_attribute_values\""), "{}", result.sql);
-        assert!(result.sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{}", result.sql);
-        assert!(!result.sql.contains("\"cav\".\"entity_id\""), "{}", result.sql);
-        assert!(!result.sql.contains("jsonb_path_query_first"), "{}", result.sql);
+        let (sql, _) = built(&compiled, &names);
+        assert!(sql.contains("FROM \"entities\" AS \"ce\""), "{sql}");
+        assert!(sql.contains("\"ce\".\"id\" = \"e\".\"id\""), "{sql}");
+        assert!(sql.contains("\"current_attribute_values\""), "{sql}");
+        assert!(sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
+        assert!(!sql.contains("\"cav\".\"entity_id\""), "{sql}");
+        assert!(!sql.contains("jsonb_path_query_first"), "{sql}");
     }
 
     #[test]
     fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/never-written\">50").unwrap());
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("FALSE"), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("FALSE"), "{sql}");
     }
 
     /// The jsonpath fallback reads the payload, which only the current-state row
@@ -510,15 +531,15 @@ mod tests {
     fn a_q_predicate_on_a_compound_value_reads_the_current_state_payload() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("address[city]==\"Berlin\"").unwrap());
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(result.sql.contains("\"ce\".\"payload\""), "{}", result.sql);
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(sql.contains("\"ce\".\"payload\""), "{sql}");
     }
 
     #[test]
     fn no_scope_q_unchanged() {
         let compiled = minimal_compiled();
-        let result = build_stage1_entity_ids(&compiled, &ResolvedAttributeNames::default()).unwrap();
-        assert!(!result.sql.contains("scope_history"), "No scope_history reference without scopeQ");
+        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        assert!(!sql.contains("scope_history"), "No scope_history reference without scopeQ: {sql}");
     }
 
     /// Clause 4.10 applies to a temporal query exactly as it does to a current-
@@ -536,13 +557,12 @@ mod tests {
             "https://example.com/customGeo".parse().expect("valid attribute name"),
             AttributeNameId::from(42_i32),
         )]);
-        let result = build_stage1_entity_ids(&compiled, &names).unwrap();
-        assert!(result.sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""), "{}", result.sql);
-        assert!(result.sql.contains("\"attribute_name_id\" = 42"), "{}", result.sql);
+        let (sql, _) = built(&compiled, &names);
+        assert!(sql.contains("FROM \"current_attribute_values\""), "{sql}");
+        assert!(sql.contains("\"geo_instance\".\"attribute_name_id\" = $"), "the dictionary id is bound: {sql}");
         assert!(
-            result.sql.contains("\"geo_instance\".\"entity_key\" = \"ce\".\"entity_key\""),
-            "correlated through the current-state probe: {}",
-            result.sql
+            sql.contains("\"geo_instance\".\"entity_key\" = \"ce\".\"entity_key\""),
+            "correlated through the current-state probe: {sql}"
         );
     }
 
@@ -560,11 +580,10 @@ mod tests {
             "https://example.com/o'brien".parse().expect("valid attribute name"),
             AttributeNameId::from(9_i32),
         )]);
-        let result = build_stage1_entity_ids(&compiled, &names).unwrap();
-        assert!(!result.sql.contains("brien"), "{}", result.sql);
-        // Every literal contributes a balanced pair of quotes, and a doubled
-        // apostrophe contributes two, so the total is even unless a literal was
-        // terminated early.
-        assert_eq!(result.sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {}", result.sql);
+        let (sql, _) = built(&compiled, &names);
+        assert!(!sql.contains("brien"), "{sql}");
+        // Every literal contributes a balanced pair of quotes, so the total is
+        // even unless a literal was terminated early.
+        assert_eq!(sql.matches('\'').count() % 2, 0, "unbalanced SQL literal: {sql}");
     }
 }

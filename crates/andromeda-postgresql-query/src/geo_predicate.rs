@@ -16,7 +16,7 @@
 //! meeting the restriction is enough.
 
 use crate::{
-    attribute_instance_correlation::{CorrelatedEntityRow, geometry_instances_of, instance_geometry_column},
+    attribute_instance_correlation::{CorrelatedEntityRow, existence_marker, geometry_instances_of, instance_geometry_column},
     error::RenderError,
     q_predicate::attribute_names::ResolvedAttributeNames,
 };
@@ -24,17 +24,16 @@ use andromeda_ngsi_ld_geometry::geo_rel::GeoRel;
 use andromeda_ngsi_ld_query::{error::QueryError, geo::query::GeoQuery};
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{EXPIRES_AT, LOCATION};
 use andromeda_postgresql_encoding::ewkb::encode;
-use andromeda_postgresql_seaquery::postgis::{
-    st_contains,
-    st_disjoint,
-    st_dwithin,
-    st_equals,
-    st_intersects,
-    st_overlaps,
-    st_within,
-    validated_geom_from_ewkb,
+use andromeda_postgresql_seaquery::{
+    cast::{cast, cast_compound},
+    clock::now,
+    jsonb::jsonb_array_elements,
+    literal::{false_literal, int_literal, text_literal},
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    postgis::{st_contains, st_disjoint, st_distance, st_dwithin, st_equals, st_intersects, st_overlaps, st_within, validated_geom_from_ewkb},
 };
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use sea_query::{Alias, Cond, Condition, Expr as SeaExpr, Query, SelectStatement, SimpleExpr};
 
 /// What a geo predicate is filtering, which fixes both where it reads the
 /// subject geometry and what a row without one means.
@@ -84,44 +83,52 @@ pub fn condition(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names: &R
         // non-matching. An IRI with no `attribute_names` row is conveyed by no
         // Entity at all, so the predicate is constant. A registration reaches a
         // named column that always exists, so it never lands here.
-        return Ok(Condition::all().add(SeaExpr::cust("FALSE")));
+        return Ok(Condition::all().add(false_literal()));
     };
     let reference = encode(&geo.geometry)?;
-    let reference_geom = validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()).into());
+    // Built fresh per relation so the EWKB it binds is not shared as an owned
+    // value between the two operands a `near` relation carries.
+    let reference_geom = || validated_geom_from_ewkb(SeaExpr::val(reference.to_vec()).into());
+    let SubjectGeometry { planar, geographic, envelope } = subject;
 
     let spatial = match &geo.georel {
-        GeoRel::Within => st_within(subject.planar(), reference_geom),
-        GeoRel::Contains => st_contains(subject.planar(), reference_geom),
-        GeoRel::Intersects => st_intersects(subject.planar(), reference_geom),
-        GeoRel::Disjoint => st_disjoint(subject.planar(), reference_geom),
-        GeoRel::Equals => st_equals(subject.planar(), reference_geom),
-        GeoRel::Overlaps => st_overlaps(subject.planar(), reference_geom),
+        GeoRel::Within => st_within(planar.clone(), reference_geom()), // clone: a registration also reads the planar column for its null guard
+        GeoRel::Contains => st_contains(planar.clone(), reference_geom()),
+        GeoRel::Intersects => st_intersects(planar.clone(), reference_geom()),
+        GeoRel::Disjoint => st_disjoint(planar.clone(), reference_geom()),
+        GeoRel::Equals => st_equals(planar.clone(), reference_geom()),
+        GeoRel::Overlaps => st_overlaps(planar.clone(), reference_geom()),
         // `near` measures on the spheroid, so both operands become `geography`.
         GeoRel::Near { max_distance, min_distance } => {
-            let reference_geography = SeaExpr::cust_with_exprs("ST_MakeValid(ST_GeomFromEWKB($1))::geography", [SeaExpr::val(reference.to_vec()).into()]);
-            near_expression(subject.geographic(), reference_geography, *max_distance, *min_distance)?
+            let reference_geography = cast(reference_geom(), PostgresType::Geography);
+            near_expression(geographic, reference_geography, *max_distance, *min_distance)?
         }
     };
 
-    Ok(match &subject.envelope {
+    Ok(match envelope {
         // Clause 5.10.2: a registration that declares no location is not
         // excluded by a geo filter, so the null column is an alternative to the
         // relation rather than a failure of it.
-        Envelope::RegistrationColumn => Condition::any().add(SeaExpr::cust(format!("{} IS NULL", subject.planar_sql))).add(spatial),
-        Envelope::EntityColumn { expiry_guard } => Condition::all().add(spatial).add(SeaExpr::cust(expiry_guard)),
+        Envelope::RegistrationColumn => Condition::any().add(SeaExpr::expr(planar).is_null()).add(spatial),
+        Envelope::EntityColumn { expiry_guard } => Condition::all().add(spatial).add(expiry_guard),
         // Clause 4.10: it is enough that one instance of the GeoProperty meets
         // the restriction, which is exactly an existential over the instance
         // rows.
-        Envelope::Instances { correlation } => Condition::all().add(SeaExpr::cust_with_exprs(format!("EXISTS (SELECT 1 {correlation} AND $1)"), [spatial])),
+        Envelope::Instances { correlation } => {
+            let mut probe = *correlation;
+            probe.expr(existence_marker()).and_where(spatial);
+            Condition::all().add(SeaExpr::exists(probe))
+        }
     })
 }
 
-/// The SQL a geo predicate reads its subject geometry through.
+/// The two operand expressions a geo predicate reads its subject geometry
+/// through, and how the relation reaches the rows carrying it.
 struct SubjectGeometry {
     /// Planar `geometry`, for the topological relations.
-    planar_sql: String,
+    planar: SimpleExpr,
     /// Spheroidal `geography`, for `near`.
-    geographic_sql: String,
+    geographic: SimpleExpr,
     /// How the rendered relation reaches the rows it is evaluated against.
     envelope: Envelope,
 }
@@ -136,31 +143,20 @@ enum Envelope {
     /// match (clause 4.10) and an expired `location` is excluded outright.
     EntityColumn {
         /// Expiry guard to `AND` onto the predicate.
-        expiry_guard: String,
+        expiry_guard: SimpleExpr,
     },
     /// The geometry lives in the attribute's instance rows, so the relation is
     /// evaluated inside a correlated `EXISTS`. An entity with no such row
     /// satisfies no existential, which is the clause 4.10 exclusion.
     Instances {
-        /// The `FROM`/`WHERE` fragment selecting those instance rows, written so
-        /// that a further conjunct can be appended.
-        correlation: String,
+        /// The correlated scan selecting those instance rows, left open so the
+        /// relation and the `SELECT 1` marker can be added before it is wrapped
+        /// in `EXISTS`. Boxed: a `SelectStatement` dwarfs the other variants.
+        correlation: Box<SelectStatement>,
     },
 }
 
-impl SubjectGeometry {
-    /// The planar operand as a sea-query expression.
-    fn planar(&self) -> SimpleExpr {
-        SeaExpr::cust(&self.planar_sql)
-    }
-
-    /// The geographic operand as a sea-query expression.
-    fn geographic(&self) -> SimpleExpr {
-        SeaExpr::cust(&self.geographic_sql)
-    }
-}
-
-/// Work out the two operand renderings and the envelope for a source.
+/// Work out the two operand expressions and the envelope for a source.
 ///
 /// `None` means the target GeoProperty is one no Entity can convey, because the
 /// broker has never recorded an attribute under that IRI.
@@ -169,24 +165,24 @@ fn subject_geometry(geo: &GeoQuery, source: GeometrySource<'_>, attribute_names:
         // A registration carries no attributes of its own, so `geoproperty`
         // does not apply and the named column is the whole of the subject.
         GeometrySource::Registration { column } => Some(SubjectGeometry {
-            planar_sql: format!("\"{column}\""),
-            geographic_sql: format!("\"{column}\"::geography"),
+            planar: SeaExpr::col(Alias::new(column)).into(),
+            geographic: cast(SeaExpr::col(Alias::new(column)).into(), PostgresType::Geography),
             envelope: Envelope::RegistrationColumn,
         }),
         GeometrySource::Entity { row } if geo.geoproperty.as_str() == LOCATION.as_str() => Some(SubjectGeometry {
-            planar_sql: row.column("location"),
-            geographic_sql: row.column("location_geo"),
+            planar: row.column(Alias::new("location")),
+            geographic: row.column(Alias::new("location_geo")),
             envelope: Envelope::EntityColumn {
-                expiry_guard: location_expiry_guard(&row.column("payload")),
+                expiry_guard: location_expiry_guard(row.column(Alias::new("payload"))),
             },
         }),
         GeometrySource::Entity { row } => {
             let attribute_id = attribute_names.get(&geo.geoproperty)?;
             Some(SubjectGeometry {
-                planar_sql: instance_geometry_column(INSTANCE_ALIAS),
-                geographic_sql: format!("{}::geography", instance_geometry_column(INSTANCE_ALIAS)),
+                planar: instance_geometry_column(INSTANCE_ALIAS),
+                geographic: cast(instance_geometry_column(INSTANCE_ALIAS), PostgresType::Geography),
                 envelope: Envelope::Instances {
-                    correlation: geometry_instances_of(row, INSTANCE_ALIAS, attribute_id),
+                    correlation: Box::new(geometry_instances_of(row, INSTANCE_ALIAS, attribute_id)),
                 },
             })
         }
@@ -208,12 +204,8 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
         parts.push(st_dwithin(geo_col.clone(), ref_geom.clone(), max)); // clone: both halves read the same two operands
     }
     if let Some(min) = min_distance {
-        // The minimum distance is request-supplied, so it binds as a parameter
-        // rather than being interpolated into the statement text.
-        parts.push(SeaExpr::cust_with_exprs(
-            "ST_Distance($1, $2) >= $3",
-            [geo_col, ref_geom, SeaExpr::val(min).into()],
-        ));
+        // The minimum distance is request-supplied, so it binds as a parameter.
+        parts.push(SeaExpr::expr(st_distance(geo_col, ref_geom)).gte(min));
     }
     // `usize` is unbounded, so a catch-all is the only way to close this match;
     // clause 4.10 admits at most the two halves, so it is reached with two.
@@ -223,7 +215,7 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
         _ => {
             let first = parts.remove(0);
             let second = parts.remove(0);
-            Ok(SeaExpr::cust_with_exprs("($1 AND $2)", [first, second]))
+            Ok(first.and(second))
         }
     }
 }
@@ -231,18 +223,28 @@ fn near_expression(geo_col: SimpleExpr, ref_geom: SimpleExpr, max_distance: Opti
 /// Exclude entities whose `location` attribute has expired.
 ///
 /// The dedicated PostGIS columns carry no expiry, so the guard reads the
-/// payload instance list.
-fn location_expiry_guard(quoted_payload_col: &str) -> String {
-    let location_iri = LOCATION.as_str();
-    let expires_at_iri = EXPIRES_AT.as_str();
-    format!(
-        "EXISTS (\
-            SELECT 1 FROM jsonb_array_elements({}->0->'{}') AS inst(elem) \
-            WHERE (inst.elem #>> '{{{},0,@value}}') IS NULL \
-               OR (inst.elem #>> '{{{},0,@value}}')::timestamptz > NOW()\
-        )",
-        quoted_payload_col, location_iri, expires_at_iri, expires_at_iri
-    )
+/// payload instance list: each element of the expanded `location` attribute is
+/// admitted when it carries no `expiresAt`, or one still in the future
+/// (clause 5.6.6).
+fn location_expiry_guard(payload: SimpleExpr) -> SimpleExpr {
+    let container = payload.json_get(int_literal(0)).json_get(text_literal(LOCATION.as_str()));
+    // The `text[]` path reaching an instance's `expiresAt` value: element,
+    // first entry, `@value`.
+    let expires_path = format!("{{{},0,@value}}", EXPIRES_AT.as_str());
+    // The instance element is read twice — once for its presence, once for its
+    // value — so each read builds its own extraction.
+    let expires_at = || SimpleExpr::from(SeaExpr::col((Alias::new("inst"), Alias::new("value")))).json_path_text(text_literal(&expires_path));
+
+    let mut probe = Query::select();
+    probe
+        .expr(existence_marker())
+        .from_function(jsonb_array_elements(container), Alias::new("inst"))
+        .cond_where(
+            Cond::any()
+                .add(SeaExpr::expr(expires_at()).is_null())
+                .add(SeaExpr::expr(cast_compound(expires_at(), PostgresType::Timestamptz)).gt(now())),
+        );
+    SeaExpr::exists(probe)
 }
 
 #[cfg(test)]
@@ -382,7 +384,7 @@ mod tests {
     fn a_custom_geoproperty_is_read_from_its_attribute_instance_rows() {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
-        assert!(sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""), "{sql}");
+        assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{sql}");
         assert!(sql.contains("\"geo_instance\".\"value_geo\""), "{sql}");
         assert!(
             sql.contains(&format!("\"attribute_name_id\" = {CUSTOM_GEOPROPERTY_ID}")),
@@ -411,7 +413,7 @@ mod tests {
         let geo = point_query(GeoRel::Within, CUSTOM_GEOPROPERTY);
         let sql = render(condition(&geo, entity_source(), &resolved_custom()).unwrap());
         assert!(
-            sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""),
+            sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""),
             "an existential, not an aggregate: {sql}"
         );
         assert!(!sql.contains("dataset_id"), "no instance is preferred over another: {sql}");
@@ -427,7 +429,7 @@ mod tests {
             let names = ResolvedAttributeNames::from_pairs([(name(iri), AttributeNameId::from(7_i32))]);
             let geo = point_query(GeoRel::Within, iri);
             let sql = render(condition(&geo, entity_source(), &names).unwrap());
-            assert!(sql.contains("EXISTS (SELECT 1 FROM \"current_attribute_values\""), "{iri}: {sql}");
+            assert!(sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{iri}: {sql}");
             assert!(sql.contains("\"attribute_name_id\" = 7"), "{iri}: {sql}");
         }
     }

@@ -10,10 +10,31 @@
 //! it is written once here.
 
 use crate::error::TemporalStoreError;
+use andromeda_postgresql_schema::{
+    queue::{TemporalAppendIntents, WriteRecords},
+    temporal::{AttributeHistory, ScopeHistory},
+};
+use andromeda_postgresql_seaquery::{cast::cast, pg_array::any, pg_type::PostgresType};
 use chrono::{DateTime, Utc};
-use const_format::concatcp;
+use sea_query::{Cond, DeleteStatement, Expr, Iden, IntoIden, IntoTableRef, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query_binder::SqlxBinder;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
 use uuid::Uuid;
+
+/// The `attribute_history` alias inside a protection subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ah"]
+struct Ah;
+
+/// The `scope_history` alias inside a protection subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "sh"]
+struct Sh;
+
+/// The `temporal_append_intents` alias inside a protection subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ti"]
+struct Ti;
 
 /// Release the named idempotency records that no longer protect an effect.
 ///
@@ -24,11 +45,10 @@ use uuid::Uuid;
 ///
 /// Returns [`TemporalStoreError::Database`] when the statement fails.
 pub(crate) async fn release_named(tx: &mut Transaction<'_, Postgres>, write_ids: &[Uuid]) -> Result<u64, TemporalStoreError> {
-    Ok(sqlx::query(RELEASE_NAMED_WRITE_RECORDS_SQL)
-        .bind(write_ids)
-        .execute(&mut **tx)
-        .await?
-        .rows_affected())
+    let mut statement = base_release();
+    statement.and_where(Expr::col(WriteRecords::WriteId).eq(any(cast(Expr::val(write_ids.to_vec()).into(), PostgresType::UuidArray))));
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    Ok(sqlx::query_with(&sql, values).execute(&mut **tx).await?.rows_affected())
 }
 
 /// Release every unprotected idempotency record recorded before a cutoff.
@@ -41,47 +61,61 @@ pub(crate) async fn release_named(tx: &mut Transaction<'_, Postgres>, write_ids:
 ///
 /// Returns [`TemporalStoreError::Database`] when the statement fails.
 pub(crate) async fn release_behind_horizon(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, TemporalStoreError> {
-    Ok(sqlx::query(RELEASE_WRITE_RECORDS_BEHIND_HORIZON_SQL)
-        .bind(cutoff)
-        .execute(pool)
-        .await?
-        .rows_affected())
+    let mut statement = base_release();
+    statement.and_where(Expr::col(WriteRecords::RecordedAt).lt(cutoff));
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    Ok(sqlx::query_with(&sql, values).execute(pool).await?.rows_affected())
 }
 
-/// The three effects a write record outlives nothing without.
-const UNPROTECTED_BY_ANY_EFFECT: &str = r#"
-  AND NOT EXISTS (SELECT 1 FROM attribute_history ah WHERE ah.write_id = wr.write_id)
-  AND NOT EXISTS (SELECT 1 FROM scope_history sh WHERE sh.write_id = wr.write_id)
-  AND NOT EXISTS (SELECT 1 FROM temporal_append_intents ti WHERE ti.write_id = wr.write_id)
-"#;
+/// The delete of `write_records` guarded by the three effect protections, before
+/// the caller adds the predicate that selects which records to consider.
+fn base_release() -> DeleteStatement {
+    Query::delete().from_table(WriteRecords::Table).cond_where(unprotected()).to_owned()
+}
 
-const RELEASE_NAMED_WRITE_RECORDS_SQL: &str = concatcp!("DELETE FROM write_records wr WHERE wr.write_id = ANY($1)", UNPROTECTED_BY_ANY_EFFECT);
+/// The three effects a write record outlives nothing without: no attribute
+/// history row, no scope history row and no queued append intent references it.
+fn unprotected() -> Cond {
+    Cond::all()
+        .add(no_reference_from(AttributeHistory::Table, AttributeHistory::WriteId, Ah))
+        .add(no_reference_from(ScopeHistory::Table, ScopeHistory::WriteId, Sh))
+        .add(no_reference_from(TemporalAppendIntents::Table, TemporalAppendIntents::WriteId, Ti))
+}
 
-const RELEASE_WRITE_RECORDS_BEHIND_HORIZON_SQL: &str = concatcp!("DELETE FROM write_records wr WHERE wr.recorded_at < $1", UNPROTECTED_BY_ANY_EFFECT);
+/// `NOT EXISTS (SELECT 1 FROM <table> <alias> WHERE <alias>.write_id = write_records.write_id)`.
+fn no_reference_from(table: impl IntoTableRef, write_id: impl IntoIden + Copy + 'static, alias: impl IntoIden + Copy + 'static) -> SimpleExpr {
+    let subquery = Query::select()
+        .expr(Expr::val(1))
+        .from_as(table, alias)
+        .and_where(Expr::col((alias, write_id)).equals((WriteRecords::Table, WriteRecords::WriteId)))
+        .to_owned();
+    Expr::exists(subquery).not()
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::write_record_release::{RELEASE_NAMED_WRITE_RECORDS_SQL, RELEASE_WRITE_RECORDS_BEHIND_HORIZON_SQL};
+    use crate::write_record_release::{Ah, base_release, no_reference_from};
+    use andromeda_postgresql_schema::temporal::AttributeHistory;
+    use sea_query::{PostgresQueryBuilder, Query};
 
     #[test]
-    fn both_releases_apply_the_same_three_protections() {
-        for statement in [RELEASE_NAMED_WRITE_RECORDS_SQL, RELEASE_WRITE_RECORDS_BEHIND_HORIZON_SQL] {
-            assert!(statement.contains("FROM attribute_history ah WHERE ah.write_id = wr.write_id"));
-            assert!(statement.contains("FROM scope_history sh WHERE sh.write_id = wr.write_id"));
-            assert!(statement.contains("FROM temporal_append_intents ti WHERE ti.write_id = wr.write_id"));
-            assert_eq!(statement.matches("NOT EXISTS").count(), 3);
+    fn a_protection_is_a_correlated_non_existence_over_the_write_identity() {
+        let sql = Query::select()
+            .expr(no_reference_from(AttributeHistory::Table, AttributeHistory::WriteId, Ah))
+            .to_owned()
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."write_id" = "write_records"."write_id")"#),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn every_release_applies_the_three_protections() {
+        let sql = base_release().to_string(PostgresQueryBuilder);
+        assert_eq!(sql.matches("NOT EXISTS").count(), 3, "{sql}");
+        for relation in ["attribute_history", "scope_history", "temporal_append_intents"] {
+            assert!(sql.contains(relation), "missing {relation}: {sql}");
         }
-    }
-
-    #[test]
-    fn the_named_release_is_confined_to_the_records_it_was_given() {
-        assert!(RELEASE_NAMED_WRITE_RECORDS_SQL.contains("wr.write_id = ANY($1)"));
-        assert!(!RELEASE_NAMED_WRITE_RECORDS_SQL.contains("recorded_at"));
-    }
-
-    #[test]
-    fn the_horizon_release_is_confined_to_records_behind_the_cutoff() {
-        assert!(RELEASE_WRITE_RECORDS_BEHIND_HORIZON_SQL.contains("wr.recorded_at < $1"));
-        assert!(!RELEASE_WRITE_RECORDS_BEHIND_HORIZON_SQL.contains("ANY("));
     }
 }

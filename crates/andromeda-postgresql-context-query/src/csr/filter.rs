@@ -11,11 +11,22 @@ use andromeda_ngsi_ld_query::filter::{
 };
 use andromeda_postgresql_query::{
     error::RenderError,
-    jsonb::comparison_sql,
-    operator::{comparison, pattern_match},
+    jsonb::lift_comparison,
+    operator::{compare, pattern as pattern_predicate},
 };
-use andromeda_postgresql_seaquery::{literal::escape_single_quoted, operator::present_and};
-use sea_query::{Condition, Expr as SeaExpr};
+use andromeda_postgresql_seaquery::{
+    jsonb::jsonb_key_exists,
+    literal::{false_literal, text_literal},
+    operator::present_and,
+    pg_operator::PgBinaryOperator,
+};
+use sea_query::{Alias, CaseStatement, Condition, Expr as SeaExpr, Query, SimpleExpr};
+
+/// The registration's `additional_properties` JSONB document, read fresh each
+/// time it opens an extraction.
+fn additional_properties() -> SimpleExpr {
+    SeaExpr::col(Alias::new("additional_properties")).into()
+}
 
 /// Compile a parsed `q` expression against `additional_properties`.
 pub fn csr_expr_to_condition(expr: &Expr) -> Result<Condition, RenderError> {
@@ -32,7 +43,7 @@ fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
         return Ok(no_registration_matches());
     };
     match pred {
-        Predicate::Exists(_) => Ok(Condition::all().add(SeaExpr::cust_with_values("\"additional_properties\" ? $1", [path.attr.as_str().to_string()]))),
+        Predicate::Exists(_) => Ok(Condition::all().add(jsonb_key_exists(additional_properties(), SeaExpr::val(path.attr.as_str()).into()))),
         Predicate::Equality { membership, rhs, .. } => Ok(csr_equality_condition(path, *membership, rhs)),
         Predicate::Ordering { op, rhs, .. } => Ok(csr_ordering_condition(path, *op, rhs)),
         Predicate::MatchPattern { pattern, .. } => Ok(csr_pattern_condition(path, pattern.as_str(), PatternPolarity::Match)),
@@ -51,7 +62,16 @@ fn csr_pred_to_condition(pred: &Predicate) -> Result<Condition, RenderError> {
 /// clause 4.9 only requires the entity to "contain the target element" for a
 /// predicate to hold.
 fn no_registration_matches() -> Condition {
-    Condition::all().add(SeaExpr::cust("FALSE"))
+    Condition::all().add(false_literal())
+}
+
+/// The present guard for one extraction: `(extract) IS NOT NULL`.
+///
+/// A missing property makes the extraction NULL, and every comparison against
+/// NULL is unknown, so presence is required structurally in both polarities
+/// (clause 4.9).
+fn present(extract: SimpleExpr) -> SimpleExpr {
+    SeaExpr::expr(extract).is_not_null()
 }
 
 /// Compile a pattern predicate against `additional_properties`.
@@ -64,14 +84,11 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
     // quotes a `::text` cast would keep, so a stored `"Alpha"` is matched as
     // `Alpha` (clause 4.9). Every comparison arm in this file extracts the same
     // way; the pattern arm must agree.
-    let value_sql = format!("(({}) #>> '{{}}') {} $1", extract, pattern_match(polarity));
-    Condition::all().add(SeaExpr::cust_with_values(
-        present_and(&format!("{extract} IS NOT NULL"), &value_sql),
-        [pattern.to_string()],
-    ))
+    let value = pattern_predicate(stored_text(extract.clone()), polarity, SeaExpr::val(pattern).into()); // clone: the presence guard reads the same extraction
+    Condition::all().add(present_and(present(extract), value))
 }
 
-/// Build a SQL expression that extracts the value of a CSR property from
+/// Build an expression that extracts the value of a CSR property from
 /// `additional_properties`, unwrapping the `Property` value wrapper at each
 /// sub-attribute level and then stepping into any compound value members.
 ///
@@ -89,16 +106,15 @@ fn csr_pattern_condition(path: &AttrPath, pattern: &str, polarity: PatternPolari
 /// never carries. An earlier renderer dropped `value_path` here entirely,
 /// comparing the whole compound value's JSON text instead of the addressed
 /// member.
-fn csr_value_extract(path: &AttrPath) -> String {
-    let mut json_path = unwrap_property(&format!("\"additional_properties\"->'{}'", escape_single_quoted(path.attr.as_str())));
+fn csr_value_extract(path: &AttrPath) -> SimpleExpr {
+    let mut json_path = unwrap_property(additional_properties().json_get(text_literal(path.attr.as_str())));
 
     for sub in &path.sub_attrs {
-        let stepped = format!("({json_path})->'{}'", escape_single_quoted(sub.as_str()));
-        json_path = unwrap_property(&stepped);
+        json_path = unwrap_property(json_path.json_get(text_literal(sub.as_str())));
     }
 
     for member in &path.value_path {
-        json_path = format!("({json_path})->'{}'", escape_single_quoted(member.as_str()));
+        json_path = json_path.json_get(text_literal(member.as_str()));
     }
 
     json_path
@@ -109,27 +125,33 @@ fn csr_value_extract(path: &AttrPath) -> String {
 /// The expression is aliased as `j` in a scalar subquery so the `CASE` reads a
 /// column three times rather than re-embedding the whole prior expression,
 /// which is what keeps [`csr_value_extract`] linear rather than exponential.
-fn unwrap_property(expr: &str) -> String {
-    format!("(SELECT CASE WHEN (j->>'type') = 'Property' THEN j->'value' ELSE j END FROM (SELECT {expr} AS j) s)")
-}
-
-/// Build the present-guarded SQL and its bind for a single-scalar comparison
-/// against `additional_properties`.
-fn csr_scalar_comparison(extract: &str, scalar: &Scalar, op: CmpOp) -> (String, String) {
-    let lifted = comparison_sql(scalar, &stored_text(extract), "$1");
-    let value_sql = format!(
-        "{stored} {op_str} {operand}",
-        stored = lifted.stored,
-        op_str = comparison(op),
-        operand = lifted.operand
-    );
-    (present_and(&format!("({extract}) IS NOT NULL"), &value_sql), lifted.value)
+fn unwrap_property(expr: SimpleExpr) -> SimpleExpr {
+    let derived = Query::select().expr_as(expr, Alias::new("j")).to_owned();
+    // `j` is read three times — the type test, the unwrapped value, and the
+    // fallthrough — so each read builds its own reference to the aliased column.
+    let j = || SimpleExpr::from(SeaExpr::col(Alias::new("j")));
+    let case = CaseStatement::new()
+        .case(
+            SeaExpr::expr(j().json_get_text(text_literal("type"))).eq(text_literal("Property")),
+            j().json_get(text_literal("value")),
+        )
+        .finally(j());
+    let unwrapped = Query::select().expr(case).from_subquery(derived, Alias::new("s")).to_owned();
+    SimpleExpr::SubQuery(None, Box::new(unwrapped.into_sub_query_statement()))
 }
 
 /// The text form of one extracted registration property, which is the side
-/// [`comparison_sql`] lifts.
-fn stored_text(extract: &str) -> String {
-    format!("({extract}) #>> '{{}}'")
+/// [`lift_comparison`] lifts: `(extract) #>> '{}'`.
+fn stored_text(extract: SimpleExpr) -> SimpleExpr {
+    extract.json_path_text(text_literal("{}"))
+}
+
+/// Build the present-guarded single-scalar comparison against
+/// `additional_properties`.
+fn csr_scalar_comparison(extract: SimpleExpr, scalar: &Scalar, op: CmpOp) -> SimpleExpr {
+    let guard = present(extract.clone()); // clone: the value side lifts the same extraction
+    let lifted = lift_comparison(scalar, stored_text(extract));
+    present_and(guard, compare(lifted.stored, op, lifted.operand))
 }
 
 /// Compile an equality predicate (`==`/`!=`) against `additional_properties`.
@@ -137,51 +159,31 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
     let extract = csr_value_extract(path);
 
     match rhs {
-        CompareValue::Scalar(scalar) => {
-            let (sql, value) = csr_scalar_comparison(&extract, scalar, membership.as_cmp_op());
-            Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
-        }
+        CompareValue::Scalar(scalar) => Condition::all().add(csr_scalar_comparison(extract, scalar, membership.as_cmp_op())),
         CompareValue::Range { min, max } => {
-            let stored = stored_text(&extract);
-            let lower = comparison_sql(min, &stored, "$1");
-            let upper = comparison_sql(max, &stored, "$2");
-            let value_sql = match membership {
-                SetMembership::Within => format!(
-                    "{stored} >= {lower_operand} AND {stored} <= {upper_operand}",
-                    stored = lower.stored,
-                    lower_operand = lower.operand,
-                    upper_operand = upper.operand
-                ),
-                SetMembership::Outside => format!(
-                    "({stored} < {lower_operand} OR {stored} > {upper_operand})",
-                    stored = lower.stored,
-                    lower_operand = lower.operand,
-                    upper_operand = upper.operand
-                ),
+            let guard = present(extract.clone()); // clone: the bounds lift the same extraction
+            let stored = stored_text(extract);
+            let lower = lift_comparison(min, stored.clone()); // clone: both bounds compare against the one lifted stored side
+            let upper_operand = lift_comparison(max, stored).operand;
+            let stored_side = lower.stored;
+            let value = match membership {
+                SetMembership::Within => compare(stored_side.clone(), CmpOp::GreaterEq, lower.operand).and(compare(stored_side, CmpOp::LessEq, upper_operand)),
+                SetMembership::Outside => compare(stored_side.clone(), CmpOp::Less, lower.operand).or(compare(stored_side, CmpOp::Greater, upper_operand)),
             };
-            Condition::all().add(SeaExpr::cust_with_values(
-                present_and(&format!("({extract}) IS NOT NULL"), &value_sql),
-                [lower.value, upper.value],
-            ))
+            Condition::all().add(present_and(guard, value))
         }
         CompareValue::ValueList(values) => {
-            let stored = stored_text(&extract);
-            let mut parts = Vec::with_capacity(values.len());
-            let mut bind_values = Vec::with_capacity(values.len());
-            for (i, v) in values.iter().enumerate() {
-                let lifted = comparison_sql(v, &stored, &format!("${idx}", idx = i + 1));
-                parts.push(format!("{stored} = {operand}", stored = lifted.stored, operand = lifted.operand));
-                bind_values.push(lifted.value);
-            }
-            let joined = parts.join(" OR ");
-            let value_sql = match membership {
-                SetMembership::Within => format!("({joined})"),
-                SetMembership::Outside => format!("NOT ({joined})"),
+            let guard = present(extract.clone()); // clone: every arm lifts the same extraction
+            let stored = stored_text(extract);
+            let disjunction = values.iter().fold(Condition::any(), |cond, v| {
+                let lifted = lift_comparison(v, stored.clone());
+                cond.add(compare(lifted.stored, CmpOp::Equal, lifted.operand))
+            });
+            let value: SimpleExpr = match membership {
+                SetMembership::Within => disjunction.into(),
+                SetMembership::Outside => disjunction.not().into(),
             };
-            Condition::all().add(SeaExpr::cust_with_values(
-                present_and(&format!("({extract}) IS NOT NULL"), &value_sql),
-                bind_values,
-            ))
+            Condition::all().add(present_and(guard, value))
         }
     }
 }
@@ -189,8 +191,7 @@ fn csr_equality_condition(path: &AttrPath, membership: SetMembership, rhs: &Comp
 /// Compile an ordering predicate (`>`/`>=`/`<`/`<=`) against `additional_properties`.
 fn csr_ordering_condition(path: &AttrPath, op: OrderingOp, rhs: &Scalar) -> Condition {
     let extract = csr_value_extract(path);
-    let (sql, value) = csr_scalar_comparison(&extract, rhs, op.as_cmp_op());
-    Condition::all().add(SeaExpr::cust_with_values(sql, [value]))
+    Condition::all().add(csr_scalar_comparison(extract, rhs, op.as_cmp_op()))
 }
 
 #[cfg(test)]
@@ -235,7 +236,7 @@ mod tests {
         // of sub-attributes produced a statement megabytes wide (~3^depth).
         let shallow = render("a.b>1");
         let deeper = render("a.b.c.d.e>1");
-        assert!(deeper.contains("AS j"), "uses the aliased subquery form: {deeper}");
+        assert!(deeper.contains("AS \"j\""), "uses the aliased subquery form: {deeper}");
         // Three more levels under linear growth stay within a small multiple;
         // under ~3^depth they would be orders of magnitude larger.
         assert!(deeper.len() < shallow.len() * 6, "growth must be linear: {} vs {}", deeper.len(), shallow.len());
@@ -279,7 +280,7 @@ mod tests {
     #[test]
     fn a_csr_pattern_matches_the_unwrapped_value_not_its_quoted_json() {
         let sql = render("name~=\"^A.*\"");
-        assert!(sql.contains("#>> '{}'"), "{sql}");
+        assert!(sql.contains("#>> ('{}')"), "{sql}");
         assert!(!sql.contains(")::text "), "{sql}");
         assert!(sql.contains(" ~ "), "{sql}");
     }
@@ -295,9 +296,13 @@ mod tests {
         // extraction's closing parentheses, outside the `unwrap_property` CASE —
         // once for the presence test, once for the comparison — not inside it,
         // which would test a `type` member `city`'s own value never carries.
-        assert!(sql.contains("))->'city') IS NOT NULL"), "{sql}");
-        assert!(sql.contains("))->'city') #>> '{}') = 'Berlin'"), "{sql}");
-        assert_eq!(sql.matches("->'city'").count(), 2, "{sql}");
+        assert!(sql.contains("-> ('city')) IS NOT NULL"), "{sql}");
+        assert!(sql.contains("= 'Berlin'"), "{sql}");
+        assert_eq!(
+            sql.matches("-> ('city')").count(),
+            2,
+            "the member is stepped once for presence, once for comparison: {sql}"
+        );
     }
 
     /// The same rule for `!=` over a range and over a value list, which had the
@@ -429,7 +434,7 @@ mod tests {
                 compile(&expr, &QFilterTarget::entities(), &names()).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)),
             );
             assert!(
-                projection_sql.contains("EXISTS ("),
+                projection_sql.contains("EXISTS("),
                 "{} must test presence structurally: {projection_sql}",
                 case.expression
             );

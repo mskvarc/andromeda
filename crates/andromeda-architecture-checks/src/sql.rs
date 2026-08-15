@@ -9,7 +9,7 @@ use std::{fs, path::Path};
 /// statement composition; `<>` is a second spelling of an operator clause 4.9
 /// writes `!=`, which is what one resource's enum returned while every other
 /// renderer in the tree emitted the clause's own token.
-const SQL_FRAGMENTS: &[&str] = &[
+pub(crate) const SQL_FRAGMENTS: &[&str] = &[
     "::numeric",
     "::boolean",
     "::timestamptz",
@@ -69,7 +69,7 @@ pub fn assert_no_sql(crate_root: &str) {
 /// and matching it anywhere would also match the end of `CARGO_MANIFEST_DIR`.
 /// Fragments that open with punctuation — a cast, an operator, a separator —
 /// carry their own boundary and are matched as written.
-fn contains_fragment(code: &str, fragment: &str) -> bool {
+pub(crate) fn contains_fragment(code: &str, fragment: &str) -> bool {
     let bounded = fragment.starts_with(|first: char| first.is_alphanumeric());
     code.match_indices(fragment).any(|(offset, _)| {
         !bounded
@@ -78,6 +78,16 @@ fn contains_fragment(code: &str, fragment: &str) -> bool {
                 .next_back()
                 .is_none_or(|preceding| !preceding.is_alphanumeric() && preceding != '_')
     })
+}
+
+/// Whether a string value reads as SQL rather than as ordinary text.
+///
+/// The same fragment list the specification-crate guard uses: a value that
+/// carries a cast, a PostGIS or JSONB token, a set operator or a statement
+/// composer is a rendering, not a description. Reused by the workspace-wide
+/// raw-SQL gate to classify constant bodies and macro literals.
+pub(crate) fn looks_like_sql(value: &str) -> bool {
+    SQL_FRAGMENTS.iter().any(|fragment| contains_fragment(value, fragment))
 }
 
 /// Every `.rs` file under a directory, paired with its path relative to it.

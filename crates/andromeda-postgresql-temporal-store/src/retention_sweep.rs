@@ -13,8 +13,27 @@
 //! behind the horizon and protect nothing are released.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_behind_horizon};
+use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
+use andromeda_postgresql_seaquery::timescale::drop_chunks;
 use chrono::{DateTime, TimeDelta, Utc};
+use sea_query::{DeleteStatement, Expr, Iden, PostgresQueryBuilder, Query};
+use sea_query_binder::SqlxBinder;
 use thiserror::Error;
+
+/// The `attribute_history` alias inside a garbage-collection subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ah"]
+struct Ah;
+
+/// The `temporal_attribute_streams` alias inside a garbage-collection subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s"]
+struct S;
+
+/// The `scope_history` alias inside a garbage-collection subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "sh"]
+struct Sh;
 
 /// Whether an operator has asked for temporal storage to be aged out.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -106,10 +125,12 @@ impl TemporalRepository {
             TemporalRetention::Enabled { horizon } => horizon,
         };
         let cutoff = horizon.cutoff(now).map_err(|error| TemporalStoreError::Validation(error.to_string()))?;
-        let attribute_history_chunks = self.drop_chunks(DROP_ATTRIBUTE_HISTORY_CHUNKS_SQL, cutoff).await?;
-        let scope_history_chunks = self.drop_chunks(DROP_SCOPE_HISTORY_CHUNKS_SQL, cutoff).await?;
-        let streams = sqlx::query(COLLECT_EMPTY_STREAMS_SQL).execute(&self.pool).await?.rows_affected();
-        let temporal_entities = sqlx::query(COLLECT_EMPTY_TEMPORAL_ENTITIES_SQL).execute(&self.pool).await?.rows_affected();
+        let attribute_history_chunks = self.drop_chunks("attribute_history", cutoff).await?;
+        let scope_history_chunks = self.drop_chunks("scope_history", cutoff).await?;
+        let (streams_sql, streams_values) = collect_empty_streams().build_sqlx(PostgresQueryBuilder);
+        let streams = sqlx::query_with(&streams_sql, streams_values).execute(&self.pool).await?.rows_affected();
+        let (entities_sql, entities_values) = collect_empty_temporal_entities().build_sqlx(PostgresQueryBuilder);
+        let temporal_entities = sqlx::query_with(&entities_sql, entities_values).execute(&self.pool).await?.rows_affected();
         let released_write_records = release_behind_horizon(&self.pool, cutoff).await?;
         Ok(TemporalRetentionOutcome::Swept(TemporalRetentionSweep {
             cutoff,
@@ -122,8 +143,10 @@ impl TemporalRepository {
     }
 
     /// Drop one hypertable's chunks that lie entirely before the cutoff.
-    async fn drop_chunks(&self, statement: &str, cutoff: DateTime<Utc>) -> Result<usize, TemporalStoreError> {
-        Ok(sqlx::query(statement).bind(cutoff).fetch_all(&self.pool).await?.len())
+    async fn drop_chunks(&self, hypertable: &str, cutoff: DateTime<Utc>) -> Result<usize, TemporalStoreError> {
+        let statement = Query::select().expr(drop_chunks(hypertable, Expr::val(cutoff).into())).to_owned();
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        Ok(sqlx::query_with(&sql, values).fetch_all(&self.pool).await?.len())
     }
 }
 
@@ -131,40 +154,56 @@ impl TemporalRepository {
 // oldest surviving row can be older than the cutoff by up to one chunk
 // interval. That is the intended behaviour: retention ages storage out at chunk
 // granularity and never rewrites a chunk to trim rows out of it.
-const DROP_ATTRIBUTE_HISTORY_CHUNKS_SQL: &str = r#"
-SELECT drop_chunks('attribute_history', older_than => $1::timestamptz)
-"#;
 
-const DROP_SCOPE_HISTORY_CHUNKS_SQL: &str = r#"
-SELECT drop_chunks('scope_history', older_than => $1::timestamptz)
-"#;
+/// Garbage-collect stream catalogue rows no history row names.
+///
+/// A stream is created in the same transaction as the first history row that
+/// names it, so a stream with no history is a stream whose history has left
+/// storage rather than one a concurrent write has not filled in yet.
+fn collect_empty_streams() -> DeleteStatement {
+    let no_history = Query::select()
+        .expr(Expr::val(1))
+        .from_as(AttributeHistory::Table, Ah)
+        .and_where(Expr::col((Ah, AttributeHistory::StreamId)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::Id)))
+        .to_owned();
+    Query::delete()
+        .from_table(TemporalAttributeStreams::Table)
+        .and_where(Expr::exists(no_history).not())
+        .to_owned()
+}
 
-// A stream is created in the same transaction as the first history row that
-// names it, so a stream with no history is a stream whose history has left
-// storage rather than one a concurrent write has not filled in yet.
-const COLLECT_EMPTY_STREAMS_SQL: &str = r#"
-DELETE FROM temporal_attribute_streams s
-WHERE NOT EXISTS (SELECT 1 FROM attribute_history ah WHERE ah.stream_id = s.id)
-"#;
-
-const COLLECT_EMPTY_TEMPORAL_ENTITIES_SQL: &str = r#"
-DELETE FROM temporal_entities te
-WHERE NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.temporal_entity_key = te.entity_key)
-  AND NOT EXISTS (SELECT 1 FROM scope_history sh WHERE sh.temporal_entity_key = te.entity_key)
-"#;
+/// Garbage-collect temporal-entity rows nothing hangs off: no stream and no
+/// scope-history row references them.
+fn collect_empty_temporal_entities() -> DeleteStatement {
+    let no_stream = Query::select()
+        .expr(Expr::val(1))
+        .from_as(TemporalAttributeStreams::Table, S)
+        .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::EntityKey)))
+        .to_owned();
+    let no_scope = Query::select()
+        .expr(Expr::val(1))
+        .from_as(ScopeHistory::Table, Sh)
+        .and_where(Expr::col((Sh, ScopeHistory::TemporalEntityKey)).equals((TemporalEntities::Table, TemporalEntities::EntityKey)))
+        .to_owned();
+    Query::delete()
+        .from_table(TemporalEntities::Table)
+        .and_where(Expr::exists(no_stream).not())
+        .and_where(Expr::exists(no_scope).not())
+        .to_owned()
+}
 
 #[cfg(test)]
 mod tests {
     use crate::retention_sweep::{
-        COLLECT_EMPTY_STREAMS_SQL,
-        COLLECT_EMPTY_TEMPORAL_ENTITIES_SQL,
-        DROP_ATTRIBUTE_HISTORY_CHUNKS_SQL,
-        DROP_SCOPE_HISTORY_CHUNKS_SQL,
         TemporalRetention,
         TemporalRetentionHorizon,
         TemporalRetentionHorizonInvalid,
+        collect_empty_streams,
+        collect_empty_temporal_entities,
     };
+    use andromeda_postgresql_seaquery::timescale::drop_chunks;
     use chrono::{DateTime, TimeDelta, Utc};
+    use sea_query::{Expr, PostgresQueryBuilder, Query};
 
     /// The fixed instant the cutoff cases are measured from.
     fn now() -> Result<DateTime<Utc>, String> {
@@ -195,31 +234,44 @@ mod tests {
 
     #[test]
     fn both_hypertables_are_aged_out_on_the_operational_write_clock() {
-        for statement in [DROP_ATTRIBUTE_HISTORY_CHUNKS_SQL, DROP_SCOPE_HISTORY_CHUNKS_SQL] {
-            assert!(statement.contains("older_than => $1::timestamptz"));
-            assert!(!statement.contains("observed_at"));
+        for hypertable in ["attribute_history", "scope_history"] {
+            let sql = Query::select()
+                .expr(drop_chunks(hypertable, Expr::val("2026-01-01T00:00:00Z").into()))
+                .to_owned()
+                .to_string(PostgresQueryBuilder);
+            assert!(sql.contains(&format!("drop_chunks('{hypertable}', older_than => ")), "{sql}");
+            assert!(sql.contains("::timestamptz"), "{sql}");
+            assert!(!sql.contains("observed_at"), "{sql}");
         }
-        assert!(DROP_ATTRIBUTE_HISTORY_CHUNKS_SQL.contains("'attribute_history'"));
-        assert!(DROP_SCOPE_HISTORY_CHUNKS_SQL.contains("'scope_history'"));
     }
 
     #[test]
     fn garbage_collection_removes_only_catalogue_rows_nothing_names() {
-        assert!(COLLECT_EMPTY_STREAMS_SQL.contains("NOT EXISTS (SELECT 1 FROM attribute_history ah WHERE ah.stream_id = s.id)"));
-        assert!(COLLECT_EMPTY_TEMPORAL_ENTITIES_SQL.contains("FROM temporal_attribute_streams s WHERE s.temporal_entity_key = te.entity_key"));
-        assert!(COLLECT_EMPTY_TEMPORAL_ENTITIES_SQL.contains("FROM scope_history sh WHERE sh.temporal_entity_key = te.entity_key"));
+        let streams = collect_empty_streams().to_string(PostgresQueryBuilder);
+        assert!(
+            streams.contains(r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_id" = "temporal_attribute_streams"."id")"#),
+            "{streams}"
+        );
+        let entities = collect_empty_temporal_entities().to_string(PostgresQueryBuilder);
+        assert!(
+            entities.contains(r#""s"."temporal_entity_key" = "temporal_entities"."entity_key""#),
+            "{entities}"
+        );
+        assert!(
+            entities.contains(r#""sh"."temporal_entity_key" = "temporal_entities"."entity_key""#),
+            "{entities}"
+        );
+        assert_eq!(entities.matches("NOT EXISTS").count(), 2, "{entities}");
     }
 
     #[test]
-    fn no_retention_statement_records_an_ngsi_ld_deletion() {
-        for statement in [
-            DROP_ATTRIBUTE_HISTORY_CHUNKS_SQL,
-            DROP_SCOPE_HISTORY_CHUNKS_SQL,
-            COLLECT_EMPTY_STREAMS_SQL,
-            COLLECT_EMPTY_TEMPORAL_ENTITIES_SQL,
+    fn no_garbage_collection_statement_records_an_ngsi_ld_deletion() {
+        for sql in [
+            collect_empty_streams().to_string(PostgresQueryBuilder),
+            collect_empty_temporal_entities().to_string(PostgresQueryBuilder),
         ] {
-            assert!(!statement.contains("INSERT"));
-            assert!(!statement.contains("deleted_at"));
+            assert!(!sql.contains("INSERT"), "{sql}");
+            assert!(!sql.contains("deleted_at"), "{sql}");
         }
     }
 }

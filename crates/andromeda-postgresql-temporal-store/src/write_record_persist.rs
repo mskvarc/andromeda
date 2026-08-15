@@ -16,8 +16,12 @@
 //! already present.
 
 use andromeda_context_commit::write_record::WriteRecord;
-use chrono::Utc;
+use andromeda_postgresql_schema::queue::WriteRecords;
+use chrono::{DateTime, Utc};
+use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
+use sea_query_binder::SqlxBinder;
 use sqlx::{Postgres, Transaction};
+use uuid::Uuid;
 
 /// Persist the bookkeeping record of one write inside the caller's transaction.
 ///
@@ -28,34 +32,59 @@ use sqlx::{Postgres, Transaction};
 ///
 /// Returns the underlying [`sqlx::Error`] when the statement fails.
 pub(crate) async fn persist_write_record(tx: &mut Transaction<'_, Postgres>, record: &WriteRecord) -> Result<(), sqlx::Error> {
-    sqlx::query(PERSIST_WRITE_RECORD_SQL)
-        .bind(record.write_id().as_uuid())
-        .bind(record.recorded_at())
-        .bind(Utc::now())
-        .execute(&mut **tx)
-        .await?;
+    let statement = persist_write_record_statement(record.write_id().as_uuid(), record.recorded_at(), Utc::now())
+        .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(&sql, values).execute(&mut **tx).await?;
     Ok(())
 }
 
-const PERSIST_WRITE_RECORD_SQL: &str = "INSERT INTO write_records (write_id, recorded_at, accepted_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
+/// The idempotent insert of one write's bookkeeping record.
+///
+/// The conflict is on the `write_id` primary key with no update, so a replay of
+/// an already-recorded write changes nothing.
+fn persist_write_record_statement(write_id: Uuid, recorded_at: DateTime<Utc>, accepted_at: DateTime<Utc>) -> Result<InsertStatement, sea_query::error::Error> {
+    let mut statement = Query::insert();
+    statement
+        .into_table(WriteRecords::Table)
+        .columns([WriteRecords::WriteId, WriteRecords::RecordedAt, WriteRecords::AcceptedAt])
+        .values([Expr::val(write_id).into(), recorded_at.into(), accepted_at.into()])?
+        .on_conflict(OnConflict::new().do_nothing().to_owned());
+    Ok(statement.to_owned())
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::write_record_persist::PERSIST_WRITE_RECORD_SQL;
+    use crate::write_record_persist::persist_write_record_statement;
+    use chrono::Utc;
+    use sea_query::PostgresQueryBuilder;
+    use uuid::Uuid;
+
+    fn rendered() -> String {
+        persist_write_record_statement(Uuid::nil(), Utc::now(), Utc::now())
+            .expect("arity")
+            .to_string(PostgresQueryBuilder)
+    }
 
     #[test]
     fn a_repeated_write_is_recognised_rather_than_recorded_twice() {
-        assert!(PERSIST_WRITE_RECORD_SQL.contains("ON CONFLICT DO NOTHING"));
+        let sql = rendered();
+        assert!(sql.contains("ON CONFLICT") && sql.contains("DO NOTHING"), "{sql}");
     }
 
     #[test]
     fn the_record_persists_the_instant_a_replay_has_to_reuse() {
-        assert!(PERSIST_WRITE_RECORD_SQL.contains("(write_id, recorded_at, accepted_at)"));
+        let sql = rendered();
+        assert!(
+            sql.contains("\"write_id\"") && sql.contains("\"recorded_at\"") && sql.contains("\"accepted_at\""),
+            "{sql}"
+        );
     }
 
     #[test]
     fn the_record_replaces_the_legacy_receipt_relation() {
-        assert!(PERSIST_WRITE_RECORD_SQL.contains("INTO write_records"));
-        assert!(!PERSIST_WRITE_RECORD_SQL.contains("temporal_history_sink_receipts"));
+        let sql = rendered();
+        assert!(sql.contains("INTO \"write_records\""), "{sql}");
+        assert!(!sql.contains("temporal_history_sink_receipts"), "{sql}");
     }
 }

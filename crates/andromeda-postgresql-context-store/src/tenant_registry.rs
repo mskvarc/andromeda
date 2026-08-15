@@ -5,9 +5,13 @@ use crate::{
     tenant_database::{DatabaseUrl, create_database_if_missing, generate_db_name, migrate_main_db, migrate_single_tenant_db},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
+use andromeda_postgresql_schema::tenancy::Tenants;
+use andromeda_postgresql_seaquery::advisory_lock::advisory_xact_lock;
 use andromeda_tenancy::{config::TenancyConfig, database::TenantDatabase, database_name::TenantDatabaseName, error::TenancyError, status::TenantStatus};
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sea_query::{Expr, InsertStatement, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query_binder::SqlxBinder;
+use sqlx::PgPool;
 
 /// The tenant registry, backed by the platform database's `tenants` table.
 ///
@@ -59,18 +63,9 @@ impl PostgresTenantRegistry {
     /// Record the unnamed default tenant, so it appears in the registry like
     /// any other.
     async fn register_default_tenant(&self) -> Result<(), ContextStoreError> {
-        sqlx::query(
-            r#"
-            INSERT INTO tenants (name, is_unnamed_default, db_name, status, created_at, modified_at)
-            VALUES (NULL, TRUE, $1, $2, NOW(), NOW())
-            ON CONFLICT (db_name) DO UPDATE SET modified_at = NOW()
-            "#,
-        )
-        .bind(self.default_database.as_str())
-        .bind(TenantStatus::Active.to_string())
-        .execute(&self.main_pool)
-        .await?;
-
+        let statement = default_tenant_upsert(self.default_database.as_str(), &TenantStatus::Active.to_string()).map_err(statement_error)?;
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        sqlx::query_with(&sql, values).execute(&self.main_pool).await?;
         Ok(())
     }
 }
@@ -80,6 +75,14 @@ fn registry_unavailable(error: &sqlx::Error) -> TenancyError {
     TenancyError::RegistryUnavailable { detail: error.to_string() }
 }
 
+/// The failure a statement that could not be assembled becomes.
+///
+/// A column/value arity mismatch is the only cause, so it is an internal
+/// invariant rather than a database failure.
+fn statement_error(error: sea_query::error::Error) -> ContextStoreError {
+    ContextStoreError::Internal(error.to_string())
+}
+
 #[async_trait]
 impl TenantDatabase for PostgresTenantRegistry {
     fn default_database(&self) -> TenantDatabaseName {
@@ -87,7 +90,8 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn registered_tenants(&self) -> Result<Vec<TenantName>, TenancyError> {
-        let names: Vec<String> = sqlx::query_scalar("SELECT name FROM tenants WHERE is_unnamed_default = FALSE AND name IS NOT NULL ORDER BY name")
+        let (sql, values) = registered_tenants_query().build_sqlx(PostgresQueryBuilder);
+        let names: Vec<String> = sqlx::query_scalar_with(&sql, values)
             .fetch_all(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
@@ -103,12 +107,12 @@ impl TenantDatabase for PostgresTenantRegistry {
     }
 
     async fn lookup(&self, name: &TenantName) -> Result<Option<TenantDatabaseName>, TenancyError> {
-        let row = sqlx::query("SELECT db_name FROM tenants WHERE name = $1 AND is_unnamed_default = FALSE")
-            .bind(name.as_str())
+        let (sql, values) = named_tenant_database_query(name.as_str(), NamedTenantScope::ExcludeDefault).build_sqlx(PostgresQueryBuilder);
+        let db_name: Option<String> = sqlx::query_scalar_with(&sql, values)
             .fetch_optional(&self.main_pool)
             .await
             .map_err(|error| registry_unavailable(&error))?;
-        Ok(row.map(|row| TenantDatabaseName::from(row.get::<String, _>("db_name"))))
+        Ok(db_name.map(TenantDatabaseName::from))
     }
 
     async fn provision(&self, name: &TenantName) -> Result<TenantDatabaseName, TenancyError> {
@@ -127,17 +131,15 @@ impl PostgresTenantRegistry {
     /// finds the row the first inserted.
     async fn provision_inner(&self, name: &TenantName) -> Result<TenantDatabaseName, ContextStoreError> {
         let mut tx = self.main_pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-            .bind(name.as_str())
-            .execute(&mut *tx)
-            .await?;
+        let (lock_sql, lock_values) = advisory_lock_query(name.as_str()).build_sqlx(PostgresQueryBuilder);
+        sqlx::query_with(&lock_sql, lock_values).execute(&mut *tx).await?;
 
-        if let Some(existing) = sqlx::query("SELECT db_name FROM tenants WHERE name = $1")
-            .bind(name.as_str())
+        let (lookup_sql, lookup_values) = named_tenant_database_query(name.as_str(), NamedTenantScope::AnyRow).build_sqlx(PostgresQueryBuilder);
+        if let Some(existing) = sqlx::query_scalar_with::<_, String, _>(&lookup_sql, lookup_values)
             .fetch_optional(&mut *tx)
             .await?
         {
-            let db_name = TenantDatabaseName::from(existing.get::<String, _>("db_name"));
+            let db_name = TenantDatabaseName::from(existing);
             tx.commit().await?;
             return Ok(db_name);
         }
@@ -145,22 +147,180 @@ impl PostgresTenantRegistry {
         let db_name = generate_db_name(&self.tenancy.tenant_db_prefix, name);
         create_database_if_missing(&self.database_url, &db_name).await?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO tenants (name, is_unnamed_default, db_name, status, created_at, modified_at)
-            VALUES ($1, FALSE, $2, $3, NOW(), NOW())
-            "#,
-        )
-        .bind(name.as_str())
-        .bind(db_name.as_str())
-        .bind(TenantStatus::Active.to_string())
-        .execute(&mut *tx)
-        .await?;
+        let statement = tenant_insert(name.as_str(), db_name.as_str(), &TenantStatus::Active.to_string()).map_err(statement_error)?;
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        sqlx::query_with(&sql, values).execute(&mut *tx).await?;
         tx.commit().await?;
 
         let tenant_url = self.database_url.with_db_name(&db_name);
         migrate_single_tenant_db(&tenant_url, self.tenancy.tenant_max_connections, self.synchronous_commit_setting).await?;
 
         Ok(db_name)
+    }
+}
+
+/// Whether a `db_name` lookup restricts to named tenants or reads any row.
+///
+/// The port's `lookup` excludes the unnamed default so a request for a named
+/// tenant can never resolve to it; provisioning reads any row, since it is
+/// checking whether the row it is about to insert already exists.
+#[derive(Clone, Copy)]
+enum NamedTenantScope {
+    /// Exclude the unnamed default tenant.
+    ExcludeDefault,
+    /// Match any row with the name.
+    AnyRow,
+}
+
+/// The names of every named tenant, in name order.
+fn registered_tenants_query() -> SelectStatement {
+    Query::select()
+        .column(Tenants::Name)
+        .from(Tenants::Table)
+        .and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false))
+        .and_where(Expr::col(Tenants::Name).is_not_null())
+        .order_by(Tenants::Name, Order::Asc)
+        .to_owned()
+}
+
+/// The database name of the tenant called `name`, under `scope`.
+fn named_tenant_database_query(name: &str, scope: NamedTenantScope) -> SelectStatement {
+    let mut query = Query::select();
+    query.column(Tenants::DbName).from(Tenants::Table).and_where(Expr::col(Tenants::Name).eq(name));
+    match scope {
+        NamedTenantScope::ExcludeDefault => {
+            query.and_where(Expr::col(Tenants::IsUnnamedDefault).eq(false));
+        }
+        NamedTenantScope::AnyRow => {}
+    }
+    query.to_owned()
+}
+
+/// Take the transaction advisory lock keyed on `name`.
+fn advisory_lock_query(name: &str) -> SelectStatement {
+    Query::select().expr(advisory_xact_lock(Expr::val(name).into())).to_owned()
+}
+
+/// Insert the unnamed default tenant, refreshing its timestamp if it exists.
+///
+/// The conflict target is `db_name`, whose unique index is what keeps a restart
+/// from inserting a second default row.
+fn default_tenant_upsert(db_name: &str, status: &str) -> Result<InsertStatement, sea_query::error::Error> {
+    let mut statement = Query::insert();
+    statement
+        .into_table(Tenants::Table)
+        .columns([
+            Tenants::Name,
+            Tenants::IsUnnamedDefault,
+            Tenants::DbName,
+            Tenants::Status,
+            Tenants::CreatedAt,
+            Tenants::ModifiedAt,
+        ])
+        .values([
+            SimpleExpr::Keyword(Keyword::Null),
+            true.into(),
+            db_name.into(),
+            status.into(),
+            Expr::current_timestamp().into(),
+            Expr::current_timestamp().into(),
+        ])?
+        .on_conflict(
+            OnConflict::column(Tenants::DbName)
+                .values([(Tenants::ModifiedAt, Expr::current_timestamp().into())])
+                .to_owned(),
+        );
+    Ok(statement.to_owned())
+}
+
+/// Insert a named tenant.
+fn tenant_insert(name: &str, db_name: &str, status: &str) -> Result<InsertStatement, sea_query::error::Error> {
+    let mut statement = Query::insert();
+    statement
+        .into_table(Tenants::Table)
+        .columns([
+            Tenants::Name,
+            Tenants::IsUnnamedDefault,
+            Tenants::DbName,
+            Tenants::Status,
+            Tenants::CreatedAt,
+            Tenants::ModifiedAt,
+        ])
+        .values([
+            name.into(),
+            false.into(),
+            db_name.into(),
+            status.into(),
+            Expr::current_timestamp().into(),
+            Expr::current_timestamp().into(),
+        ])?;
+    Ok(statement.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tenant_registry::{
+        NamedTenantScope,
+        advisory_lock_query,
+        default_tenant_upsert,
+        named_tenant_database_query,
+        registered_tenants_query,
+        tenant_insert,
+    };
+    use sea_query::PostgresQueryBuilder;
+
+    fn select_sql(statement: sea_query::SelectStatement) -> String {
+        statement.to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn registered_tenants_lists_named_tenants_in_order() {
+        let sql = select_sql(registered_tenants_query());
+        assert!(sql.contains("SELECT \"name\" FROM \"tenants\""), "{sql}");
+        assert!(sql.contains("\"is_unnamed_default\" ="), "{sql}");
+        assert!(sql.contains("\"name\" IS NOT NULL"), "{sql}");
+        assert!(sql.contains("ORDER BY \"name\" ASC"), "{sql}");
+    }
+
+    #[test]
+    fn the_port_lookup_excludes_the_unnamed_default() {
+        let sql = select_sql(named_tenant_database_query("acme", NamedTenantScope::ExcludeDefault));
+        assert!(sql.contains("SELECT \"db_name\" FROM \"tenants\""), "{sql}");
+        assert!(sql.contains("\"name\" ="), "{sql}");
+        assert!(sql.contains("\"is_unnamed_default\""), "{sql}");
+    }
+
+    #[test]
+    fn the_provisioning_lookup_reads_any_row() {
+        let sql = select_sql(named_tenant_database_query("acme", NamedTenantScope::AnyRow));
+        assert!(sql.contains("\"name\" ="), "{sql}");
+        assert!(!sql.contains("is_unnamed_default"), "provisioning must not exclude the default row: {sql}");
+    }
+
+    #[test]
+    fn the_advisory_lock_hashes_the_bound_name() {
+        let (sql, values) = {
+            use sea_query_binder::SqlxBinder;
+            advisory_lock_query("acme").build_sqlx(PostgresQueryBuilder)
+        };
+        assert!(sql.contains("pg_advisory_xact_lock(hashtext("), "{sql}");
+        assert_eq!(values.0.0.len(), 1, "the name is bound, not interpolated: {sql}");
+    }
+
+    #[test]
+    fn the_default_upsert_conflicts_on_db_name_and_refreshes_the_timestamp() {
+        let sql = default_tenant_upsert("andromeda", "active").expect("arity").to_string(PostgresQueryBuilder);
+        assert!(sql.contains("INSERT INTO \"tenants\""), "{sql}");
+        assert!(sql.contains("ON CONFLICT (\"db_name\") DO UPDATE"), "{sql}");
+        assert!(sql.contains("\"modified_at\" = CURRENT_TIMESTAMP"), "{sql}");
+    }
+
+    #[test]
+    fn a_named_tenant_insert_is_not_the_default() {
+        let sql = tenant_insert("acme", "andromeda_acme", "active")
+            .expect("arity")
+            .to_string(PostgresQueryBuilder);
+        assert!(sql.contains("INSERT INTO \"tenants\""), "{sql}");
+        assert!(!sql.contains("ON CONFLICT"), "a named tenant insert has no upsert: {sql}");
     }
 }

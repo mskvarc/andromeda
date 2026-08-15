@@ -77,6 +77,28 @@ pub enum Csr {
     AdditionalProperties,
 }
 
+/// The `registration_information` routing projection derived from a
+/// registration's `information`, which distributed-operation discovery
+/// preselects against before reading the payload.
+#[derive(Iden, Clone, Copy)]
+pub enum RegistrationInformation {
+    /// The `registration_information` table.
+    Table,
+    /// Foreign key to the owning `context_source_registrations` row.
+    RegistrationId,
+    /// The set of entity-type IRIs the information item constrains, or `NULL`
+    /// when it constrains no type.
+    EntityTypes,
+    /// The exact entity identifier the item constrains, or `NULL`.
+    EntityId,
+    /// The entity identifier pattern the item constrains, or `NULL`.
+    EntityIdPattern,
+    /// The interned property-name dictionary keys the item declares, or `NULL`.
+    PropertyNameIds,
+    /// The interned relationship-name dictionary keys the item declares, or `NULL`.
+    RelationshipNameIds,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::csr::Csr;

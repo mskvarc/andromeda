@@ -23,6 +23,11 @@ pub struct Ah;
 #[iden = "an"]
 pub struct An;
 
+/// Alias `te` for the `temporal_entities` table.
+#[derive(Iden, Clone, Copy)]
+#[iden = "te"]
+pub struct Te;
+
 /// Alias `ce` for the current-state `entities` row a `q` or geo predicate reads.
 ///
 /// A `q` expression and a geo query filter current state (clauses 4.9 and 4.10)
@@ -45,7 +50,7 @@ pub struct EntityIdColumn;
 
 #[cfg(test)]
 mod tests {
-    use crate::alias::{Ah, An, Ce, EntityIdColumn, S};
+    use crate::alias::{Ah, An, Ce, EntityIdColumn, S, Te};
     use sea_query::Iden;
 
     #[test]
@@ -53,6 +58,7 @@ mod tests {
         pretty_assertions::assert_eq!(S.to_string(), "s");
         pretty_assertions::assert_eq!(Ah.to_string(), "ah");
         pretty_assertions::assert_eq!(An.to_string(), "an");
+        pretty_assertions::assert_eq!(Te.to_string(), "te");
         pretty_assertions::assert_eq!(Ce.to_string(), "ce");
         pretty_assertions::assert_eq!(EntityIdColumn.to_string(), "entity_id");
     }

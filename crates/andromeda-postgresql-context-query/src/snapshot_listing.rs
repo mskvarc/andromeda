@@ -1,21 +1,14 @@
 //! The statements that list the entities a materialised snapshot holds
 //! (clause 5.16, Snapshot Functionality).
 //!
-//! A sibling of [`snapshot_purge`](crate::snapshot_purge): both assemble a
-//! snapshot statement in the [`BindBuilder`]/[`BuiltQuery`] style rather than
-//! through sea-query, so the whole snapshot statement family reads one way. The
-//! runtime table and column names come from the caller because the same shape
-//! serves both the entity snapshot table and the temporal snapshot table; they
-//! are trusted identifiers the repository supplies, never request input.
+//! The runtime table and column names come from the caller because the same
+//! shape serves both the entity snapshot table and the temporal snapshot table;
+//! they are trusted identifiers the repository supplies, never request input.
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
-use andromeda_postgresql_seaquery::{
-    bind::{BindBuilder, BindValue},
-    built::BuiltQuery,
-};
-use sea_query::Iden;
-use std::borrow::Cow;
+use andromeda_postgresql_seaquery::{aggregate::count_all, literal::text_literal, pg_array::any, pg_operator::PgBinaryOperator};
+use sea_query::{Alias, Condition, Expr as SeaExpr, Iden, Order, Query, SelectStatement, SimpleExpr};
 
 /// The inputs that select one page of a snapshot's entities.
 #[derive(Debug)]
@@ -36,45 +29,59 @@ pub struct SnapshotListingParams<'a> {
     pub offset: i64,
 }
 
-/// Build the count-and-data statement pair that lists a snapshot's entities.
+/// The paginated data statement and its matching total-count statement.
 ///
-/// The returned [`BuiltQuery`] carries the paginated data statement in `sql`,
-/// the matching `COUNT(*)` in `count_sql`, and the shared `WHERE`-clause binds.
-/// `LIMIT`/`OFFSET` are rendered as integer literals rather than binds so the
-/// count statement, which omits them, reuses the same bind vector — the entity
-/// query builder pages the same way.
-pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> BuiltQuery<'static> {
-    let mut binds: BindBuilder<BindValue<'static>> = BindBuilder::default();
+/// The two share one `WHERE` condition so the count reports exactly the rows the
+/// page draws from; each is executed on its own through `build_sqlx`.
+pub struct SnapshotListing {
+    /// The `SELECT <data> … LIMIT … OFFSET …` page.
+    pub data: SelectStatement,
+    /// The `SELECT COUNT(*) …` over the same filter, without pagination.
+    pub count: SelectStatement,
+}
 
-    let snapshot_marker = binds.bind(BindValue::String(Cow::Owned(params.snapshot_id.to_string())));
-    let mut predicates = vec![format!("snapshot_id = {snapshot_marker}")];
+/// The shared `WHERE` condition selecting a snapshot's matching entities.
+fn listing_condition(params: &SnapshotListingParams<'_>) -> Condition {
+    let mut condition = Condition::all().add(SeaExpr::expr(SeaExpr::col(Alias::new("snapshot_id"))).eq(params.snapshot_id.to_string()));
 
     if let Some(entity_type) = params.entity_type {
-        let marker = binds.bind(BindValue::String(Cow::Owned(entity_type.to_string())));
-        predicates.push(format!("{}->>'type' LIKE '%' || {marker} || '%'", params.data_column));
+        // The stored representation carries the type as a JSON member; a
+        // substring match keeps the previous `LIKE '%type%'` behaviour, with the
+        // wildcarded pattern bound as one value.
+        let stored_type = SimpleExpr::from(SeaExpr::col(Alias::new(params.data_column))).json_get_text(text_literal("type"));
+        condition = condition.add(SeaExpr::expr(stored_type).like(format!("%{entity_type}%")));
     }
 
     if let Some(ids) = params.entity_ids
         && !ids.is_empty()
     {
-        let ids = ids.iter().map(Uri::to_string).collect();
-        let marker = binds.bind(BindValue::StringVec(Cow::Owned(ids)));
-        predicates.push(format!("entity_id = ANY({marker})"));
+        let ids: Vec<String> = ids.iter().map(Uri::to_string).collect();
+        condition = condition.add(SeaExpr::expr(SeaExpr::col(Alias::new("entity_id"))).eq(any(SeaExpr::val(ids).into())));
     }
 
-    let where_clause = predicates.join(" AND ");
-    let table = params.table;
-    let data_column = params.data_column;
-    // `LIMIT`/`OFFSET` are non-negative integers, so they are safe to inline and
-    // must be inlined for the count statement to share this bind vector.
-    let limit = params.limit.max(0);
-    let offset = params.offset.max(0);
+    condition
+}
 
-    BuiltQuery {
-        sql: format!("SELECT {data_column} FROM {table} WHERE {where_clause} ORDER BY entity_id ASC LIMIT {limit} OFFSET {offset}"),
-        count_sql: Some(format!("SELECT COUNT(*) AS cnt FROM {table} WHERE {where_clause}")),
-        bind_values: binds.into_values(),
-    }
+/// Build the count-and-data statement pair that lists a snapshot's entities.
+pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> SnapshotListing {
+    // clone: the count statement filters on the same condition.
+    let condition = listing_condition(params);
+
+    let mut data = Query::select();
+    data.expr(SeaExpr::col(Alias::new(params.data_column)))
+        .from(Alias::new(params.table))
+        .cond_where(condition.clone())
+        .order_by(Alias::new("entity_id"), Order::Asc)
+        .limit(params.limit.max(0) as u64)
+        .offset(params.offset.max(0) as u64);
+
+    let mut count = Query::select();
+    count
+        .expr_as(count_all(), Alias::new("cnt"))
+        .from(Alias::new(params.table))
+        .cond_where(condition);
+
+    SnapshotListing { data, count }
 }
 
 /// Build the statement that fetches one entity's representation from a snapshot.
@@ -82,24 +89,20 @@ pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> BuiltQuery<'st
 /// `table` and `data_column` are the SQL identifiers the repository supplies,
 /// named through [`Iden`] so a rename moves the reference with them; the snapshot
 /// and the entity are named by their domain identifiers.
-pub fn build_get_row_query(table: impl Iden, data_column: impl Iden, snapshot_id: &Uri, entity_id: &Uri) -> BuiltQuery<'static> {
-    let mut binds: BindBuilder<BindValue<'static>> = BindBuilder::default();
-    let snapshot_marker = binds.bind(BindValue::String(Cow::Owned(snapshot_id.to_string())));
-    let entity_marker = binds.bind(BindValue::String(Cow::Owned(entity_id.to_string())));
-
-    let table = table.to_string();
-    let data_column = data_column.to_string();
-    BuiltQuery {
-        sql: format!("SELECT {data_column} FROM {table} WHERE snapshot_id = {snapshot_marker} AND entity_id = {entity_marker}"),
-        count_sql: None,
-        bind_values: binds.into_values(),
-    }
+pub fn build_get_row_query(table: impl Iden + 'static, data_column: impl Iden + 'static, snapshot_id: &Uri, entity_id: &Uri) -> SelectStatement {
+    let mut select = Query::select();
+    select
+        .expr(SeaExpr::col(data_column))
+        .from(table)
+        .and_where(SeaExpr::expr(SeaExpr::col(Alias::new("snapshot_id"))).eq(snapshot_id.to_string()))
+        .and_where(SeaExpr::expr(SeaExpr::col(Alias::new("entity_id"))).eq(entity_id.to_string()));
+    select
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_query::Alias;
+    use sea_query::PostgresQueryBuilder;
 
     fn params<'a>(snapshot_id: &'a Uri, entity_type: Option<&'a TypeExprRaw>, entity_ids: Option<&'a [Uri]>) -> SnapshotListingParams<'a> {
         SnapshotListingParams {
@@ -114,63 +117,62 @@ mod tests {
     }
 
     #[test]
-    fn the_bare_listing_filters_only_by_snapshot_and_pages_by_literal() {
+    fn the_bare_listing_filters_only_by_snapshot_and_pages() {
         let snapshot_id = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot URI");
-        let built = build_listing_query(&params(&snapshot_id, None, None));
-        assert_eq!(
-            built.sql,
-            "SELECT entity_data FROM snapshot_entities WHERE snapshot_id = $1 ORDER BY entity_id ASC LIMIT 25 OFFSET 50"
-        );
-        assert_eq!(
-            built.count_sql.as_deref(),
-            Some("SELECT COUNT(*) AS cnt FROM snapshot_entities WHERE snapshot_id = $1")
-        );
-        assert_eq!(built.bind_values.len(), 1);
+        let listing = build_listing_query(&params(&snapshot_id, None, None));
+        let data = listing.data.to_string(PostgresQueryBuilder);
+        assert!(data.contains("SELECT \"entity_data\" FROM \"snapshot_entities\""), "{data}");
+        assert!(data.contains("\"snapshot_id\" = "), "{data}");
+        assert!(data.contains("ORDER BY \"entity_id\" ASC"), "{data}");
+        assert!(data.contains("LIMIT 25 OFFSET 50"), "{data}");
+        let count = listing.count.to_string(PostgresQueryBuilder);
+        assert!(count.contains("COUNT(*)"), "{count}");
+        assert!(!count.contains("LIMIT"), "{count}");
     }
 
     #[test]
     fn a_type_filter_matches_the_json_type_member() {
         let snapshot_id = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot URI");
         let entity_type = "Vehicle".parse().expect("valid type expression");
-        let built = build_listing_query(&params(&snapshot_id, Some(&entity_type), None));
-        assert!(built.sql.contains("entity_data->>'type' LIKE '%' || $2 || '%'"), "{}", built.sql);
-        // The count shares the type predicate and its bind, but not the paging.
-        assert!(
-            built
-                .count_sql
-                .as_deref()
-                .unwrap_or_default()
-                .contains("entity_data->>'type' LIKE '%' || $2 || '%'")
-        );
-        assert!(!built.count_sql.as_deref().unwrap_or_default().contains("LIMIT"));
-        assert_eq!(built.bind_values.len(), 2);
+        let listing = build_listing_query(&params(&snapshot_id, Some(&entity_type), None));
+        for sql in [listing.data.to_string(PostgresQueryBuilder), listing.count.to_string(PostgresQueryBuilder)] {
+            assert!(sql.contains("\"entity_data\" ->> ('type')"), "{sql}");
+            assert!(sql.contains(" LIKE "), "{sql}");
+            assert!(sql.contains("'%Vehicle%'"), "{sql}");
+        }
     }
 
     #[test]
     fn an_id_filter_renders_an_array_membership_test() {
         let ids = vec!["urn:ngsi-ld:A:1".parse().expect("valid URI"), "urn:ngsi-ld:A:2".parse().expect("valid URI")];
         let snapshot_id = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot URI");
-        let built = build_listing_query(&params(&snapshot_id, None, Some(&ids)));
-        assert!(built.sql.contains("entity_id = ANY($2)"), "{}", built.sql);
-        assert_eq!(built.bind_values.len(), 2);
+        let listing = build_listing_query(&params(&snapshot_id, None, Some(&ids)));
+        assert!(
+            listing.data.to_string(PostgresQueryBuilder).contains("\"entity_id\" = ANY("),
+            "{}",
+            listing.data.to_string(PostgresQueryBuilder)
+        );
     }
 
     #[test]
     fn an_empty_id_list_adds_no_predicate() {
         let ids: Vec<Uri> = Vec::new();
         let snapshot_id = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot URI");
-        let built = build_listing_query(&params(&snapshot_id, None, Some(&ids)));
-        assert!(!built.sql.contains("ANY"), "{}", built.sql);
-        assert_eq!(built.bind_values.len(), 1);
+        let listing = build_listing_query(&params(&snapshot_id, None, Some(&ids)));
+        assert!(
+            !listing.data.to_string(PostgresQueryBuilder).contains("ANY"),
+            "{}",
+            listing.data.to_string(PostgresQueryBuilder)
+        );
     }
 
     #[test]
     fn a_single_row_fetch_keys_on_snapshot_and_entity() {
         let snapshot_id: Uri = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot id");
         let entity_id: Uri = "urn:ngsi-ld:A:1".parse().expect("valid entity id");
-        let built = build_get_row_query(Alias::new("snapshot_entities"), Alias::new("entity_data"), &snapshot_id, &entity_id);
-        assert_eq!(built.sql, "SELECT entity_data FROM snapshot_entities WHERE snapshot_id = $1 AND entity_id = $2");
-        assert!(built.count_sql.is_none());
-        assert_eq!(built.bind_values.len(), 2);
+        let sql = build_get_row_query(Alias::new("snapshot_entities"), Alias::new("entity_data"), &snapshot_id, &entity_id).to_string(PostgresQueryBuilder);
+        assert!(sql.contains("SELECT \"entity_data\" FROM \"snapshot_entities\""), "{sql}");
+        assert!(sql.contains("\"snapshot_id\" = "), "{sql}");
+        assert!(sql.contains("\"entity_id\" = "), "{sql}");
     }
 }

@@ -24,10 +24,12 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-schema",
+        "andromeda-postgresql-seaquery",
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["sqlx"],
+    allow_production_dependencies: ["sea-query", "sea-query-binder", "sqlx"],
 }
 
 #[cfg(test)]

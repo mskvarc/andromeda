@@ -70,7 +70,7 @@ impl TemporalHistoryReader for TemporalRepository {
         let stage1 = build_stage1_entity_ids(compiled, &attribute_names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
         let entity_id_rows = self
-            .execute_temporal_query(&stage1.sql, &stage1.bind_values)
+            .execute_temporal_query(stage1.select)
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
@@ -84,14 +84,8 @@ impl TemporalHistoryReader for TemporalRepository {
             .collect::<Result<Vec<_>, _>>()?;
 
         let total_count = if compiled.pagination.count == CountPolicy::Emit {
-            let count_sql = stage1
-                .count_sql
-                .as_ref()
-                .ok_or_else(|| TemporalStoreError::Query("Count SQL not built".to_string()))?;
-            let count_rows = self
-                .execute_temporal_query(count_sql, &stage1.bind_values)
-                .await
-                .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+            let count = stage1.count.ok_or_else(|| TemporalStoreError::Query("Count SQL not built".to_string()))?;
+            let count_rows = self.execute_temporal_query(count).await.map_err(|e| TemporalStoreError::Query(e.to_string()))?;
             count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
         } else {
             None
@@ -111,9 +105,9 @@ impl TemporalHistoryReader for TemporalRepository {
     }
 
     async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
-        let stage2 = build_temporal_history_query(entity_id, compiled).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let stage2 = build_temporal_history_query(entity_id, compiled);
         let pg_rows = self
-            .execute_temporal_query(&stage2.sql, &stage2.bind_values)
+            .execute_temporal_query(stage2)
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
@@ -126,9 +120,9 @@ impl TemporalHistoryReader for TemporalRepository {
     }
 
     async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        let stage2 = build_temporal_history_query(entity_id, compiled).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let stage2 = build_temporal_history_query(entity_id, compiled);
         let pg_rows = self
-            .execute_temporal_query(&stage2.sql, &stage2.bind_values)
+            .execute_temporal_query(stage2)
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 

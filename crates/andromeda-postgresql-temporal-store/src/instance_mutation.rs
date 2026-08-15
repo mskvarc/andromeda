@@ -24,11 +24,36 @@ use andromeda_ngsi_ld_lexicon::{
 };
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_schema::{
+    attribute_dictionary::AttributeNames,
+    temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
+};
+use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
-use const_format::concatcp;
+use sea_query::{CaseStatement, Expr, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
 use serde_json::Value;
 use sqlx::postgres::PgRow;
+
+/// The `temporal_attribute_streams` alias in the stream-scope subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "s"]
+struct S;
+
+/// The `temporal_entities` alias in the stream-scope subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "te"]
+struct Te;
+
+/// The `attribute_names` alias in the stream-scope subquery.
+#[derive(Iden, Clone, Copy)]
+#[iden = "an"]
+struct An;
+
+/// The `attribute_history` alias the single-instance select reads under.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ah"]
+struct Ah;
 
 impl TemporalRepository {
     /// Replace one expanded attribute instance through the typed PostgreSQL update path.
@@ -64,9 +89,11 @@ impl TemporalRepository {
     /// corrupt replay identity for every sibling row still pointing at it.
     pub(crate) async fn delete_instance(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
+        let generated_sql = delete_instance_sql(InstanceColumn::Generated);
+        let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(DELETE_GENERATED_INSTANCE_SQL).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(DELETE_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query(&generated_sql).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(&verbatim_sql).bind(identifier.as_str()),
         };
         let deleted = statement
             .bind(entity_id.as_str())
@@ -82,7 +109,8 @@ impl TemporalRepository {
         // release. Releasing it here is what lets a client reuse the
         // `instanceId` of an instance it has just deleted.
         if let InstanceIdentity::Verbatim(identifier) = instance {
-            sqlx::query(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL)
+            let release_sql = release_verbatim_instance_claim_sql();
+            sqlx::query(&release_sql)
                 .bind(identifier.as_str())
                 .bind(entity_id.as_str())
                 .bind(attribute_name.as_str())
@@ -101,9 +129,11 @@ impl TemporalRepository {
         instance: &InstanceIdentity,
         state: &UpdateInstanceState,
     ) -> Result<(), TemporalStoreError> {
+        let generated_sql = update_instance_sql(InstanceColumn::Generated);
+        let verbatim_sql = update_instance_sql(InstanceColumn::Verbatim);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(UPDATE_GENERATED_INSTANCE_SQL).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(UPDATE_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query(&generated_sql).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(&verbatim_sql).bind(identifier.as_str()),
         };
         let updated = statement
             .bind(entity_id.as_str())
@@ -136,9 +166,11 @@ impl TemporalRepository {
         entity_id: &Uri,
         attribute_name: &AttributeName,
     ) -> Result<Option<PgRow>, TemporalStoreError> {
+        let generated_sql = select_instance_sql(InstanceColumn::Generated);
+        let verbatim_sql = select_instance_sql(InstanceColumn::Verbatim);
         let statement = match instance {
-            InstanceIdentity::Generated(uuid) => sqlx::query(SELECT_GENERATED_INSTANCE_SQL).bind(uuid),
-            InstanceIdentity::Verbatim(identifier) => sqlx::query(SELECT_VERBATIM_INSTANCE_SQL).bind(identifier.as_str()),
+            InstanceIdentity::Generated(uuid) => sqlx::query(&generated_sql).bind(uuid),
+            InstanceIdentity::Verbatim(identifier) => sqlx::query(&verbatim_sql).bind(identifier.as_str()),
         };
         Ok(statement
             .bind(entity_id.as_str())
@@ -211,121 +243,167 @@ const fn value_kind_of(value: &AttributeValue) -> ValueKind {
     }
 }
 
+/// Which stored column carries the addressed `instanceId`.
+///
+/// Clause 5.6.15's identifier lives in exactly one of two columns, and every
+/// statement addresses the one that matches so it reads the partial index that
+/// covers it rather than resolving an `OR` with a scan.
+#[derive(Clone, Copy)]
+enum InstanceColumn {
+    /// A broker-minted `instanceId`, stored as a bare UUID.
+    Generated,
+    /// A client-supplied `instanceId`, stored verbatim.
+    Verbatim,
+}
+
+impl InstanceColumn {
+    /// The `attribute_history` column this identity is addressed through.
+    const fn column(self) -> AttributeHistory {
+        match self {
+            InstanceColumn::Generated => AttributeHistory::GeneratedInstanceUuid,
+            InstanceColumn::Verbatim => AttributeHistory::VerbatimInstanceId,
+        }
+    }
+}
+
 /// The streams of one entity's attribute, whatever `datasetId` they carry.
 ///
 /// An `instanceId` is unique across the attribute, so the dataset dimension is
 /// not part of the address clause 5.6.15 defines; every stream of the named
-/// attribute is a candidate and the instance predicate selects within them.
-const ATTRIBUTE_STREAMS_SUBQUERY: &str = r#"
-    SELECT s.id
-    FROM temporal_attribute_streams s
-    JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
-    JOIN attribute_names an ON an.id = s.attribute_name_id
-    WHERE te.id = $2 AND an.name = $3
-"#;
+/// attribute is a candidate and the instance predicate selects within them. The
+/// entity id (`$2`) and attribute name (`$3`) are bound by the caller's chain.
+fn attribute_streams_subquery() -> SelectStatement {
+    Query::select()
+        .column((S, TemporalAttributeStreams::Id))
+        .from_as(TemporalAttributeStreams::Table, S)
+        .join_as(
+            JoinType::InnerJoin,
+            TemporalEntities::Table,
+            Te,
+            Expr::col((Te, TemporalEntities::EntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)),
+        )
+        .join_as(
+            JoinType::InnerJoin,
+            AttributeNames::Table,
+            An,
+            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+        )
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
+        .to_owned()
+}
 
-const DELETE_GENERATED_INSTANCE_SQL: &str = concatcp!(
-    "DELETE FROM attribute_history WHERE generated_instance_uuid = $1 AND stream_id IN (",
-    ATTRIBUTE_STREAMS_SUBQUERY,
-    ")"
-);
-
-const DELETE_VERBATIM_INSTANCE_SQL: &str = concatcp!(
-    "DELETE FROM attribute_history WHERE verbatim_instance_id = $1 AND stream_id IN (",
-    ATTRIBUTE_STREAMS_SUBQUERY,
-    ")"
-);
+/// The instance delete, removing the addressed row rather than tombstoning it.
+fn delete_instance_sql(column: InstanceColumn) -> String {
+    Query::delete()
+        .from_table(AttributeHistory::Table)
+        .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
+        .and_where(Expr::col(AttributeHistory::StreamId).in_subquery(attribute_streams_subquery()))
+        .to_owned()
+        .to_string(PostgresQueryBuilder)
+}
 
 /// Free the `(entity, attribute, verbatim instanceId)` claim a deleted
 /// instance held, so a future write may reuse the identifier (clause 4.5.7
 /// does not reserve a deleted instance's identity forever).
-const RELEASE_VERBATIM_INSTANCE_CLAIM_SQL: &str = r#"
-DELETE FROM attribute_history_instance_claims c
-USING temporal_entities te, attribute_names an
-WHERE c.verbatim_instance_id = $1
-  AND c.temporal_entity_key = te.entity_key AND te.id = $2
-  AND c.attribute_name_id = an.id AND an.name = $3
-"#;
-
-/// Value columns, declared shape, and the modification instant of one instance.
 ///
-/// `modified_at` is the NGSI-LD `modifiedAt` axis (clause 4.8), which a
-/// successful modification advances; `recorded_at` is the operational instant
-/// the row was written and is never rewritten, so a modified row keeps sorting
-/// where the write that created it placed it.
+/// `DELETE … USING` is expressed as two correlated `EXISTS`, since sea-query has
+/// no `USING`: each resolves one of the scope tables the join did.
+fn release_verbatim_instance_claim_sql() -> String {
+    let entity_scope = Query::select()
+        .expr(Expr::val(1))
+        .from_as(TemporalEntities::Table, Te)
+        .and_where(
+            Expr::col((Te, TemporalEntities::EntityKey)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey)),
+        )
+        .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
+        .to_owned();
+    let attribute_scope = Query::select()
+        .expr(Expr::val(1))
+        .from_as(AttributeNames::Table, An)
+        .and_where(Expr::col((An, AttributeNames::Id)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::AttributeNameId)))
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
+        .to_owned();
+    Query::delete()
+        .from_table(AttributeHistoryInstanceClaims::Table)
+        .and_where(Expr::col(AttributeHistoryInstanceClaims::VerbatimInstanceId).eq(external_placeholder(1)))
+        .and_where(Expr::exists(entity_scope))
+        .and_where(Expr::exists(attribute_scope))
+        .to_owned()
+        .to_string(PostgresQueryBuilder)
+}
+
+/// The geometry column's `CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END`.
+fn geometry_write(marker: usize) -> SimpleExpr {
+    CaseStatement::new()
+        .case(
+            Expr::expr(external_placeholder(marker)).is_not_null(),
+            validated_geom_from_ewkb(external_placeholder(marker)),
+        )
+        .finally(Keyword::Null)
+        .into()
+}
+
+/// The instance modification (clause 5.6.14 replacement).
 ///
-/// `$5` is the value's decimal literal, cast to the column's arbitrary-precision
-/// type: a number that has no exact double is stored by a modification exactly
-/// as a creation stores it.
-///
-/// `attribute_kind` is set alongside the value columns rather than left as it
-/// was: clause 5.6.14 defines this operation as replacement by the supplied
-/// complete fragment, and a replacement that changes family must move the
-/// row's declared family with it, or the row would render under its old
-/// family while storing the new family's value shape.
-const UPDATE_INSTANCE_ASSIGNMENTS: &str = r#"
-UPDATE attribute_history
-SET value_kind = $4,
-    value_number = $5::numeric,
-    value_string = $6,
-    value_bool = $7,
-    value_geo = CASE WHEN $8 IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB($8)) ELSE NULL END,
-    value_object = $9,
-    value_datetime = $10,
-    value_uri = $11,
-    observed_at = $12,
-    metadata = $13,
-    unit_code_id = $14,
-    attribute_kind = $15,
-    modified_at = NOW()
-"#;
+/// `$5` is the value's decimal literal cast to the column's arbitrary-precision
+/// type, so a number with no exact double is stored exactly as a creation stores
+/// it. `modified_at` advances the NGSI-LD axis while `recorded_at` is left alone.
+/// `attribute_kind` moves with the value columns so a replacement that changes
+/// family keeps the row's declared family in agreement with its value shape.
+fn update_instance_sql(column: InstanceColumn) -> String {
+    Query::update()
+        .table(AttributeHistory::Table)
+        .values([
+            (AttributeHistory::ValueKind, external_placeholder(4)),
+            (AttributeHistory::ValueNumber, cast(external_placeholder(5), PostgresType::Numeric)),
+            (AttributeHistory::ValueString, external_placeholder(6)),
+            (AttributeHistory::ValueBool, external_placeholder(7)),
+            (AttributeHistory::ValueGeo, geometry_write(8)),
+            (AttributeHistory::ValueObject, external_placeholder(9)),
+            (AttributeHistory::ValueDatetime, external_placeholder(10)),
+            (AttributeHistory::ValueUri, external_placeholder(11)),
+            (AttributeHistory::ObservedAt, external_placeholder(12)),
+            (AttributeHistory::Metadata, external_placeholder(13)),
+            (AttributeHistory::UnitCodeId, external_placeholder(14)),
+            (AttributeHistory::AttributeKind, external_placeholder(15)),
+            (AttributeHistory::ModifiedAt, now()),
+        ])
+        .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
+        .and_where(Expr::col(AttributeHistory::StreamId).in_subquery(attribute_streams_subquery()))
+        .to_owned()
+        .to_string(PostgresQueryBuilder)
+}
 
-const UPDATE_GENERATED_INSTANCE_SQL: &str = concatcp!(
-    UPDATE_INSTANCE_ASSIGNMENTS,
-    "WHERE generated_instance_uuid = $1 AND stream_id IN (",
-    ATTRIBUTE_STREAMS_SUBQUERY,
-    ")"
-);
-
-const UPDATE_VERBATIM_INSTANCE_SQL: &str = concatcp!(
-    UPDATE_INSTANCE_ASSIGNMENTS,
-    "WHERE verbatim_instance_id = $1 AND stream_id IN (",
-    ATTRIBUTE_STREAMS_SUBQUERY,
-    ")"
-);
-
-const SELECT_INSTANCE_COLUMNS: &str = r#"
-SELECT ah.recorded_at, ah.write_id, ah.write_ordinal, ah.stream_id,
-       ah.attribute_kind, ah.value_kind, ah.observed_at, ah.deleted_at
-FROM attribute_history ah
-"#;
-
-const SELECT_GENERATED_INSTANCE_SQL: &str = concatcp!(
-    SELECT_INSTANCE_COLUMNS,
-    "WHERE ah.generated_instance_uuid = $1 AND ah.stream_id IN (",
-    ATTRIBUTE_STREAMS_SUBQUERY,
-    ") LIMIT 1"
-);
-
-const SELECT_VERBATIM_INSTANCE_SQL: &str = concatcp!(
-    SELECT_INSTANCE_COLUMNS,
-    "WHERE ah.verbatim_instance_id = $1 AND ah.stream_id IN (",
-    ATTRIBUTE_STREAMS_SUBQUERY,
-    ") LIMIT 1"
-);
+/// The single-instance select used for policy validation.
+fn select_instance_sql(column: InstanceColumn) -> String {
+    Query::select()
+        .column((Ah, AttributeHistory::RecordedAt))
+        .column((Ah, AttributeHistory::WriteId))
+        .column((Ah, AttributeHistory::WriteOrdinal))
+        .column((Ah, AttributeHistory::StreamId))
+        .column((Ah, AttributeHistory::AttributeKind))
+        .column((Ah, AttributeHistory::ValueKind))
+        .column((Ah, AttributeHistory::ObservedAt))
+        .column((Ah, AttributeHistory::DeletedAt))
+        .from_as(AttributeHistory::Table, Ah)
+        .and_where(Expr::col((Ah, column.column())).eq(external_placeholder(1)))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamId)).in_subquery(attribute_streams_subquery()))
+        .limit(1)
+        .to_owned()
+        .to_string(PostgresQueryBuilder)
+}
 
 #[cfg(test)]
 mod tests {
     use crate::{
         attribute_value::AttributeValue,
         instance_mutation::{
-            DELETE_GENERATED_INSTANCE_SQL,
-            DELETE_VERBATIM_INSTANCE_SQL,
-            RELEASE_VERBATIM_INSTANCE_CLAIM_SQL,
-            SELECT_GENERATED_INSTANCE_SQL,
-            SELECT_VERBATIM_INSTANCE_SQL,
-            UPDATE_GENERATED_INSTANCE_SQL,
-            UPDATE_VERBATIM_INSTANCE_SQL,
+            InstanceColumn,
+            delete_instance_sql,
+            release_verbatim_instance_claim_sql,
+            select_instance_sql,
+            update_instance_sql,
             value_kind_of,
         },
     };
@@ -333,84 +411,76 @@ mod tests {
     use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
 
+    /// The six identity-column statements, rendered.
+    fn all_statements() -> Vec<String> {
+        [InstanceColumn::Generated, InstanceColumn::Verbatim]
+            .into_iter()
+            .flat_map(|column| [delete_instance_sql(column), update_instance_sql(column), select_instance_sql(column)])
+            .collect()
+    }
+
     #[test]
     fn each_statement_addresses_exactly_one_instance_identity_column() {
-        for statement in [DELETE_GENERATED_INSTANCE_SQL, UPDATE_GENERATED_INSTANCE_SQL, SELECT_GENERATED_INSTANCE_SQL] {
-            assert!(statement.contains("generated_instance_uuid = $1"));
-            assert!(!statement.contains("verbatim_instance_id"));
-        }
-        for statement in [DELETE_VERBATIM_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL, SELECT_VERBATIM_INSTANCE_SQL] {
-            assert!(statement.contains("verbatim_instance_id = $1"));
-            assert!(!statement.contains("generated_instance_uuid"));
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            for statement in [delete_instance_sql(column), update_instance_sql(column), select_instance_sql(column)] {
+                match column {
+                    InstanceColumn::Generated => {
+                        assert!(statement.contains(r#""generated_instance_uuid" = ($1)"#), "{statement}");
+                        assert!(!statement.contains("verbatim_instance_id"), "{statement}");
+                    }
+                    InstanceColumn::Verbatim => {
+                        assert!(statement.contains(r#""verbatim_instance_id" = ($1)"#), "{statement}");
+                        assert!(!statement.contains("generated_instance_uuid"), "{statement}");
+                    }
+                }
+            }
         }
     }
 
     #[test]
     fn every_statement_is_confined_to_the_named_entity_and_attribute() {
-        for statement in [
-            DELETE_GENERATED_INSTANCE_SQL,
-            DELETE_VERBATIM_INSTANCE_SQL,
-            UPDATE_GENERATED_INSTANCE_SQL,
-            UPDATE_VERBATIM_INSTANCE_SQL,
-            SELECT_GENERATED_INSTANCE_SQL,
-            SELECT_VERBATIM_INSTANCE_SQL,
-        ] {
-            assert!(statement.contains("FROM temporal_attribute_streams s"));
-            assert!(statement.contains("WHERE te.id = $2 AND an.name = $3"));
-            assert!(!statement.contains("temporal_entity_attributes"));
+        for statement in all_statements() {
+            assert!(statement.contains(r#"FROM "temporal_attribute_streams" AS "s""#), "{statement}");
+            assert!(statement.contains(r#""te"."id" = ($2)"#), "{statement}");
+            assert!(statement.contains(r#""an"."name" = ($3)"#), "{statement}");
         }
     }
 
     #[test]
     fn a_modification_advances_the_modification_axis_and_leaves_the_write_clock_alone() {
-        for statement in [UPDATE_GENERATED_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL] {
-            assert!(statement.contains("modified_at = NOW()"));
-            assert!(!statement.contains("recorded_at ="));
-            assert!(statement.contains("value_kind = $4"));
-        }
-    }
-
-    /// Clause 5.6.14 defines instance PATCH as replacement by the supplied
-    /// complete fragment: a replacement that changes attribute family must
-    /// move `attribute_kind` along with the value columns, or the row would
-    /// keep rendering under its old family while storing the new family's
-    /// value shape.
-    #[test]
-    fn a_modification_updates_the_stored_attribute_kind_alongside_the_value_columns() {
-        for statement in [UPDATE_GENERATED_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL] {
-            assert!(statement.contains("attribute_kind = $15"), "{statement}");
-            assert!(statement.contains("value_kind = $4"), "{statement}");
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            let statement = update_instance_sql(column);
+            assert!(statement.contains(r#""modified_at" = NOW()"#), "{statement}");
+            assert!(!statement.contains(r#""recorded_at" ="#), "{statement}");
+            assert!(statement.contains(r#""value_kind" = $4"#), "{statement}");
+            assert!(statement.contains(r#""attribute_kind" = $15"#), "{statement}");
         }
     }
 
     #[test]
     fn a_deletion_removes_the_row_rather_than_recording_a_tombstone() {
-        for statement in [DELETE_GENERATED_INSTANCE_SQL, DELETE_VERBATIM_INSTANCE_SQL] {
-            assert!(statement.starts_with("DELETE FROM attribute_history"));
-            assert!(!statement.contains("deleted_at"));
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            let statement = delete_instance_sql(column);
+            assert!(statement.starts_with(r#"DELETE FROM "attribute_history""#), "{statement}");
+            assert!(!statement.contains("deleted_at"), "{statement}");
         }
     }
 
-    /// Deleting a verbatim instance must free the identifier it claimed, or a
-    /// client could never reuse an `instanceId` it had already removed.
-    /// Resolved through the same entity-and-attribute scope every other
-    /// verbatim statement here uses, not through `stream_id`, since the claim
-    /// table carries no stream column.
     #[test]
     fn a_verbatim_deletion_releases_the_instance_claim_it_held() {
-        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("DELETE FROM attribute_history_instance_claims"));
-        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("c.verbatim_instance_id = $1"));
-        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("te.id = $2"));
-        assert!(RELEASE_VERBATIM_INSTANCE_CLAIM_SQL.contains("an.name = $3"));
+        let statement = release_verbatim_instance_claim_sql();
+        assert!(statement.starts_with(r#"DELETE FROM "attribute_history_instance_claims""#), "{statement}");
+        assert!(statement.contains(r#""verbatim_instance_id" = ($1)"#), "{statement}");
+        assert!(statement.contains(r#""te"."id" = ($2)"#), "{statement}");
+        assert!(statement.contains(r#""an"."name" = ($3)"#), "{statement}");
+        assert_eq!(statement.matches("EXISTS").count(), 2, "{statement}");
     }
 
-    /// The value column is `NUMERIC`, and the statement binds its decimal
-    /// literal: a cast through `double precision` would round every clause
-    /// 5.6.14 modification of an integer beyond 2^53.
     #[test]
     fn the_update_statement_binds_the_numeric_literal_without_a_double_hop() {
-        for statement in [UPDATE_GENERATED_INSTANCE_SQL, UPDATE_VERBATIM_INSTANCE_SQL] {
-            assert!(statement.contains("value_number = $5::numeric"), "{statement}");
+        for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
+            let statement = update_instance_sql(column);
+            assert!(statement.contains(r#""value_number" = $5::numeric"#), "{statement}");
             assert!(!statement.contains("double precision"), "{statement}");
         }
     }

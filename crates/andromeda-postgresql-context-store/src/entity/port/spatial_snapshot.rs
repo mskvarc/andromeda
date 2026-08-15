@@ -10,16 +10,30 @@ use andromeda_entity::{
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use async_trait::async_trait;
+use sea_query::{Expr, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query_binder::SqlxBinder;
 use tracing::warn;
 
-/// Read the typed columns required to reconstruct default-location index entries.
-const LOCATION_SNAPSHOTS_SQL: &str = "SELECT id, types, location::bytea FROM entities WHERE location IS NOT NULL";
+/// Read the typed columns required to reconstruct default-location index
+/// entries: the identifier, the type IRIs, and the location geometry as EWKB.
+fn location_snapshots_statement() -> SelectStatement {
+    Query::select()
+        .column(Entities::Id)
+        .column(Entities::Types)
+        .expr(cast(Expr::col(Entities::Location).into(), PostgresType::Bytea))
+        .from(Entities::Table)
+        .and_where(Expr::col(Entities::Location).is_not_null())
+        .to_owned()
+}
 
 #[async_trait]
 impl EntitySpatialSnapshotSource for EntityRepository {
     async fn location_snapshots(&self) -> Result<Vec<EntitySpatialSnapshot>, EntityError> {
-        let rows = sqlx::query_as::<_, (String, Vec<String>, Vec<u8>)>(LOCATION_SNAPSHOTS_SQL)
+        let (sql, values) = location_snapshots_statement().build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_as_with::<_, (String, Vec<String>, Vec<u8>), _>(&sql, values)
             .fetch_all(&self.pool)
             .await
             .map_err(|error| EntityError::persistence(format!("spatial snapshot query failed: {error}")))?;
@@ -57,15 +71,25 @@ impl EntitySpatialSnapshotSource for EntityRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::LOCATION_SNAPSHOTS_SQL;
-    use crate::entity::repo::EntityRepository;
+    use crate::entity::{port::spatial_snapshot::location_snapshots_statement, repo::EntityRepository};
     use andromeda_entity::port::spatial_snapshot::EntitySpatialSnapshotSource;
+    use sea_query::PostgresQueryBuilder;
+    use sea_query_binder::SqlxBinder;
 
     fn assert_spatial_source<T: EntitySpatialSnapshotSource>() {}
 
     #[test]
     fn entity_repository_directly_implements_the_spatial_snapshot_source() {
         assert_spatial_source::<EntityRepository>();
-        assert!(LOCATION_SNAPSHOTS_SQL.starts_with("SELECT id, types, location::bytea"));
+    }
+
+    #[test]
+    fn the_snapshot_reads_the_typed_columns_of_located_entities() {
+        let (sql, values) = location_snapshots_statement().build_sqlx(PostgresQueryBuilder);
+        assert_eq!(
+            sql, r#"SELECT "id", "types", "location"::bytea FROM "entities" WHERE "location" IS NOT NULL"#,
+            "{sql}"
+        );
+        assert_eq!(values.0.0.len(), 0, "the snapshot reads every located entity, binding nothing: {sql}");
     }
 }

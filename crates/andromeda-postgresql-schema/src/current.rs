@@ -21,6 +21,18 @@ pub enum Entities {
     Payload,
     /// Array of `ltree` scope paths an entity currently belongs to (clause 4.18).
     ScopePaths,
+    /// Instant the entity was created (clause 4.8 `createdAt`).
+    CreatedAt,
+    /// Instant the entity was last modified (clause 4.8 `modifiedAt`).
+    ModifiedAt,
+    /// Instant the entity expires, when it has one (clause 4.22 `expiresAt`).
+    ExpiresAt,
+    /// The default GeoProperty geometry (clause 4.10).
+    Location,
+    /// The `observationSpace` geometry (clause 4.5.4).
+    ObservationSpace,
+    /// The `operationSpace` geometry (clause 4.5.4).
+    OperationSpace,
 }
 
 /// The `current_attribute_values` table - one row per current attribute
@@ -94,6 +106,12 @@ mod tests {
         assert_eq!(Entities::Types.to_string(), "types");
         assert_eq!(Entities::Payload.to_string(), "payload");
         assert_eq!(Entities::ScopePaths.to_string(), "scope_paths");
+        assert_eq!(Entities::CreatedAt.to_string(), "created_at");
+        assert_eq!(Entities::ModifiedAt.to_string(), "modified_at");
+        assert_eq!(Entities::ExpiresAt.to_string(), "expires_at");
+        assert_eq!(Entities::Location.to_string(), "location");
+        assert_eq!(Entities::ObservationSpace.to_string(), "observation_space");
+        assert_eq!(Entities::OperationSpace.to_string(), "operation_space");
     }
 
     #[test]

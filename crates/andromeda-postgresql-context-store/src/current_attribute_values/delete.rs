@@ -4,7 +4,27 @@ use crate::{current_attribute_values::row::ProjectedAttributeKey, error::Context
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+use andromeda_postgresql_schema::current::CurrentAttributeValues;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    pg_array::any,
+    pg_operator::PgBinaryOperator,
+    pg_type::PostgresType,
+    placeholder::external_placeholder,
+    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+};
+use sea_query::{Expr, Iden, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query_binder::SqlxBinder;
 use sqlx::{Postgres, Transaction};
+
+/// The `UNNEST` set-delete's staging alias, `d`.
+///
+/// The named instances are read under this alias inside the correlated
+/// existence test; it is spelled nowhere else, so the single `AS "d"` the table
+/// source emits is the one [`apply_column_alias`] rewrites.
+#[derive(Iden, Clone, Copy)]
+#[iden = "d"]
+struct Staging;
 
 /// Delete the projection rows of the named attribute instances.
 ///
@@ -16,6 +36,11 @@ use sqlx::{Postgres, Transaction};
 ///
 /// Runs in the caller's transaction, so the removal and the entity mutation
 /// that ordered it commit together.
+///
+/// The `dataset_id` array carries NULLs (`Vec<Option<&str>>`), which
+/// `sea-query-binder` cannot represent, so the three column arrays bind through
+/// `sqlx` in the marker order [`delete_instances_sql`] emits; the statement
+/// structure is still built by sea-query.
 ///
 /// # Errors
 ///
@@ -35,7 +60,8 @@ pub async fn delete_instances_in_tx(tx: &mut Transaction<'_, Postgres>, keys: &[
     }
     let (entity_keys, attribute_name_ids, dataset_ids) = (entity_keys, attribute_name_ids, dataset_ids);
 
-    sqlx::query(DELETE_INSTANCES_SQL)
+    let sql = delete_instances_sql();
+    sqlx::query(&sql)
         .bind(&entity_keys)
         .bind(&attribute_name_ids)
         .bind(&dataset_ids)
@@ -61,48 +87,112 @@ pub async fn delete_entity_projections_in_tx(tx: &mut Transaction<'_, Postgres>,
     }
 
     let keys: Vec<i64> = entity_keys.iter().copied().map(EntityKey::get).collect();
-    sqlx::query(DELETE_ENTITY_PROJECTIONS_SQL).bind(&keys).execute(&mut **tx).await?;
+    let (sql, values) = entity_delete_statement(keys).build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(&sql, values).execute(&mut **tx).await?;
 
     Ok(())
 }
 
-/// Delete statement for a set of attribute instances.
+/// Build the entity-wide delete: `entity_key = ANY($1::bigint[])`.
 ///
-/// The `datasetId` comparison is `IS NOT DISTINCT FROM` rather than `=`,
-/// because the default instance is the one carrying no `datasetId` at all
-/// (clause 4.5.5) and an equality test against a null matches nothing — the
-/// default instance would survive every delete aimed at it.
-const DELETE_INSTANCES_SQL: &str = r#"
-DELETE FROM current_attribute_values c
-USING UNNEST($1::bigint[], $2::integer[], $3::text[]) AS d(entity_key, attribute_name_id, dataset_id)
-WHERE c.entity_key = d.entity_key
-  AND c.attribute_name_id = d.attribute_name_id
-  AND c.dataset_id IS NOT DISTINCT FROM d.dataset_id
-"#;
+/// The surrogate keys bind through sea-query as one array, since none is NULL,
+/// rather than one placeholder per key — a batch cannot exhaust the wire
+/// protocol's parameter space that way.
+fn entity_delete_statement(keys: Vec<i64>) -> sea_query::DeleteStatement {
+    Query::delete()
+        .from_table(CurrentAttributeValues::Table)
+        .and_where(Expr::col(CurrentAttributeValues::EntityKey).eq(any(cast(Expr::val(keys).into(), PostgresType::BigintArray))))
+        .to_owned()
+}
 
-/// Delete statement for every projection row of a set of entities.
-const DELETE_ENTITY_PROJECTIONS_SQL: &str = "DELETE FROM current_attribute_values WHERE entity_key = ANY($1::bigint[])";
+/// The three staging columns of the instance delete, in bind order.
+fn staging_columns() -> [UnnestColumn; 3] {
+    [
+        UnnestColumn::new(CurrentAttributeValues::EntityKey, PostgresType::BigintArray),
+        UnnestColumn::new(CurrentAttributeValues::AttributeNameId, PostgresType::IntegerArray),
+        UnnestColumn::new(CurrentAttributeValues::DatasetId, PostgresType::TextArray),
+    ]
+}
+
+/// Build the instance-delete statement.
+///
+/// The `datasetId` comparison is `IS NOT DISTINCT FROM` rather than `=`, because
+/// the default instance is the one carrying no `datasetId` at all (clause 4.5.5)
+/// and an equality test against a null matches nothing — the default instance
+/// would survive every delete aimed at it.
+///
+/// `DELETE … USING` is expressed as a correlated `EXISTS`: sea-query has no
+/// `USING` clause, and the existence test deletes exactly the rows the staged
+/// grain names, which is what the join did.
+fn delete_instances_sql() -> String {
+    let columns = staging_columns();
+    let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
+
+    let mut staged = Query::select();
+    staged
+        .column((Staging, CurrentAttributeValues::EntityKey))
+        .from_function(call, Staging)
+        .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Staging, CurrentAttributeValues::EntityKey)))
+        .and_where(
+            Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId)).equals((Staging, CurrentAttributeValues::AttributeNameId)),
+        )
+        .and_where(
+            SimpleExpr::from(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::DatasetId)))
+                .not_distinct_from(Expr::col((Staging, CurrentAttributeValues::DatasetId)).into()),
+        );
+    let staged = staged;
+
+    let sql = Query::delete()
+        .from_table(CurrentAttributeValues::Table)
+        .and_where(Expr::exists(staged))
+        .to_owned()
+        .to_string(PostgresQueryBuilder);
+    apply_column_alias(sql, &Staging, &columns)
+}
 
 #[cfg(test)]
 mod tests {
-    use crate::current_attribute_values::delete::{DELETE_ENTITY_PROJECTIONS_SQL, DELETE_INSTANCES_SQL};
+    use crate::current_attribute_values::delete::{delete_instances_sql, entity_delete_statement};
+    use sea_query::PostgresQueryBuilder;
+    use sea_query_binder::SqlxBinder;
 
     #[test]
     fn the_instance_delete_reaches_the_default_instance() {
         assert!(
-            DELETE_INSTANCES_SQL.contains("c.dataset_id IS NOT DISTINCT FROM d.dataset_id"),
-            "an equality test would never match the null datasetId of a default instance"
+            delete_instances_sql().contains(r#""current_attribute_values"."dataset_id" IS NOT DISTINCT FROM "d"."dataset_id""#),
+            "an equality test would never match the null datasetId of a default instance: {}",
+            delete_instances_sql()
         );
     }
 
     #[test]
-    fn the_instance_delete_is_confined_to_one_entity_and_one_attribute() {
-        assert!(DELETE_INSTANCES_SQL.contains("c.entity_key = d.entity_key"));
-        assert!(DELETE_INSTANCES_SQL.contains("c.attribute_name_id = d.attribute_name_id"));
+    fn the_instance_delete_is_a_correlated_existence_test_over_the_staged_grain() {
+        let sql = delete_instances_sql();
+        assert!(sql.contains(r#"DELETE FROM "current_attribute_values" WHERE EXISTS"#), "{sql}");
+        assert!(sql.contains(r#""current_attribute_values"."entity_key" = "d"."entity_key""#), "{sql}");
+        assert!(
+            sql.contains(r#""current_attribute_values"."attribute_name_id" = "d"."attribute_name_id""#),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn the_instance_delete_binds_one_contiguous_array_per_grain_column() {
+        let sql = delete_instances_sql();
+        for cast in ["$1::bigint[]", "$2::integer[]", "$3::text[]"] {
+            assert!(sql.contains(cast), "missing {cast} in {sql}");
+        }
+        assert!(sql.contains("AS d(entity_key, attribute_name_id, dataset_id)"), "{sql}");
+        assert!(!sql.contains("$4"), "only the three grain arrays are bound: {sql}");
     }
 
     #[test]
     fn the_entity_delete_addresses_the_surrogate_key_alone() {
-        assert!(DELETE_ENTITY_PROJECTIONS_SQL.contains("WHERE entity_key = ANY($1::bigint[])"));
+        let (sql, values) = entity_delete_statement(vec![1, 2]).build_sqlx(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"DELETE FROM "current_attribute_values" WHERE "entity_key" = ANY($1::bigint[])"#),
+            "{sql}"
+        );
+        assert_eq!(values.0.0.len(), 1, "the whole key array is one bound value: {sql}");
     }
 }

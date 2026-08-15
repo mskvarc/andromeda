@@ -26,6 +26,10 @@ pub enum AttributeNameLookupError {
     /// A dictionary statement failed.
     #[error("attribute-name dictionary statement failed: {0}")]
     Statement(#[from] sqlx::Error),
+    /// A dictionary statement could not be assembled, which a column/value arity
+    /// mismatch is the only cause of.
+    #[error("attribute-name dictionary statement could not be built: {0}")]
+    StatementBuild(String),
     /// A stored dictionary row holds text that is not an attribute name.
     ///
     /// The raw text is carried rather than a typed name because the value is

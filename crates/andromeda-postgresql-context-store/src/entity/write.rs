@@ -15,6 +15,13 @@
 //! No statement here reads. A read-modify-write takes its "before" snapshot
 //! outside the transaction and states what it assumed in a precondition, which
 //! the update statement enforces.
+//!
+//! Each statement's parallel arrays bind through `sqlx` rather than sea-query:
+//! the geometry, expiry and expectation arrays carry NULLs (`Vec<Option<T>>`),
+//! which `sea-query-binder` cannot represent, so every array is bound outside
+//! sea-query in the marker order the statement builder emits. The statement
+//! structure — every relation, column, cast, function and clause — is still
+//! built by sea-query.
 
 use crate::{
     entity::{
@@ -28,10 +35,137 @@ use crate::{
 };
 use andromeda_context_commit::deleted_entity::DeletedEntity;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_seaquery::{
+    cast::cast,
+    clock::now,
+    jsonb::jsonb_array_elements_text,
+    pg_array::array_subquery,
+    pg_type::PostgresType,
+    placeholder::external_placeholder,
+    postgis::validated_geom_from_ewkb,
+    unnest::{UnnestColumn, apply_column_alias, unnest_call},
+};
 use chrono::{DateTime, Utc};
+use sea_query::{CaseStatement, Cond, Expr, Func, Iden, IntoIden, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr, TableRef};
 use sqlx::{Postgres, Row, Transaction};
 
-/// Insert entities that are not there, leaving any that are.
+/// The staging alias, `d`, each set-write reads its parallel arrays under.
+///
+/// Spelled nowhere else in a statement, so the single `AS "d"` its table source
+/// emits is the one [`apply_column_alias`] rewrites into the column-list alias.
+#[derive(Iden, Clone, Copy)]
+#[iden = "d"]
+struct Staged;
+
+/// The staging columns of the entity set-writes, named as the `AS d(…)` alias
+/// spells them rather than as the `entities` columns they land in.
+///
+/// The type and scope arrays arrive as JSONB (`types_json`, `scope_paths_json`)
+/// and are expanded to `text[]`/`ltree[]` in the projection; the geometries
+/// arrive as EWKB (`loc`, `obs`, `ops`) and are validated there. Not every
+/// statement uses every column: the delete stages only `id` and the expectation.
+#[derive(Iden, Clone, Copy)]
+enum StagedColumn {
+    /// Entity identifier.
+    Id,
+    /// Type array as JSONB.
+    TypesJson,
+    /// Scope-path array as JSONB, in `ltree` dot notation.
+    ScopePathsJson,
+    /// Payload as JSON text, cast to `jsonb` in the projection.
+    Payload,
+    /// Default GeoProperty geometry as EWKB.
+    Loc,
+    /// `observationSpace` geometry as EWKB.
+    Obs,
+    /// `operationSpace` geometry as EWKB.
+    Ops,
+    /// Expiration timestamp.
+    ExpiresAt,
+    /// The `modifiedAt` the caller read, or NULL for an unconditional write.
+    ExpectedModifiedAt,
+}
+
+/// A staging column reference, `d.<column>`.
+fn staged(column: StagedColumn) -> SimpleExpr {
+    Expr::col((Staged, column)).into()
+}
+
+/// The validated-geometry projection of a staged EWKB column:
+/// `CASE WHEN d.<col> IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.<col>)) ELSE NULL END`.
+///
+/// The EWKB already carries its SRID, so no re-SRID is applied, and a NULL EWKB
+/// projects to a NULL geometry rather than a call on a NULL argument.
+fn geometry(column: StagedColumn) -> SimpleExpr {
+    CaseStatement::new()
+        .case(Expr::col((Staged, column)).is_not_null(), validated_geom_from_ewkb(staged(column)))
+        .finally(Keyword::Null)
+        .into()
+}
+
+/// The `text[]`/`ltree[]` projection of a staged JSONB array column:
+/// `ARRAY(SELECT jsonb_array_elements_text(d.<col>)[::element_cast])`.
+fn text_array_of(column: StagedColumn, element_cast: Option<PostgresType>) -> SimpleExpr {
+    let element: SimpleExpr = jsonb_array_elements_text(staged(column)).into();
+    let element = match element_cast {
+        Some(ty) => cast(element, ty),
+        None => element,
+    };
+    array_subquery(Query::select().expr(element).to_owned())
+}
+
+/// The precondition both the update and the delete carry:
+/// `d.expected_modified_at IS NULL OR entities.modified_at = d.expected_modified_at`.
+///
+/// A null expectation matches whatever is there; a non-null one matches only a
+/// row still standing as the caller read it, which is what turns a
+/// read-modify-write into a compare-and-set rather than a lost update.
+fn expectation() -> Cond {
+    Cond::any()
+        .add(Expr::col((Staged, StagedColumn::ExpectedModifiedAt)).is_null())
+        .add(Expr::col((Entities::Table, Entities::ModifiedAt)).equals((Staged, StagedColumn::ExpectedModifiedAt)))
+}
+
+/// The eight staging columns of the insert, in bind order.
+fn insert_staging_columns() -> [UnnestColumn; 8] {
+    [
+        UnnestColumn::new(StagedColumn::Id, PostgresType::TextArray),
+        UnnestColumn::new(StagedColumn::TypesJson, PostgresType::JsonbArray),
+        UnnestColumn::new(StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
+        UnnestColumn::new(StagedColumn::Payload, PostgresType::TextArray),
+        UnnestColumn::new(StagedColumn::Loc, PostgresType::ByteaArray),
+        UnnestColumn::new(StagedColumn::Obs, PostgresType::ByteaArray),
+        UnnestColumn::new(StagedColumn::Ops, PostgresType::ByteaArray),
+        UnnestColumn::new(StagedColumn::ExpiresAt, PostgresType::TimestamptzArray),
+    ]
+}
+
+/// The nine staging columns of the update: the insert's eight plus the
+/// expectation the compare-and-set reads.
+fn update_staging_columns() -> [UnnestColumn; 9] {
+    [
+        UnnestColumn::new(StagedColumn::Id, PostgresType::TextArray),
+        UnnestColumn::new(StagedColumn::TypesJson, PostgresType::JsonbArray),
+        UnnestColumn::new(StagedColumn::ScopePathsJson, PostgresType::JsonbArray),
+        UnnestColumn::new(StagedColumn::Payload, PostgresType::TextArray),
+        UnnestColumn::new(StagedColumn::Loc, PostgresType::ByteaArray),
+        UnnestColumn::new(StagedColumn::Obs, PostgresType::ByteaArray),
+        UnnestColumn::new(StagedColumn::Ops, PostgresType::ByteaArray),
+        UnnestColumn::new(StagedColumn::ExpiresAt, PostgresType::TimestamptzArray),
+        UnnestColumn::new(StagedColumn::ExpectedModifiedAt, PostgresType::TimestamptzArray),
+    ]
+}
+
+/// The two staging columns of the delete: the identifier and the expectation.
+fn delete_staging_columns() -> [UnnestColumn; 2] {
+    [
+        UnnestColumn::new(StagedColumn::Id, PostgresType::TextArray),
+        UnnestColumn::new(StagedColumn::ExpectedModifiedAt, PostgresType::TimestamptzArray),
+    ]
+}
+
+/// Build the batch insert.
 ///
 /// The conflict clause is how a duplicate create is detected: the identifier
 /// simply does not come back, and the caller answers 409 off that (NGSI-LD
@@ -39,65 +173,121 @@ use sqlx::{Postgres, Row, Transaction};
 /// is what lets one statement serve a batch that is permitted to succeed
 /// partially (clause 5.6.7) and the idempotent placeholder the Temporal API
 /// needs, without three different statements.
-const ENTITY_INSERT_SQL: &str = r#"
-INSERT INTO entities (id, types, scope_paths, payload, location, observation_space, operation_space, expires_at)
-SELECT
-    d.id,
-    ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
-    ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
-    d.payload::jsonb,
-    CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
-    CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
-    CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
-    d.expires_at
-FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[])
-    AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)
-ON CONFLICT (id) DO NOTHING
-RETURNING entity_key, id
-"#;
+///
+/// # Errors
+///
+/// Returns [`ContextStoreError::Internal`] if the projection ever stops matching
+/// the eight-wide column list, which the fixed shapes here make unreachable.
+fn entity_insert_sql() -> Result<String, ContextStoreError> {
+    let columns = insert_staging_columns();
+    let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
 
-/// Overwrite entities, optionally only where they still stand as the caller
-/// read them.
+    let mut select = Query::select();
+    select
+        .expr(staged(StagedColumn::Id))
+        .expr(text_array_of(StagedColumn::TypesJson, None))
+        .expr(text_array_of(StagedColumn::ScopePathsJson, Some(PostgresType::Ltree)))
+        .expr(cast(staged(StagedColumn::Payload), PostgresType::Jsonb))
+        .expr(geometry(StagedColumn::Loc))
+        .expr(geometry(StagedColumn::Obs))
+        .expr(geometry(StagedColumn::Ops))
+        .expr(staged(StagedColumn::ExpiresAt))
+        .from_function(call, Staged);
+    let select = select;
+
+    let mut insert = Query::insert();
+    insert.into_table(Entities::Table).columns([
+        Entities::Id,
+        Entities::Types,
+        Entities::ScopePaths,
+        Entities::Payload,
+        Entities::Location,
+        Entities::ObservationSpace,
+        Entities::OperationSpace,
+        Entities::ExpiresAt,
+    ]);
+    insert.select_from(select).map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+    insert
+        .on_conflict(OnConflict::column(Entities::Id).do_nothing().to_owned())
+        .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]));
+
+    let sql = insert.to_string(PostgresQueryBuilder);
+    Ok(apply_column_alias(sql, &Staged, &columns))
+}
+
+/// Build the batch update.
 ///
 /// The expectation column is nullable so one statement carries both an
 /// unconditional overwrite and a compare-and-set in the same batch: a null
 /// expectation matches whatever is there, a non-null one matches only an
 /// untouched row. An identifier that does not come back therefore means either
 /// "gone" or "moved on", and which of those it is depends on the precondition
-/// the caller attached.
-const ENTITY_UPDATE_SQL: &str = r#"
-UPDATE entities SET
-    payload = d.payload::jsonb,
-    types = ARRAY(SELECT jsonb_array_elements_text(d.types_json)),
-    scope_paths = ARRAY(SELECT jsonb_array_elements_text(d.scope_paths_json)::ltree),
-    location = CASE WHEN d.loc IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.loc)) ELSE NULL END,
-    observation_space = CASE WHEN d.obs IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.obs)) ELSE NULL END,
-    operation_space = CASE WHEN d.ops IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.ops)) ELSE NULL END,
-    modified_at = NOW(),
-    expires_at = COALESCE(d.expires_at, entities.expires_at)
-FROM UNNEST($1::text[], $2::jsonb[], $3::jsonb[], $4::text[], $5::bytea[], $6::bytea[], $7::bytea[], $8::timestamptz[], $9::timestamptz[])
-    AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at, expected_modified_at)
-WHERE entities.id = d.id
-  AND (d.expected_modified_at IS NULL OR entities.modified_at = d.expected_modified_at)
-RETURNING entities.entity_key, entities.id
-"#;
+/// the caller attached. `expires_at` is coalesced so an update that omits it
+/// keeps the stored value rather than clearing it.
+fn entity_update_sql() -> String {
+    let columns = update_staging_columns();
+    let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
 
-/// Remove entities, optionally only where they still stand as the caller read
-/// them.
+    let mut update = Query::update();
+    update
+        .table(Entities::Table)
+        .value(Entities::Payload, cast(staged(StagedColumn::Payload), PostgresType::Jsonb))
+        .value(Entities::Types, text_array_of(StagedColumn::TypesJson, None))
+        .value(Entities::ScopePaths, text_array_of(StagedColumn::ScopePathsJson, Some(PostgresType::Ltree)))
+        .value(Entities::Location, geometry(StagedColumn::Loc))
+        .value(Entities::ObservationSpace, geometry(StagedColumn::Obs))
+        .value(Entities::OperationSpace, geometry(StagedColumn::Ops))
+        .value(Entities::ModifiedAt, now())
+        .value(
+            Entities::ExpiresAt,
+            SimpleExpr::from(Func::coalesce([
+                staged(StagedColumn::ExpiresAt),
+                Expr::col((Entities::Table, Entities::ExpiresAt)).into(),
+            ])),
+        )
+        .from(TableRef::FunctionCall(call, Staged.into_iden()))
+        .cond_where(
+            Cond::all()
+                .add(Expr::col((Entities::Table, Entities::Id)).equals((Staged, StagedColumn::Id)))
+                .add(expectation()),
+        )
+        .returning(Query::returning().columns([(Entities::Table, Entities::EntityKey), (Entities::Table, Entities::Id)]));
+
+    let sql = update.to_string(PostgresQueryBuilder);
+    apply_column_alias(sql, &Staged, &columns)
+}
+
+/// Build the batch delete.
 ///
-/// Carries the same nullable expectation column the update statement does, and
-/// for the same reason: a delete computed from a payload the caller read is a
-/// read-modify-write like any other, and one that overwrote a state its author
-/// never saw would be a lost update whether it wrote a row or removed one. An
-/// identifier that does not come back means "gone" or "moved on", and the
-/// precondition says which.
-const ENTITY_DELETE_SQL: &str = r#"
-DELETE FROM entities
-USING UNNEST($1::text[], $2::timestamptz[]) AS d(id, expected_modified_at)
-WHERE entities.id = d.id
-  AND (d.expected_modified_at IS NULL OR entities.modified_at = d.expected_modified_at)
-RETURNING entities.id, entities.payload, entities.created_at, entities.modified_at, entities.expires_at
-"#;
+/// Carries the same nullable expectation the update does, and for the same
+/// reason: a delete computed from a payload the caller read is a
+/// read-modify-write like any other, and one that removed a state its author
+/// never saw would be a lost update. `DELETE … USING` is expressed as a
+/// correlated `EXISTS`, since sea-query has no `USING` clause and the existence
+/// test deletes exactly the rows the staged grain names.
+///
+/// The payload and system attributes come back because the clause 5.6.10
+/// notification carries both and cannot read them once the row is gone.
+fn entity_delete_sql() -> String {
+    let columns = delete_staging_columns();
+    let call = unnest_call(columns.iter().enumerate().map(|(index, column)| (column, external_placeholder(index + 1))));
+
+    let mut staged_rows = Query::select();
+    staged_rows.column((Staged, StagedColumn::Id)).from_function(call, Staged).cond_where(
+        Cond::all()
+            .add(Expr::col((Entities::Table, Entities::Id)).equals((Staged, StagedColumn::Id)))
+            .add(expectation()),
+    );
+    let staged_rows = staged_rows;
+
+    let sql = Query::delete()
+        .from_table(Entities::Table)
+        .and_where(Expr::exists(staged_rows))
+        .returning(Query::returning().columns([Entities::Id, Entities::Payload, Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt]))
+        .to_owned()
+        .to_string(PostgresQueryBuilder);
+    apply_column_alias(sql, &Staged, &columns)
+}
 
 impl EntityRepository {
     /// Insert every entity in `entities` that does not already exist, returning
@@ -109,7 +299,8 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let rows: Vec<(i64, String)> = sqlx::query_as(ENTITY_INSERT_SQL)
+        let sql = entity_insert_sql()?;
+        let rows: Vec<(i64, String)> = sqlx::query_as(&sql)
             .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
@@ -148,7 +339,8 @@ impl EntityRepository {
         types_present(entities)?;
 
         let ids = entities.ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let rows: Vec<(i64, String)> = sqlx::query_as(ENTITY_UPDATE_SQL)
+        let sql = entity_update_sql();
+        let rows: Vec<(i64, String)> = sqlx::query_as(&sql)
             .bind(&ids)
             .bind(&entities.types_json)
             .bind(&entities.scope_paths_json)
@@ -167,9 +359,6 @@ impl EntityRepository {
 
     /// Delete every entity in `ids` whose expectation still holds, returning
     /// what each one held.
-    ///
-    /// The payload and system attributes come back because the clause 5.6.10
-    /// notification carries both and cannot read them once the row is gone.
     ///
     /// Nothing else is deleted here. The current attribute values the entity
     /// owns go with it through the one foreign key that cascades from
@@ -196,7 +385,8 @@ impl EntityRepository {
         }
 
         let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>();
-        let rows = sqlx::query(ENTITY_DELETE_SQL).bind(ids).bind(expected_modified_at).fetch_all(&mut **tx).await?;
+        let sql = entity_delete_sql();
+        let rows = sqlx::query(&sql).bind(ids).bind(expected_modified_at).fetch_all(&mut **tx).await?;
 
         rows.into_iter()
             .map(|row| {
@@ -214,7 +404,7 @@ impl EntityRepository {
 
 #[cfg(test)]
 mod tests {
-    use super::{ENTITY_DELETE_SQL, ENTITY_INSERT_SQL, ENTITY_UPDATE_SQL};
+    use crate::entity::write::{entity_delete_sql, entity_insert_sql, entity_update_sql};
     use std::collections::BTreeSet;
 
     /// Every `$n` placeholder in `sql`, as numbers.
@@ -227,66 +417,100 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn the_fused_update_honours_a_null_expectation() {
-        assert!(ENTITY_UPDATE_SQL.contains("d.expected_modified_at IS NULL OR entities.modified_at = d.expected_modified_at"));
+    /// The rendered insert, unwrapped for assertion.
+    fn insert() -> String {
+        entity_insert_sql().expect("the fixed eight-wide insert builds")
     }
 
     #[test]
-    fn the_fused_update_binds_contiguous_placeholders() {
-        pretty_assertions::assert_eq!(placeholders(ENTITY_UPDATE_SQL), (1..=9).collect::<BTreeSet<u32>>());
+    fn the_insert_binds_contiguous_placeholders_and_names_its_staging_columns() {
+        let sql = insert();
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=8).collect::<BTreeSet<u32>>());
+        assert!(
+            sql.contains("AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at)"),
+            "{sql}"
+        );
     }
 
     #[test]
-    fn the_fused_insert_binds_contiguous_placeholders() {
-        pretty_assertions::assert_eq!(placeholders(ENTITY_INSERT_SQL), (1..=8).collect::<BTreeSet<u32>>());
+    fn the_insert_expands_the_type_and_scope_arrays_and_casts_the_scope_to_ltree() {
+        let sql = insert();
+        assert!(sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."types_json"))"#), "{sql}");
+        assert!(
+            sql.contains(r#"ARRAY(SELECT jsonb_array_elements_text("d"."scope_paths_json")::ltree)"#),
+            "{sql}"
+        );
     }
 
     #[test]
-    fn the_fused_delete_honours_a_null_expectation() {
-        assert!(ENTITY_DELETE_SQL.contains("d.expected_modified_at IS NULL OR entities.modified_at = d.expected_modified_at"));
-    }
-
-    #[test]
-    fn the_fused_delete_binds_contiguous_placeholders() {
-        pretty_assertions::assert_eq!(placeholders(ENTITY_DELETE_SQL), (1..=2).collect::<BTreeSet<u32>>());
-    }
-
-    #[test]
-    fn the_fused_delete_returns_what_the_notification_needs() {
-        for column in [
-            "entities.id",
-            "entities.payload",
-            "entities.created_at",
-            "entities.modified_at",
-            "entities.expires_at",
-        ] {
-            assert!(ENTITY_DELETE_SQL.contains(column), "the delete must return {column}");
+    fn the_insert_validates_every_geometry_from_its_embedded_srid() {
+        let sql = insert();
+        for column in ["loc", "obs", "ops"] {
+            assert!(sql.contains(&format!(r#"ST_MakeValid(ST_GeomFromEWKB("d"."{column}"))"#)), "{sql}");
         }
+        assert!(!sql.contains("ST_SetSRID"), "{sql}");
     }
 
     #[test]
-    fn the_fused_insert_keeps_its_conflict_clause() {
-        assert!(ENTITY_INSERT_SQL.contains("ON CONFLICT (id) DO NOTHING"));
-        assert!(ENTITY_INSERT_SQL.contains("RETURNING entity_key, id"));
+    fn the_insert_keeps_its_conflict_clause_and_returns_the_surrogate_key() {
+        let sql = insert();
+        assert!(sql.contains(r#"ON CONFLICT ("id") DO NOTHING"#), "{sql}");
+        assert!(sql.contains(r#"RETURNING "entity_key", "id""#), "{sql}");
     }
 
     #[test]
-    fn both_writing_statements_return_the_surrogate_key_with_the_identifier() {
-        assert!(ENTITY_INSERT_SQL.contains("RETURNING entity_key, id"));
-        assert!(ENTITY_UPDATE_SQL.contains("RETURNING entities.entity_key, entities.id"));
+    fn the_update_honours_a_null_expectation_and_binds_nine_placeholders() {
+        let sql = entity_update_sql();
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=9).collect::<BTreeSet<u32>>());
+        assert!(
+            sql.contains(r#""d"."expected_modified_at" IS NULL OR "entities"."modified_at" = "d"."expected_modified_at""#),
+            "{sql}"
+        );
     }
 
     #[test]
-    fn the_fused_delete_removes_nothing_but_the_entity_row() {
-        assert!(ENTITY_DELETE_SQL.contains("DELETE FROM entities"));
+    fn the_update_stamps_the_transaction_clock_and_coalesces_the_expiry() {
+        let sql = entity_update_sql();
+        assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
+        assert!(sql.contains(r#"COALESCE("d"."expires_at", "entities"."expires_at")"#), "{sql}");
+    }
+
+    #[test]
+    fn the_update_reads_its_staging_rows_through_a_function_source() {
+        let sql = entity_update_sql();
+        assert!(sql.contains("FROM UNNEST("), "{sql}");
+        assert!(
+            sql.contains("AS d(id, types_json, scope_paths_json, payload, loc, obs, ops, expires_at, expected_modified_at)"),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"RETURNING "entities"."entity_key", "entities"."id""#), "{sql}");
+    }
+
+    #[test]
+    fn the_delete_is_a_correlated_existence_test_that_honours_the_expectation() {
+        let sql = entity_delete_sql();
+        pretty_assertions::assert_eq!(placeholders(&sql), (1..=2).collect::<BTreeSet<u32>>());
+        assert!(sql.contains(r#"DELETE FROM "entities" WHERE EXISTS"#), "{sql}");
+        assert!(sql.contains(r#""entities"."id" = "d"."id""#), "{sql}");
+        assert!(
+            sql.contains(r#""d"."expected_modified_at" IS NULL OR "entities"."modified_at" = "d"."expected_modified_at""#),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn the_delete_returns_what_the_notification_needs_and_touches_no_other_relation() {
+        let sql = entity_delete_sql();
+        for column in ["id", "payload", "created_at", "modified_at", "expires_at"] {
+            assert!(sql.contains(&format!(r#""{column}""#)), "the delete must return {column}: {sql}");
+        }
         for relation in [
             "current_attribute_values",
             "attribute_history",
             "temporal_entities",
             "temporal_attribute_streams",
         ] {
-            assert!(!ENTITY_DELETE_SQL.contains(relation), "entity deletion must not name {relation}");
+            assert!(!sql.contains(relation), "entity deletion must not name {relation}: {sql}");
         }
     }
 }

@@ -6,9 +6,15 @@
 
 use crate::{error::ContextStoreError, pending_side_effects::payload::PersistedBatchSideEffectJob};
 use andromeda_context_commit::{side_effect_job_id::SideEffectJobId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_postgresql_schema::queue::PendingSideEffects;
+use chrono::{DateTime, Utc};
+use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query};
+use sea_query_binder::SqlxBinder;
+use serde_json::Value;
 use sqlx::{Postgres, Transaction, postgres::PgPool};
+use uuid::Uuid;
 
-/// Enqueue one deferred job under the identity of the write that produced it.
+/// Insert one deferred job under the identity of the write that produced it.
 ///
 /// `ON CONFLICT (write_id) DO NOTHING` is what makes the enqueue idempotent: a
 /// commit that is replayed under its original write identity finds its job
@@ -21,8 +27,33 @@ use sqlx::{Postgres, Transaction, postgres::PgPool};
 /// ordinal base the enqueueing commit used, and resume its temporal and
 /// notification consequences under them rather than under a freshly minted
 /// identity.
-const ENQUEUE_SQL: &str =
-    "INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (write_id) DO NOTHING";
+fn enqueue_statement(
+    id: Uuid,
+    write_id: Uuid,
+    recorded_at: DateTime<Utc>,
+    consequence_base: i32,
+    payload: Value,
+) -> Result<InsertStatement, sea_query::error::Error> {
+    let mut statement = Query::insert();
+    statement
+        .into_table(PendingSideEffects::Table)
+        .columns([
+            PendingSideEffects::Id,
+            PendingSideEffects::WriteId,
+            PendingSideEffects::RecordedAt,
+            PendingSideEffects::ConsequenceBase,
+            PendingSideEffects::Payload,
+        ])
+        .values([
+            Expr::val(id).into(),
+            Expr::val(write_id).into(),
+            recorded_at.into(),
+            consequence_base.into(),
+            Expr::val(payload).into(),
+        ])?
+        .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
+    Ok(statement.to_owned())
+}
 
 /// Postgres-backed queue for deferred batch side-effects.
 #[derive(Debug)]
@@ -62,29 +93,50 @@ impl PendingSideEffectsRepository {
         let consequence_base = consequence_base
             .as_i32()
             .map_err(|error| ContextStoreError::Internal(format!("pending side-effect consequence base is out of range: {error}")))?;
-        sqlx::query(ENQUEUE_SQL)
-            .bind(SideEffectJobId::mint().as_uuid())
-            .bind(record.write_id().as_uuid())
-            .bind(record.recorded_at())
-            .bind(consequence_base)
-            .bind(payload_json)
-            .execute(&mut **tx)
-            .await?;
+        let statement = enqueue_statement(
+            SideEffectJobId::mint().as_uuid(),
+            record.write_id().as_uuid(),
+            record.recorded_at(),
+            consequence_base,
+            payload_json,
+        )
+        .map_err(|error| ContextStoreError::Internal(format!("failed to build pending_side_effects insert: {error}")))?;
+        let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+        sqlx::query_with(&sql, values).execute(&mut **tx).await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::pending_side_effects::repo::ENQUEUE_SQL;
+    use crate::pending_side_effects::repo::enqueue_statement;
+    use chrono::Utc;
+    use sea_query::PostgresQueryBuilder;
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn rendered() -> String {
+        enqueue_statement(Uuid::nil(), Uuid::nil(), Utc::now(), 0, json!({}))
+            .expect("arity")
+            .to_string(PostgresQueryBuilder)
+    }
 
     #[test]
     fn the_enqueue_supplies_the_row_identity_rather_than_leaving_it_to_the_database() {
-        assert!(ENQUEUE_SQL.contains("(id, write_id, recorded_at, consequence_base, payload)"));
+        let sql = rendered();
+        assert!(
+            sql.contains(r#""id""#)
+                && sql.contains(r#""write_id""#)
+                && sql.contains(r#""recorded_at""#)
+                && sql.contains(r#""consequence_base""#)
+                && sql.contains(r#""payload""#),
+            "{sql}"
+        );
     }
 
     #[test]
     fn a_replayed_write_enqueues_no_second_job() {
-        assert!(ENQUEUE_SQL.contains("ON CONFLICT (write_id) DO NOTHING"));
+        let sql = rendered();
+        assert!(sql.contains(r#"ON CONFLICT ("write_id") DO NOTHING"#), "{sql}");
     }
 }
