@@ -227,7 +227,7 @@ fn observation_row(
 /// Translate a neutral observation value into the shape the row stores.
 fn stored_value(row: &TemporalHistoryRow) -> Result<AttributeHistoryValue, TemporalStoreError> {
     match &row.value {
-        TemporalValue::Number(value) => Ok(AttributeHistoryValue::Number(*value)),
+        TemporalValue::Number(value) => Ok(AttributeHistoryValue::Number(value.clone())), // clone: the persisted row owns its exact decimal.
         TemporalValue::String(value) => Ok(AttributeHistoryValue::String(value.clone())), // clone: the persisted row owns the string.
         TemporalValue::Boolean(value) => Ok(AttributeHistoryValue::Boolean(*value)),
         TemporalValue::Geometry(value) => Ok(AttributeHistoryValue::Geometry(

@@ -14,13 +14,13 @@ use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::Strea
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{
-    cast::cast,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, OnConflict, PostgresQueryBuilder, Query, SimpleExpr};
 use serde_json::Value;
@@ -92,7 +92,7 @@ enum HistoryStaged {
     ValueBool,
     /// Instance identifier stored exactly as received.
     VerbatimInstanceId,
-    /// Arbitrary-precision value as the decimal literal `NUMERIC` parses.
+    /// Arbitrary-precision value bound directly as `NUMERIC`.
     ValueNumber,
     /// String value.
     ValueString,
@@ -377,8 +377,8 @@ struct AttributeHistoryBinds<'a> {
     value_bools: Vec<Option<bool>>,
     /// Instance identifiers stored exactly as received.
     verbatim_instance_ids: Vec<Option<&'a str>>,
-    /// Arbitrary-precision values as the decimal literals `NUMERIC` parses.
-    value_numbers: Vec<Option<String>>,
+    /// Arbitrary-precision values bound directly as `numeric[]`.
+    value_numbers: Vec<Option<BigDecimal>>,
     /// String values.
     value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
@@ -432,7 +432,9 @@ fn attribute_history_binds<'a>(rows: &'a [AttributeHistoryRow]) -> Result<Attrib
         binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
         binds.value_bools.push(row.value.boolean());
         binds.verbatim_instance_ids.push(verbatim_instance_id(&row.instance));
-        binds.value_numbers.push(row.value.numeric_literal());
+        // SQLx owns the array values. Clone the decimal itself so the bind is
+        // exact and never passes through text or binary64.
+        binds.value_numbers.push(row.value.number().cloned());
         binds.value_strings.push(row.value.string());
         binds.value_geos.push(geometry_bytes(row.value.geometry())?);
         binds.value_objects.push(row.value.object());
@@ -460,7 +462,7 @@ fn history_staging_columns() -> [UnnestColumn; 21] {
         UnnestColumn::new(HistoryStaged::UnitCodeId, PostgresType::SmallintArray),
         UnnestColumn::new(HistoryStaged::ValueBool, PostgresType::BooleanArray),
         UnnestColumn::new(HistoryStaged::VerbatimInstanceId, PostgresType::TextArray),
-        UnnestColumn::new(HistoryStaged::ValueNumber, PostgresType::TextArray),
+        UnnestColumn::new(HistoryStaged::ValueNumber, PostgresType::NumericArray),
         UnnestColumn::new(HistoryStaged::ValueString, PostgresType::TextArray),
         UnnestColumn::new(HistoryStaged::ValueGeo, PostgresType::ByteaArray),
         UnnestColumn::new(HistoryStaged::ValueObject, PostgresType::JsonbArray),
@@ -476,8 +478,8 @@ fn staged(column: HistoryStaged) -> SimpleExpr {
 
 /// The bulk attribute-history insert.
 ///
-/// The value number reaches the arbitrary-precision column as its decimal
-/// literal cast `::numeric`, never widened to a double; the geometry is
+/// The value number reaches the arbitrary-precision column through a native
+/// `numeric[]` bind, never widened to a double; the geometry is
 /// validated from its embedded-SRID EWKB, with a NULL EWKB projecting to a NULL
 /// geometry. The conflict target names the columns `uq_attribute_history_write`
 /// covers, so a row replayed under its original write identity is a no-op.
@@ -510,7 +512,7 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
         .expr(staged(HistoryStaged::UnitCodeId))
         .expr(staged(HistoryStaged::ValueBool))
         .expr(staged(HistoryStaged::VerbatimInstanceId))
-        .expr(cast(staged(HistoryStaged::ValueNumber), PostgresType::Numeric))
+        .expr(staged(HistoryStaged::ValueNumber))
         .expr(staged(HistoryStaged::ValueString))
         .expr(geometry)
         .expr(staged(HistoryStaged::ValueObject))
@@ -653,9 +655,10 @@ mod tests {
     }
 
     #[test]
-    fn the_numeric_value_reaches_storage_as_a_decimal_literal_rather_than_a_double() {
+    fn the_numeric_value_reaches_storage_through_a_numeric_array_bind() {
         let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
-        assert!(sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
+        assert!(sql.contains(r#"$16::numeric[]"#), "{sql}");
+        assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
     }
 }

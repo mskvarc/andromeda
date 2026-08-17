@@ -21,6 +21,7 @@ use andromeda_jsonld::{
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
@@ -197,7 +198,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
     let mut all_compacted = vec![compacted];
     if let Some(join) = sub.notification_join {
         if join == JoinMode::Flat
-            && let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone())
+            && let Ok(main_entity) = deserialize_exact::<Entity>(&all_compacted[0])
         {
             match resolve_linked_cached(
                 entity_query,
@@ -220,7 +221,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
                 }
             }
         } else if join == JoinMode::Inline
-            && let Ok(main_entity) = serde_json::from_value::<Entity>(all_compacted[0].clone())
+            && let Ok(main_entity) = deserialize_exact::<Entity>(&all_compacted[0])
         {
             match resolve_linked_cached(
                 entity_query,
@@ -262,7 +263,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
                     }
                 }
             } else {
-                match serde_json::from_value::<Entity>(item.clone()) {
+                match deserialize_exact::<Entity>(&item) {
                     Ok(entity) => simplify_entity(&entity),
                     Err(e) => {
                         debug!("Failed to simplify entity for keyValues: {}", e);

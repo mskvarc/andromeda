@@ -31,6 +31,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-context-commit",
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-ngsi-ld-number",
         "andromeda-postgresql-attribute-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",

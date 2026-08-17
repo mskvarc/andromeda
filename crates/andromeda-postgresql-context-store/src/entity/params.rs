@@ -3,7 +3,7 @@
 //! One entity or a thousand, the statements bind the same nine arrays, so this
 //! is the only shape the write path builds. Everything that turns a
 //! specification value into a column — the `ltree` rendering of a scope, the
-//! `sonic_rs` pre-serialisation of a payload, the EWKB encoding of a geometry —
+//! exact JSON pre-serialisation of a payload, the EWKB encoding of a geometry —
 //! happens on the way in here.
 
 use crate::error::ContextStoreError;
@@ -25,10 +25,9 @@ pub struct PreparedEntityColumns {
     /// Expanded payloads retained for the in-process side-effect consumers
     /// that still require a DOM view.
     pub payloads: Vec<Value>,
-    /// Pre-serialised JSON text for each payload, produced once via
-    /// `sonic_rs::to_string` so that the SQL bind path can pass the wire
-    /// bytes directly to Postgres (bound as `text[]` and cast to `jsonb`)
-    /// instead of walking the `serde_json::Value` DOM per row inside sqlx.
+    /// Pre-serialised JSON text for each payload, produced once so that the SQL
+    /// bind path can pass the wire bytes directly to Postgres (bound as
+    /// `text[]` and cast to `jsonb`) instead of walking the DOM per row in SQLx.
     pub payload_json: Vec<String>,
     /// Location EWKB buffers.
     pub locations: Vec<Option<Vec<u8>>>,
@@ -56,12 +55,11 @@ impl PreparedEntityColumns {
         }
     }
 
-    /// Pre-serialise an expanded payload with `sonic_rs` and append it to both
-    /// `payloads` (DOM view) and `payload_json` (wire bytes). Always use this
-    /// rather than pushing `payloads` directly so the two parallel vectors
-    /// stay aligned.
+    /// Pre-serialise an expanded payload and append it to both `payloads` (DOM
+    /// view) and `payload_json` (wire bytes). Always use this rather than
+    /// pushing `payloads` directly so the two parallel vectors stay aligned.
     pub fn push_payload(&mut self, payload: Value) -> Result<(), ContextStoreError> {
-        let json = sonic_rs::to_string(&payload).map_err(|err| ContextStoreError::Internal(format!("serialise entity payload: {err}")))?;
+        let json = serde_json::to_string(&payload).map_err(|error| ContextStoreError::Internal(format!("serialise entity payload: {error}")))?;
         self.payload_json.push(json);
         self.payloads.push(payload);
         Ok(())

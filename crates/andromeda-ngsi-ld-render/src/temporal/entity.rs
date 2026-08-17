@@ -227,7 +227,8 @@ fn matches_expanded_attribute(term: &ProjectionTerm, attr_name: &AttributeName) 
 mod tests {
     use super::*;
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, temporal_format::TemporalFormat, time_prop::TimeProp};
-    use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, temporal::TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         pagination::Pagination,
@@ -255,7 +256,7 @@ mod tests {
             attribute_name: attr_name(attr),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(JsonNumber::Double(1.0)),
+            value: TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")),
             observed_at: Some(instant()),
             recorded_at: instant(),
             created_at: Some(instant()),

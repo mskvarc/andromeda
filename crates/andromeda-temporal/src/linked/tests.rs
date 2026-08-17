@@ -37,10 +37,10 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
-    attribute::json_number::JsonNumber,
     notification::SysAttrsSnapshot,
     temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
 };
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{projection::grammar::parse_projection_list, temporal::compiled::CompiledTemporalQuery};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::LinkedResolutionFailureKind;
 use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
@@ -277,7 +277,7 @@ impl StubBroker {
             attribute_name: "https://example.com/reading".parse::<AttributeName>().expect("valid attribute IRI"),
             attribute_type: AttributeType::Property,
             dataset_id: None,
-            value: TemporalValue::Number(JsonNumber::Double(1.0)),
+            value: TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")),
             observed_at: Some(instant),
             recorded_at: instant,
             created_at: Some(instant),

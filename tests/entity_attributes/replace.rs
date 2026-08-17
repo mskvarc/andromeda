@@ -22,8 +22,9 @@ use crate::{
     vehicle_speed_two_datasetid,
 };
 use reqwest::{Method, StatusCode};
-use serde_json::json;
+use serde_json::{Number, json};
 use serial_test::serial;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // Replace existing attribute
@@ -52,6 +53,26 @@ async fn attribute_replace_existing_success() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["isParked"]["type"], "Relationship");
     assert_eq!(body["isParked"]["object"], "urn:ngsi-ld:OffStreetParking:Downtown2");
+}
+
+#[tokio::test]
+#[serial]
+async fn attribute_replace_preserves_an_exact_decimal() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Vehicle:replace_exact_number");
+    assert_eq!(
+        create_entity_json(&c, &vehicle_speed_multi_instances(&id), TEST_SUITE_CONTEXT).await,
+        StatusCode::CREATED
+    );
+    let exact = Number::from_str("0.150000000000000005").expect("exact JSON number");
+    let fragment = json!({"type": "Property", "value": exact, "@context": TEST_SUITE_CONTEXT});
+
+    let (status, _) = replace_entity_attr(&c, &id, "speed", &fragment, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.150000000000000005"));
 }
 
 #[tokio::test]

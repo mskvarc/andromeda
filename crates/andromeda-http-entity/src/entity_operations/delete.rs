@@ -12,6 +12,7 @@ use crate::entity_operations::{
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
+    Json,
     NgsiLdBatchResponse,
     NgsiLdErrorType,
     OriginalUri,
@@ -19,7 +20,6 @@ use crate::entity_operations::{
     ProblemResponse,
     Response,
     ResponsePayload,
-    SonicJson,
     StatusCode,
     apply_preference_applied,
     async_preference,
@@ -86,7 +86,7 @@ pub(crate) async fn batch_delete(
         };
         let status = StatusCode::from_u16(first.status()).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(resp_body) = first.body() {
-            return Ok((status, SonicJson(resp_body.clone())).into_response()); // clone: owned Value needed for JSON response
+            return Ok((status, Json(resp_body.clone())).into_response()); // clone: owned Value needed for JSON response
         }
         return Ok(status.into_response());
     }

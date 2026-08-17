@@ -2,8 +2,9 @@
 
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::value_kind::ValueKind;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -82,6 +83,20 @@ impl AttributeHistoryValue {
     pub fn numeric_literal(&self) -> Option<String> {
         match self {
             AttributeHistoryValue::Number(number) => Some(number.to_string()),
+            AttributeHistoryValue::Tombstone { .. }
+            | AttributeHistoryValue::String(_)
+            | AttributeHistoryValue::Boolean(_)
+            | AttributeHistoryValue::Geometry(_)
+            | AttributeHistoryValue::Object(_)
+            | AttributeHistoryValue::DateTime(_)
+            | AttributeHistoryValue::Uri(_) => None,
+        }
+    }
+
+    /// Borrows the exact numeric value for an ordinary SQLx `NUMERIC` bind.
+    pub const fn number(&self) -> Option<&BigDecimal> {
+        match self {
+            AttributeHistoryValue::Number(number) => Some(number.decimal()),
             AttributeHistoryValue::Tombstone { .. }
             | AttributeHistoryValue::String(_)
             | AttributeHistoryValue::Boolean(_)
@@ -180,7 +195,7 @@ impl AttributeHistoryValue {
 #[cfg(test)]
 mod tests {
     use crate::attribute_history_value::AttributeHistoryValue;
-    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use chrono::{TimeZone, Utc};
 
@@ -203,13 +218,13 @@ mod tests {
     fn an_integer_beyond_the_exact_double_range_reaches_the_numeric_column_unchanged() {
         // One above 2^53, which the double format cannot name individually and
         // the previous `DOUBLE PRECISION` column therefore refused outright.
-        let value = AttributeHistoryValue::Number(JsonNumber::Signed(9_007_199_254_740_993));
+        let value = AttributeHistoryValue::Number(JsonNumber::from(9_007_199_254_740_993_i64));
         pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("9007199254740993"));
     }
 
     #[test]
     fn a_fractional_number_renders_a_literal_numeric_parses() {
-        let value = AttributeHistoryValue::Number(JsonNumber::Double(-2.5e-4));
+        let value = AttributeHistoryValue::Number(JsonNumber::try_from(-2.5e-4).expect("a finite number"));
         pretty_assertions::assert_eq!(value.numeric_literal().as_deref(), Some("-0.00025"));
     }
 
@@ -222,7 +237,7 @@ mod tests {
     fn every_value_shape_reports_exactly_one_populated_column() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         let values = [
-            AttributeHistoryValue::Number(JsonNumber::Signed(1)),
+            AttributeHistoryValue::Number(JsonNumber::from(1)),
             AttributeHistoryValue::String("text".to_owned()),
             AttributeHistoryValue::Boolean(false),
             AttributeHistoryValue::Object(serde_json::json!({"a": 1})),

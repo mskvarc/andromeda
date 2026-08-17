@@ -9,6 +9,7 @@ use andromeda_http_response::{classified_report::ClassifiedReport, problem_respo
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri as EntityId;
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error_type::NgsiLdErrorType};
 use axum::{
     body::Bytes,
@@ -26,16 +27,9 @@ fn public_error(error_type: NgsiLdErrorType, detail: impl Into<String>, instance
     ClassifiedReport::public(error_type, detail).with_instance(instance.clone())
 }
 
-/// Parse a batch request body into a JSON `Value` via `sonic-rs`.
-///
-/// `sonic-rs` accepts `&[u8]` directly (no mutation, no copy) and runtime-
-/// dispatches its SIMD implementation (AVX2 / NEON / scalar) based on host
-/// CPU features. Used unconditionally on the batch path: the dispatch cost
-/// is amortised over header inspection and per-entity context merging that
-/// already happen above and below the parse, so even sub-KiB bodies prefer
-/// it over `serde_json`'s byte-by-byte scan.
-fn parse_batch_body_json(body: &Bytes) -> Result<Value, String> {
-    sonic_rs::from_slice::<Value>(body).map_err(|err| err.to_string())
+/// Parse a batch request body without narrowing arbitrary-precision numbers.
+fn parse_batch_body_json(body: &Bytes) -> Result<Value, serde_json::Error> {
+    serde_json::from_slice::<Value>(body)
 }
 
 /// Content-Type classification for batch entity parsing.
@@ -209,6 +203,11 @@ pub fn parse_batch_entities(
             .parse::<EntityId>()
             .map_err(|_error| public_error(NgsiLdErrorType::InvalidRequest, "Every batch entity must contain a valid URI id", uri))?;
 
+        if let Err(error) = canonicalize_numbers(&mut item) {
+            parse_errors.push(BatchEntityError::new(entity_id, NgsiLdErrorType::BadRequestData, &error.to_string()));
+            continue;
+        }
+
         // Per-entity @context validation
         let has_context = item.as_object().is_some_and(|o| o.contains_key("@context"));
 
@@ -235,7 +234,7 @@ pub fn parse_batch_entities(
             obj.remove("@context");
         }
 
-        match serde_json::from_value::<Entity>(item) {
+        match deserialize_exact::<Entity>(&item) {
             Ok(entity) => entities.push(entity),
             Err(e) => {
                 parse_errors.push(BatchEntityError::new(
@@ -281,12 +280,29 @@ mod tests {
         let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
         let (entities, _context, errors) = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect("batch parses");
 
-        pretty_assertions::assert_eq!(entities.len(), 2);
+        assert_eq!(entities.len(), 2, "{errors:?}");
         pretty_assertions::assert_eq!(
             entities.iter().map(|entity| entity.id.to_string()).collect::<Vec<_>>(),
             vec!["urn:ngsi-ld:Vehicle:1".to_string(), "urn:ngsi-ld:Vehicle:3".to_string()]
         );
         pretty_assertions::assert_eq!(errors.len(), 1);
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
+    }
+
+    #[test]
+    fn exact_numbers_survive_and_range_failures_remain_per_entity() {
+        let body = Bytes::from(
+            r#"[{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}},{"id":"urn:ngsi-ld:Vehicle:2","type":"Vehicle","json":{"type":"JsonProperty","json":{"nested":1e-16384}}},{"id":"urn:ngsi-ld:Vehicle:3","type":"Vehicle","speed":{"type":"Property","value":18446744073709551616}}]"#,
+        );
+        let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
+        let (entities, _context, errors) = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect("batch parses");
+
+        assert_eq!(entities.len(), 2, "{errors:?}");
+        let encoded = serde_json::to_string(&entities).expect("exact entities");
+        assert!(encoded.contains("0.100000000000000005"), "{encoded}");
+        assert!(encoded.contains("18446744073709551616"), "{encoded}");
+        pretty_assertions::assert_eq!(errors.len(), 1);
+        pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
+        assert!(errors[0].error.detail.contains("/json/json/nested"), "{}", errors[0].error.detail);
     }
 }

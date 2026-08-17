@@ -2,7 +2,7 @@
 
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
@@ -91,7 +91,7 @@ pub struct ProjectedAttributeRow {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::row::ProjectedAttributeValue;
-    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use chrono::{TimeZone, Utc};
 
@@ -99,7 +99,7 @@ mod tests {
     fn no_projected_value_declares_the_reserved_tombstone_shape() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         let values = [
-            ProjectedAttributeValue::Number(JsonNumber::Signed(1)),
+            ProjectedAttributeValue::Number(JsonNumber::from(1)),
             ProjectedAttributeValue::String("text".to_owned()),
             ProjectedAttributeValue::Boolean(true),
             ProjectedAttributeValue::Object(serde_json::json!({"a": 1})),
@@ -115,7 +115,7 @@ mod tests {
     fn every_value_shape_names_a_distinct_typed_column() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         let kinds = [
-            ProjectedAttributeValue::Number(JsonNumber::Signed(1)).kind(),
+            ProjectedAttributeValue::Number(JsonNumber::from(1)).kind(),
             ProjectedAttributeValue::String("text".to_owned()).kind(),
             ProjectedAttributeValue::Boolean(true).kind(),
             ProjectedAttributeValue::Object(serde_json::json!([])).kind(),

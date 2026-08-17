@@ -147,7 +147,7 @@ async fn current_projection_three_distinct_datasets_form_three_grains() {
     let default_body = default_only.json_value().expect("retrieval body must be JSON");
     assert_eq!(
         default_body["temperature"],
-        json!({"type": "Property", "value": 1.0}),
+        json!({"type": "Property", "value": 1}),
         "`@none` selects the default instance alone: {default_body:?}"
     );
     assert!(

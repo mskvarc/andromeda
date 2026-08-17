@@ -4,8 +4,7 @@
 //! The projection stores one typed value per attribute instance. Sub-attributes
 //! (`temperature.observedAt`) and the interior of compound values
 //! (`address[city]`) live only inside the payload, so predicates addressing them
-//! read the payload directly. A numeric operand too large to survive the bind
-//! path exactly lands here as well. This path is unindexed by construction.
+//! read the payload directly. This path is unindexed by construction.
 
 use crate::{
     jsonb::{attribute_value_jsonpath, lift_comparison},
@@ -207,23 +206,6 @@ mod tests {
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
         render_condition(compile(&expr, &QFilterTarget::entities(), &names()).expect("compile q"))
-    }
-
-    #[test]
-    fn integers_beyond_f64_precision_fall_back_to_the_payload() {
-        // The operand can only travel as `double precision`, and beyond 2^53 it
-        // rounds. Probing the projection with the rounded operand would make the
-        // entity visible via GET but denied by the filter.
-        let sql = render(&format!("\"{SPEED}\"==12345678901234567"));
-        assert!(sql.contains("jsonb_path_query_first"), "{sql}");
-        assert!(!sql.contains("current_attribute_values"), "{sql}");
-    }
-
-    #[test]
-    fn a_range_bound_beyond_f64_precision_falls_back() {
-        let sql = render(&format!("\"{SPEED}\"==1..12345678901234567"));
-        assert!(sql.contains("jsonb_path_query_first"), "one lossy bound taints the range: {sql}");
-        assert!(!sql.contains("current_attribute_values"), "{sql}");
     }
 
     #[test]

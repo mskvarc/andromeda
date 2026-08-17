@@ -704,6 +704,7 @@ mod tests {
                     | Value::BigUnsigned(_)
                     | Value::Float(_)
                     | Value::Double(_)
+                    | Value::BigDecimal(_)
                     | Value::String(_)
                     | Value::Enum(_)
                     | Value::Char(_)

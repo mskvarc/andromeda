@@ -34,7 +34,6 @@ use andromeda_http_response::{
     linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
     render::start_rendering,
-    sonic_json::SonicJson,
 };
 use andromeda_ngsi_ld_model::{entity_type::EntityTypeValue, expanded::mutation::selection::OverwritePolicy, query::body::Query};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
@@ -49,6 +48,7 @@ use andromeda_ngsi_ld_request::{
     query::entity::parameters::EntityQueryParameters,
 };
 use axum::{
+    Json,
     body::Bytes,
     extract::OriginalUri,
     http::StatusCode,

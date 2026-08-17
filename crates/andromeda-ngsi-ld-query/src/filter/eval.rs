@@ -7,6 +7,7 @@ use crate::filter::{
     scalar::{CompareValue, Scalar, parse_date, parse_date_time, parse_time},
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::properties::{ENTITY, JSON, LANGUAGE_MAP, OBJECT, OBJECT_LIST, VALUE, VALUE_LIST, VOCAB};
 use serde_json::{Map, Value};
 use std::{cmp::Ordering, slice::from_ref};
@@ -409,9 +410,8 @@ fn eval_cmp_scalar(entity_val: &Value, op: CmpOp, scalar: &Scalar) -> bool {
 fn eval_cmp_scalar_inner(entity_val: &Value, op: CmpOp, scalar: &Scalar) -> Option<bool> {
     match scalar {
         Scalar::Number(rhs_num) => {
-            let lhs = entity_val_to_f64(entity_val)?;
-            let rhs = rhs_num.as_f64()?;
-            Some(cmp_op(lhs.partial_cmp(&rhs)?, op))
+            let lhs = entity_value_to_number(entity_val)?;
+            Some(cmp_op(lhs.cmp(rhs_num), op))
         }
         Scalar::Bool(rhs_bool) => {
             let lhs = entity_val_to_bool(entity_val)?;
@@ -453,12 +453,12 @@ const fn cmp_op(ord: Ordering, op: CmpOp) -> bool {
     }
 }
 
-/// Read an entity value as a number, accepting the textual form PostgreSQL and
-/// JSON-LD both admit.
-fn entity_val_to_f64(val: &Value) -> Option<f64> {
+/// Read an entity value as an exact number, accepting the textual form typed
+/// JSON-LD values use.
+fn entity_value_to_number(val: &Value) -> Option<JsonNumber> {
     match val {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.parse::<f64>().ok(),
+        Value::Number(number) => JsonNumber::try_from(number).ok(),
+        Value::String(value) => value.parse::<JsonNumber>().ok(),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }
 }
@@ -571,6 +571,40 @@ mod tests {
     fn eval_float_equal() {
         let expr = parse("\"https://example.com/temperature\"==23.5").unwrap();
         assert!(evaluate(&expr, &vehicle_entity()));
+    }
+
+    #[test]
+    fn exact_decimals_compare_beyond_binary64_precision() {
+        let entity: Value = serde_json::from_str(
+            r#"[{"@id":"urn:ngsi-ld:Sensor:1","https://example.com/reading":[{"https://uri.etsi.org/ngsi-ld/hasValue":[{"@value":0.100000000000000005}]}]}]"#,
+        )
+        .expect("exact arbitrary-precision JSON");
+        assert!(evaluate(
+            &parse("\"https://example.com/reading\"==0.100000000000000005").expect("exact equality"),
+            &entity
+        ));
+        assert!(evaluate(
+            &parse("\"https://example.com/reading\">0.100000000000000004").expect("exact ordering"),
+            &entity
+        ));
+        assert!(!evaluate(
+            &parse("\"https://example.com/reading\"==0.100000000000000004").expect("adjacent inequality"),
+            &entity
+        ));
+    }
+
+    #[test]
+    fn a_typed_json_ld_numeric_string_uses_the_same_exact_domain() {
+        let entity = serde_json::json!([{
+            "@id": "urn:ngsi-ld:Sensor:1",
+            "https://example.com/reading": [{
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "0.100000000000000005", "@type": "http://www.w3.org/2001/XMLSchema#decimal"}]
+            }]
+        }]);
+        assert!(evaluate(
+            &parse("\"https://example.com/reading\"==0.100000000000000005").expect("exact equality"),
+            &entity
+        ));
     }
 
     #[test]

@@ -48,6 +48,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-headers",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",

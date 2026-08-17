@@ -60,6 +60,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-geometry",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-notification",
@@ -79,5 +80,5 @@ andromeda_architecture_checks::dependency_boundary! {
     ],
     allow_workspace_dev_dependencies: [
     ],
-    allow_production_dependencies: ["confique", "sea-query", "sea-query-sqlx", "sonic-rs", "sqlx", "tokio"],
+    allow_production_dependencies: ["confique", "sea-query", "sea-query-sqlx", "sqlx", "tokio"],
 }

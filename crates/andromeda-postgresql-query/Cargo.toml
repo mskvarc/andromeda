@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-postgresql-encoding.workspace = true
@@ -18,11 +19,11 @@ andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 chrono = { version = "0.4.45", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["from"] }
-sea-query = { version = "1.0.2", features = ["backend-postgres", "with-chrono"] }
+sea-query = { version = "1.0.2", features = ["backend-postgres", "with-bigdecimal", "with-chrono"] }
 thiserror = "2.0.20"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 pretty_assertions = "1.4.1"
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

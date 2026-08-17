@@ -1,9 +1,6 @@
 //! NGSI-LD response type for entity collections with pre-rendered payload.
 
-use crate::{
-    headers::{CommonHeadersOptions, apply_common_headers},
-    sonic_json::SonicJson,
-};
+use crate::headers::{CommonHeadersOptions, apply_common_headers};
 use andromeda_http_headers::{
     ngsild_content_range::NgsiLdContentRange,
     ngsild_results_count::NgsiLdResultsCount,
@@ -13,6 +10,7 @@ use andromeda_http_headers::{
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
 use axum::{
+    Json,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -134,6 +132,6 @@ impl IntoResponse for NgsiLdCollectionResponse {
             },
         );
 
-        (status, headers, SonicJson(self.rendered.value)).into_response()
+        (status, headers, Json(self.rendered.value)).into_response()
     }
 }

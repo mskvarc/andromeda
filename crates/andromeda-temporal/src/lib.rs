@@ -36,6 +36,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-representation",

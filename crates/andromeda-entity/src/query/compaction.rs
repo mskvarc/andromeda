@@ -5,6 +5,7 @@
 use crate::{error::EntityError, query::EntityQueryService};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::term_expander::TermExpander;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -42,7 +43,7 @@ impl EntityQueryService {
         obj.remove("@id");
         obj.insert("id".to_string(), Value::String(id));
 
-        let mut entity: Entity = serde_json::from_value(Value::Object(obj)).map_err(|err| EntityError::validation(format!("Invalid entity data: {err}")))?;
+        let mut entity: Entity = deserialize_exact(&Value::Object(obj)).map_err(|err| EntityError::validation(format!("Invalid entity data: {err}")))?;
 
         // Clause 4.22: an instance whose `expiresAt` has passed is not part of
         // the entity, and the sweep that removes it from storage runs on an

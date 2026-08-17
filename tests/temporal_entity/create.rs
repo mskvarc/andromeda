@@ -17,7 +17,7 @@ use crate::{
     unique_id,
 };
 use reqwest::StatusCode;
-use serde_json::json;
+use serde_json::{Value, json};
 use serial_test::serial;
 
 // ---------------------------------------------------------------------------
@@ -91,6 +91,42 @@ async fn temporal_create_entity_with_plural_values_success() {
             .as_array()
             .is_some_and(|observations| { observations.iter().all(|observation| observation["datasetId"] == "urn:ngsi-ld:Dataset:sensor") })
     );
+}
+
+#[tokio::test]
+#[serial]
+async fn temporal_create_and_read_preserve_exact_decimal_values() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Vehicle:create_exact_numbers");
+    let entity: Value = serde_json::from_str(&format!(
+        r#"{{"id":"{id}","type":"Vehicle","speed":[{{"type":"Property","value":0.100000000000000005,"observedAt":"2020-08-01T12:03:00Z"}},{{"type":"Property","value":18446744073709551616,"observedAt":"2020-08-01T12:05:00Z"}}],"@context":["{TEST_SUITE_CONTEXT}"]}}"#
+    ))
+    .expect("exact temporal entity JSON");
+
+    let status = create_temporal_entity(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body, _) = get_temporal_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    let body = serde_json::to_string(&body).expect("temporal response JSON");
+    assert!(body.contains("0.100000000000000005"), "temporal response: {body}");
+    assert!(body.contains("18446744073709551616"), "temporal response: {body}");
+}
+
+#[tokio::test]
+#[serial]
+async fn temporal_create_rejects_an_out_of_range_decimal() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Vehicle:create_out_of_range_number");
+    let entity: Value = serde_json::from_str(&format!(
+        r#"{{"id":"{id}","type":"Vehicle","speed":[{{"type":"Property","value":1e-16384,"observedAt":"2020-08-01T12:03:00Z"}}],"@context":["{TEST_SUITE_CONTEXT}"]}}"#
+    ))
+    .expect("syntactically valid temporal entity JSON");
+
+    let status = create_temporal_entity(&c, &entity).await;
+    pretty_assertions::assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

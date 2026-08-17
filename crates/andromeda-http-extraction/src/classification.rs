@@ -79,7 +79,7 @@ pub fn classify_query_error(error: &QueryError) -> ClassifiedReport {
         | QueryError::GeoIncomplete
         | QueryError::ProjectionUnbalancedBrace { .. }
         | QueryError::ProjectionEmptyTerm { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
-        QueryError::QInvalidNumber(_)
+        QueryError::QInvalidNumber { .. }
         | QueryError::QInvalidDateTime { .. }
         | QueryError::QInvalidDate { .. }
         | QueryError::QInvalidTime { .. }

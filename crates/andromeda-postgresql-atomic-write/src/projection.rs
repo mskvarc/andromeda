@@ -166,10 +166,8 @@ mod tests {
         scope::grammar::ScopeBuf,
         uri::Uri,
     };
-    use andromeda_ngsi_ld_model::{
-        attribute::json_number::JsonNumber,
-        temporal::{TemporalHistoryRow, TemporalValue},
-    };
+    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{entity_key::EntityKey, value_kind::ValueKind};
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
     use andromeda_temporal::{
@@ -223,7 +221,7 @@ mod tests {
     #[test]
     fn an_observation_becomes_one_upsert_at_the_instance_grain() {
         let mut work = ProjectionWork::default();
-        let intent = intent(vec![observation(TemporalValue::Number(JsonNumber::Signed(42)))]);
+        let intent = intent(vec![observation(TemporalValue::Number(JsonNumber::from(42)))]);
         collect(&mut work, &intent, entity_key(), &dictionary()).expect("a projectable observation");
         pretty_assertions::assert_eq!(work.upserts.len(), 1);
         assert!(work.removals.is_empty());

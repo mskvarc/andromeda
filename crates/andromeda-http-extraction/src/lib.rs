@@ -32,6 +32,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
@@ -41,7 +42,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-vocabulary",
     ],
-    allow_production_dependencies: ["axum", "sonic-rs"],
+    allow_production_dependencies: ["axum"],
 }
 
 #[cfg(test)]

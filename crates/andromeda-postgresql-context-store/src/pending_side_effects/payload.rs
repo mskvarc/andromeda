@@ -7,6 +7,7 @@
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,7 +34,7 @@ impl PersistedBatchSideEffectJob {
     /// Decodes a JSONB value while preserving validation failures as a typed
     /// persistence error.
     pub fn decode(value: Value) -> Result<PersistedBatchSideEffectJob, PendingSideEffectPayloadError> {
-        serde_json::from_value(value).map_err(PendingSideEffectPayloadError::from)
+        deserialize_exact(&value).map_err(PendingSideEffectPayloadError::from)
     }
 }
 

@@ -27,8 +27,9 @@ use crate::{
     vehicle_speed_two_datasetid,
 };
 use reqwest::{Method, StatusCode};
-use serde_json::json;
+use serde_json::{Number, json};
 use serial_test::serial;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // Append new attribute
@@ -61,6 +62,23 @@ async fn attribute_append_new_attribute_success() {
     assert_eq!(body["attribute_to_be_added"]["type"], "Property");
     assert_eq!(body["attribute_to_be_added"]["value"], 23);
     assert!(body.get("speed").is_some(), "existing attribute should remain");
+}
+
+#[tokio::test]
+#[serial]
+async fn attribute_append_preserves_an_exact_decimal() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Vehicle:append_exact_number");
+    assert_eq!(create_entity(&c, &vehicle_minimal(&id)).await, StatusCode::CREATED);
+    let exact = Number::from_str("0.130000000000000005").expect("exact JSON number");
+    let fragment = json!({"reading": {"type": "Property", "value": exact}, "@context": TEST_SUITE_CONTEXT});
+
+    let (status, _) = append_entity_attrs(&c, &id, &fragment, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.130000000000000005"));
 }
 
 #[tokio::test]

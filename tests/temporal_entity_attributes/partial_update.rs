@@ -20,8 +20,9 @@ use crate::{
     vehicle_temporal_representation,
 };
 use reqwest::{Method, StatusCode};
+use serde_json::{Number, json};
 use serial_test::serial;
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 use tokio::time::sleep;
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,22 @@ async fn temporal_attrs_modify_instance_success() {
     assert_eq!(after_instance["createdAt"], created_at, "createdAt must be stable across instance replacement");
     let advanced = after_instance["modifiedAt"].as_str().expect("modifiedAt must be rendered after update");
     assert!(advanced > modified_at.as_str(), "modifiedAt must advance across instance replacement");
+}
+
+#[tokio::test]
+#[serial]
+async fn temporal_attrs_modify_instance_preserves_an_exact_decimal() {
+    let _serialized_environment = clean_database().await;
+    let (c, id, instance_id) = setup_entity_with_instance_id("urn:ngsi-ld:Vehicle:modify_exact_number").await;
+    let exact = Number::from_str("0.170000000000000005").expect("exact JSON number");
+    let fragment = json!({"type": "Property", "value": exact, "observedAt": "2020-09-01T12:03:00Z", "@context": [COMPOUND_CONTEXT]});
+
+    let (status, bytes, _) = modify_temporal_attr_instance(&c, &id, "speed", &instance_id, &fragment).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(bytes.is_empty());
+    let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&body).expect("temporal entity JSON").contains("0.170000000000000005"));
 }
 
 // ---------------------------------------------------------------------------

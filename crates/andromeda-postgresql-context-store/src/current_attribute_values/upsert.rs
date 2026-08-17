@@ -6,7 +6,6 @@ use crate::{
 };
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
-    cast::cast,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
@@ -84,9 +83,7 @@ pub async fn upsert_projection_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &
 ///
 /// Each pairs the name the row column takes in the `AS d(…)` alias with the
 /// array element type its `UNNEST` argument casts to. The `value_number` array
-/// is `text[]`, not a float array: an arbitrary-precision value travels as its
-/// decimal text and is cast `::numeric` in the projection, never widened to a
-/// double on the wire.
+/// is `numeric[]`, so exact decimals are bound without a text or binary64 hop.
 fn staging_columns() -> [UnnestColumn; 14] {
     [
         UnnestColumn::new(CurrentAttributeValues::EntityKey, PostgresType::BigintArray),
@@ -98,7 +95,7 @@ fn staging_columns() -> [UnnestColumn; 14] {
         UnnestColumn::new(CurrentAttributeValues::UnitCodeId, PostgresType::SmallintArray),
         UnnestColumn::new(CurrentAttributeValues::ValueBool, PostgresType::BooleanArray),
         UnnestColumn::new(CurrentAttributeValues::DatasetId, PostgresType::TextArray),
-        UnnestColumn::new(CurrentAttributeValues::ValueNumber, PostgresType::TextArray),
+        UnnestColumn::new(CurrentAttributeValues::ValueNumber, PostgresType::NumericArray),
         UnnestColumn::new(CurrentAttributeValues::ValueString, PostgresType::TextArray),
         UnnestColumn::new(CurrentAttributeValues::ValueGeo, PostgresType::ByteaArray),
         UnnestColumn::new(CurrentAttributeValues::ValueObject, PostgresType::JsonbArray),
@@ -163,7 +160,7 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .expr(staged(CurrentAttributeValues::UnitCodeId))
         .expr(staged(CurrentAttributeValues::ValueBool))
         .expr(staged(CurrentAttributeValues::DatasetId))
-        .expr(cast(staged(CurrentAttributeValues::ValueNumber), PostgresType::Numeric))
+        .expr(staged(CurrentAttributeValues::ValueNumber))
         .expr(staged(CurrentAttributeValues::ValueString))
         .expr(geometry)
         .expr(staged(CurrentAttributeValues::ValueObject))
@@ -255,7 +252,7 @@ mod tests {
             "$3::integer[]",
             "$4::smallint[]",
             "$8::boolean[]",
-            "$10::text[]",
+            "$10::numeric[]",
             "$12::bytea[]",
             "$13::jsonb[]",
         ] {
@@ -288,7 +285,8 @@ mod tests {
     #[test]
     fn a_number_reaches_the_arbitrary_precision_column_rather_than_a_double() {
         let sql = rendered();
-        assert!(sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
+        assert!(sql.contains(r#"$10::numeric[]"#), "{sql}");
+        assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
         assert!(!sql.contains("float8"), "{sql}");
     }

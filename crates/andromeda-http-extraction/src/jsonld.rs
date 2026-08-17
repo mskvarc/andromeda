@@ -7,6 +7,7 @@
 use andromeda_http_headers::{link::header::Link, version::NgsiLdVersion};
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
 use andromeda_ngsi_ld_render::version::VersionRenderer;
 use axum::{
     body::Bytes,
@@ -211,13 +212,9 @@ where
             return Err(ExtractorRejection::invalid_request("Request body shall not be empty", uri.clone()));
         }
 
-        // Parse as Value first to extract @context if needed, then strip.
-        // `sonic-rs` runtime-dispatches a SIMD parser (AVX2 / NEON / scalar)
-        // and is roughly 2-3x faster than `serde_json` on body shapes seen by
-        // this extractor (single entities, small batches). The output is a
-        // standard `serde_json::Value`, so downstream code is unchanged.
         let mut value: serde_json::Value =
-            sonic_rs::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
+            serde_json::from_slice(&bytes).map_err(|error| ExtractorRejection::invalid_request(format!("Invalid JSON: {error}"), uri.clone()))?;
+        canonicalize_numbers(&mut value).map_err(|error| ExtractorRejection::bad_request_data(error.to_string(), uri.clone()))?;
 
         // Reject empty arrays — not a valid NGSI-LD entity or batch payload
         if value.as_array().is_some_and(|a| a.is_empty()) {
@@ -253,7 +250,7 @@ where
         // Context is handled separately by ContextUrl extractor
         strip_context_from_value(&mut value);
 
-        let typed_value: T = serde_json::from_value(value).map_err(|e| ExtractorRejection::bad_request_data(format!("Invalid JSON: {e}"), uri.clone()))?;
+        let typed_value: T = deserialize_exact(&value).map_err(|e| ExtractorRejection::bad_request_data(format!("Invalid JSON: {e}"), uri.clone()))?;
 
         Ok(JsonLd { value: typed_value, context })
     }
@@ -397,5 +394,41 @@ mod tests {
 
         let result = JsonLd::<Value>::from_request(req, &()).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn nested_numbers_are_preserved_without_a_binary64_hop() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"id":"urn:ngsi-ld:T:1","type":"T","property":{"type":"Property","value":0.100000000000000005,"nested":[18446744073709551616]},"list":{"type":"ListProperty","valueList":[-2.5e-400]},"json":{"type":"JsonProperty","json":{"n":1.234567890123456789e20}}}"#,
+            ))
+            .expect("request builds");
+
+        let extracted = JsonLd::<Value>::from_request(req, &()).await.expect("supported exact numbers");
+        let encoded = serde_json::to_string(&extracted.value).expect("exact JSON");
+        assert!(encoded.contains("0.100000000000000005"), "{encoded}");
+        assert!(encoded.contains("18446744073709551616"), "{encoded}");
+        assert!(encoded.contains("-2.5e-400") || encoded.contains("-2.5E-400"), "{encoded}");
+        assert!(encoded.contains("123456789012345678900"), "{encoded}");
+    }
+
+    #[tokio::test]
+    async fn an_out_of_range_nested_number_is_bad_request_data_with_its_path() {
+        let req = Request::builder()
+            .uri("/ngsi-ld/v1/entities")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"id":"urn:ngsi-ld:T:1","type":"T","property":{"type":"Property","value":{"nested":[1e-16384]}}}"#,
+            ))
+            .expect("request builds");
+
+        match JsonLd::<Value>::from_request(req, &()).await {
+            Err(ExtractorRejection::BadRequestData { detail, .. }) => {
+                assert!(detail.contains("/property/value/nested/0"), "{detail}");
+            }
+            _other => unreachable!("expected BadRequestData"),
+        }
     }
 }

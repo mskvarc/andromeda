@@ -14,8 +14,10 @@ use andromeda_ngsi_ld_lexicon::{
     ngsi_ld_time::NgsiLdTime,
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, expanded::geo_property::expanded_geo_node_to_geometry};
+use andromeda_ngsi_ld_model::expanded::geo_property::expanded_geo_node_to_geometry;
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -23,12 +25,8 @@ use serde_json::Value;
 ///
 /// Exactly one is populated; which one is decided by [`AttributeValue`].
 pub struct HistoryValueColumns {
-    /// Decimal literal for the arbitrary-precision numeric column.
-    ///
-    /// The column is `NUMERIC`, so the value is handed over as its decimal text:
-    /// an integer beyond the range the double format names individually reaches
-    /// storage unchanged rather than being refused or rounded at the boundary.
-    pub value_number: Option<String>,
+    /// Exact value for the arbitrary-precision numeric column.
+    pub value_number: Option<BigDecimal>,
     /// String value for string-typed properties.
     pub value_string: Option<String>,
     /// Boolean value for boolean-typed properties.
@@ -79,7 +77,7 @@ impl AttributeValue {
             value_uri: None,
         };
         match self {
-            AttributeValue::Number(number) => columns.value_number = Some(number.to_string()),
+            AttributeValue::Number(number) => columns.value_number = Some(number.into_decimal()),
             AttributeValue::String(text) => columns.value_string = Some(text),
             AttributeValue::Boolean(flag) => columns.value_bool = Some(flag),
             AttributeValue::Geometry(geometry) => columns.value_geo = Some(geometry),
@@ -206,7 +204,9 @@ pub fn extract_attribute_value(instance: &Value, attribute_type: AttributeType) 
                     // shape it was parsed in and reaches storage as its decimal
                     // literal: a clause 5.6.14 modification stores exactly the
                     // values a creation does.
-                    Value::Number(number) => Ok(AttributeValue::Number(JsonNumber::try_from(number)?)),
+                    Value::Number(number) => JsonNumber::try_from(number)
+                        .map(AttributeValue::Number)
+                        .map_err(|error| TemporalStoreError::Validation(error.to_string())),
                     Value::Bool(b) => Ok(AttributeValue::Boolean(*b)),
                     Value::String(s) => Ok(AttributeValue::String(s.clone())), // clone: need owned String for the enum payload; s is borrowed from JSON
                     Value::Object(_) | Value::Array(_) => Ok(AttributeValue::Object(value.clone())), // clone: need owned Value for the enum payload; value is borrowed from JSON
@@ -309,7 +309,7 @@ mod tests {
         let columns = extract_attribute_value(&instance, AttributeType::Property)
             .expect("numeric property")
             .into_columns();
-        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("12.5"));
+        pretty_assertions::assert_eq!(columns.value_number.map(|value| value.to_string()).as_deref(), Some("12.5"));
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
         let columns = extract_attribute_value(&instance, AttributeType::Property)
             .expect("an arbitrary-precision integer")
             .into_columns();
-        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("9007199254740993"));
+        pretty_assertions::assert_eq!(columns.value_number.map(|value| value.to_string()).as_deref(), Some("9007199254740993"));
     }
 
     #[test]
@@ -348,7 +348,7 @@ mod tests {
         let columns = extract_attribute_value(&instance, AttributeType::Property)
             .expect("2^53 has an exact double")
             .into_columns();
-        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("9007199254740992"));
+        pretty_assertions::assert_eq!(columns.value_number.map(|value| value.to_string()).as_deref(), Some("9007199254740992"));
     }
 
     #[test]

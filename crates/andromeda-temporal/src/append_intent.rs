@@ -156,7 +156,8 @@ mod tests {
     use crate::append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity};
     use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
     use andromeda_ngsi_ld_lexicon::{instance_identity::InstanceIdentity, uri::Uri};
-    use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, temporal::TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     use std::sync::Arc;
@@ -183,7 +184,7 @@ mod tests {
         let TemporalAppendEntry::Observation { row } = &intent.entries[0] else {
             return;
         };
-        pretty_assertions::assert_eq!(row.value, TemporalValue::Number(JsonNumber::Signed(42)));
+        pretty_assertions::assert_eq!(row.value, TemporalValue::Number(JsonNumber::from(42)));
         pretty_assertions::assert_eq!(intent.record.recorded_at(), recorded_at);
         pretty_assertions::assert_eq!(row.recorded_at, recorded_at);
         assert!(matches!(row.instance, InstanceIdentity::Generated(_)));

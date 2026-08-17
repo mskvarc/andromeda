@@ -100,10 +100,10 @@ impl<'a> TemporalAggregationRenderer<'a> {
                             AggrMethod::DistinctCount => row.distinct_count.map_or(Value::Null, |count| json!(count)),
                             AggrMethod::Min => aggregation_min_max_to_json(row.min.as_ref()),
                             AggrMethod::Max => aggregation_min_max_to_json(row.max.as_ref()),
-                            AggrMethod::Avg => row.avg.map_or(Value::Null, |number| json!(number)),
-                            AggrMethod::Sum => row.sum.map_or(Value::Null, |number| json!(number)),
-                            AggrMethod::SumSq => row.sumsq.map_or(Value::Null, |number| json!(number)),
-                            AggrMethod::StdDev => row.stddev.map_or(Value::Null, |number| json!(number)),
+                            AggrMethod::Avg => row.avg.as_ref().map_or(Value::Null, |number| json!(number)),
+                            AggrMethod::Sum => row.sum.as_ref().map_or(Value::Null, |number| json!(number)),
+                            AggrMethod::SumSq => row.sumsq.as_ref().map_or(Value::Null, |number| json!(number)),
+                            AggrMethod::StdDev => row.stddev.as_ref().map_or(Value::Null, |number| json!(number)),
                         };
 
                         let bucket_start = row.bucket_start.map_or(Value::Null, |instant| json!(whole_seconds(instant)));
@@ -146,10 +146,8 @@ mod tests {
         temporal_format::TemporalFormat,
         time_prop::TimeProp,
     };
-    use andromeda_ngsi_ld_model::{
-        attribute::json_number::JsonNumber,
-        temporal::{AggregationMinMax, TemporalAggregationRow},
-    };
+    use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow};
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_query::{
         entity_selection::EntitySelection,
         temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
@@ -157,6 +155,7 @@ mod tests {
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
     use serde_json::{Value, json};
+    use std::str::FromStr;
 
     const WEIGHT: &str = "https://uri.etsi.org/ngsi-ld/default-context/weight";
 
@@ -211,13 +210,47 @@ mod tests {
     #[test]
     fn an_exact_sum_is_rendered_as_the_integer_it_is() {
         let mut row = bucket(None, None);
-        row.sum = Some(JsonNumber::Signed(9_007_199_254_740_993));
+        row.sum = Some(JsonNumber::from(9_007_199_254_740_993_i64));
         let instance = rendered(&[row], vec![AggrMethod::Sum]);
         pretty_assertions::assert_eq!(instance["sum"], json!([[9_007_199_254_740_993_i64, Value::Null, Value::Null]]));
         assert!(
             serde_json::to_string(&instance).expect("the instance serialises").contains("9007199254740993"),
             "{instance}"
         );
+    }
+
+    #[test]
+    fn every_decimal_aggregate_is_rendered_without_binary64_conversion() {
+        let exact = |value: &str| JsonNumber::from_str(value).expect("supported exact aggregate");
+        let mut row = bucket(None, None);
+        row.avg = Some(exact("0.150000000000000005"));
+        row.min = Some(AggregationMinMax::Number(exact("0.100000000000000005")));
+        row.max = Some(AggregationMinMax::Number(exact("0.200000000000000005")));
+        row.sum = Some(exact("0.300000000000000010"));
+        row.sumsq = Some(exact("0.050000000000000003000000000000000050"));
+        row.stddev = Some(exact("0.070710678118654752"));
+        let instance = rendered(
+            &[row],
+            vec![
+                AggrMethod::Avg,
+                AggrMethod::Min,
+                AggrMethod::Max,
+                AggrMethod::Sum,
+                AggrMethod::SumSq,
+                AggrMethod::StdDev,
+            ],
+        );
+        let encoded = serde_json::to_string(&instance).expect("aggregate JSON");
+        for expected in [
+            "0.150000000000000005",
+            "0.100000000000000005",
+            "0.200000000000000005",
+            "0.30000000000000001",
+            "0.05000000000000000300000000000000005",
+            "0.070710678118654752",
+        ] {
+            assert!(encoded.contains(expected), "missing {expected} in {encoded}");
+        }
     }
 
     /// Clause 4.5.19 reports the extremum of the values that were observed, and
@@ -239,7 +272,7 @@ mod tests {
     #[test]
     fn each_extremum_family_renders_in_its_own_json_shape() {
         let cases = [
-            (AggregationMinMax::Number(JsonNumber::Double(1.5)), json!(1.5)),
+            (AggregationMinMax::Number(JsonNumber::try_from(1.5).expect("a finite number")), json!(1.5)),
             (AggregationMinMax::String("alpha".to_owned()), json!("alpha")),
             (AggregationMinMax::Boolean(true), json!(true)),
             (AggregationMinMax::DateTime(instant("2026-01-01T00:00:00Z")), json!("2026-01-01T00:00:00Z")),

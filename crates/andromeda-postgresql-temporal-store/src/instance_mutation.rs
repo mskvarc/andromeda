@@ -28,7 +28,7 @@ use andromeda_postgresql_schema::{
     attribute_dictionary::AttributeNames,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
 };
-use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
+use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
@@ -139,7 +139,7 @@ impl TemporalRepository {
             .bind(entity_id.as_str())
             .bind(attribute_name.as_str())
             .bind(state.value_kind.code())
-            .bind(state.columns.value_number.as_deref())
+            .bind(state.columns.value_number.as_ref())
             .bind(state.columns.value_string.as_deref())
             .bind(state.columns.value_bool)
             .bind(geometry_bytes(state.columns.value_geo.as_ref())?)
@@ -346,9 +346,9 @@ fn geometry_write(marker: usize) -> SimpleExpr {
 
 /// The instance modification (clause 5.6.14 replacement).
 ///
-/// `$5` is the value's decimal literal cast to the column's arbitrary-precision
-/// type, so a number with no exact double is stored exactly as a creation stores
-/// it. `modified_at` advances the NGSI-LD axis while `recorded_at` is left alone.
+/// `$5` binds directly as the column's arbitrary-precision type, so a number
+/// with no exact double is stored exactly as a creation stores it. `modified_at`
+/// advances the NGSI-LD axis while `recorded_at` is left alone.
 /// `attribute_kind` moves with the value columns so a replacement that changes
 /// family keeps the row's declared family in agreement with its value shape.
 fn update_instance_sql(column: InstanceColumn) -> String {
@@ -356,7 +356,7 @@ fn update_instance_sql(column: InstanceColumn) -> String {
         .table(AttributeHistory::Table)
         .values([
             (AttributeHistory::ValueKind, external_placeholder(4)),
-            (AttributeHistory::ValueNumber, cast(external_placeholder(5), PostgresType::Numeric)),
+            (AttributeHistory::ValueNumber, external_placeholder(5)),
             (AttributeHistory::ValueString, external_placeholder(6)),
             (AttributeHistory::ValueBool, external_placeholder(7)),
             (AttributeHistory::ValueGeo, geometry_write(8)),
@@ -408,7 +408,7 @@ mod tests {
         },
     };
     use andromeda_ngsi_ld_geometry::geometry::Geometry;
-    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
 
     /// The six identity-column statements, rendered.
@@ -477,10 +477,10 @@ mod tests {
     }
 
     #[test]
-    fn the_update_statement_binds_the_numeric_literal_without_a_double_hop() {
+    fn the_update_statement_binds_numeric_without_a_double_hop() {
         for column in [InstanceColumn::Generated, InstanceColumn::Verbatim] {
             let statement = update_instance_sql(column);
-            assert!(statement.contains(r#""value_number" = $5::numeric"#), "{statement}");
+            assert!(statement.contains(r#""value_number" = $5"#), "{statement}");
             assert!(!statement.contains("double precision"), "{statement}");
         }
     }
@@ -492,7 +492,7 @@ mod tests {
             .map_err(|error| error.to_string());
         assert_eq!(geometry, Ok(ValueKind::Geometry));
         let kinds = [
-            value_kind_of(&AttributeValue::Number(JsonNumber::Signed(1))),
+            value_kind_of(&AttributeValue::Number(JsonNumber::from(1))),
             value_kind_of(&AttributeValue::String("text".to_owned())),
             value_kind_of(&AttributeValue::Boolean(true)),
             value_kind_of(&AttributeValue::Object(serde_json::json!({}))),

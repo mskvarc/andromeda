@@ -4,6 +4,7 @@ use crate::outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWrit
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use indexmap::IndexMap;
 use serde_json::Value;
 use tracing::warn;
@@ -15,7 +16,7 @@ pub(crate) fn parse_forwarded_entities(csr_id: &Uri, values: Vec<Value>) -> (Vec
         if let Value::Object(object) = &mut value {
             object.remove("@context");
         }
-        match serde_json::from_value::<Entity>(value) {
+        match deserialize_exact::<Entity>(&value) {
             Ok(e) => entities.push(e),
             Err(err) => {
                 warn!("Context source {} returned entity that failed to parse: {}", csr_id, err);
@@ -173,5 +174,16 @@ mod tests {
         let (entities, warnings) = parse_forwarded_entities(&registration_id, vec![value]);
         pretty_assertions::assert_eq!(entities.len(), 1);
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn a_forwarded_entity_keeps_its_exact_decimal_value() {
+        let value = serde_json::from_str(r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}}"#)
+            .expect("exact remote JSON");
+        let registration_id = "urn:ngsi-ld:Registration:1".parse().expect("registration URI");
+        let (entities, warnings) = parse_forwarded_entities(&registration_id, vec![value]);
+        assert!(warnings.is_empty());
+        let encoded = serde_json::to_string(&entities).expect("forwarded response JSON");
+        assert!(encoded.contains("0.100000000000000005"), "{encoded}");
     }
 }

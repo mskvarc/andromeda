@@ -3,7 +3,7 @@
 //! A projection write serves one attribute instance or ten thousand through the
 //! same statement, so the rows are transposed into one vector per column and
 //! expanded server-side. Everything that turns a domain value into a column —
-//! the decimal literal `NUMERIC` parses, the EWKB a geometry is projected from,
+//! the exact decimal a `NUMERIC` bind carries, the EWKB a geometry is projected from,
 //! the codes the kind columns hold — happens on the way in here.
 
 use crate::{
@@ -16,6 +16,7 @@ use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::Enti
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -25,8 +26,8 @@ use serde_json::Value;
 /// by the caller, which is what keeps the `value_kind` code and the column
 /// holding the value from ever disagreeing.
 struct TypedValueColumns<'a> {
-    /// The arbitrary-precision value as the decimal literal `NUMERIC` parses.
-    value_number: Option<String>,
+    /// The arbitrary-precision value bound directly as `NUMERIC`.
+    value_number: Option<&'a BigDecimal>,
     /// The string value.
     value_string: Option<&'a str>,
     /// The boolean value.
@@ -53,10 +54,7 @@ fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_>
         value_uri: None,
     };
     match value {
-        // The column is arbitrary-precision, so the number travels as its
-        // decimal text: a JSON integer beyond the range the double format names
-        // individually reaches storage unchanged rather than rounded into it.
-        ProjectedAttributeValue::Number(number) => columns.value_number = Some(number.to_string()),
+        ProjectedAttributeValue::Number(number) => columns.value_number = Some(number.decimal()),
         ProjectedAttributeValue::String(text) => columns.value_string = Some(text),
         ProjectedAttributeValue::Boolean(flag) => columns.value_bool = Some(*flag),
         ProjectedAttributeValue::Geometry(geometry) => columns.value_geo = Some(geometry),
@@ -87,8 +85,8 @@ pub struct ProjectionBinds<'a> {
     pub value_bools: Vec<Option<bool>>,
     /// `datasetId` of each row, absent on a default instance.
     pub dataset_ids: Vec<Option<&'a str>>,
-    /// Arbitrary-precision values as the decimal literals `NUMERIC` parses.
-    pub value_numbers: Vec<Option<String>>,
+    /// Arbitrary-precision values bound as a `numeric[]`.
+    pub value_numbers: Vec<Option<BigDecimal>>,
     /// String values.
     pub value_strings: Vec<Option<&'a str>>,
     /// Geometry values as EWKB, projected server-side.
@@ -134,7 +132,9 @@ impl<'a> ProjectionBinds<'a> {
             binds.unit_code_ids.push(row.unit_code_id.map(UnitCodeId::get));
             binds.value_bools.push(value.value_bool);
             binds.dataset_ids.push(row.key.dataset_id.as_ref().map(Uri::as_str));
-            binds.value_numbers.push(value.value_number);
+            // SQLx owns array elements for the duration of the query. Clone the
+            // decimal itself, preserving its exact value without formatting it.
+            binds.value_numbers.push(value.value_number.cloned());
             binds.value_strings.push(value.value_string);
             binds.value_geos.push(geometry_bytes(value.value_geo)?);
             binds.value_objects.push(value.value_object);
@@ -150,7 +150,7 @@ mod tests {
         columns::{ProjectionBinds, typed_value_columns},
         row::{ProjectedAttributeKey, ProjectedAttributeRow, ProjectedAttributeValue},
     };
-    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, entity_key::EntityKey, value_kind::ValueKind};
     use chrono::{TimeZone, Utc};
 
@@ -172,15 +172,16 @@ mod tests {
     #[test]
     fn a_number_reaches_the_column_as_the_decimal_literal_numeric_parses() {
         // One above 2^53, which the double format cannot name individually.
-        let columns = typed_value_columns(&ProjectedAttributeValue::Number(JsonNumber::Signed(9_007_199_254_740_993)));
-        pretty_assertions::assert_eq!(columns.value_number.as_deref(), Some("9007199254740993"));
+        let value = ProjectedAttributeValue::Number(JsonNumber::from(9_007_199_254_740_993_i64));
+        let columns = typed_value_columns(&value);
+        pretty_assertions::assert_eq!(columns.value_number.map(ToString::to_string).as_deref(), Some("9007199254740993"));
     }
 
     #[test]
     fn every_value_shape_populates_exactly_one_typed_column() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         let values = [
-            ProjectedAttributeValue::Number(JsonNumber::Double(-2.5e-4)),
+            ProjectedAttributeValue::Number(JsonNumber::try_from(-2.5e-4).expect("a finite number")),
             ProjectedAttributeValue::String("text".to_owned()),
             ProjectedAttributeValue::Boolean(false),
             ProjectedAttributeValue::Object(serde_json::json!({"a": 1})),

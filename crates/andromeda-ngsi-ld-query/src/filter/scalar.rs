@@ -2,8 +2,8 @@
 
 use crate::error::QueryError;
 use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
-use serde_json::Number;
 
 /// The right-hand side of a comparison predicate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,8 +31,8 @@ pub enum CompareValue {
 /// what makes `12:00:00+01:00` and `11:00:00Z` the same operand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scalar {
-    /// A numeric value (integer or floating-point).
-    Number(Number),
+    /// An exact numeric value.
+    Number(JsonNumber),
     /// A boolean value (`true` or `false`).
     Bool(bool),
     /// A quoted string value.

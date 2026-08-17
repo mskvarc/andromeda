@@ -28,6 +28,7 @@ use andromeda_ngsi_ld_model::{
     notification::Notification,
     subscription::Subscription,
 };
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::filter::eval;
 use andromeda_ngsi_ld_render::simplify::simplify_entity;
 use andromeda_subscription::{compilation::compile_geo_q, store::SubscriptionStore};
@@ -315,7 +316,7 @@ impl IntervalNotificationOperation {
 
             let formatted = if let Some(fmt) = sub.notification.format {
                 if fmt.is_simplified() {
-                    match serde_json::from_value::<Entity>(compacted.clone()) {
+                    match deserialize_exact::<Entity>(&compacted) {
                         Ok(entity) => simplify_entity(&entity),
                         Err(_) => compacted,
                     }

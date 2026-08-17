@@ -24,7 +24,7 @@ use crate::{
     pattern::Pattern,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use serde_json::Number;
+use andromeda_ngsi_ld_number::JsonNumber;
 
 /// The most segments an attribute path may nest, counting sub-attributes and
 /// linked-entity hops alike.
@@ -530,7 +530,9 @@ impl<'a> Parser<'a> {
         match self.advance() {
             Some(Token::NumberLit(s)) => {
                 // clone: only on the error path, where the message owns the literal
-                let num: Number = s.parse::<serde_json::Number>().map_err(|_| QueryError::QInvalidNumber(s.clone()))?;
+                let num = s
+                    .parse::<JsonNumber>()
+                    .map_err(|source| QueryError::QInvalidNumber { value: s.clone(), source })?;
                 Ok(Scalar::Number(num))
             }
             Some(Token::QuotedStr(s) | Token::Ident(s)) => Scalar::from_literal(s),
@@ -859,7 +861,7 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Ordering { rhs, .. }) => match rhs {
                 Scalar::Number(n) => {
-                    pretty_assertions::assert_eq!(n.as_f64(), Some(-5.0));
+                    pretty_assertions::assert_eq!(n, JsonNumber::from(-5));
                 }
                 other @ (Scalar::Bool(_) | Scalar::Str(_) | Scalar::DateTime(_) | Scalar::Date(_) | Scalar::Time(_)) => {
                     unreachable!("expected Number, got {other:?}")
@@ -875,12 +877,26 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Equality { rhs, .. }) => match rhs {
                 CompareValue::Scalar(Scalar::Number(n)) => {
-                    pretty_assertions::assert_eq!(n.as_f64(), Some(23.5));
+                    pretty_assertions::assert_eq!(n, JsonNumber::try_from(23.5).expect("a finite number"));
                 }
                 other @ (CompareValue::Scalar(_) | CompareValue::Range { .. } | CompareValue::ValueList(_)) => unreachable!("expected Number, got {other:?}"),
             },
             other @ (Expr::And(_) | Expr::Or(_) | Expr::Pred(_)) => unreachable!("expected Equality, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn exact_fraction_and_range_failure_are_typed() {
+        let expr = parse("temperature==0.100000000000000005").expect("supported exact number");
+        let Expr::Pred(Predicate::Equality {
+            rhs: CompareValue::Scalar(Scalar::Number(number)),
+            ..
+        }) = expr
+        else {
+            unreachable!("expected numeric equality");
+        };
+        pretty_assertions::assert_eq!(number.to_string(), "0.100000000000000005");
+        assert!(matches!(parse("temperature==1e-16384"), Err(QueryError::QInvalidNumber { .. })));
     }
 
     #[test]

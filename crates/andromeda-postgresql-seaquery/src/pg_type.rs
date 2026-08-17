@@ -80,6 +80,9 @@ pub enum PostgresType {
     /// `boolean[]`.
     #[iden = "boolean[]"]
     BooleanArray,
+    /// `numeric[]`.
+    #[iden = "numeric[]"]
+    NumericArray,
     /// `text[]`.
     #[iden = "text[]"]
     TextArray,
@@ -120,6 +123,7 @@ mod tests {
     fn array_type_names_carry_their_brackets() {
         assert_eq!(PostgresType::IntegerArray.to_string(), "integer[]");
         assert_eq!(PostgresType::BigintArray.to_string(), "bigint[]");
+        assert_eq!(PostgresType::NumericArray.to_string(), "numeric[]");
         assert_eq!(PostgresType::TextArray.to_string(), "text[]");
         assert_eq!(PostgresType::ByteaArray.to_string(), "bytea[]");
         assert_eq!(PostgresType::JsonbArray.to_string(), "jsonb[]");

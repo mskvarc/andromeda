@@ -1,6 +1,5 @@
 //! Backend-neutral temporal observations and aggregation values.
 
-use crate::attribute::json_number::JsonNumber;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -8,6 +7,7 @@ use andromeda_ngsi_ld_lexicon::{
     time_prop::TimeProp,
     uri::Uri,
 };
+use andromeda_ngsi_ld_number::JsonNumber;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,11 +16,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TemporalValue {
-    /// A numeric attribute value, in the shape it was parsed in.
-    ///
-    /// The shape survives the whole write path so an integer the double format
-    /// cannot name reaches the arbitrary-precision storage column unchanged
-    /// instead of being rounded at the first conversion.
+    /// An exact numeric attribute value.
     Number(JsonNumber),
     /// A string attribute value.
     String(String),
@@ -46,6 +42,33 @@ pub enum TemporalValue {
         /// The instant the instance was deleted at.
         deleted_at: DateTime<Utc>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal::TemporalValue;
+    use andromeda_ngsi_ld_number::JsonNumber;
+    use std::str::FromStr;
+
+    #[test]
+    fn an_exact_number_round_trips_through_the_durable_wire_shape() {
+        let value = TemporalValue::Number(JsonNumber::from_str("0.100000000000000005").expect("supported exact number"));
+        let encoded = serde_json::to_string(&value).expect("durable JSON");
+        pretty_assertions::assert_eq!(encoded, r#"{"number":0.100000000000000005}"#);
+        pretty_assertions::assert_eq!(serde_json::from_str::<TemporalValue>(&encoded).expect("round trip"), value);
+    }
+
+    #[test]
+    fn integer_and_double_payloads_from_old_intents_remain_readable() {
+        pretty_assertions::assert_eq!(
+            serde_json::from_str::<TemporalValue>(r#"{"number":42}"#).expect("old integer intent"),
+            TemporalValue::Number(JsonNumber::from(42))
+        );
+        pretty_assertions::assert_eq!(
+            serde_json::from_str::<TemporalValue>(r#"{"number":1.5}"#).expect("old double intent"),
+            TemporalValue::Number(JsonNumber::from_str("1.5").expect("exact decimal"))
+        );
+    }
 }
 
 impl TemporalValue {

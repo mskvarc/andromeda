@@ -280,7 +280,11 @@ fn context_reference(context: &ContextSpec) -> Result<RemoteContextReference<Iri
 
 #[cfg(test)]
 mod tests {
-    use crate::{context_spec::ContextSpec, core_context::NGSI_LD_CORE_CONTEXT_V16_URL, engine::processor::JsonLdEngine};
+    use crate::{
+        context_spec::ContextSpec,
+        core_context::NGSI_LD_CORE_CONTEXT_V16_URL,
+        engine::{options::CompactOptions, processor::JsonLdEngine},
+    };
     use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
     use serde_json::json;
 
@@ -314,6 +318,28 @@ mod tests {
             .expect("expansion succeeds");
 
         assert!(expanded.is_array());
+    }
+
+    #[tokio::test]
+    async fn standards_expansion_and_compaction_preserve_exact_value_list_and_json_numbers() {
+        let document = serde_json::from_str(
+            r#"{"id":"urn:ngsi-ld:Device:exact","type":"Device","reading":{"type":"Property","value":0.100000000000000005},"readings":{"type":"ListProperty","valueList":[0.100000000000000005]},"config":{"type":"JsonProperty","json":{"n":0.100000000000000005}}}"#,
+        )
+        .expect("exact JSON");
+        let engine = offline_engine();
+        let context = ContextSpec::none();
+        let expanded = engine.expand(document, &context).await.expect("expansion succeeds");
+        let expanded_json = serde_json::to_string(&expanded).expect("expanded JSON");
+        pretty_assertions::assert_eq!(expanded_json.matches("0.100000000000000005").count(), 3);
+        assert!(!expanded_json.contains("$serde_json::private::Number"), "{expanded_json}");
+
+        let compacted = engine
+            .compact(expanded, &context, CompactOptions::default())
+            .await
+            .expect("compaction succeeds");
+        let compacted_json = serde_json::to_string(&compacted).expect("compacted JSON");
+        pretty_assertions::assert_eq!(compacted_json.matches("0.100000000000000005").count(), 3);
+        assert!(!compacted_json.contains("$serde_json::private::Number"), "{compacted_json}");
     }
 
     #[tokio::test]

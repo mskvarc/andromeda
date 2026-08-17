@@ -23,8 +23,9 @@ use crate::{
     unique_id,
 };
 use reqwest::{Method, StatusCode};
-use serde_json::json;
+use serde_json::{Number, json};
 use serial_test::serial;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // 054_01: Replace existing entity
@@ -58,6 +59,26 @@ async fn entity_replace_success_createdat_preserved() {
     assert_eq!(after["locatedAt"]["object"], "urn:ngsi-ld:City:Pisa", "new relationship should be present");
     assert!(after.get("subCategory").is_none(), "old attribute should be gone");
     assert_eq!(after["createdAt"].as_str().unwrap(), created_at, "createdAt should be preserved");
+}
+
+#[tokio::test]
+#[serial]
+async fn entity_replace_preserves_an_exact_decimal() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Building:replace_exact_number");
+    assert_eq!(
+        create_entity_json(&c, &building_simple_attributes(&id), COMPOUND_CONTEXT).await,
+        StatusCode::CREATED
+    );
+    let exact = Number::from_str("0.120000000000000005").expect("exact JSON number");
+    let replacement = json!({"id": id, "type": "Building", "reading": {"type": "Property", "value": exact}, "@context": TEST_SUITE_CONTEXT});
+
+    let (status, _) = replace_entity(&c, &id, &replacement, "application/ld+json", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.120000000000000005"));
 }
 
 // ---------------------------------------------------------------------------

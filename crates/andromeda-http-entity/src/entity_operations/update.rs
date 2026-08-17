@@ -13,6 +13,7 @@ use crate::entity_operations::{
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
+    Json,
     NgsiLdBatchResponse,
     NgsiLdErrorType,
     OriginalUri,
@@ -22,7 +23,6 @@ use crate::entity_operations::{
     RequestOverwritePolicy,
     Response,
     ResponsePayload,
-    SonicJson,
     StatusCode,
     UpdateParams,
     ValidatedQuery,
@@ -96,7 +96,7 @@ pub(crate) async fn batch_update(
         };
         let status = StatusCode::from_u16(first.status()).unwrap_or(StatusCode::NO_CONTENT);
         if let Some(resp_body) = first.body() {
-            return Ok((status, SonicJson(resp_body.clone())).into_response());
+            return Ok((status, Json(resp_body.clone())).into_response());
         }
         return Ok(status.into_response());
     }

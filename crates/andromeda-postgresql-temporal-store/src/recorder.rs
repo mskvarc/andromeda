@@ -45,8 +45,7 @@ impl TemporalRecorder {
     /// Returns [`TemporalStoreError::Database`] when a statement fails,
     /// [`TemporalStoreError::NotFound`] when an intent extends a Temporal
     /// Evolution that does not exist and declares no entity type to create it
-    /// with, and [`TemporalStoreError::Validation`] or
-    /// [`TemporalStoreError::NumericPrecision`] when a row cannot be encoded.
+    /// with, or [`TemporalStoreError::Validation`] when a row cannot be encoded.
     pub async fn record_intents_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,

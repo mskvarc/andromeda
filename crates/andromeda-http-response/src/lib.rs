@@ -17,7 +17,6 @@ pub mod pagination;
 pub mod problem_response;
 pub mod render;
 pub mod single;
-pub mod sonic_json;
 pub mod tenant_state_rejection;
 
 #[cfg(test)]
@@ -34,7 +33,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-ngsi-ld-vocabulary",
     ],
-    allow_production_dependencies: ["axum", "sonic-rs"],
+    allow_production_dependencies: ["axum"],
 }
 
 #[cfg(test)]

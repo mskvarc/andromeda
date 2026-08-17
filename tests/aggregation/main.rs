@@ -7,7 +7,7 @@
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE as BASE_URL;
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::{Number, Value, json};
 use uuid::Uuid;
 
 const CTX: &iri_rs::Iri<&str> = CORE_CONTEXT;
@@ -85,6 +85,19 @@ fn numeric_entity(id: &str, attr: &str, values: &[(f64, &str)]) -> Value {
     })
 }
 
+/// Build a temporal entity from raw exact-decimal observations without constructing an `f64`.
+fn exact_numeric_entity(id: &str) -> Value {
+    serde_json::from_str(&format!(
+        r#"{{"id":"{id}","type":"AggTestEntity","reading":[{{"type":"Property","value":0.100000000000000005,"observedAt":"2024-01-01T00:00:00Z"}},{{"type":"Property","value":0.200000000000000005,"observedAt":"2024-01-01T01:00:00Z"}}],"@context":"{CTX}"}}"#
+    ))
+    .expect("exact temporal entity JSON")
+}
+
+/// Borrow the arbitrary-precision JSON spelling of one aggregate result.
+fn aggregate_number(value: &Value) -> &str {
+    value.as_number().map(Number::as_str).expect("aggregate result must be a JSON number")
+}
+
 /// Build a temporal entity with a boolean Property.
 fn boolean_entity(id: &str, attr: &str, values: &[(bool, &str)]) -> Value {
     let instances: Vec<Value> = values.iter().map(|(v, ts)| json!({"type": "Property", "value": v, "observedAt": ts})).collect();
@@ -160,6 +173,23 @@ const NUMERIC_OBS: &[(f64, &str)] = &[
     (200.0, "2024-01-01T01:00:00Z"),
     (300.0, "2024-01-01T02:00:00Z"),
 ];
+
+#[tokio::test]
+async fn decimal_aggregates_preserve_values_beyond_binary64_precision() {
+    let client = Client::new();
+    let id = uid("num-exact");
+    create(&client, &exact_numeric_entity(&id)).await;
+
+    let body = get_aggregated(&client, &id, "avg,min,max,sum,sumsq,stddev", None).await;
+    pretty_assertions::assert_eq!(aggregate_number(&body["reading"]["avg"][0][0]), "0.150000000000000005");
+    pretty_assertions::assert_eq!(aggregate_number(&body["reading"]["min"][0][0]), "0.100000000000000005");
+    pretty_assertions::assert_eq!(aggregate_number(&body["reading"]["max"][0][0]), "0.200000000000000005");
+    pretty_assertions::assert_eq!(aggregate_number(&body["reading"]["sum"][0][0]), "0.30000000000000001");
+    pretty_assertions::assert_eq!(aggregate_number(&body["reading"]["sumsq"][0][0]), "0.05000000000000000300000000000000005");
+    assert!(aggregate_number(&body["reading"]["stddev"][0][0]).starts_with("0.070710678118654"));
+
+    delete(&client, &id).await;
+}
 
 #[tokio::test]
 async fn avg_on_numeric_property() {

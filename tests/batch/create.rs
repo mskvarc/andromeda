@@ -1,9 +1,11 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
+use andromeda_test_fixtures::context::CORE_CONTEXT;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
 use crate::helpers::*;
-use serde_json::json;
+use serde_json::{Number, json};
+use std::str::FromStr;
 
 #[tokio::test]
 #[serial]
@@ -49,6 +51,46 @@ async fn batch_create_with_properties_returns_201() {
     let (status, _, body) = get_entity(&c, &id1, "", true).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     pretty_assertions::assert_eq!(body["name"]["value"], "Eiffel Tower");
+}
+
+#[tokio::test]
+#[serial]
+async fn batch_create_preserves_exact_numbers_and_classifies_range_failures_per_entity() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let fraction_id = unique_id("urn:ngsi-ld:Building:batch_exact_fraction");
+    let integer_id = unique_id("urn:ngsi-ld:Building:batch_exact_integer");
+    let rejected_id = unique_id("urn:ngsi-ld:Building:batch_out_of_range");
+    let fraction = Number::from_str("0.180000000000000005").expect("exact JSON fraction");
+    let integer = Number::from_str("18446744073709551616").expect("exact JSON integer");
+    let out_of_range = Number::from_str("1e-16384").expect("syntactically valid JSON number");
+    let entities = json!([
+        {"id": fraction_id, "type": "Building", "reading": {"type": "Property", "value": fraction}, "@context": [CORE_CONTEXT]},
+        {"id": integer_id, "type": "Building", "reading": {"type": "Property", "value": integer}, "@context": [CORE_CONTEXT]},
+        {"id": rejected_id, "type": "Building", "reading": {"type": "Property", "value": out_of_range}, "@context": [CORE_CONTEXT]}
+    ]);
+
+    let (status, body) = batch_create(&c, &entities).await;
+    pretty_assertions::assert_eq!(status, StatusCode::MULTI_STATUS, "batch result: {body}");
+    pretty_assertions::assert_eq!(body["success"].as_array().map(Vec::len), Some(2));
+    pretty_assertions::assert_eq!(body["errors"].as_array().map(Vec::len), Some(1));
+
+    let (status, _, fraction_body) = get_entity(&c, &fraction_id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert!(
+        serde_json::to_string(&fraction_body)
+            .expect("fraction entity JSON")
+            .contains("0.180000000000000005")
+    );
+    let (status, _, integer_body) = get_entity(&c, &integer_id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::OK);
+    assert!(
+        serde_json::to_string(&integer_body)
+            .expect("integer entity JSON")
+            .contains("18446744073709551616")
+    );
+    let (status, _, _) = get_entity(&c, &rejected_id, "", true).await;
+    pretty_assertions::assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

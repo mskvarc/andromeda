@@ -28,10 +28,8 @@ use andromeda_ngsi_ld_lexicon::{
     time_prop::TimeProp,
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::{
-    attribute::json_number::JsonNumber,
-    temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
-};
+use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_query::{
     entity_selection::EntitySelection,
     temporal::{compiled::CompiledTemporalQuery, instance_selection::InstanceSelection, representation::Representation, window::TemporalWindow},
@@ -283,7 +281,7 @@ fn fixture() -> (SequencedTemporalAppendIntent, Uri) {
         attribute_name: "https://example.com/speed".parse().expect("valid attribute name"),
         attribute_type: AttributeType::Property,
         dataset_id: None,
-        value: TemporalValue::Number(JsonNumber::Signed(42)),
+        value: TemporalValue::Number(JsonNumber::from(42)),
         observed_at: Some(instant()),
         recorded_at: instant(),
         created_at: Some(instant()),

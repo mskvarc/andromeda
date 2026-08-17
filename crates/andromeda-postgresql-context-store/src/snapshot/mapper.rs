@@ -7,6 +7,7 @@ use andromeda_ngsi_ld_model::{
     query::body::Query,
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
 };
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -16,7 +17,7 @@ use url::Url;
 /// Deserialize an optional JSON column into a typed `Option<T>`.
 pub fn deserialize_json_column<T: DeserializeOwned>(row: &PgRow, column: &str) -> Result<Option<T>, ContextStoreError> {
     let val: Option<Value> = row.try_get(column)?;
-    val.map(|v| serde_json::from_value(v).map_err(|e| ContextStoreError::Internal(format!("Failed to deserialize {column}: {e}"))))
+    val.map(|v| deserialize_exact(&v).map_err(|e| ContextStoreError::Internal(format!("Failed to deserialize {column}: {e}"))))
         .transpose()
 }
 

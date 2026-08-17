@@ -16,9 +16,10 @@ pub(crate) fn id_object<V: JsonValue>(s: &str) -> V {
 
 /// Convert a [`serde_json::Value`] into the expander's [`JsonValue`] representation.
 ///
-/// Numbers that fit neither `i64`, `u64` nor `f64` cannot be produced by
-/// `serde_json`'s parser, so the final arm is unreachable in practice and
-/// yields null rather than panicking.
+/// The generic expansion trait cannot construct an arbitrary-precision number.
+/// Such a number is carried as its exact text in this internal scaffold and is
+/// replaced with a native `serde_json::Number` by the exact expansion interface
+/// before the expanded document leaves the model.
 pub(crate) fn serde_json_value_to_json_value<V: JsonValue>(value: &Value) -> V {
     match value {
         Value::Null => V::null(),
@@ -28,10 +29,8 @@ pub(crate) fn serde_json_value_to_json_value<V: JsonValue>(value: &Value) -> V {
                 V::integer(i)
             } else if let Some(u) = n.as_u64() {
                 V::unsigned(u)
-            } else if let Some(f) = n.as_f64() {
-                V::float(f)
             } else {
-                V::null()
+                V::string(n.as_str())
             }
         }
         Value::String(s) => V::string(s),

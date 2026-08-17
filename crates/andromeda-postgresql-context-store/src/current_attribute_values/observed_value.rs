@@ -33,7 +33,7 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
 
     fn try_from(value: &TemporalValue) -> Result<ProjectedAttributeValue, ProjectedValueUnrepresentable> {
         match value {
-            TemporalValue::Number(number) => Ok(ProjectedAttributeValue::Number(*number)),
+            TemporalValue::Number(number) => Ok(ProjectedAttributeValue::Number(number.clone())), // clone: the projected row owns its exact decimal.
             // clone: the projected row owns the value it writes.
             TemporalValue::String(text) => Ok(ProjectedAttributeValue::String(text.clone())),
             TemporalValue::Boolean(flag) => Ok(ProjectedAttributeValue::Boolean(*flag)),
@@ -51,7 +51,8 @@ impl TryFrom<&TemporalValue> for ProjectedAttributeValue {
 #[cfg(test)]
 mod tests {
     use crate::current_attribute_values::{observed_value::ProjectedValueUnrepresentable, row::ProjectedAttributeValue};
-    use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, temporal::TemporalValue};
+    use andromeda_ngsi_ld_model::temporal::TemporalValue;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -69,7 +70,7 @@ mod tests {
     fn every_observed_shape_projects_into_its_own_typed_column() {
         let instant = Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant");
         let observed = [
-            TemporalValue::Number(JsonNumber::Double(1.5)),
+            TemporalValue::Number(JsonNumber::try_from(1.5).expect("a finite number")),
             TemporalValue::String("text".to_owned()),
             TemporalValue::Boolean(true),
             TemporalValue::Geometry(json!({"type": "Point", "coordinates": [1.0, 2.0]})),
@@ -95,10 +96,10 @@ mod tests {
     /// itself rather than as the nearest double.
     #[test]
     fn a_number_beyond_the_exact_double_range_keeps_its_arbitrary_precision_form() {
-        let observed = TemporalValue::Number(JsonNumber::Signed(9_007_199_254_740_993));
+        let observed = TemporalValue::Number(JsonNumber::from(9_007_199_254_740_993_i64));
         let projected = ProjectedAttributeValue::try_from(&observed).expect("an exact integer");
         pretty_assertions::assert_eq!(projected.kind(), ValueKind::Number);
-        pretty_assertions::assert_eq!(projected, ProjectedAttributeValue::Number(JsonNumber::Signed(9_007_199_254_740_993)));
+        pretty_assertions::assert_eq!(projected, ProjectedAttributeValue::Number(JsonNumber::from(9_007_199_254_740_993_i64)));
     }
 
     #[test]

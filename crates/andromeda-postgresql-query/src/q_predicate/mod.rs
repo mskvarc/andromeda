@@ -29,7 +29,6 @@
 //! | comparison or pattern with no sub-attribute and no value path | `EXISTS` on `current_attribute_values` |
 //! | bare existence | `EXISTS` on `current_attribute_values`, presence alone |
 //! | anything carrying a sub-attribute or value path | JSONB jsonpath fallback |
-//! | a numeric operand beyond 2^53 | JSONB jsonpath fallback |
 //! | attribute IRI absent from `attribute_names` | constant `FALSE` |
 //!
 //! The fallback keeps the previous semantics for the shapes the projection

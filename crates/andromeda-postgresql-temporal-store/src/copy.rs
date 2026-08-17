@@ -168,7 +168,7 @@ mod tests {
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
-    use andromeda_ngsi_ld_model::attribute::json_number::JsonNumber;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::StreamId};
     use andromeda_postgresql_encoding::copy::COPY_HEADER_SIGNATURE;
     use andromeda_temporal::append_intent::TemporalObservationIdentity;
@@ -286,7 +286,7 @@ mod tests {
     fn a_number_is_staged_as_the_decimal_literal_the_numeric_cast_reads() {
         // The value is one above 2^53: it has no exact double, so a stream that
         // encoded it as a float8 would have to refuse or round it.
-        let row = row(Uuid::nil(), AttributeHistoryValue::Number(JsonNumber::Signed(9_007_199_254_740_993)));
+        let row = row(Uuid::nil(), AttributeHistoryValue::Number(JsonNumber::from(9_007_199_254_740_993_i64)));
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
         let literal = b"9007199254740993";
         let found = buf.windows(literal.len()).any(|window| window == literal);

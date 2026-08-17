@@ -18,10 +18,10 @@ use andromeda_ngsi_ld_lexicon::{
     uri::Uri,
 };
 use andromeda_ngsi_ld_model::{
-    attribute::json_number::JsonNumber,
     expanded::{geo_property::expanded_geo_node_to_geometry, instance_key::is_system_attribute, null_sentinel::instance_is_null_sentinel},
     temporal::{TemporalHistoryRow, TemporalValue},
 };
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_ngsi_ld_render::uri_decoding::decode_percent_encoded_uri;
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
@@ -531,10 +531,8 @@ mod tests {
         write_record::WriteRecord,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
-    use andromeda_ngsi_ld_model::{
-        attribute::json_number::JsonNumber,
-        temporal::{TemporalHistoryRow, TemporalValue},
-    };
+    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{DateTime, TimeZone, Utc};
     use serde_json::{Value, json};
     use std::sync::Arc;
@@ -614,8 +612,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(rows.len(), 2);
-        pretty_assertions::assert_eq!(rows[0].value, TemporalValue::Number(JsonNumber::Signed(55)));
-        pretty_assertions::assert_eq!(rows[1].value, TemporalValue::Number(JsonNumber::Signed(61)));
+        pretty_assertions::assert_eq!(rows[0].value, TemporalValue::Number(JsonNumber::from(55)));
+        pretty_assertions::assert_eq!(rows[1].value, TemporalValue::Number(JsonNumber::from(61)));
         assert!(rows.iter().all(|row| {
             row.dataset_id
                 .as_ref()

@@ -19,14 +19,13 @@ use crate::{
     history_row_decode::{decode_attribute_name, decode_dataset_id, decode_unit_code_id},
     stored_decimal::json_number_of,
 };
-use andromeda_ngsi_ld_model::{
-    attribute::json_number::JsonNumber,
-    temporal::{AggregationMinMax, TemporalAggregationRow},
-};
+use andromeda_ngsi_ld_model::temporal::{AggregationMinMax, TemporalAggregationRow};
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, registry::UnknownCompactCode, value_kind::ValueKind};
 use andromeda_postgresql_temporal_query::aggregation_group::{AggregationGroupSpan, CodeSpan, ObservedUnits};
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use sqlx::{Decode, Postgres, Row, Type, postgres::PgRow, types::BigDecimal};
+use sqlx::{Decode, Postgres, Row, Type, postgres::PgRow};
 
 /// Read the span of families, value shapes and unit identities one aggregation group covered.
 pub(crate) fn decode_aggregation_group_span(row: &PgRow) -> Result<AggregationGroupSpan, TemporalStoreError> {
@@ -130,19 +129,21 @@ fn decode_extremum(
 /// the observations were recorded in. Any other number means the row did not
 /// come from that expression, which is a fault rather than a value.
 fn boolean_extremum(counted: JsonNumber, column: &str) -> Result<AggregationMinMax, TemporalStoreError> {
-    match counted {
-        JsonNumber::Signed(0) => Ok(AggregationMinMax::Boolean(false)),
-        JsonNumber::Signed(1) => Ok(AggregationMinMax::Boolean(true)),
-        other @ (JsonNumber::Signed(_) | JsonNumber::Unsigned(_) | JsonNumber::Double(_)) => Err(TemporalStoreError::Decode(format!(
-            "{column} of a boolean attribute is {other}, which counts neither false nor true"
-        ))),
+    if counted == JsonNumber::from(0) {
+        Ok(AggregationMinMax::Boolean(false))
+    } else if counted == JsonNumber::from(1) {
+        Ok(AggregationMinMax::Boolean(true))
+    } else {
+        Err(TemporalStoreError::Decode(format!(
+            "{column} of a boolean attribute is {counted}, which counts neither false nor true"
+        )))
     }
 }
 
 /// Read one `NUMERIC` aggregate as the exact JSON number it is.
 fn decode_exact_aggregate(row: &PgRow, column: &str) -> Result<Option<JsonNumber>, TemporalStoreError> {
     match projected_column::<BigDecimal>(row, column)? {
-        Some(decimal) => Ok(Some(json_number_of(&decimal, column)?)),
+        Some(decimal) => Ok(Some(json_number_of(decimal, column)?)),
         None => Ok(None),
     }
 }
@@ -224,7 +225,8 @@ fn decode_observed_units(row: &PgRow) -> Result<ObservedUnits, TemporalStoreErro
 #[cfg(test)]
 mod tests {
     use crate::aggregation_row_decode::{ExtremumColumn, boolean_extremum, extremum_column};
-    use andromeda_ngsi_ld_model::{attribute::json_number::JsonNumber, temporal::AggregationMinMax};
+    use andromeda_ngsi_ld_model::temporal::AggregationMinMax;
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_postgresql_codes::value_kind::ValueKind;
 
     /// The extremum is read from the column its value shape names, and a shape
@@ -259,11 +261,11 @@ mod tests {
     #[test]
     fn a_boolean_extremum_comes_back_as_the_boolean_its_count_stood_for() {
         pretty_assertions::assert_eq!(
-            boolean_extremum(JsonNumber::Signed(0), "agg_min").expect("zero counts false"),
+            boolean_extremum(JsonNumber::from(0), "agg_min").expect("zero counts false"),
             AggregationMinMax::Boolean(false)
         );
         pretty_assertions::assert_eq!(
-            boolean_extremum(JsonNumber::Signed(1), "agg_max").expect("one counts true"),
+            boolean_extremum(JsonNumber::from(1), "agg_max").expect("one counts true"),
             AggregationMinMax::Boolean(true)
         );
     }
@@ -273,8 +275,8 @@ mod tests {
     /// being reported as one of the two.
     #[test]
     fn a_boolean_extremum_that_counts_neither_value_is_refused() {
-        let error = boolean_extremum(JsonNumber::Signed(2), "agg_min").expect_err("two counts nothing");
+        let error = boolean_extremum(JsonNumber::from(2), "agg_min").expect_err("two counts nothing");
         assert!(error.to_string().contains("agg_min"), "got {error}");
-        assert!(boolean_extremum(JsonNumber::Double(0.5), "agg_min").is_err());
+        assert!(boolean_extremum("0.5".parse::<JsonNumber>().expect("an exact decimal"), "agg_min").is_err());
     }
 }

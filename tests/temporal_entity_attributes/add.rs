@@ -18,8 +18,9 @@ use crate::{
     vehicle_temporal_representation,
 };
 use reqwest::{Method, StatusCode};
-use serde_json::json;
+use serde_json::{Number, json};
 use serial_test::serial;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // Add attribute to temporal entity
@@ -53,6 +54,23 @@ async fn temporal_attrs_add_attribute_success() {
 
     let added = body["added_attribute"].as_array().expect("added_attribute should be array");
     assert_eq!(added.len(), 3, "should have 3 added_attribute instances");
+}
+
+#[tokio::test]
+#[serial]
+async fn temporal_attrs_add_preserves_an_exact_decimal() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Vehicle:add_exact_number");
+    assert_eq!(create_temporal_entity(&c, &vehicle_temporal_representation(&id)).await, StatusCode::CREATED);
+    let exact = Number::from_str("0.160000000000000005").expect("exact JSON number");
+    let fragment = json!({"exactAdded": [{"type": "Property", "value": exact, "observedAt": "2020-09-01T12:00:00Z"}], "@context": [COMPOUND_CONTEXT]});
+
+    let (status, _) = add_temporal_attrs(&c, &id, &fragment).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = get_temporal_entity(&c, &id, Some(COMPOUND_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&body).expect("temporal entity JSON").contains("0.160000000000000005"));
 }
 
 #[tokio::test]

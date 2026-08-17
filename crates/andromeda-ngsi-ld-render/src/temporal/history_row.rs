@@ -2,10 +2,7 @@
 
 use crate::temporal::geojson_ld::expand_geojson;
 use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_family::InstanceFamily, rfc3339::whole_seconds};
-use andromeda_ngsi_ld_model::{
-    attribute::json_number::JsonNumber,
-    temporal::{TemporalHistoryRow, TemporalValue},
-};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::{
     NULL_URI,
@@ -58,16 +55,8 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
     }
 
     match &row.value {
-        // The number renders in the shape it was stored in. Re-deciding here
-        // whether a value is "really" an integer would make the temporal
-        // representation of a value disagree with the current one.
-        TemporalValue::Number(v) => {
-            let json_val = match v {
-                JsonNumber::Signed(value) => json!(value),
-                JsonNumber::Unsigned(value) => json!(value),
-                JsonNumber::Double(value) => json!(value),
-            };
-            instance.insert(value_key.to_string(), json!([{"@value": json_val}]));
+        TemporalValue::Number(value) => {
+            instance.insert(value_key.to_string(), json!([{"@value": value.to_json_value()}]));
         }
         TemporalValue::String(v) => {
             if row.attribute_type == AttributeType::VocabProperty {
@@ -161,10 +150,8 @@ pub fn neutral_row_to_expanded_instance(row: &TemporalHistoryRow, sys_attrs: Sys
 mod tests {
     use crate::temporal::history_row::neutral_row_to_expanded_instance;
     use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, instance_identity::InstanceIdentity, rfc3339::whole_seconds};
-    use andromeda_ngsi_ld_model::{
-        attribute::json_number::JsonNumber,
-        temporal::{TemporalHistoryRow, TemporalValue},
-    };
+    use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+    use andromeda_ngsi_ld_number::JsonNumber;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use andromeda_ngsi_ld_vocabulary::{NULL_URI, expanded::properties as expanded_properties};
     use chrono::{DateTime, TimeZone, Utc};
@@ -224,7 +211,7 @@ mod tests {
     /// observation carries no `deletedAt` at all.
     #[test]
     fn the_operational_write_clock_is_never_rendered() {
-        let row = row(TemporalValue::Number(JsonNumber::Double(1.0)));
+        let row = row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")));
         let rendered = neutral_row_to_expanded_instance(&row, SysAttrsInclusion::Include);
 
         pretty_assertions::assert_eq!(member(&rendered, expanded_properties::DELETED_AT.as_str()), None);
@@ -238,7 +225,7 @@ mod tests {
     /// rendering rather than filled in from another instant.
     #[test]
     fn an_axis_the_observation_does_not_carry_is_absent_from_the_rendering() {
-        let mut row = row(TemporalValue::Number(JsonNumber::Double(1.0)));
+        let mut row = row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")));
         row.observed_at = None;
         row.created_at = None;
         let rendered = neutral_row_to_expanded_instance(&row, SysAttrsInclusion::Include);
@@ -253,7 +240,10 @@ mod tests {
     #[test]
     fn a_generated_identifier_renders_through_the_permanent_template() {
         let expected = json!([{"@id": "urn:ngsi-ld:attribute:instance:01942f6c-7f00-7000-8000-000000000001"}]);
-        let live = neutral_row_to_expanded_instance(&row(TemporalValue::Number(JsonNumber::Double(1.0))), SysAttrsInclusion::Strip);
+        let live = neutral_row_to_expanded_instance(
+            &row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number"))),
+            SysAttrsInclusion::Strip,
+        );
         let deleted = neutral_row_to_expanded_instance(
             &row(TemporalValue::Tombstone {
                 deleted_at: instant(1_700_000_300),
@@ -295,9 +285,9 @@ mod tests {
     #[test]
     fn a_number_renders_in_the_shape_it_was_stored_in() {
         let cases = [
-            (JsonNumber::Double(1.0), json!(1.0)),
-            (JsonNumber::Signed(9_007_199_254_740_993), json!(9_007_199_254_740_993_i64)),
-            (JsonNumber::Double(-2.5e-4), json!(-2.5e-4)),
+            (JsonNumber::try_from(1.0).expect("a finite number"), json!(1)),
+            (JsonNumber::from(9_007_199_254_740_993_i64), json!(9_007_199_254_740_993_i64)),
+            (JsonNumber::try_from(-2.5e-4).expect("a finite number"), json!(-2.5e-4)),
         ];
         for (number, expected) in cases {
             let rendered = neutral_row_to_expanded_instance(&row(TemporalValue::Number(number)), SysAttrsInclusion::Strip);
@@ -309,7 +299,7 @@ mod tests {
     /// in, which clause 4.5.7 requires the broker to hand back unchanged.
     #[test]
     fn a_verbatim_identifier_renders_in_the_spelling_it_arrived_in() {
-        let mut row = row(TemporalValue::Number(JsonNumber::Double(1.0)));
+        let mut row = row(TemporalValue::Number(JsonNumber::try_from(1.0).expect("a finite number")));
         row.instance = InstanceIdentity::Verbatim("https://example.org/instances/1".parse().expect("valid URI"));
         let rendered = neutral_row_to_expanded_instance(&row, SysAttrsInclusion::Strip);
 

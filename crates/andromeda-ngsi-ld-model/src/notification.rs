@@ -203,4 +203,18 @@ mod tests {
         .expect_err("a foreign discriminator is rejected");
         assert!(error.to_string().contains("invalid value"), "{error}");
     }
+
+    #[test]
+    fn notification_data_keeps_an_exact_decimal() {
+        let entity = serde_json::from_str(r#"{"id":"urn:ngsi-ld:Vehicle:1","type":"Vehicle","speed":{"type":"Property","value":0.100000000000000005}}"#)
+            .expect("exact entity JSON");
+        let notification = Notification::builder()
+            .id("urn:ngsi-ld:Notification:1".parse::<Uri>().expect("valid notification id"))
+            .subscription_id(subscription_id())
+            .notified_at(instant())
+            .data(vec![entity])
+            .build();
+        let encoded = serde_json::to_string(&notification).expect("notification JSON");
+        assert!(encoded.contains("0.100000000000000005"), "{encoded}");
+    }
 }

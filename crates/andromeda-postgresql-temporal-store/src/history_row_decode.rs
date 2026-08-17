@@ -19,17 +19,16 @@ use crate::{attribute_kind_code::attribute_type_of, error::TemporalStoreError, s
 use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    attribute::json_number::JsonNumber,
-    temporal::{TemporalHistoryRow, TemporalValue},
-};
+use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
+use andromeda_ngsi_ld_number::JsonNumber;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb::Ewkb;
 use andromeda_temporal::{append_intent::TemporalObservationIdentity, port::history_reader::TemporalHistoryObservation};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
+use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{Row, postgres::PgRow, types::BigDecimal};
+use sqlx::{Row, postgres::PgRow};
 use uuid::Uuid;
 
 /// Decode one `attribute_history` row into a [`TemporalHistoryRow`].
@@ -190,13 +189,11 @@ where
 
 /// Read the arbitrary-precision value column.
 ///
-/// The stored column is `NUMERIC` and the neutral observation carries the shape
-/// the value was parsed in, so the decimal literal is read back as the JSON
-/// number it was written from: an integer beyond 2^53 comes out as that integer
-/// rather than as the double nearest to it.
+/// The stored column is `NUMERIC`, so its decimal is carried directly into the
+/// exact neutral observation domain without a text or binary64 round trip.
 fn decode_number(row: &PgRow) -> Result<JsonNumber, TemporalStoreError> {
     let stored: BigDecimal = required_column(row, "value_number")?;
-    json_number_of(&stored, "attribute_history.value_number")
+    json_number_of(stored, "attribute_history.value_number")
 }
 
 /// Read the geometry column, which the query layer selects as EWKB.

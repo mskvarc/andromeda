@@ -3,6 +3,7 @@
 
 use crate::simplify::simplify_entity;
 use andromeda_ngsi_ld_model::entity::Entity;
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -95,7 +96,7 @@ impl TemporalSimplifyRenderer {
 
 /// Simplify one compacted temporal entity.
 fn simplify_value(entity_value: Value) -> Result<Value, TemporalSimplifyError> {
-    let entity: Entity = serde_json::from_value(entity_value).map_err(TemporalSimplifyError::InvalidEntity)?;
+    let entity: Entity = deserialize_exact(&entity_value).map_err(TemporalSimplifyError::InvalidEntity)?;
     Ok(simplify_entity(&entity))
 }
 

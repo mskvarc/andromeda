@@ -23,11 +23,7 @@ use andromeda_ngsi_ld_query::{
     pattern::Pattern,
 };
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
-use andromeda_postgresql_seaquery::{
-    cast::cast,
-    literal::{false_literal, int_literal},
-    pg_type::PostgresType,
-};
+use andromeda_postgresql_seaquery::literal::{false_literal, int_literal};
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, Iden, Query, SimpleExpr};
 
 /// The alias every value probe reads the `current_attribute_values` scan under.
@@ -95,7 +91,7 @@ fn compile_local_predicate(pred: &Predicate, path: &AttrPath, target: &QFilterTa
     match pred {
         Predicate::Exists(_) => Ok(compile_exists(path, target, names)),
         Predicate::Equality { membership, rhs, .. } => {
-            if is_projection_eligible(path) && !compare_value_exceeds_precision(rhs) {
+            if is_projection_eligible(path) {
                 match names.get(&path.attr) {
                     Some(id) => Ok(compile_equality_on_projection(id, *membership, rhs, target)),
                     None => Ok(unsatisfiable()),
@@ -105,7 +101,7 @@ fn compile_local_predicate(pred: &Predicate, path: &AttrPath, target: &QFilterTa
             }
         }
         Predicate::Ordering { op, rhs, .. } => {
-            if is_projection_eligible(path) && !scalar_exceeds_precision(rhs) {
+            if is_projection_eligible(path) {
                 match names.get(&path.attr) {
                     Some(id) => Ok(compile_ordering_on_projection(id, *op, rhs, target)),
                     None => Ok(unsatisfiable()),
@@ -124,46 +120,6 @@ fn compile_local_predicate(pred: &Predicate, path: &AttrPath, target: &QFilterTa
 /// and compound value paths (`address[city]`) live inside the JSONB payload.
 const fn is_projection_eligible(path: &AttrPath) -> bool {
     path.sub_attrs.is_empty() && path.value_path.is_empty()
-}
-
-/// Largest integer magnitude `f64` represents exactly.
-const F64_EXACT_INTEGER_LIMIT: i128 = 1 << 53;
-
-/// Whether a comparison target is outside what a probe can carry to the
-/// projection.
-///
-/// `current_attribute_values.value_number` is `numeric` and so holds exactly
-/// what the client wrote, but the comparison operand travels as `double
-/// precision` — the widest exact numeric type this crate can bind — and is cast
-/// back to `numeric` in the statement. Beyond 2^53 that round trip rounds the
-/// operand, and the probe would answer against a value the client never wrote:
-/// `GET` on the entity would show the exact number while the filter denied it.
-///
-/// Such predicates go to the JSONB fallback instead, which reads the payload and
-/// compares as `numeric` throughout. That is slower and unindexed, and it stops
-/// being necessary the moment a `numeric` bind value exists.
-fn scalar_exceeds_precision(scalar: &Scalar) -> bool {
-    let Scalar::Number(number) = scalar else {
-        return false;
-    };
-    // Only integers can exceed f64's exact range while still being written
-    // precisely in JSON; a value the client wrote as a float is already an
-    // f64-shaped quantity.
-    number
-        .as_i64()
-        .map(|value| i128::from(value).abs() > F64_EXACT_INTEGER_LIMIT)
-        .or_else(|| number.as_u64().map(|value| i128::from(value) > F64_EXACT_INTEGER_LIMIT))
-        .unwrap_or(false)
-}
-
-/// Whether any operand of an equality comparison is outside the projection's
-/// precision.
-fn compare_value_exceeds_precision(rhs: &CompareValue) -> bool {
-    match rhs {
-        CompareValue::Scalar(scalar) => scalar_exceeds_precision(scalar),
-        CompareValue::Range { min, max } => scalar_exceeds_precision(min) || scalar_exceeds_precision(max),
-        CompareValue::ValueList(values) => values.iter().any(scalar_exceeds_precision),
-    }
 }
 
 /// A predicate that no row can satisfy.
@@ -275,10 +231,8 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 ///
 /// The mapping mirrors what the write path projects:
 ///
-/// * numbers land in `value_number` (`numeric`); the operand is bound as
-///   `double precision` and cast back, which is exact for every value
-///   [`scalar_exceeds_precision`] admits and keeps the comparison
-///   `numeric`-to-`numeric` so the typed index still applies,
+/// * numbers land in `value_number` (`numeric`) and bind directly as an exact
+///   decimal, so every supported operand uses the typed numeric index,
 /// * booleans in `value_bool`,
 /// * date-times in `value_datetime`,
 /// * strings in `value_string` for Properties and single-valued
@@ -292,20 +246,9 @@ fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Sca
 ///   comparison against the bound canonical text is a temporal comparison.
 fn scalar_condition(scalar: &Scalar, op: CmpOp) -> SimpleExpr {
     match scalar {
-        Scalar::Number(number) => match number.as_f64() {
-            // The operand is bound as `double precision` and cast back to
-            // `numeric`, so the comparison stays `numeric`-to-`numeric` and the
-            // typed partial index still applies.
-            Some(value) => compare(
-                probe_column(CurrentAttributeValues::ValueNumber),
-                op,
-                cast(SeaExpr::val(value), PostgresType::Numeric),
-            ),
-            // A `serde_json::Number` that fits no f64 cannot be carried to the
-            // projection at all, and one that large is out of range for
-            // `scalar_exceeds_precision` to have admitted a comparison anyway.
-            None => false_literal(),
-        },
+        // SeaQuery owns every value in its AST, so this is the one necessary
+        // clone between the borrowed query domain value and the NUMERIC bind.
+        Scalar::Number(number) => compare(probe_column(CurrentAttributeValues::ValueNumber), op, SeaExpr::val(number.decimal().clone())),
         Scalar::Bool(value) => compare(probe_column(CurrentAttributeValues::ValueBool), op, SeaExpr::val(*value)),
         Scalar::Str(value) => {
             let string_test = compare(probe_column(CurrentAttributeValues::ValueString), op, SeaExpr::val(value.as_str()));
@@ -477,19 +420,20 @@ mod tests {
         assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
         assert!(matches!(binds[0], Value::Int(Some(7))), "attribute id binds as int4: {binds:?}");
         assert!(
-            matches!(binds[1], Value::Double(Some(value)) if (value - 50.0).abs() < f64::EPSILON),
-            "numeric literal binds as float8: {binds:?}"
+            matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "50"),
+            "numeric literal binds as NUMERIC: {binds:?}"
         );
     }
 
     #[test]
-    fn a_number_comparison_casts_its_operand_so_the_column_stays_numeric() {
-        // `value_number` is `numeric`. Without the cast the operand's
-        // `double precision` type wins operator resolution and the column is
-        // coerced instead, which both rounds it and makes the typed partial
-        // index inapplicable.
-        let (sql, _) = render(&format!("{}>50", quoted(SPEED)));
-        assert!(sql.contains("\"cav\".\"value_number\" > ($2::numeric)"), "{sql}");
+    fn a_number_comparison_binds_numeric_without_a_double_conversion() {
+        let (sql, binds) = render(&format!("{}>0.100000000000000005", quoted(SPEED)));
+        assert!(sql.contains("\"cav\".\"value_number\" > $2"), "{sql}");
+        assert!(!sql.contains("double precision"), "{sql}");
+        assert!(
+            matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "0.100000000000000005"),
+            "{binds:?}"
+        );
     }
 
     #[test]
@@ -637,8 +581,8 @@ mod tests {
         assert!(sql.contains("\"cav\".\"value_number\" >="), "{sql}");
         assert!(sql.contains("\"cav\".\"value_number\" <="), "{sql}");
         assert!(matches!(binds[0], Value::Int(Some(12))));
-        assert!(matches!(binds[1], Value::Double(Some(value)) if (value - 10.0).abs() < f64::EPSILON));
-        assert!(matches!(binds[2], Value::Double(Some(value)) if (value - 20.0).abs() < f64::EPSILON));
+        assert!(matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "10"));
+        assert!(matches!(&binds[2], Value::BigDecimal(Some(value)) if value.to_string() == "20"));
     }
 
     #[test]
@@ -665,16 +609,19 @@ mod tests {
     }
 
     #[test]
-    fn integers_within_f64_precision_still_use_the_projection() {
-        let (sql, _) = render(&format!("{}==9007199254740991", quoted(SPEED)));
-        assert!(sql.contains("current_attribute_values"), "2^53-1 is exact in f64: {sql}");
+    fn integers_beyond_binary64_precision_use_the_numeric_projection() {
+        let (sql, binds) = render(&format!("{}==9007199254740993", quoted(SPEED)));
+        assert!(sql.contains("current_attribute_values"), "{sql}");
+        assert!(!sql.contains("jsonb_path_query_first"), "{sql}");
+        assert!(
+            matches!(&binds[1], Value::BigDecimal(Some(value)) if value.to_string() == "9007199254740993"),
+            "{binds:?}"
+        );
     }
 
     #[test]
-    fn floats_are_never_treated_as_lossy() {
-        // A value written as a float is already an f64-shaped quantity; only
-        // large integers can lose precision on the way to the probe.
-        let (sql, _) = render(&format!("{}>1.5", quoted(SPEED)));
+    fn exact_fractions_use_the_projection() {
+        let (sql, _) = render(&format!("{}>0.100000000000000005", quoted(SPEED)));
         assert!(sql.contains("\"cav\".\"value_number\" >"), "{sql}");
     }
 

@@ -29,8 +29,9 @@ use crate::{
     unique_id,
 };
 use reqwest::{Method, StatusCode};
-use serde_json::json;
+use serde_json::{Number, json};
 use serial_test::serial;
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // 056_01: Merge entity scenarios
@@ -78,6 +79,23 @@ async fn entity_merge_simple_properties_updated() {
     assert_eq!(body["name"]["value"], "Pisa Tower");
     assert_eq!(body["almostFull"]["value"], true);
     assert_eq!(body["airQualityLevel"]["value"], 6);
+}
+
+#[tokio::test]
+#[serial]
+async fn entity_merge_preserves_an_exact_decimal() {
+    let _serialized_environment = clean_database().await;
+    let c = client();
+    let id = unique_id("urn:ngsi-ld:Building:merge_exact_number");
+    assert_eq!(create_entity(&c, &building_minimal(&id)).await, StatusCode::CREATED);
+    let exact = Number::from_str("0.110000000000000005").expect("exact JSON number");
+    let fragment = json!({"id": id, "type": "Building", "reading": {"type": "Property", "value": exact}, "@context": TEST_SUITE_CONTEXT});
+
+    let (status, _) = merge_entity(&c, &id, &fragment, None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = get_entity(&c, &id, "", "application/ld+json", Some(TEST_SUITE_CONTEXT)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&body).expect("entity JSON").contains("0.110000000000000005"));
 }
 
 #[tokio::test]

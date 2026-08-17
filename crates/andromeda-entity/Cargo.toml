@@ -15,6 +15,7 @@ andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-request.workspace = true
@@ -34,7 +35,7 @@ iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
 moka = { version = "0.12.16", features = ["future"] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 tracing = "0.1.44"

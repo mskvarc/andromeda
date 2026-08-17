@@ -9,7 +9,7 @@ use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
 use pretty_assertions::assert_eq;
 use reqwest::StatusCode;
-use serde_json::json;
+use serde_json::{Value, json};
 
 /// The expanded Building type of the ETSI test-suite context.
 const BUILDING_TYPE: &str = "https://ngsi-ld-test-suite/context#Building";
@@ -120,28 +120,115 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
 }
 
 #[tokio::test]
-async fn current_projection_number_column_stores_the_exact_json_number() {
+async fn current_projection_and_indexed_queries_preserve_neighboring_exact_decimals() {
     let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
     let client = scope.client();
-    let id = scope.id("Building:atomicity-exact-number");
+    let exact_id = scope.id("Building:atomicity-exact-number");
+    let adjacent_id = scope.id("Building:atomicity-adjacent-number");
 
-    // 2^53 + 1 is the smallest positive integer `double precision` cannot hold.
-    // `value_number` is `NUMERIC` precisely so the projection agrees with the
-    // payload, which stores the JSON number verbatim.
-    let entity = json!({
-        "id": id,
-        "type": "Building",
-        "reading": {"type": "Property", "value": 9_007_199_254_740_993_i64},
-        "@context": [TEST_SUITE_CONTEXT]
-    });
+    let entity: Value = serde_json::from_str(&format!(
+        r#"{{"id":"{exact_id}","type":"Building","reading":{{"type":"Property","value":0.100000000000000005}},"large":{{"type":"Property","value":18446744073709551616}},"@context":["{TEST_SUITE_CONTEXT}"]}}"#
+    ))
+    .expect("arbitrary-precision entity JSON");
     let created = client.post_entity(&entity).send().await.expect("create entity failed");
     assert_eq!(created.status, StatusCode::CREATED, "create: {:?}", created.body);
 
-    let rows = rows_for_attribute(scope.database_pool(), &id, "reading").await;
+    let adjacent: Value = serde_json::from_str(&format!(
+        r#"{{"id":"{adjacent_id}","type":"Building","reading":{{"type":"Property","value":0.100000000000000004}},"@context":["{TEST_SUITE_CONTEXT}"]}}"#
+    ))
+    .expect("adjacent arbitrary-precision entity JSON");
+    let created = client.post_entity(&adjacent).send().await.expect("create adjacent entity failed");
+    assert_eq!(created.status, StatusCode::CREATED, "create adjacent: {:?}", created.body);
+
+    let reading_rows = rows_for_attribute(scope.database_pool(), &exact_id, "reading").await;
+    assert_eq!(reading_rows.first().and_then(|row| row.value_text.as_deref()), Some("0.100000000000000005"));
+    let large_rows = rows_for_attribute(scope.database_pool(), &exact_id, "large").await;
     assert_eq!(
-        rows.first().and_then(|row| row.value_text.as_deref()),
-        Some("9007199254740993"),
-        "the NUMERIC projection column must not round the value the payload stores exactly"
+        large_rows.first().and_then(|row| row.value_text.as_deref()),
+        Some("18446744073709551616"),
+        "the NUMERIC projection column must hold an integer beyond u64 without rounding"
+    );
+
+    let stored_payload: String = sqlx::query_scalar("SELECT payload::text FROM entities WHERE id = $1")
+        .bind(&exact_id)
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("stored payload must be readable");
+    assert!(stored_payload.contains("0.100000000000000005"), "stored payload: {stored_payload}");
+    assert!(stored_payload.contains("18446744073709551616"), "stored payload: {stored_payload}");
+
+    let retrieved = client
+        .get_entity(&exact_id, "", "application/json", Some(TEST_SUITE_CONTEXT))
+        .await
+        .expect("retrieve entity failed");
+    assert_eq!(retrieved.status, StatusCode::OK);
+    let retrieved = String::from_utf8(retrieved.body.to_vec()).expect("response JSON is UTF-8");
+    assert!(retrieved.contains("0.100000000000000005"), "retrieved entity: {retrieved}");
+    assert!(retrieved.contains("18446744073709551616"), "retrieved entity: {retrieved}");
+
+    let cases = [
+        ("reading==0.100000000000000005", vec![exact_id.as_str()]),
+        ("reading!=0.100000000000000005", vec![adjacent_id.as_str()]),
+        ("reading<0.100000000000000005", vec![adjacent_id.as_str()]),
+        ("reading>0.100000000000000004", vec![exact_id.as_str()]),
+        (
+            "reading==0.100000000000000004..0.100000000000000005",
+            vec![adjacent_id.as_str(), exact_id.as_str()],
+        ),
+        (
+            "reading==0.100000000000000004,0.100000000000000005",
+            vec![adjacent_id.as_str(), exact_id.as_str()],
+        ),
+    ];
+    for (q, expected_ids) in cases {
+        let response = client
+            .query_entities(&format!("type=Building&q={q}"), "application/json", Some(TEST_SUITE_CONTEXT))
+            .await
+            .expect("exact numeric query failed");
+        assert_eq!(response.status, StatusCode::OK, "query {q}: {:?}", response.body);
+        let body = response.json_value().expect("query response must be JSON");
+        let mut ids = body
+            .as_array()
+            .expect("query response must be an array")
+            .iter()
+            .filter_map(|entity| entity["id"].as_str())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        let mut expected_ids = expected_ids;
+        expected_ids.sort_unstable();
+        assert_eq!(ids, expected_ids, "query {q} must distinguish adjacent decimals");
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+#[tokio::test]
+async fn current_projection_rejects_an_out_of_range_number_without_mutation() {
+    let scope = TestEnvironment::from_suite("current-projection").await.expect("isolated test environment");
+    let client = scope.client();
+    let id = scope.id("Building:out-of-range-number");
+    let entity: Value = serde_json::from_str(&format!(
+        r#"{{"id":"{id}","type":"Building","reading":{{"type":"Property","value":1e-16384}},"@context":["{TEST_SUITE_CONTEXT}"]}}"#
+    ))
+    .expect("syntactically valid JSON number");
+
+    let rejected = client.post_entity(&entity).send().await.expect("create request failed");
+    assert_eq!(rejected.status, StatusCode::BAD_REQUEST, "rejection: {:?}", rejected.body);
+    let problem = rejected.json_value().expect("problem details must be JSON");
+    assert!(
+        problem["type"].as_str().is_some_and(|value| value.contains("BadRequestData")),
+        "problem details: {problem}"
+    );
+
+    let entity_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM entities WHERE id = $1")
+        .bind(&id)
+        .fetch_one(scope.database_pool())
+        .await
+        .expect("entity count must be readable");
+    assert_eq!(entity_rows, 0, "the rejected entity must not be persisted");
+    assert!(
+        rows_for_attribute(scope.database_pool(), &id, "reading").await.is_empty(),
+        "the rejected number must not reach the projection"
     );
 
     scope.finish().await.expect("cleanup failed");

@@ -24,6 +24,7 @@
 use crate::ordering::collation::IcuCollationError;
 use andromeda_ngsi_ld_geometry::{geo_rel::GeoRelParseError, geojson::GeometryError};
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
+use andromeda_ngsi_ld_number::JsonNumberError;
 
 /// Errors raised while validating, parsing, compiling or planning a query.
 #[derive(Debug, thiserror::Error)]
@@ -62,8 +63,14 @@ pub enum QueryError {
         position: usize,
     },
     /// A numeric literal was lexed but failed to parse.
-    #[error("Q expression: invalid number literal {0}")]
-    QInvalidNumber(String),
+    #[error("Q expression: invalid number literal {value}: {source}")]
+    QInvalidNumber {
+        /// The rejected numeric operand.
+        value: String,
+        /// The exact-number syntax or supported-range failure.
+        #[source]
+        source: JsonNumberError,
+    },
     /// An attribute path nested more sub-attributes than the parser admits.
     ///
     /// A guard against a pathological path whose backend rendering grows with

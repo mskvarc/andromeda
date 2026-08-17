@@ -1,6 +1,7 @@
 //! PostgreSQL anchor persistence and delivery state for temporal append intents.
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
 use andromeda_postgresql_seaquery::{
     pg_array::text_array,
@@ -151,8 +152,7 @@ impl PostgresTemporalIntentStore {
         let raw_sequence: i64 = row.try_get("sequence").map_err(persistence)?;
         let sequence = TemporalIntentSequence::new(raw_sequence).map_err(|error| TemporalError::internal(error.to_string()))?;
         let payload: Value = row.try_get("intent").map_err(persistence)?;
-        let intent =
-            serde_json::from_value(payload).map_err(|error| TemporalError::persistence(format!("failed to decode temporal append intent: {error}")))?;
+        let intent = deserialize_exact(&payload).map_err(|error| TemporalError::persistence(format!("failed to decode temporal append intent: {error}")))?;
         Ok(SequencedTemporalAppendIntent { sequence, intent })
     }
 

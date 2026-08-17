@@ -286,6 +286,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn exact_numeric_operands_round_trip_by_mathematical_value() {
+        for expression in [
+            "speed==18446744073709551616",
+            "speed==0.100000000000000005",
+            "speed>-2.5e-400",
+            "speed==1e2..1.00000000000000000001e2",
+            "speed==0.100000000000000004,0.100000000000000005",
+        ] {
+            let parsed = parse(expression).unwrap_or_else(|error| unreachable!("{expression} must parse: {error}"));
+            let rendered = serialize(&parsed);
+            let reparsed = parse(&rendered).unwrap_or_else(|error| unreachable!("{rendered} must reparse: {error}"));
+            pretty_assertions::assert_eq!(reparsed, parsed, "mathematical-value round trip of {expression} through {rendered}");
+        }
+    }
+
     /// Clause 4.9's `QueryTermAssoc` is the only way to override the default
     /// precedence, so a group the client wrote has to come back as a group. A
     /// stored subscription is re-serialised whenever it is read back or

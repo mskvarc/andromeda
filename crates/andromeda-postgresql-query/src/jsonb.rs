@@ -52,15 +52,15 @@ pub struct LiftedComparison {
 /// payload member holding text of another shape yields `NULL` and simply does not
 /// match, instead of aborting the statement.
 ///
-/// A number, a boolean and a `DateTime` bind as decimal or RFC 3339 text and are
-/// cast in the statement rather than encoded to a native type, so a value beyond
-/// `f64`'s exact range survives the round trip exactly (clause 4.9 numeric
-/// comparison).
+/// Numbers bind directly as `NUMERIC`; booleans and `DateTime` values bind as
+/// text and are cast in the statement.
 pub fn lift_comparison(scalar: &Scalar, stored_text: SimpleExpr) -> LiftedComparison {
     match scalar {
-        Scalar::Number(_) => LiftedComparison {
+        Scalar::Number(number) => LiftedComparison {
             stored: cast_compound(stored_text, PostgresType::Numeric),
-            operand: cast(SeaExpr::val(scalar.literal_text()), PostgresType::Numeric),
+            // SeaQuery owns every AST bind, so the exact decimal must be cloned
+            // from the borrowed query operand.
+            operand: SeaExpr::val(number.decimal().clone()),
         },
         Scalar::Bool(_) => LiftedComparison {
             stored: cast_compound(stored_text, PostgresType::Boolean),
@@ -143,11 +143,12 @@ mod tests {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
     }
 
-    /// The one value an operand binds, rendered as its text.
+    /// The one text value an operand binds.
     fn bound_value(expr: SimpleExpr) -> String {
         let (_, Values(values)) = Query::select().expr(expr).to_owned().build(PostgresQueryBuilder);
         match values.into_iter().next().expect("one bound value") {
             Value::String(Some(text)) => text,
+            Value::BigDecimal(Some(value)) => value.to_string(),
             other @ (Value::Bool(_)
             | Value::TinyInt(_)
             | Value::SmallInt(_)
@@ -159,6 +160,7 @@ mod tests {
             | Value::BigUnsigned(_)
             | Value::Float(_)
             | Value::Double(_)
+            | Value::BigDecimal(None)
             | Value::Enum(_)
             | Value::Char(_)
             | Value::Bytes(_)
@@ -171,7 +173,7 @@ mod tests {
             | Value::ChronoDateTimeWithTimeZone(_)
             | Value::Uuid(_)
             | Value::Array(..)) => unreachable!("a lifted operand binds text: {other:?}"),
-            Value::String(None) => unreachable!("a lifted operand binds absent text"),
+            Value::String(None) => unreachable!("a lifted operand binds an absent value"),
         }
     }
 
@@ -179,8 +181,8 @@ mod tests {
     fn a_number_is_lifted_to_numeric_on_both_sides_so_it_is_not_ordered_as_text() {
         let lifted = lift_comparison(&Scalar::Number(9.into()), stored());
         assert!(render(lifted.stored).contains("::numeric"), "the stored side casts to numeric");
-        assert!(render(lifted.operand.clone()).contains("::numeric"), "the operand casts to numeric");
-        assert_eq!(bound_value(lifted.operand), "9", "the operand binds decimal text, not a float");
+        assert!(!render(lifted.operand.clone()).contains("::"), "the operand is already NUMERIC");
+        assert_eq!(bound_value(lifted.operand), "9", "the operand binds NUMERIC, not a float");
     }
 
     #[test]

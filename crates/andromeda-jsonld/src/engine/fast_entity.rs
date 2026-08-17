@@ -331,6 +331,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fast_and_processor_paths_preserve_the_same_exact_decimals() {
+        let document: Value = serde_json::from_str(
+            r#"{"id":"urn:ngsi-ld:Device:exact","type":"Device","reading":{"type":"Property","value":0.100000000000000005,"nested":{"type":"Property","value":0.100000000000000005}},"config":{"type":"JsonProperty","json":{"n":0.100000000000000005}}}"#,
+        )
+        .expect("exact JSON");
+        let engine = offline_engine();
+        let handle = core_handle(&engine).await;
+        let fast = engine.try_fast_expand(&document, &handle).expect("the fastpath models these attributes");
+        let slow = engine.expand(document, handle.spec()).await.expect("the processor expands");
+        pretty_assertions::assert_eq!(fast, slow);
+        let encoded = serde_json::to_string(&fast).expect("expanded JSON");
+        pretty_assertions::assert_eq!(encoded.matches("0.100000000000000005").count(), 3);
+        assert!(!encoded.contains("$serde_json::private::Number"), "{encoded}");
+    }
+
+    #[tokio::test]
     async fn a_scope_expands_identically_as_one_path_and_as_several() {
         assert_both_paths_agree(json!({ "id": "urn:ngsi-ld:Device:sc1", "type": "Device", "scope": "root/a" })).await;
         assert_both_paths_agree(json!({ "id": "urn:ngsi-ld:Device:sc2", "type": "Device", "scope": ["root/a", "root/b"] })).await;
