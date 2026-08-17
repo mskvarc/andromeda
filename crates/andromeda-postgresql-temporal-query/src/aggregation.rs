@@ -35,7 +35,27 @@ use andromeda_postgresql_seaquery::{
     pg_type::PostgresType,
     timescale::time_bucket,
 };
-use sea_query::{Alias, CaseStatement, Condition, Expr, ExprTrait, Func, JoinType, Order, Query, SelectStatement, SimpleExpr};
+use sea_query::{Alias, CaseStatement, Condition, Expr, ExprTrait, Func, Iden, JoinType, Order, Query, SelectStatement, SimpleExpr};
+
+/// Lateral projection that computes one bucket boundary per history row.
+#[derive(Iden, Clone, Copy)]
+#[iden = "bucket"]
+struct Bucket;
+
+/// Start instant projected by [`Bucket`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "bucket_start"]
+struct BucketStart;
+
+/// Lateral projection of the implicit per-entity bucket origin.
+#[derive(Iden, Clone, Copy)]
+#[iden = "bucket_origin"]
+struct BucketOrigin;
+
+/// Origin instant projected by [`BucketOrigin`].
+#[derive(Iden, Clone, Copy)]
+#[iden = "origin"]
+struct Origin;
 
 /// Unified numeric expression for type-aware aggregation (NGSI-LD 4.5.19.1).
 ///
@@ -123,14 +143,14 @@ fn distinct_value_expr() -> SimpleExpr {
 /// The bucket origin, measured over the same entity's streams through the stream
 /// catalogue rather than through a current-state row.
 ///
-/// Derived once per selected entity and reused for both bucket bounds, rather
-/// than evaluating the same aggregate expression once for each rendered column.
+/// Derived once per selected entity and supplied to the single bucket
+/// calculation rather than repeated in both rendered bounds.
 fn origin_subquery(axis: AttributeHistory) -> SelectStatement {
     let ah2 = Alias::new("ah2");
     let s2 = Alias::new("s2");
     let mut origin = Query::select();
     origin
-        .expr_as(Func::min(Expr::col((ah2.clone(), axis))), Alias::new("origin"))
+        .expr_as(Func::min(Expr::col((ah2.clone(), axis))), Origin)
         .from_as(AttributeHistory::Table, ah2.clone())
         .join_as(
             JoinType::Join,
@@ -140,6 +160,18 @@ fn origin_subquery(axis: AttributeHistory) -> SelectStatement {
         )
         .and_where(Expr::col((s2, TemporalAttributeStreams::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)));
     origin.take()
+}
+
+/// Project a history row's bucket start exactly once.
+///
+/// The outer aggregation groups on the projected column instead of repeating
+/// the expression over `ah.<axis>` in its select list. PostgreSQL can therefore
+/// validate the grouped statement without treating the time-axis column as an
+/// ungrouped outer projection.
+fn bucket_subquery(axis: AttributeHistory, width: SimpleExpr, origin: SimpleExpr) -> SelectStatement {
+    Query::select()
+        .expr_as(time_bucket(width, Expr::col((Ah, axis)), origin), BucketStart)
+        .to_owned()
 }
 
 /// Build the aggregation query with `time_bucket` windows.
@@ -158,8 +190,8 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
     select.expr_as(Expr::col((An, AttributeNames::Name)), Alias::new("attribute_name"));
     select.expr(Expr::col((S, TemporalAttributeStreams::DatasetId)));
     project_group_span(&mut select);
+    base_history_source(&mut select);
 
-    let mut needs_origin_join = false;
     if let Some(period) = period {
         let iso = period.as_iso8601();
         let origin = match compiled.window.interval.reference() {
@@ -167,13 +199,19 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
             Some(reference) => Expr::val(*reference),
             // Absent, buckets align to the actual data range (not epoch).
             None => {
-                needs_origin_join = true;
-                Expr::col((Alias::new("bucket_origin"), Alias::new("origin")))
+                select.join_lateral(JoinType::Join, origin_subquery(axis), BucketOrigin, SimpleExpr::from(true));
+                Expr::col((BucketOrigin, Origin))
             }
         };
-        let bucket_start = time_bucket(cast(Expr::val(iso.clone()), PostgresType::Interval), Expr::col((Ah, axis)), origin);
+        select.join_lateral(
+            JoinType::Join,
+            bucket_subquery(axis, cast(Expr::val(iso.clone()), PostgresType::Interval), origin),
+            Bucket,
+            SimpleExpr::from(true),
+        );
+        let bucket_start = Expr::col((Bucket, BucketStart));
         let bucket_end = bucket_start.clone().add(cast(Expr::val(iso), PostgresType::Interval));
-        select.expr_as(bucket_start, Alias::new("bucket_start"));
+        select.expr_as(bucket_start, BucketStart);
         select.expr_as(bucket_end, Alias::new("bucket_end"));
     } else {
         select.expr_as(typed_null(PostgresType::Timestamptz), Alias::new("bucket_start"));
@@ -182,11 +220,6 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
 
     for (expr, alias) in aggregate_columns(&compiled.representation.aggr_methods) {
         select.expr_as(expr, Alias::new(alias));
-    }
-
-    base_history_source(&mut select);
-    if needs_origin_join {
-        select.join_lateral(JoinType::Join, origin_subquery(axis), Alias::new("bucket_origin"), SimpleExpr::from(true));
     }
 
     // Clause 4.5.7: a tombstone records a deletion and carries no value, so the
@@ -201,7 +234,7 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
         SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))),
     ];
     if period.is_some() {
-        group.push(Expr::col(Alias::new("bucket_start")));
+        group.push(Expr::col((Bucket, BucketStart)));
     }
     select.add_group_by(group);
 
@@ -209,7 +242,7 @@ pub fn build_aggregation_query(compiled: &CompiledTemporalQuery, condition: Cond
         .order_by((An, AttributeNames::Name), Order::Asc)
         .order_by((S, TemporalAttributeStreams::DatasetId), Order::Asc);
     if period.is_some() {
-        select.order_by(Alias::new("bucket_start"), Order::Asc);
+        select.order_by((Bucket, BucketStart), Order::Asc);
     }
 
     select.take()
@@ -254,11 +287,29 @@ mod tests {
         build_aggregation_query(compiled, entity_filter()).to_string(PostgresQueryBuilder)
     }
 
+    fn bound_sql_of(compiled: &CompiledTemporalQuery) -> (String, sea_query::Values) {
+        build_aggregation_query(compiled, entity_filter()).build(PostgresQueryBuilder)
+    }
+
     #[test]
     fn a_period_produces_a_bucketed_group_by() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         assert!(sql.contains("time_bucket"), "{sql}");
         assert!(sql.contains("bucket_start"), "{sql}");
+    }
+
+    #[test]
+    fn the_bound_statement_projects_one_bucket_expression_and_reuses_its_result() {
+        let (sql, _values) = bound_sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
+        assert!(sql.contains("JOIN LATERAL (SELECT time_bucket("), "{sql}");
+        assert!(sql.contains("AS \"bucket_start\") AS \"bucket\""), "{sql}");
+        assert!(sql.contains("\"bucket\".\"bucket_start\" +"), "{sql}");
+        pretty_assertions::assert_eq!(sql.matches("\"ah\".\"observed_at\"").count(), 1, "{sql}");
+        pretty_assertions::assert_eq!(
+            sql.matches("::interval").count(),
+            2,
+            "the bucket width and bucket-end width must each be bound once: {sql}"
+        );
     }
 
     /// Clause 4.5.19: the bucket is computed on the same axis the window filters
@@ -300,7 +351,7 @@ mod tests {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
         let group_by = group_by.split("ORDER BY").next().expect("a clause before ORDER BY").trim();
-        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\", \"bucket_start\"", "{sql}");
+        pretty_assertions::assert_eq!(group_by, "\"an\".\"name\", \"s\".\"dataset_id\", \"bucket\".\"bucket_start\"", "{sql}");
 
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], None));
         let group_by = sql.split("GROUP BY").nth(1).expect("a GROUP BY clause");
@@ -392,7 +443,11 @@ mod tests {
     fn the_rows_arrive_ordered_by_attribute_dataset_and_period() {
         let sql = sql_of(&aggregated(vec![AggrMethod::Avg], Some("PT1H")));
         let order_by = sql.split("ORDER BY").nth(1).expect("an ORDER BY clause").trim();
-        pretty_assertions::assert_eq!(order_by, "\"an\".\"name\" ASC, \"s\".\"dataset_id\" ASC, \"bucket_start\" ASC", "{sql}");
+        pretty_assertions::assert_eq!(
+            order_by,
+            "\"an\".\"name\" ASC, \"s\".\"dataset_id\" ASC, \"bucket\".\"bucket_start\" ASC",
+            "{sql}"
+        );
     }
 
     #[test]

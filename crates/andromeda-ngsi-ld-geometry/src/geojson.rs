@@ -25,6 +25,10 @@ pub enum GeometryError {
     /// is not a number.
     #[error("invalid GeoJSON geometry value: {0}")]
     GeojsonValue(#[from] serde_json::Error),
+    /// A JSON coordinate is outside the finite binary64 domain used for
+    /// spatial operations.
+    #[error("GeoJSON coordinate cannot be represented as a finite 64-bit float")]
+    CoordinateOutOfRange,
     /// The value is a GeoJSON GeometryCollection. ETSI GS CIM 009 v1.9.1 clause
     /// 4.7.1 allows a GeoProperty value every geometry RFC 7946 defines except
     /// this one, and clause 4.6.3 excludes it from reference geometries too.

@@ -71,11 +71,7 @@ impl<'de> Deserialize<'de> for OrderingGeometry {
         D: Deserializer<'de>,
     {
         let wire = OrderingGeometryWire::deserialize(deserializer)?;
-        let value = serde_json::json!({
-            "type": wire.geometry,
-            "coordinates": wire.coordinates,
-        });
-        Geometry::from_geojson_value(&value)
+        Geometry::from_type_and_coordinates(wire.geometry, wire.coordinates)
             .map(OrderingGeometry::new)
             .map_err(|error| DeserializeError::custom(OrderingGeometryError::Geometry(error)))
     }

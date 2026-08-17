@@ -4,6 +4,7 @@ use andromeda_ngsi_ld_geometry::{
     geo_rel::{GeoRel, GeoRelParseError},
     geojson::GeometryError,
     geometry::Geometry,
+    geometry_type::GeometryType,
 };
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReference;
 use serde::{
@@ -63,8 +64,8 @@ impl GeoQueryInput {
             | serde_json::Value::Array(_)
             | serde_json::Value::Object(_)) => value,
         };
-        let value = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
-        let geometry = Geometry::from_geojson_value(&value).map_err(GeoQueryInputError::Geometry)?;
+        let geometry_type = geometry_type.parse::<GeometryType>().map_err(GeoQueryInputError::GeometryType)?;
+        let geometry = Geometry::from_type_and_coordinates(geometry_type, coordinates).map_err(GeoQueryInputError::Geometry)?;
         Ok(GeoQueryInput::new(georel, geometry, geoproperty))
     }
 }
@@ -118,6 +119,9 @@ pub enum GeoQueryInputError {
     /// The URL coordinate member was not JSON.
     #[error("invalid geo-query coordinates: {0}")]
     Coordinates(serde_json::Error),
+    /// The geometry name is not one of the GeoJSON types supported by NGSI-LD.
+    #[error("invalid geo-query geometry type: {0}")]
+    GeometryType(strum::ParseError),
     /// The reference geometry is invalid.
     ///
     /// Carries the geometry diagnostic verbatim so that a position with an

@@ -13,12 +13,12 @@
 //! are evaluated over. The projection is computed once, at construction, so
 //! neither an entity write nor a subscription match pays for it repeatedly.
 
-use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, planar::project};
+use crate::{dimension::GeometryDimension, form::GeometryForm, geojson::GeometryError, geometry_type::GeometryType, planar::project};
 use geo::algorithm::BoundingRect;
 use geojson::{Geometry as GeoJsonGeometry, GeometryValue};
 use jsonld_expandable_core::{JsonValue, ToJsonValue};
 use serde::{Deserialize, Serialize, Serializer};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 /// A geometry attached to an NGSI-LD GeoProperty (clause 5.2.7).
 ///
@@ -75,6 +75,29 @@ impl Geometry {
         Geometry::from_geojson(&geometry)
     }
 
+    /// Build from the separate geometry type and coordinates used by NGSI-LD
+    /// query parameters and subscription `geoQ` objects.
+    ///
+    /// Coordinates are explicitly narrowed to finite `f64` values at this
+    /// domain boundary, then inserted into a JSON object without passing through
+    /// a generic serializer. This matters when `serde_json` arbitrary precision
+    /// is enabled: a parsed number carries a private raw-number token that an
+    /// incompatible serializer can otherwise expose as an object instead of a
+    /// coordinate number.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GeometryError::CoordinateOutOfRange`] when an ordinate cannot
+    /// be represented as a finite `f64`, or the same typed errors as
+    /// [`Geometry::from_geojson_value`] when the coordinates do not form the
+    /// requested RFC 7946 geometry.
+    pub fn from_type_and_coordinates(geometry_type: GeometryType, coordinates: Value) -> Result<Geometry, GeometryError> {
+        let mut object = Map::new();
+        object.insert("type".to_owned(), Value::String(geometry_type.to_string()));
+        object.insert("coordinates".to_owned(), coordinates_as_f64(coordinates)?);
+        Geometry::from_geojson_value(&Value::Object(object))
+    }
+
     /// The geometry as received: every position with the altitude and the
     /// ordinate count it arrived with, every polygon ring exactly as written.
     pub const fn form(&self) -> &GeometryForm {
@@ -104,6 +127,23 @@ impl Geometry {
     /// for a geometry with no coordinates, such as a Polygon with no rings.
     pub fn bounding_rect(&self) -> Option<geo::Rect<f64>> {
         self.planar.bounding_rect()
+    }
+}
+
+/// Narrow arbitrary-precision JSON coordinate numbers to the finite binary64
+/// domain used by `geo`, `geojson` and PostGIS geometry operations.
+fn coordinates_as_f64(value: Value) -> Result<Value, GeometryError> {
+    match value {
+        Value::Number(number) => {
+            let coordinate = number
+                .as_f64()
+                .filter(|coordinate| coordinate.is_finite())
+                .ok_or(GeometryError::CoordinateOutOfRange)?;
+            let number = serde_json::Number::from_f64(coordinate).ok_or(GeometryError::CoordinateOutOfRange)?;
+            Ok(Value::Number(number))
+        }
+        Value::Array(values) => values.into_iter().map(coordinates_as_f64).collect::<Result<Vec<_>, _>>().map(Value::Array),
+        Value::Null | Value::Bool(_) | Value::String(_) | Value::Object(_) => Ok(value),
     }
 }
 
@@ -206,6 +246,20 @@ mod tests {
     fn a_geojson_point_round_trips_through_the_domain_type() {
         let geometry = Geometry::from_geojson_value(&point_json()).expect("point parses");
         pretty_assertions::assert_eq!(serde_json::to_value(&geometry).expect("serialises"), point_json());
+    }
+
+    #[test]
+    fn separate_type_and_arbitrary_precision_coordinates_decode_without_exposing_the_raw_number_token() {
+        let coordinates: Value = serde_json::from_str("[0.100000000000000005,52.5]").expect("coordinates parse");
+        let geometry = Geometry::from_type_and_coordinates(GeometryType::Point, coordinates).expect("point parses");
+        pretty_assertions::assert_eq!(geometry.to_geojson().value.type_name(), "Point");
+    }
+
+    #[test]
+    fn a_coordinate_outside_the_finite_f64_domain_is_rejected_at_the_geometry_boundary() {
+        let coordinates: Value = serde_json::from_str("[1e400,52.5]").expect("JSON number parses");
+        let error = Geometry::from_type_and_coordinates(GeometryType::Point, coordinates).expect_err("coordinate must be rejected");
+        assert!(matches!(error, GeometryError::CoordinateOutOfRange), "got {error:?}");
     }
 
     #[test]

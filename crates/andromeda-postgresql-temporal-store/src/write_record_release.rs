@@ -82,12 +82,13 @@ fn unprotected() -> Cond {
         .add(no_reference_from(TemporalAppendIntents::Table, TemporalAppendIntents::WriteId, Ti))
 }
 
-/// `NOT EXISTS (SELECT 1 FROM <table> <alias> WHERE <alias>.write_id = write_records.write_id)`.
-fn no_reference_from(table: impl IntoTableRef, write_id: impl IntoIden + Copy + 'static, alias: impl IntoIden + Copy + 'static) -> SimpleExpr {
+/// `NOT EXISTS` protection correlating an effect's identity column to the
+/// canonical `write_records.write_id`.
+fn no_reference_from(table: impl IntoTableRef, identity: impl IntoIden + Copy + 'static, alias: impl IntoIden + Copy + 'static) -> SimpleExpr {
     let subquery = Query::select()
         .expr(Expr::val(1))
         .from_as(table, alias)
-        .and_where(Expr::col((alias, write_id)).equals((WriteRecords::Table, WriteRecords::WriteId)))
+        .and_where(Expr::col((alias, identity)).equals((WriteRecords::Table, WriteRecords::WriteId)))
         .to_owned();
     Expr::exists(subquery).not()
 }
@@ -117,5 +118,6 @@ mod tests {
         for relation in ["attribute_history", "scope_history", "temporal_append_intents"] {
             assert!(sql.contains(relation), "missing {relation}: {sql}");
         }
+        assert!(sql.contains(r#""ti"."write_id" = "write_records"."write_id""#), "{sql}");
     }
 }

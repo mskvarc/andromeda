@@ -2,7 +2,7 @@
 
 use crate::error::SubscriptionError;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use andromeda_ngsi_ld_query::{
     filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize},
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
@@ -157,12 +157,16 @@ fn validate_geo_q_geometry(geo_q: &Value) -> Result<(), SubscriptionError> {
     let (Some(geometry_type), Some(coordinates)) = (geo_q.get("geometry"), geo_q.get("coordinates")) else {
         return Ok(());
     };
+    let geometry_type = geometry_type
+        .as_str()
+        .ok_or_else(|| SubscriptionError::validation("geoQ geometry must be a GeoJSON geometry type string"))?
+        .parse::<GeometryType>()
+        .map_err(|error| SubscriptionError::validation(format!("geoQ geometry: {error}")))?;
     let coordinates = match coordinates {
         Value::String(raw) => serde_json::from_str::<Value>(raw).map_err(|error| SubscriptionError::validation(format!("geoQ coordinates: {error}")))?,
         other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) | Value::Object(_)) => other.clone(), // clone: the GeoJSON decoder consumes the value it decodes
     };
-    let value = serde_json::json!({ "type": geometry_type, "coordinates": coordinates });
-    Geometry::from_geojson_value(&value)
+    Geometry::from_type_and_coordinates(geometry_type, coordinates)
         .map(|_geometry| ())
         .map_err(|error| SubscriptionError::validation(format!("geoQ reference geometry: {error}")))
 }

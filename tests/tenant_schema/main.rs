@@ -18,6 +18,7 @@ mod migration_failure;
 mod procedural_logic;
 mod reconciliation;
 mod schema_contract;
+mod temporal_append_intent;
 
 /// The suite name every environment in this suite is allocated under.
 pub const SUITE: &str = "tenant_schema";

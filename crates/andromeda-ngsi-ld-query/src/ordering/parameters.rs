@@ -1,7 +1,11 @@
 //! The complete ordering definition carried by a clause-5.2.23 `Query`.
 
-use crate::ordering::{collation::IcuCollation, geometry::OrderingGeometry, term::OrderTerm};
-use andromeda_ngsi_ld_geometry::geometry_type::GeometryType;
+use crate::ordering::{
+    collation::IcuCollation,
+    geometry::{OrderingGeometry, OrderingGeometryError},
+    term::OrderTerm,
+};
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as DeserializeError};
 use serde_json::Value;
 use typed_builder::TypedBuilder;
@@ -65,9 +69,10 @@ impl<'de> Deserialize<'de> for OrderingParameters {
             (None, None) => None,
             (None, Some(_)) => return Err(DeserializeError::custom("orderGeometry requires orderFrom")),
             (Some(coordinates), geometry) => {
-                let geometry = geometry.unwrap_or(GeometryType::Point);
-                let value = serde_json::json!({ "geometry": geometry, "coordinates": coordinates });
-                Some(serde_json::from_value(value).map_err(DeserializeError::custom)?)
+                let geometry_type = geometry.unwrap_or(GeometryType::Point);
+                let geometry = Geometry::from_type_and_coordinates(geometry_type, coordinates)
+                    .map_err(|error| DeserializeError::custom(OrderingGeometryError::Geometry(error)))?;
+                Some(OrderingGeometry::new(geometry))
             }
         };
         Ok(OrderingParameters {

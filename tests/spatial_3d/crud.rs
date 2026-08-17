@@ -7,6 +7,7 @@
 //! invented.
 
 use crate::fixtures::{
+    assert_coordinates_eq,
     building_point_2d,
     building_point_3d,
     building_polygon_3d,
@@ -49,7 +50,7 @@ async fn crud_point_3d_round_trips() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &json!([13.4, 52.52, 300.5]));
+    assert_coordinates_eq(location_coordinates(&body), &json!([13.4, 52.52, 300.5]));
 
     // Migration 0032 stores XYZ verbatim rather than flattening to XY.
     assert_eq!(location_zmflag(scope.database_pool(), &id).await, 2);
@@ -68,7 +69,7 @@ async fn crud_linestring_3d_round_trips() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -90,7 +91,7 @@ async fn crud_polygon_3d_round_trips() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -106,7 +107,7 @@ async fn crud_multipoint_3d_round_trips() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -126,7 +127,7 @@ async fn crud_multilinestring_3d_round_trips() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -149,7 +150,7 @@ async fn crud_multipolygon_3d_round_trips() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -167,7 +168,7 @@ async fn crud_mixed_arity_linestring_preserved_verbatim() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -189,8 +190,8 @@ async fn crud_entity_with_2d_location_and_3d_custom_geoproperty() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &json!([13.4, 52.52]));
-    assert_eq!(geoproperty_coordinates(&body, "observationPoint"), &json!([13.4, 52.52, 120.0]));
+    assert_coordinates_eq(location_coordinates(&body), &json!([13.4, 52.52]));
+    assert_coordinates_eq(geoproperty_coordinates(&body, "observationPoint"), &json!([13.4, 52.52, 120.0]));
 
     // The hoisted location column stays XY even though a sibling GeoProperty is XYZ.
     assert_eq!(location_zmflag(scope.database_pool(), &id).await, 0);
@@ -215,11 +216,11 @@ async fn crud_batch_create_3d_entities_round_trip() {
 
     let (status, ground_body) = get_entity(client, &ground).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&ground_body), &p0());
+    assert_coordinates_eq(location_coordinates(&ground_body), &p0());
 
     let (status, elevated_body) = get_entity(client, &elevated).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&elevated_body), &p500());
+    assert_coordinates_eq(location_coordinates(&elevated_body), &p500());
 
     scope.finish().await.expect("cleanup failed");
 }
@@ -241,7 +242,7 @@ async fn crud_patch_attrs_upgrades_2d_location_to_3d() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &json!([13.4, 52.52, 400.0]));
+    assert_coordinates_eq(location_coordinates(&body), &json!([13.4, 52.52, 400.0]));
     assert_eq!(location_zmflag(scope.database_pool(), &id).await, 2);
 
     // A 2D near query on the same footprint still matches (NGSI-LD 4.10).
@@ -277,7 +278,7 @@ async fn crud_patch_attrs_downgrades_3d_location_to_2d() {
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
     let coordinates = location_coordinates(&body);
-    assert_eq!(coordinates, &json!([13.4, 52.52]));
+    assert_coordinates_eq(coordinates, &json!([13.4, 52.52]));
     assert_eq!(coordinates.as_array().map(Vec::len), Some(2), "altitude must not be reinstated");
     assert_eq!(location_zmflag(scope.database_pool(), &id).await, 0);
 
@@ -308,7 +309,7 @@ async fn crud_mixed_arity_survives_no_op_attribute_patch() {
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(location_coordinates(&body), &coordinates);
+    assert_coordinates_eq(location_coordinates(&body), &coordinates);
 
     scope.finish().await.expect("cleanup failed");
 }

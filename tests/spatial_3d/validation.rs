@@ -7,7 +7,7 @@
 //! accepts a geometry: entity bodies, query parameters, POST query bodies,
 //! subscriptions, temporal queries, ordering references and registrations.
 
-use crate::fixtures::{building_point_3d, create, encode_json, get_entity, location_coordinates, query};
+use crate::fixtures::{assert_coordinates_eq, building_point_3d, create, encode_json, get_entity, location_coordinates, query};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::{context::TEST_SUITE_CONTEXT, problem_detail as error};
 use andromeda_test_harness::environment::TestEnvironment;
@@ -181,11 +181,7 @@ async fn validation_patch_to_four_ordinates_is_rejected_and_leaves_value_intact(
 
     let (status, body) = get_entity(client, &id).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        location_coordinates(&body),
-        &json!([13.4, 52.52, 300.0]),
-        "a rejected patch must leave the stored geometry untouched"
-    );
+    assert_coordinates_eq(location_coordinates(&body), &json!([13.4, 52.52, 300.0]));
 
     scope.finish().await.expect("cleanup failed");
 }

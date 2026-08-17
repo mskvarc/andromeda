@@ -8,7 +8,7 @@
 //! These tests need an empty broker so that unrelated subscriptions cannot
 //! observe the fixtures, so they take the serialized environment lock.
 
-use crate::notification_adapter::NotificationAdapter as NotificationReceiver;
+use crate::{fixtures::assert_coordinates_eq, notification_adapter::NotificationAdapter as NotificationReceiver};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::serialized_environment::SerializedEnvironment;
@@ -87,11 +87,11 @@ async fn subscription_geoq_near_3d_reference_matches_horizontally() {
     assert_eq!(notification.body["subscriptionId"], json!(subscription_id));
     let entity = first_notified_entity(&notification.body);
     assert_eq!(entity["id"], json!(entity_id));
-    assert_eq!(
+    assert_coordinates_eq(
         entity
             .pointer("/location/value/coordinates")
             .expect("notified entity must carry location coordinates"),
-        &json!([13.4, 52.52, 500.0])
+        &json!([13.4, 52.52, 500.0]),
     );
 
     receiver.shutdown().await;

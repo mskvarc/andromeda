@@ -4,7 +4,7 @@ use crate::{
     compiled::{CompiledCsrSubscription, CompiledSubscription},
     stored_subscription::StoredSubscription,
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
+use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, Subscription},
@@ -113,8 +113,14 @@ pub fn compile_geo_q(geo_q: &serde_json::Value, sub_id: &str) -> Option<GeoQuery
             return None;
         }
     };
-    let geojson = serde_json::json!({"type": geometry_str, "coordinates": coordinates});
-    let geometry = match Geometry::from_geojson_value(&geojson) {
+    let geometry_type = match geometry_str.parse::<GeometryType>() {
+        Ok(geometry_type) => geometry_type,
+        Err(error) => {
+            debug!(subscription = sub_id, %error, "Invalid subscription geoQ geometry type");
+            return None;
+        }
+    };
+    let geometry = match Geometry::from_type_and_coordinates(geometry_type, coordinates) {
         Ok(geometry) => geometry,
         Err(error) => {
             debug!(subscription = sub_id, %error, "Invalid subscription geoQ geometry");

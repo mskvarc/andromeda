@@ -4,7 +4,7 @@
 //! representation does, and a temporal geo-query filters on the same 2D
 //! footprint as the non-temporal one.
 
-use crate::fixtures::{encode_json, p_2d, p0};
+use crate::fixtures::{assert_coordinates_eq, encode_json, p_2d, p0};
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::TEST_SUITE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -70,7 +70,7 @@ async fn temporal_3d_location_round_trips() {
     let instances = body["location"].as_array().map(Vec::as_slice).unwrap_or_default();
     assert!(!instances.is_empty(), "location must have at least one temporal instance");
     let coordinates = instances[0].pointer("/value/coordinates").expect("instance must carry value.coordinates");
-    assert_eq!(coordinates, &json!([13.4, 52.52, 300.0]));
+    assert_coordinates_eq(coordinates, &json!([13.4, 52.52, 300.0]));
 
     scope.finish().await.expect("cleanup failed");
 }
