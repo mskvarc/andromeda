@@ -1,6 +1,6 @@
 -- generated - never hand-edited
 -- ============================================================================
--- 0041: UN/CEFACT unit-code catalogue seed
+-- 0009: UN/CEFACT unit-code catalogue seed
 -- ============================================================================
 -- Rendered by the generation test of `crates/andromeda-unit-catalog` from the
 -- same identity assignment the broker compiles in, so an identifier written

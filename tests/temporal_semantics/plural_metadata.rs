@@ -130,7 +130,7 @@ async fn temporal_semantics_every_plural_member_kind_becomes_its_typed_observati
     assert_eq!(status, StatusCode::CREATED);
 
     // Stored family codes: 2 Relationship, 5 LanguageProperty, 6 JsonProperty,
-    // 4 VocabProperty, as migration 0048 fixes them.
+    // 4 VocabProperty, as migration 0011 fixes them.
     for (term, attribute_kind) in [("owner", 2_i16), ("label", 5), ("doc", 6), ("tags", 4)] {
         let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri(term)).await;
         assert_eq!(rows.len(), 2, "{term} recorded both plural members");

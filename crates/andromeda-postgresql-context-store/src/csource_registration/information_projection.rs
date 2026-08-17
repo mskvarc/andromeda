@@ -48,7 +48,7 @@
 //! );
 //! ```
 //!
-//! Migration `0064_registration_information` declares it, with the storage
+//! Migration `0016_registration_information` declares it, with the storage
 //! parameters, the per-column population checks and the index set that belong to
 //! the schema rather than to this module; nothing here may name a column that
 //! file does not.

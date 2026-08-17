@@ -7,7 +7,7 @@
 //!
 //! The schema deliberately indexes one axis. `idx_attribute_history_stream_observed_at`
 //! exists because `observedAt` is the default and carries the query volume;
-//! migration 0048 records that a created, modified or deleted index is
+//! migration 0011 records that a created, modified or deleted index is
 //! benchmark-gated and none was accepted. These tests assert both halves of
 //! that decision — the indexed axis reaches its index, the other three are
 //! exact and stay on the stream-led path — so a later index is added because a
@@ -166,7 +166,7 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Migration 0048 states that no created, modified or deleted index was
+/// Migration 0011 states that no created, modified or deleted index was
 /// accepted, because none was measured to earn one. This records that decision
 /// as an assertion rather than as prose: the day one is added, this test says
 /// so, and the matrix row is re-measured instead of quietly gaining coverage.

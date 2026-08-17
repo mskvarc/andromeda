@@ -1,110 +1,71 @@
 -- ============================================================================
--- 012: Scope History -- Dedicated TimescaleDB Hypertable
+-- 0049: Rebuilt scope history
 -- ============================================================================
--- Stores the temporal evolution of entity scopes (NGSI-LD clause 4.5.4).
+-- Scope history hangs off the temporal catalogue, not off current state, and
+-- carries the same shape as attribute history: the operational `recorded_at`
+-- partition column, the whole write identity, the four semantic time axes, the
+-- split instance identity and the tombstone encoding.
 --
--- Scopes are NOT attributes -- they have no dataset_id, no value_type
--- taxonomy, and no TEA catalog entry. Previous versions piggybacked scope
--- changes as synthetic Property instances in attribute_history; this table
--- gives scopes their own dedicated storage with proper ltree indexing.
+-- It has no attribute kind. A scope is not an attribute -- clause 4.5.4 gives
+-- it no dataset dimension, no attribute family and no catalogue entry -- so its
+-- value vocabulary is its own two-member registry rather than a borrowed
+-- subset of the attribute one:
 --
--- The scope path IS the value, stored as PostgreSQL ltree for efficient
--- hierarchical matching (e.g. scopeQ with wildcards).
+--   value_kind: 0 Tombstone (reserved), 1 ScopePath
 --
--- Hypertable configuration mirrors attribute_history (0008):
---   * Chunk interval: 1 day
---   * Columnar storage: segmented by entity_id, ordered by time DESC
+-- Append-only, never renumbered, and this text is the authority.
+--
+-- A scope deletion is a row carrying `deleted_at` and no path, never an
+-- invented sentinel path.
+--
+-- The permanently stable rendering template for a broker-minted identifier is
+-- `urn:ngsi-ld:scope:instance:{uuid}`; a client-supplied identifier is stored
+-- exactly as received.
+--
+-- The path keeps its `ltree` type and its GiST index, which is what scopeQ
+-- matching reads (clause 4.18).
 -- ============================================================================
 
 CREATE TABLE scope_history (
-    -- Observation timestamp (server-side modification time).
-    time          TIMESTAMPTZ NOT NULL,
-
-    -- The entity this scope belongs to.
-    entity_id     TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-
-    -- The scope path in ltree format (e.g. 'Madrid.Gardens').
-    -- Slash-delimited NGSI-LD scopes are converted to dot notation on insert.
-    scope_path    ltree NOT NULL,
-
-    -- Unique identifier for this scope observation instance.
-    instance_id   TEXT NOT NULL,
-
-    -- Uniqueness: one scope observation per entity per timestamp per instance.
-    UNIQUE (entity_id, time, instance_id)
+    recorded_at TIMESTAMPTZ NOT NULL,
+    temporal_entity_key BIGINT NOT NULL,
+    write_id UUID NOT NULL,
+    write_ordinal INTEGER NOT NULL,
+    value_kind SMALLINT NOT NULL,
+    observed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
+    modified_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    generated_instance_uuid UUID,
+    verbatim_instance_id TEXT COMPRESSION lz4 COLLATE "C",
+    scope_path ltree COMPRESSION lz4,
+    CONSTRAINT uq_scope_history_write UNIQUE (recorded_at, write_id, write_ordinal),
+    CONSTRAINT chk_scope_history_write_ordinal CHECK (write_ordinal >= 0),
+    CONSTRAINT chk_scope_history_instance_identity
+        CHECK (num_nonnulls(generated_instance_uuid, verbatim_instance_id) = 1),
+    CONSTRAINT chk_scope_history_value_presence CHECK (
+        (value_kind = 0 AND deleted_at IS NOT NULL AND scope_path IS NULL)
+        OR
+        (value_kind = 1 AND scope_path IS NOT NULL))
 );
 
--- Convert to a TimescaleDB hypertable, partitioned by time in 1-day chunks.
-SELECT create_hypertable('scope_history', 'time', chunk_time_interval => INTERVAL '1 day');
+SELECT create_hypertable('scope_history', by_range('recorded_at', INTERVAL '30 days'));
 
--- Enable columnar storage.
--- Same pattern as attribute_history (0008): prefer columnstore API, fall back
--- to legacy compression on older TimescaleDB versions.
-DO $$
-DECLARE
-    has_columnstore BOOLEAN;
-BEGIN
-    SELECT EXISTS(SELECT 1 FROM pg_proc WHERE proname = 'add_columnstore_policy')
-    INTO has_columnstore;
+CREATE INDEX idx_scope_history_entity_recorded_at
+    ON scope_history (temporal_entity_key, recorded_at DESC);
 
-    IF has_columnstore THEN
-        RAISE NOTICE 'columnstore API available -- using columnstore for scope_history';
+CREATE INDEX idx_scope_history_entity_observed_at
+    ON scope_history (temporal_entity_key, observed_at DESC)
+    WHERE observed_at IS NOT NULL;
 
-        ALTER TABLE scope_history SET (
-            timescaledb.enable_columnstore,
-            timescaledb.segmentby = 'entity_id',
-            timescaledb.orderby = 'time DESC'
-        );
-        CALL add_columnstore_policy('scope_history', after => INTERVAL '7 days');
-        SET timescaledb.max_tuples_decompressed_per_dml_transaction = 1000000;
-    ELSE
-        RAISE NOTICE 'columnstore API not available -- using legacy compression for scope_history';
+CREATE INDEX idx_scope_history_entity_generated_instance
+    ON scope_history (temporal_entity_key, generated_instance_uuid)
+    WHERE generated_instance_uuid IS NOT NULL;
 
-        ALTER TABLE scope_history SET (
-            timescaledb.compress,
-            timescaledb.compress_segmentby = 'entity_id',
-            timescaledb.compress_orderby = 'time DESC'
-        );
-        SELECT add_compression_policy('scope_history', INTERVAL '7 days');
-    END IF;
-END
-$$;
+CREATE INDEX idx_scope_history_entity_verbatim_instance
+    ON scope_history (temporal_entity_key, verbatim_instance_id)
+    WHERE verbatim_instance_id IS NOT NULL;
 
--- Primary lookup: retrieve scope history for an entity, newest first.
-CREATE INDEX idx_scope_history_entity_time ON scope_history(entity_id, time DESC);
-
--- Hierarchical scope matching for scopeQ queries using lquery/ltree operators.
-CREATE INDEX idx_scope_history_scope_path ON scope_history USING GIST (scope_path);
-
--- Dedup index: the bulk dedup DELETE uses WHERE entity_id = d.entity_id AND
--- instance_id = d.instance_id. The UNIQUE constraint includes `time` between
--- the dedup columns, so this index covers the (entity_id, instance_id) axis.
-CREATE INDEX idx_scope_history_dedup ON scope_history(entity_id, instance_id);
-
--- ============================================================================
--- Data migration: move synthetic scope entries from attribute_history
--- ============================================================================
--- Previous versions recorded scopes as fake Property instances in
--- attribute_history with attribute name 'https://uri.etsi.org/ngsi-ld/scope'.
--- Migrate those rows to scope_history, converting slash paths to ltree dots.
-
-INSERT INTO scope_history (time, entity_id, scope_path, instance_id)
-SELECT ah.time, tea.entity_id,
-       REPLACE(LTRIM(ah.value_string, '/'), '/', '.')::ltree,
-       ah.instance_id
-FROM attribute_history ah
-JOIN temporal_entity_attributes tea ON tea.id = ah.tea_id
-JOIN attribute_names an ON an.id = tea.attribute_name_id
-WHERE an.name = 'https://uri.etsi.org/ngsi-ld/scope';
-
--- Clean up synthetic scope entries from attribute_history.
-DELETE FROM attribute_history ah
-USING temporal_entity_attributes tea, attribute_names an
-WHERE ah.tea_id = tea.id AND an.id = tea.attribute_name_id
-AND an.name = 'https://uri.etsi.org/ngsi-ld/scope';
-
--- Clean up synthetic scope TEA catalog entries.
-DELETE FROM temporal_entity_attributes tea
-USING attribute_names an
-WHERE an.id = tea.attribute_name_id
-AND an.name = 'https://uri.etsi.org/ngsi-ld/scope';
+CREATE INDEX idx_scope_history_scope_path
+    ON scope_history USING GIST (scope_path)
+    WHERE scope_path IS NOT NULL;

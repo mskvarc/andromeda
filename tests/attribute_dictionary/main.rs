@@ -1,10 +1,10 @@
 //! Verification of the attribute-name dictionary's capacity and its bound.
 //!
-//! Migration `0035_attribute_names_integer` widened the dictionary key to
-//! `INTEGER`, which removed the 32,767-entry ceiling the old `SMALLINT` key
-//! imposed by accident, and `0039_dictionary_growth_guard` replaced that
-//! accident with a stated policy: byte-comparable, length-bounded names plus an
-//! API-layer bound on how far one tenant's dictionary may grow.
+//! Migration `0007_attribute_names` gives the dictionary key `INTEGER` range,
+//! well past the 32,767-entry ceiling a `SMALLINT` key would impose by
+//! accident, and states the dictionary's policy: byte-comparable,
+//! length-bounded names plus an API-layer bound on how far one tenant's
+//! dictionary may grow.
 //!
 //! Both tests here change the size of a shared relation, so each holds the
 //! harness's exclusive lease for its duration and removes exactly the rows it

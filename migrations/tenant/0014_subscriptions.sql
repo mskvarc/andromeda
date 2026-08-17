@@ -1,5 +1,5 @@
 -- ============================================================================
--- 008: Subscriptions
+-- 0014: Subscriptions
 -- ============================================================================
 -- NGSI-LD Subscription management (spec clause 5.2.12, operations 5.8.x).
 --
@@ -22,11 +22,23 @@
 --                   receiverInfo, notifierInfo}, attributes, sysAttrs, ...}
 --   * geo_q:        GeoQuery {georel, geometry, coordinates, geoproperty}
 --   * temporal_q:   TemporalQuery (only for CSR subscriptions)
+--
+-- `subscription_key` is the narrow surrogate identity the notification queue
+-- carries. A delivery row exists once per matched Subscription per affected
+-- Entity, so the queue is the highest-cardinality relation that references a
+-- Subscription; repeating the variable-length, locale-collated `id` URI in
+-- every one of those tuples is the single largest avoidable cost on the
+-- delivery path. The UNIQUE constraint on it is what a foreign key needs to
+-- point at, so deleting a Subscription reclaims its queued deliveries through
+-- ON DELETE CASCADE with no read-modify-write loop in the broker.
 -- ============================================================================
 
 CREATE TABLE subscriptions (
     -- Subscription URI, e.g. "urn:ngsi-ld:Subscription:mySubscription"
     id TEXT NOT NULL PRIMARY KEY,
+
+    -- Narrow surrogate identity referenced by the notification queue.
+    subscription_key BIGINT GENERATED ALWAYS AS IDENTITY,
 
     -- Discriminator: "entity" for entity subscriptions, "csource" for CSR
     -- subscriptions. Both types share the same schema; csource subscriptions
@@ -114,7 +126,9 @@ CREATE TABLE subscriptions (
 
     -- System-managed temporal properties
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT uq_subscriptions_subscription_key UNIQUE (subscription_key)
 );
 
 -- Lookup active subscriptions for notification matching (partitioned by kind)

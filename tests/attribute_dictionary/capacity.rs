@@ -1,6 +1,6 @@
 //! Verification matrix row "Attribute dictionary capacity".
 //!
-//! The dictionary key was widened to `INTEGER` in `0035_attribute_names_integer`
+//! The dictionary key is `INTEGER` (migration `0007_attribute_names`)
 //! precisely so that a tenant modelling an open world is not stopped at the
 //! 32,767 entries a `SMALLINT` key could number. The check is therefore made
 //! past that boundary: 32,768 distinct valid attribute IRIs are interned, and

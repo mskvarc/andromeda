@@ -1,5 +1,5 @@
 -- ============================================================================
--- 009: Context Source Registrations (CSR)
+-- 0015: Context Source Registrations (CSR)
 -- ============================================================================
 -- NGSI-LD Context Source Registration management (spec clause 5.2.9,
 -- operations 5.9.x / 5.10.x).
@@ -14,7 +14,10 @@
 --   * observation_space -- union of all entities' observationSpace GeoProperties
 --   * operation_space   -- union of all entities' operationSpace GeoProperties
 --   All three are partial-GIST-indexed (WHERE ... IS NOT NULL) for efficient
---   spatial matching during distributed entity discovery.
+--   spatial matching during distributed entity discovery, and are typmod-free
+--   `geometry` with explicit SRID and Zm-flag checks rather than
+--   `GEOMETRY(Geometry, 4326)`: no typmod spelling accepts XY and XYZ in one
+--   column, which RFC 7946 clause 3.1.1 altitudes require.
 --
 -- JSONB columns for dynamic/nested spec structures:
 --   * information:           array of RegistrationInfo, each containing
@@ -27,6 +30,11 @@
 --   * management:            RegistrationManagementInfo (cacheDuration,
 --                            reconPeriod, etc.)
 --   * context_source_info:   additional key-value metadata about the source
+--
+-- CSR lookups during forwarding filter by status='ok' (healthy registrations
+-- only -- failed ones are excluded until they recover). A partial btree
+-- restricted to `status = 'ok'` keeps the hot-path index small and omits the
+-- bloat from failed registrations.
 -- ============================================================================
 
 CREATE TABLE context_source_registrations (
@@ -58,13 +66,13 @@ CREATE TABLE context_source_registrations (
     management_interval JSONB,
 
     -- Geographic area covered by this Context Source (WGS 84)
-    location GEOMETRY(Geometry, 4326),
+    location geometry,
 
     -- Union of observation spaces of all entities the source provides
-    observation_space GEOMETRY(Geometry, 4326),
+    observation_space geometry,
 
     -- Union of operation spaces of all entities the source provides
-    operation_space GEOMETRY(Geometry, 4326),
+    operation_space geometry,
 
     -- When this registration expires. NULL means no expiry.
     expires_at TIMESTAMPTZ,
@@ -119,10 +127,22 @@ CREATE TABLE context_source_registrations (
     -- Geometry validity constraints
     CONSTRAINT chk_csr_location_valid
         CHECK (location IS NULL OR ST_IsValid(location)),
+    CONSTRAINT chk_csr_location_srid
+        CHECK (location IS NULL OR ST_SRID(location) = 4326),
+    CONSTRAINT chk_csr_location_zm
+        CHECK (location IS NULL OR ST_Zmflag(location) IN (0, 2)),
     CONSTRAINT chk_csr_observation_space_valid
         CHECK (observation_space IS NULL OR ST_IsValid(observation_space)),
+    CONSTRAINT chk_csr_observation_space_srid
+        CHECK (observation_space IS NULL OR ST_SRID(observation_space) = 4326),
+    CONSTRAINT chk_csr_observation_space_zm
+        CHECK (observation_space IS NULL OR ST_Zmflag(observation_space) IN (0, 2)),
     CONSTRAINT chk_csr_operation_space_valid
-        CHECK (operation_space IS NULL OR ST_IsValid(operation_space))
+        CHECK (operation_space IS NULL OR ST_IsValid(operation_space)),
+    CONSTRAINT chk_csr_operation_space_srid
+        CHECK (operation_space IS NULL OR ST_SRID(operation_space) = 4326),
+    CONSTRAINT chk_csr_operation_space_zm
+        CHECK (operation_space IS NULL OR ST_Zmflag(operation_space) IN (0, 2))
 );
 
 -- Spatial matching for distributed entity discovery (partial: excludes NULL rows)
@@ -136,3 +156,8 @@ CREATE INDEX idx_csr_observation_space ON context_source_registrations USING GIS
 -- Spatial index for operation space filtering
 CREATE INDEX idx_csr_operation_space ON context_source_registrations USING GIST (operation_space)
     WHERE operation_space IS NOT NULL;
+
+-- Forwarding filters by status='ok' (healthy registrations only).
+CREATE INDEX idx_csr_status_active
+    ON context_source_registrations (status)
+    WHERE status = 'ok';
