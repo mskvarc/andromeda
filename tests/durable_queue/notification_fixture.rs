@@ -1,6 +1,6 @@
 //! The event and deliveries a notification verification starts from.
 
-use crate::queue_database::{record_events, subscription};
+use crate::queue_database::{record_events, subscription, subscription_key};
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
@@ -36,7 +36,7 @@ pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNo
         changed_attribute_name_ids: Vec::new(),
         entity_snapshot: Some(&snapshot),
         previous_snapshot: None,
-        subscription_ids: identifiers.iter().collect(),
+        subscription_keys: subscription_keys.iter().map(|key| subscription_key(*key)).collect(),
     }];
     record_events(pool, &record, &events).await.expect("one write's events and deliveries");
 

@@ -55,10 +55,37 @@ pub fn extension_version(name: &str) -> SimpleExpr {
 #[iden = "current_setting"]
 struct CurrentSetting;
 
+/// `pg_current_xact_id_if_assigned()` - the transaction id of the calling
+/// transaction, or `NULL` while it has none.
+#[derive(Iden, Clone, Copy)]
+#[iden = "pg_current_xact_id_if_assigned"]
+struct PgCurrentXactIdIfAssigned;
+
+/// `pg_current_xact_id_if_assigned() IS NULL` - whether the calling
+/// transaction has written nothing yet.
+///
+/// A transaction is assigned an id by its first write, so a null answer means
+/// every row the transaction's snapshot shows was committed by someone else;
+/// a read that asks this alongside its rows can tell a committed hit from one
+/// the transaction itself may still roll back.
+pub fn transaction_has_not_written() -> SimpleExpr {
+    SimpleExpr::from(Func::cust(PgCurrentXactIdIfAssigned)).is_null()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::introspection::{current_setting, current_setting_missing_ok, extension_version};
+    use crate::introspection::{current_setting, current_setting_missing_ok, extension_version, transaction_has_not_written};
     use sea_query::{Alias, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn the_unwritten_transaction_test_asks_for_a_null_transaction_id() {
+        let (sql, values) = Query::select()
+            .expr_as(transaction_has_not_written(), Alias::new("fresh"))
+            .to_owned()
+            .build(PostgresQueryBuilder);
+        assert!(sql.contains("pg_current_xact_id_if_assigned() IS NULL"), "{sql}");
+        assert!(values.0.is_empty(), "{sql}");
+    }
 
     #[test]
     fn current_setting_binds_the_setting_name() {

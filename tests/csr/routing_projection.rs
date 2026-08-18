@@ -7,7 +7,9 @@
 //! derived in Rust and rewritten inside the same transaction as every
 //! registration mutation, so these tests check both halves: that the rows carry
 //! each dimension the documents declare, and that a query on each dimension
-//! still returns exactly the registrations the documents admit.
+//! still returns exactly the registrations the documents admit. An axis a row
+//! does not constrain carries a sentinel rather than `NULL` (`{'*'}`, `''`,
+//! `{0}`), and a registration constraining nothing is one row of sentinels.
 
 use andromeda_test_fixtures::context::CORE_CONTEXT;
 use andromeda_test_harness::environment::TestEnvironment;
@@ -33,11 +35,13 @@ async fn routing_rows(pool: &PgPool, registration_id: &str) -> Vec<Value> {
     .into_iter()
     .map(|row| {
         json!({
-            "entity_types": row.get::<Option<Vec<String>>, _>("entity_types"),
-            "entity_id": row.get::<Option<String>, _>("entity_id"),
+            "entity_types": row.get::<Vec<String>, _>("entity_types"),
+            "entity_id": row.get::<String, _>("entity_id"),
             "entity_id_pattern": row.get::<Option<String>, _>("entity_id_pattern"),
-            "property_name_ids": row.get::<Option<Vec<i32>>, _>("property_name_ids").map(|keys| keys.len()),
-            "relationship_name_ids": row.get::<Option<Vec<i32>>, _>("relationship_name_ids").map(|keys| keys.len()),
+            "property_name_ids": row.get::<Vec<i32>, _>("property_name_ids").len(),
+            "relationship_name_ids": row.get::<Vec<i32>, _>("relationship_name_ids").len(),
+            "property_wildcard": row.get::<Vec<i32>, _>("property_name_ids") == vec![0],
+            "relationship_wildcard": row.get::<Vec<i32>, _>("relationship_name_ids") == vec![0],
             "operations": row.get::<Option<Vec<i16>>, _>("operations"),
         })
     })
@@ -104,6 +108,7 @@ async fn a_registration_projects_every_dimension_its_information_declares() {
     assert_eq!(row["entity_id_pattern"], Value::Null, "the item declared no pattern: {row}");
     assert_eq!(row["property_name_ids"], json!(1), "the declared property name is interned: {row}");
     assert_eq!(row["relationship_name_ids"], json!(1), "the declared relationship name is interned: {row}");
+    assert_eq!(row["property_wildcard"], json!(false), "a declared name is not the sentinel: {row}");
     // Operations are a registration-wide member replicated onto every row, and
     // the group token of Table 4.20-2 is a member in its own right rather than
     // being expanded into the operations it stands for.
@@ -152,10 +157,10 @@ async fn one_row_is_projected_per_information_item_and_entity_selector() {
 }
 
 /// Information items are disjunctive, so an item that bounds no axis makes the
-/// whole registration unconstrained: it projects no rows and has to stay a
-/// candidate on every dimension a query narrows on.
+/// whole registration unconstrained: it projects one row carrying every
+/// sentinel and has to stay a candidate on every dimension a query narrows on.
 #[tokio::test]
-async fn an_unconstrained_registration_projects_no_rows_and_stays_a_candidate() {
+async fn an_unconstrained_registration_projects_one_wildcard_row_and_stays_a_candidate() {
     let scope = TestEnvironment::from_suite(SUITE).await.expect("isolated test environment");
     let client = scope.client();
     let registration_id = scope.id("ContextSourceRegistration:routing-open");
@@ -171,11 +176,21 @@ async fn an_unconstrained_registration_projects_no_rows_and_stays_a_candidate() 
     assert_eq!(created.status, StatusCode::CREATED, "create registration: {:?}", created.body);
 
     let rows = routing_rows(scope.database_pool(), &registration_id).await;
-    assert!(rows.is_empty(), "a registration that constrains nothing projects nothing: {rows:?}");
+    assert_eq!(rows.len(), 1, "a registration that constrains nothing projects one wildcard row: {rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["entity_types"], json!(["*"]), "the type axis carries the wildcard sentinel: {row}");
+    assert_eq!(row["entity_id"], json!(""), "the identifier axis carries the empty sentinel: {row}");
+    assert_eq!(row["entity_id_pattern"], Value::Null, "{row}");
+    assert_eq!(row["property_wildcard"], json!(true), "the property axis carries the key sentinel: {row}");
+    assert_eq!(
+        row["relationship_wildcard"],
+        json!(true),
+        "the relationship axis carries the key sentinel: {row}"
+    );
 
-    // Both dimensions the projection narrows on have to keep admitting it: the
-    // preselect may only discard registrations no unnesting could have matched,
-    // and this one matches everything.
+    // Both entity dimensions the projection narrows on have to keep admitting
+    // it: the preselect may only discard registrations no unnesting could have
+    // matched, and this one matches every entity.
     for query in ["type=Device", "idPattern=urn:ngsi-ld:.*"] {
         assert!(
             discovered(&scope, query).await.contains(&registration_id),
@@ -278,7 +293,12 @@ async fn updating_and_deleting_a_registration_moves_its_payload_and_its_routing_
         json!(["https://uri.etsi.org/ngsi-ld/default-context/Vehicle"]),
         "the rows follow the payload they were derived from: {rows:?}"
     );
-    assert_eq!(rows[0]["entity_id"], Value::Null, "the replaced item declares no identifier: {rows:?}");
+    assert_eq!(rows[0]["entity_id"], json!(""), "the replaced item declares no identifier: {rows:?}");
+    assert_eq!(
+        rows[0]["relationship_name_ids"],
+        json!(0),
+        "a name declared on one axis leaves the other empty, not wildcarded: {rows:?}"
+    );
 
     let retrieved = client
         .retrieve_registration(&registration_id, None)

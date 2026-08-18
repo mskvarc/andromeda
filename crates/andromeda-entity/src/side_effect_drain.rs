@@ -31,6 +31,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
+use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Utc};
 use std::{sync::Arc, time::Duration};
 
@@ -112,8 +113,12 @@ impl EntitySideEffectDrain {
         } = lease;
         match self.deliver(job, record, consequence_base).await {
             Ok(()) => match self.queue.ack(id, &self.config.lease_owner).await? {
-                LeaseAcknowledgement::Applied => Ok(true),
+                LeaseAcknowledgement::Applied => {
+                    record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::Completed, 1);
+                    Ok(true)
+                }
                 LeaseAcknowledgement::Lost => {
+                    record_queue_outcome(QueueName::PendingSideEffects, QueueOutcome::LeaseLost, 1);
                     tracing::warn!(job_id = %id, event = "pending_side_effect_lease_lost_on_ack");
                     Ok(false)
                 }
@@ -122,18 +127,23 @@ impl EntitySideEffectDrain {
                 let attempt = u16::try_from(i32::from(attempts).saturating_add(1))
                     .map_err(|conversion| EntityError::internal(format!("invalid durable side-effect attempt count: {conversion}")))?;
                 let detail = error.to_string();
-                let acknowledgement = if attempt >= self.config.max_attempts {
-                    self.queue.mark_dead(id, &self.config.lease_owner, &detail).await?
+                let (acknowledgement, outcome) = if attempt >= self.config.max_attempts {
+                    (self.queue.mark_dead(id, &self.config.lease_owner, &detail).await?, QueueOutcome::Exhausted)
                 } else {
                     let exponent = u32::from(attempt.saturating_sub(1)).min(15);
                     let multiplier = 1_u32 << exponent;
                     let backoff = self.config.base_backoff.saturating_mul(multiplier);
                     let retry_at = now + chrono::Duration::from_std(backoff).map_err(|conversion| EntityError::internal(conversion.to_string()))?;
-                    self.queue.nack(id, &self.config.lease_owner, &detail, retry_at).await?
+                    (self.queue.nack(id, &self.config.lease_owner, &detail, retry_at).await?, QueueOutcome::Retried)
                 };
-                if acknowledgement == LeaseAcknowledgement::Lost {
-                    tracing::warn!(job_id = %id, event = "pending_side_effect_lease_lost_on_retry");
-                }
+                let outcome = match acknowledgement {
+                    LeaseAcknowledgement::Applied => outcome,
+                    LeaseAcknowledgement::Lost => {
+                        tracing::warn!(job_id = %id, event = "pending_side_effect_lease_lost_on_retry");
+                        QueueOutcome::LeaseLost
+                    }
+                };
+                record_queue_outcome(QueueName::PendingSideEffects, outcome, 1);
                 Ok(false)
             }
         }
@@ -161,6 +171,12 @@ impl EntitySideEffectDrain {
             }
         }
         Ok(())
+    }
+
+    /// Remove dead-lettered jobs created before `cutoff`, returning how many
+    /// were removed.
+    pub async fn purge_dead(&self, cutoff: DateTime<Utc>) -> Result<u64, EntityError> {
+        self.queue.purge_dead_before(cutoff).await
     }
 }
 
@@ -347,6 +363,14 @@ mod tests {
                 }
                 Ok(self.lease_outcome)
             })
+        }
+
+        fn purge_dead_before<'life0, 'async_trait>(&'life0 self, _cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<u64, EntityError>>
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            Box::pin(async move { Ok(0) })
         }
     }
 

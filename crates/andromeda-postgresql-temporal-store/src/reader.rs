@@ -11,11 +11,16 @@ use crate::{
     error::TemporalStoreError,
     history_row_decode::decode_history_row,
     repo::TemporalRepository,
+    temporal_query_execution::TemporalStatement,
 };
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
-use andromeda_postgresql_query::projected_attribute_names::projected_attribute_names;
+use andromeda_postgresql_query::{
+    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+    projected_attribute_names::projected_attribute_names,
+    projected_type_names::projected_type_names,
+};
 use andromeda_postgresql_temporal_query::{
     aggregation_group::ensure_uniform_aggregation_groups,
     history::build_temporal_history_query,
@@ -54,23 +59,35 @@ impl TemporalHistoryReader for TemporalRepository {
     async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         // A temporal query orders by time rather than by distance, so it
         // contributes no ordering terms.
-        let names = projected_attribute_names(compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
+        let attribute_names = projected_attribute_names(&[], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
         // The projection is written inside the transaction that writes the
         // entity, so a dictionary hit is already backed by committed projection
         // rows and there is nothing to wait for.
-        let attribute_names = if names.is_empty() {
-            Default::default()
+        let attributes = if attribute_names.is_empty() {
+            ResolvedNames::default()
         } else {
             self.attribute_names
-                .lookup(&names)
+                .lookup(&attribute_names)
                 .await
                 .map_err(|e| TemporalStoreError::Query(e.to_string()))?
         };
+        // The catalogue carries type keys, so a type selection resolves through
+        // the same dictionary the write path minted them in.
+        let type_names = projected_type_names(&compiled.entities);
+        let types = if type_names.is_empty() {
+            ResolvedNames::default()
+        } else {
+            self.entity_type_names
+                .lookup(&type_names)
+                .await
+                .map_err(|e| TemporalStoreError::Query(e.to_string()))?
+        };
+        let names = QueryNames { attributes, types };
 
-        let stage1 = build_stage1_entity_ids(compiled, &attribute_names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let stage1 = build_stage1_entity_ids(compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
         let entity_id_rows = self
-            .execute_temporal_query(stage1.select)
+            .execute_temporal_query(TemporalStatement::Stage1, stage1.select)
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
@@ -85,7 +102,10 @@ impl TemporalHistoryReader for TemporalRepository {
 
         let total_count = if compiled.pagination.count == CountPolicy::Emit {
             let count = stage1.count.ok_or_else(|| TemporalStoreError::Query("Count SQL not built".to_string()))?;
-            let count_rows = self.execute_temporal_query(count).await.map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+            let count_rows = self
+                .execute_temporal_query(TemporalStatement::Stage1Count, count)
+                .await
+                .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
             count_rows.first().and_then(|r| r.try_get::<i64, _>("count").ok())
         } else {
             None
@@ -107,7 +127,7 @@ impl TemporalHistoryReader for TemporalRepository {
     async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
         let stage2 = build_temporal_history_query(entity_id, compiled);
         let pg_rows = self
-            .execute_temporal_query(stage2)
+            .execute_temporal_query(TemporalStatement::History, stage2)
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
@@ -122,7 +142,7 @@ impl TemporalHistoryReader for TemporalRepository {
     async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         let stage2 = build_temporal_history_query(entity_id, compiled);
         let pg_rows = self
-            .execute_temporal_query(stage2)
+            .execute_temporal_query(TemporalStatement::Aggregation, stage2)
             .await
             .map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 

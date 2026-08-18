@@ -26,6 +26,7 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     commit_replay::CommitReplay,
     committer::{CommitFuture, ContextCommitter},
+    subscription_key::SubscriptionKey,
     write_outcome::WriteOutcome,
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
@@ -40,7 +41,6 @@ use andromeda_subscription::{
     error::SubscriptionError,
     store::{SubscriptionFields, SubscriptionStore},
     stored_subscription::StoredSubscription,
-    subscription_key::SubscriptionKey,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use async_trait::async_trait;
@@ -57,6 +57,8 @@ use std::{
 const ENTITY_ID: &str = "urn:ngsi-ld:Building:durable-test";
 /// The subscription the recording committer must be owed a match against.
 const SUBSCRIPTION_ID: &str = "urn:ngsi-ld:Subscription:durable-test";
+/// The surrogate key the fixture subscription is stored under.
+const SUBSCRIPTION_KEY: i64 = 1;
 /// The expanded Building type both the entity and the subscription selector carry.
 const BUILDING_TYPE_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/Building";
 /// The expanded IRI the `category` term the entity already carries resolves to.
@@ -188,8 +190,13 @@ fn stored_building_subscription() -> Result<StoredSubscription, SubscriptionErro
         "modifiedAt": "2020-01-01T00:00:00Z"
     }))
     .map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription: {error}")))?;
-    let key = SubscriptionKey::try_from(1).map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription key: {error}")))?;
+    let key = SubscriptionKey::try_from(SUBSCRIPTION_KEY).map_err(|error| SubscriptionError::internal(format!("invalid fixture subscription key: {error}")))?;
     Ok(StoredSubscription { key, subscription })
+}
+
+/// The fixture subscription's surrogate key, as the store would have assigned it.
+fn subscription_key() -> SubscriptionKey {
+    SubscriptionKey::try_from(SUBSCRIPTION_KEY).expect("the fixture subscription key is positive")
 }
 
 #[async_trait]
@@ -320,7 +327,7 @@ fn assert_single_match(write: &AtomicWrite, trigger: NotificationTrigger, change
         "the matching subscription is owed exactly one notification"
     );
     let matched = &write.subscription_matches[0];
-    assert_eq!(matched.subscription_id.as_str(), SUBSCRIPTION_ID);
+    assert_eq!(matched.subscription_key, subscription_key());
     assert_eq!(matched.entity_id.as_str(), ENTITY_ID);
     assert_eq!(matched.trigger, trigger);
     assert_eq!(matched.changed_attrs, vec![attribute_name(changed)]);

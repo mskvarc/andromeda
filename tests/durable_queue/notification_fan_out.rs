@@ -11,7 +11,7 @@
 
 use crate::{
     notification_fixture::{entity_id, entity_snapshot, subscription_id},
-    queue_database::{attribute_name, deliveries_of, events_of, queue_database, record_events, subscription},
+    queue_database::{attribute_name, deliveries_of, events_of, queue_database, record_events, subscription, subscription_key},
     queue_workers::{delivery_worker, holding_lease},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
@@ -28,9 +28,6 @@ use uuid::Uuid;
 
 /// Subscriptions in the high-fan-out fixture.
 const HIGH_FAN_OUT: usize = 100;
-
-/// The attempt ceiling the queue's partial claim index carries.
-const MAX_ATTEMPTS: i32 = 5;
 
 /// An Entity snapshot large enough that repeating it per subscriber would dominate the queue.
 fn large_snapshot(entity: &Uri) -> Value {
@@ -104,7 +101,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             changed_attribute_name_ids: vec![temperature, speed],
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
-            subscription_ids: vec![&single],
+            subscription_keys: vec![subscription_key(single_key)],
         }],
     )
     .await
@@ -129,7 +126,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
             changed_attribute_name_ids: vec![temperature, speed],
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
-            subscription_ids: many.iter().collect(),
+            subscription_keys: many_keys.iter().map(|key| subscription_key(*key)).collect(),
         }],
     )
     .await
@@ -157,10 +154,7 @@ async fn durable_queue_one_event_owes_exactly_one_delivery_per_matching_subscrip
 
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
-    let claimed = queue
-        .claim_pending(&worker, holding_lease(), 200, MAX_ATTEMPTS)
-        .await
-        .expect("claim the whole fan-out");
+    let claimed = queue.claim_pending(&worker, holding_lease(), 200).await.expect("claim the whole fan-out");
     assert_eq!(claimed.len(), HIGH_FAN_OUT + 1, "every owed delivery is claimable");
     let rendered = claimed.first().expect("a claimed delivery");
     assert_eq!(
@@ -207,7 +201,7 @@ async fn durable_queue_a_batch_write_numbers_its_events_uniquely_and_absorbs_a_r
             changed_attribute_name_ids: Vec::new(),
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
-            subscription_ids: vec![&first, &second],
+            subscription_keys: vec![subscription_key(first_key), subscription_key(second_key)],
         })
         .collect();
     record_events(&pool, &record, &events).await.expect("the batch write");
@@ -245,7 +239,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
     let entity = entity_id();
     let snapshot = entity_snapshot(&entity);
     let subscriber = subscription_id();
-    subscription(&pool, subscriber.as_str()).await;
+    let subscriber_key = subscription(&pool, subscriber.as_str()).await;
     let record = WriteRecord::mint(Utc::now());
     record_events(
         &pool,
@@ -257,7 +251,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
             changed_attribute_name_ids: Vec::new(),
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
-            subscription_ids: vec![&subscriber],
+            subscription_keys: vec![subscription_key(subscriber_key)],
         }],
     )
     .await
@@ -274,7 +268,7 @@ async fn durable_queue_claiming_a_delivery_leaves_its_event_untouched() {
 
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
-    let claimed = queue.claim_pending(&worker, holding_lease(), 10, MAX_ATTEMPTS).await.expect("claim");
+    let claimed = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim");
     assert_eq!(claimed.len(), 1);
 
     let after: (String, Value) = sqlx::query_as("SELECT xmin::text, entity_snapshot FROM notification_events WHERE write_id = $1")

@@ -5,18 +5,18 @@
 //! transaction that writes the entity itself. Nothing publishes it afterwards
 //! and nothing reconciles it later: a projection failure aborts the commit with
 //! everything else, so a `q` filter can never be answered from a projection
-//! that disagrees with `entities.payload`.
+//! that disagrees with `entity_documents.payload`.
 //!
-//! Both the interpreted intents and the surrogate keys come from phases that
-//! already ran. The intents are the same ones history is written from — one
-//! interpretation of the mutation serves both — and the keys are the ones the
-//! entity statements returned, so an entity whose write did not land carries no
-//! key and contributes nothing here.
+//! The interpreted intents, the surrogate keys and the attribute dictionary
+//! keys all come from phases that already ran. The intents are the same ones
+//! history is written from — one interpretation of the mutation serves both —
+//! the entity keys are the ones the entity statements returned, so an entity
+//! whose write did not land carries no key and contributes nothing here, and
+//! the dictionary keys were minted from those same intents in this transaction.
 
 use crate::commit_refusal::{persistence, unit_code};
 use andromeda_context_commit::error::CommitError;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::current_attribute_values::{
     delete::delete_instances_in_tx,
@@ -43,15 +43,16 @@ struct ProjectionWork {
 ///
 /// # Errors
 ///
-/// Returns [`CommitError::Persistence`] when the dictionary cannot be resolved
-/// or a statement fails, [`CommitError::Submission`] when an instance carries a
-/// `unitCode` the catalog cannot store, and [`CommitError::Invariant`] when an
-/// observation carries a value the projection has no column for.
+/// Returns [`CommitError::Persistence`] when a statement fails,
+/// [`CommitError::Submission`] when an instance carries a `unitCode` the
+/// catalog cannot store, and [`CommitError::Invariant`] when an observation
+/// carries a value the projection has no column for or names an attribute the
+/// dictionary did not resolve.
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
     intents: &[TemporalAppendIntent],
     keys: &HashMap<Uri, EntityKey>,
-    attribute_names: &dyn AttributeNameLookup,
+    dictionary: &HashMap<AttributeName, AttributeNameId>,
 ) -> Result<(), CommitError> {
     let projected: Vec<(&TemporalAppendIntent, EntityKey)> = intents
         .iter()
@@ -61,10 +62,9 @@ pub(crate) async fn apply(
         return Ok(());
     }
 
-    let dictionary = resolve_dictionary(tx, &projected, attribute_names).await?;
     let mut work = ProjectionWork::default();
     for (intent, entity_key) in &projected {
-        collect(&mut work, intent, *entity_key, &dictionary)?;
+        collect(&mut work, intent, *entity_key, dictionary)?;
     }
     let work = work;
 
@@ -76,33 +76,6 @@ pub(crate) async fn apply(
     Ok(())
 }
 
-/// Mint the dictionary key of every attribute the projected intents name.
-///
-/// Creating rather than looking up: an attribute recorded for the first time
-/// has no key yet, and the projection's foreign key demands one. Minted in the
-/// commit's own transaction, so a key exists exactly when the projected row that
-/// references it does.
-async fn resolve_dictionary(
-    tx: &mut Transaction<'_, Postgres>,
-    projected: &[(&TemporalAppendIntent, EntityKey)],
-    attribute_names: &dyn AttributeNameLookup,
-) -> Result<HashMap<AttributeName, AttributeNameId>, CommitError> {
-    let mut names: Vec<AttributeName> = projected
-        .iter()
-        .flat_map(|(intent, _)| intent.entries.iter())
-        .filter_map(|entry| match entry {
-            // clone: the dictionary request owns the names it resolves.
-            TemporalAppendEntry::Observation { row } => Some(row.attribute_name.clone()),
-            TemporalAppendEntry::Tombstone { attribute_name, .. } => Some(attribute_name.clone()),
-            TemporalAppendEntry::Scope { .. } => None,
-        })
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    let names = names;
-    attribute_names.resolve_or_create(tx, &names).await.map_err(persistence)
-}
-
 /// Turn one intent's entries into the projection work they describe.
 fn collect(
     work: &mut ProjectionWork,
@@ -110,7 +83,6 @@ fn collect(
     entity_key: EntityKey,
     dictionary: &HashMap<AttributeName, AttributeNameId>,
 ) -> Result<(), CommitError> {
-    let modified_at = intent.record.recorded_at();
     for entry in &intent.entries {
         match entry {
             TemporalAppendEntry::Observation { row } => {
@@ -122,7 +94,6 @@ fn collect(
                     Err(_) => work.removals.push(key),
                     Ok(value) => work.upserts.push(ProjectedAttributeRow {
                         key,
-                        modified_at,
                         attribute_kind: stored_attribute_kind(row.attribute_type),
                         value,
                         unit_code_id: unit_code_in(row.metadata.as_ref()).map_err(unit_code)?,

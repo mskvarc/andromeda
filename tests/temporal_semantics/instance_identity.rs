@@ -1,4 +1,4 @@
-//! Compact generated instance identity and mixed UUID versions.
+//! Compact generated instance identity and mixed instance UUID versions.
 //!
 //! Clause 4.5.7 hands a client-supplied `instanceId` back unchanged, so a
 //! broker-minted identifier keeps only its UUID and is re-rendered through one
@@ -133,18 +133,20 @@ async fn temporal_semantics_generated_and_verbatim_instance_identities_stay_apar
     );
 }
 
-/// A migrated version-4 stream is read, joined and rendered beside a new
-/// version-7 one, with no version-dependent branch and no rewritten identifier.
+/// A migrated instance whose broker-minted identifier is a version-4 UUID is
+/// read, joined and rendered beside a newly minted version-7 one, with no
+/// version-dependent branch and no rewritten identifier. The seeded stream is
+/// keyed by whatever the database generated for it, exactly like a written one.
 #[tokio::test]
 #[serial]
-async fn temporal_semantics_mixed_uuid_versions_read_and_join_without_rewriting() {
+async fn temporal_semantics_mixed_instance_uuid_versions_read_and_join_without_rewriting() {
     let _serialized_environment = clean_database().await;
     let http = client();
     let pool = database().await;
     let migrated_id = unique_id("urn:ngsi-ld:Vehicle:mixed_uuid_migrated");
     let current_id = unique_id("urn:ngsi-ld:Vehicle:mixed_uuid_current");
 
-    // A new write mints version-7 identifiers throughout.
+    // A new write mints version-7 instance identifiers.
     let (status, _) = create_temporal_entity(
         &http,
         &json!({
@@ -156,17 +158,16 @@ async fn temporal_semantics_mixed_uuid_versions_read_and_join_without_rewriting(
     .await;
     assert_eq!(status, StatusCode::CREATED);
 
-    // A migrated tenant carries version-4 stream and instance identifiers.
-    let migrated_stream = Uuid::new_v4();
+    // A migrated tenant carries version-4 instance identifiers.
     let migrated_instance = Uuid::new_v4();
-    assert_eq!(migrated_stream.get_version_num(), 4);
+    assert_eq!(migrated_instance.get_version_num(), 4);
     let entity_key = seed_temporal_entity(&pool, &migrated_id, "Vehicle").await;
     let name_id = attribute_name_id(&pool, &attribute_iri("speed")).await;
-    seed_stream(&pool, migrated_stream, entity_key, name_id).await;
+    let migrated_stream = seed_stream(&pool, entity_key, name_id).await;
     seed_history_row(
         &pool,
         &SeededHistoryRow {
-            stream_id: migrated_stream,
+            stream_key: migrated_stream,
             recorded_at: Utc::now() - TimeDelta::minutes(1),
             write_id: Uuid::new_v4(),
             generated_instance_uuid: migrated_instance,
@@ -176,10 +177,10 @@ async fn temporal_semantics_mixed_uuid_versions_read_and_join_without_rewriting(
     )
     .await;
 
-    // The migrated stream joins its catalogue row and renders like any other.
+    // The seeded stream joins its catalogue row and renders like any other.
     let migrated_rows = stored_attribute_history(&pool, &migrated_id, &attribute_iri("speed")).await;
-    assert_eq!(migrated_rows.len(), 1, "the version-4 stream joins its catalogue row");
-    assert_eq!(migrated_rows[0].stream_id, migrated_stream, "the stored identifier is not rewritten");
+    assert_eq!(migrated_rows.len(), 1, "the seeded stream joins its catalogue row");
+    assert_eq!(migrated_rows[0].stream_key, migrated_stream, "the row carries the key the catalogue generated");
     assert_eq!(
         migrated_rows[0].generated_instance_uuid,
         Some(migrated_instance),
@@ -187,18 +188,12 @@ async fn temporal_semantics_mixed_uuid_versions_read_and_join_without_rewriting(
     );
 
     let current_rows = stored_attribute_history(&pool, &current_id, &attribute_iri("speed")).await;
-    assert_eq!(current_rows[0].stream_id.get_version_num(), 7, "a new stream is version 7");
-    assert_ne!(
-        current_rows[0].stream_id.get_version_num(),
-        migrated_rows[0].stream_id.get_version_num(),
-        "the two populations really are different UUID versions"
-    );
+    let current_instance = current_rows[0].generated_instance_uuid.expect("a minted identifier");
+    assert_eq!(current_instance.get_version_num(), 7, "a new instance identifier is version 7");
+    assert_ne!(current_rows[0].stream_key, migrated_stream, "the two entities record on two streams");
 
     // Both render through the same template and both are retrievable.
-    for (entity_id, expected_value, expected_uuid) in [
-        (&migrated_id, 4, migrated_instance),
-        (&current_id, 7, current_rows[0].generated_instance_uuid.expect("a minted identifier")),
-    ] {
+    for (entity_id, expected_value, expected_uuid) in [(&migrated_id, 4, migrated_instance), (&current_id, 7, current_instance)] {
         let (status, body) = get_temporal_entity(&http, entity_id, "").await;
         assert_eq!(status, StatusCode::OK, "a {expected_value}-valued stream is retrievable");
         let instances = rendered_instances(&body, "speed");

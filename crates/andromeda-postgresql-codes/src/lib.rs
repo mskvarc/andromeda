@@ -6,7 +6,7 @@
 //! history row, the trigger condition of a notification, the operation set of a
 //! context-source registration. The second is the identities those rows are
 //! keyed and referenced by: the current-state entity key, the temporal entity
-//! key and the attribute stream identifier.
+//! key and the attribute stream key.
 //!
 //! The split instance identity is deliberately not here. Clause 4.5.7 makes an
 //! `instanceId` part of what a client is handed back, so it is a domain value
@@ -42,8 +42,8 @@ pub mod notification_trigger;
 pub mod registry;
 /// The persisted value shape of one scope-history row.
 pub mod scope_value_kind;
-/// The identity of one temporal attribute stream.
-pub mod stream_id;
+/// The narrow key a temporal attribute stream is referenced by.
+pub mod stream_key;
 /// The narrow key a temporal entity is referenced by.
 pub mod temporal_entity_key;
 /// The persisted value shape of one attribute-history row.

@@ -58,14 +58,16 @@ pub enum ScopeTarget {
 }
 
 impl ScopeTarget {
-    /// The current-scope target reading an entity's scope paths from `column`.
+    /// The current-scope target reading an entity's scope paths from the
+    /// `(relation, column)` the driving statement declares.
     ///
-    /// The column is named by the iden the driving statement declares, so a
+    /// The column is named by the idens the driving statement declares, so a
     /// rename moves this reference with it rather than leaving a hand-quoted
-    /// string behind.
-    pub fn current_paths(column: impl IntoIden) -> ScopeTarget {
+    /// string behind; it is qualified because the statement joins the search
+    /// row beside the identity row and an unqualified name would be ambiguous.
+    pub fn current_paths(column: (impl IntoIden, impl IntoIden)) -> ScopeTarget {
         ScopeTarget::CurrentPaths {
-            column: ColumnReference::bare(column),
+            column: ColumnReference::qualified(column.0, column.1),
         }
     }
 
@@ -144,7 +146,7 @@ fn scope_history_exists(lquery: &str, entity_key_column: &ColumnReference, timep
 #[cfg(test)]
 mod tests {
     use super::*;
-    use andromeda_postgresql_schema::current::Entities;
+    use andromeda_postgresql_schema::current::{Entities, EntitySearch};
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
     fn scope(raw: &str) -> ScopeQuery {
@@ -152,7 +154,7 @@ mod tests {
     }
 
     fn current() -> ScopeTarget {
-        ScopeTarget::current_paths(Entities::ScopePaths)
+        ScopeTarget::current_paths((EntitySearch::Table, EntitySearch::ScopePaths))
     }
 
     fn history(interval: TimeInterval) -> ScopeTarget {

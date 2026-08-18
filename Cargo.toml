@@ -67,11 +67,12 @@ andromeda-entity.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-notification.workspace = true
-andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
+andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
+andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true
 andromeda-test-client.workspace = true
 andromeda-test-fixtures.workspace = true
@@ -115,8 +116,8 @@ andromeda-http-context-registry = { path = "crates/andromeda-http-context-regist
 andromeda-http-entity = { path = "crates/andromeda-http-entity" }
 andromeda-http-entity-map = { path = "crates/andromeda-http-entity-map" }
 andromeda-http-extraction = { path = "crates/andromeda-http-extraction" }
-andromeda-http-health = { path = "crates/andromeda-http-health" }
 andromeda-http-headers = { path = "crates/andromeda-http-headers" }
+andromeda-http-health = { path = "crates/andromeda-http-health" }
 andromeda-http-registration = { path = "crates/andromeda-http-registration" }
 andromeda-http-response = { path = "crates/andromeda-http-response" }
 andromeda-http-server = { path = "crates/andromeda-http-server" }
@@ -124,6 +125,7 @@ andromeda-http-snapshot = { path = "crates/andromeda-http-snapshot" }
 andromeda-http-source-identity = { path = "crates/andromeda-http-source-identity" }
 andromeda-http-stack = { path = "crates/andromeda-http-stack" }
 andromeda-http-subscription = { path = "crates/andromeda-http-subscription" }
+andromeda-http-telemetry = { path = "crates/andromeda-http-telemetry" }
 andromeda-http-temporal = { path = "crates/andromeda-http-temporal" }
 andromeda-http-tenancy = { path = "crates/andromeda-http-tenancy" }
 andromeda-jsonld = { path = "crates/andromeda-jsonld" }
@@ -134,16 +136,16 @@ andromeda-ngsi-ld-number = { path = "crates/andromeda-ngsi-ld-number" }
 andromeda-ngsi-ld-problem-details = { path = "crates/andromeda-ngsi-ld-problem-details" }
 andromeda-ngsi-ld-query = { path = "crates/andromeda-ngsi-ld-query" }
 andromeda-ngsi-ld-render = { path = "crates/andromeda-ngsi-ld-render" }
-andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-representation = { path = "crates/andromeda-ngsi-ld-representation" }
+andromeda-ngsi-ld-request = { path = "crates/andromeda-ngsi-ld-request" }
 andromeda-ngsi-ld-vocabulary = { path = "crates/andromeda-ngsi-ld-vocabulary" }
 andromeda-notification = { path = "crates/andromeda-notification" }
 andromeda-postgresql-atomic-write = { path = "crates/andromeda-postgresql-atomic-write" }
-andromeda-postgresql-attribute-dictionary = { path = "crates/andromeda-postgresql-attribute-dictionary" }
 andromeda-postgresql-codes = { path = "crates/andromeda-postgresql-codes" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
+andromeda-postgresql-name-dictionary = { path = "crates/andromeda-postgresql-name-dictionary" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-schema = { path = "crates/andromeda-postgresql-schema" }
 andromeda-postgresql-seaquery = { path = "crates/andromeda-postgresql-seaquery" }
@@ -154,6 +156,7 @@ andromeda-snapshot = { path = "crates/andromeda-snapshot" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-subscription = { path = "crates/andromeda-subscription" }
 andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
+andromeda-telemetry = { path = "crates/andromeda-telemetry" }
 andromeda-temporal = { path = "crates/andromeda-temporal" }
 andromeda-tenancy = { path = "crates/andromeda-tenancy" }
 andromeda-test-client = { path = "crates/andromeda-test-client" }

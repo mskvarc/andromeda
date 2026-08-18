@@ -88,11 +88,12 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-notification",
- "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",
  "andromeda-postgresql-temporal-store",
+ "andromeda-temporal",
  "andromeda-tenancy",
  "andromeda-test-client",
  "andromeda-test-fixtures",
@@ -154,6 +155,7 @@ dependencies = [
  "andromeda-http-source-identity",
  "andromeda-http-stack",
  "andromeda-http-subscription",
+ "andromeda-http-telemetry",
  "andromeda-http-temporal",
  "andromeda-http-tenancy",
  "andromeda-jsonld",
@@ -163,14 +165,15 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-notification",
  "andromeda-postgresql-atomic-write",
- "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-context-store",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-temporal-store",
  "andromeda-registration",
  "andromeda-snapshot",
  "andromeda-spatial-index",
  "andromeda-subscription",
  "andromeda-task-runtime",
+ "andromeda-telemetry",
  "andromeda-temporal",
  "andromeda-tenancy",
  "async-trait",
@@ -296,6 +299,7 @@ dependencies = [
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-spatial-index",
  "andromeda-subscription",
+ "andromeda-telemetry",
  "andromeda-tenancy",
  "async-lock",
  "async-trait",
@@ -395,13 +399,16 @@ dependencies = [
  "andromeda-http-source-identity",
  "andromeda-http-stack",
  "andromeda-http-subscription",
+ "andromeda-http-telemetry",
  "andromeda-http-temporal",
  "andromeda-http-tenancy",
  "andromeda-ngsi-ld-lexicon",
+ "andromeda-telemetry",
  "andromeda-tenancy",
  "async-trait",
  "axum",
  "futures",
+ "pretty_assertions",
  "tokio",
  "tower",
  "tower-http 0.7.0",
@@ -736,6 +743,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-http-telemetry"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-telemetry",
+ "axum",
+ "mediatype",
+ "metrics",
+ "pretty_assertions",
+ "thiserror 2.0.20",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "andromeda-http-temporal"
 version = "0.1.0"
 dependencies = [
@@ -1039,6 +1061,7 @@ dependencies = [
  "andromeda-registration",
  "andromeda-spatial-index",
  "andromeda-subscription",
+ "andromeda-telemetry",
  "andromeda-tenancy",
  "async-trait",
  "chrono",
@@ -1068,13 +1091,14 @@ dependencies = [
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-number",
- "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-store",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-postgresql-temporal-store",
+ "andromeda-telemetry",
  "andromeda-temporal",
  "async-trait",
  "chrono",
@@ -1091,32 +1115,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "andromeda-postgresql-attribute-dictionary"
-version = "0.1.0"
-dependencies = [
- "andromeda-architecture-checks",
- "andromeda-ngsi-ld-lexicon",
- "andromeda-postgresql-query",
- "andromeda-postgresql-schema",
- "andromeda-postgresql-seaquery",
- "async-trait",
- "dashmap",
- "sea-query",
- "sea-query-sqlx",
- "serde",
- "sqlx",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
 name = "andromeda-postgresql-codes"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "derive_more",
  "thiserror 2.0.20",
- "uuid",
 ]
 
 [[package]]
@@ -1157,16 +1161,17 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
  "andromeda-notification",
- "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-context-query",
  "andromeda-postgresql-encoding",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-registration",
  "andromeda-snapshot",
  "andromeda-subscription",
+ "andromeda-telemetry",
  "andromeda-tenancy",
  "andromeda-unit-catalog",
  "async-trait",
@@ -1208,6 +1213,26 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "uuid",
+]
+
+[[package]]
+name = "andromeda-postgresql-name-dictionary"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "andromeda-ngsi-ld-lexicon",
+ "andromeda-postgresql-query",
+ "andromeda-postgresql-schema",
+ "andromeda-postgresql-seaquery",
+ "async-trait",
+ "dashmap",
+ "sea-query",
+ "sea-query-sqlx",
+ "serde",
+ "sqlx",
+ "strum",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -1284,13 +1309,14 @@ dependencies = [
  "andromeda-ngsi-ld-number",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-vocabulary",
- "andromeda-postgresql-attribute-dictionary",
  "andromeda-postgresql-codes",
  "andromeda-postgresql-encoding",
+ "andromeda-postgresql-name-dictionary",
  "andromeda-postgresql-query",
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "andromeda-postgresql-temporal-query",
+ "andromeda-telemetry",
  "andromeda-temporal",
  "andromeda-unit-catalog",
  "async-trait",
@@ -1302,6 +1328,7 @@ dependencies = [
  "sea-query-sqlx",
  "serde_json",
  "sqlx",
+ "strum",
  "thiserror 2.0.20",
  "uuid",
 ]
@@ -1390,6 +1417,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-vocabulary",
  "andromeda-spatial-index",
+ "andromeda-telemetry",
  "andromeda-tenancy",
  "async-trait",
  "chrono",
@@ -1399,7 +1427,9 @@ dependencies = [
  "iri-rs",
  "langtag",
  "mediatype",
+ "parking_lot",
  "pretty_assertions",
+ "proptest",
  "serde",
  "serde_json",
  "strum",
@@ -1425,6 +1455,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "andromeda-telemetry"
+version = "0.1.0"
+dependencies = [
+ "andromeda-architecture-checks",
+ "metrics",
+ "metrics-exporter-prometheus",
+ "pretty_assertions",
+ "strum",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
 name = "andromeda-temporal"
 version = "0.1.0"
 dependencies = [
@@ -1441,6 +1484,7 @@ dependencies = [
  "andromeda-ngsi-ld-representation",
  "andromeda-ngsi-ld-request",
  "andromeda-ngsi-ld-vocabulary",
+ "andromeda-telemetry",
  "async-lock",
  "async-trait",
  "chrono",
@@ -1825,6 +1869,21 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "bit-set"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+dependencies = [
+ "bit-vec",
+]
+
+[[package]]
+name = "bit-vec"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
@@ -2753,6 +2812,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "evmap"
+version = "11.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b8874945f036109c72242964c1174cf99434e30cfa45bf45fedc983f50046f8"
+dependencies = [
+ "hashbag",
+ "left-right",
+ "smallvec",
+]
+
+[[package]]
 name = "fast-float2"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2949,6 +3019,21 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "generator"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3b854b0e584ead1a33f18b2fcad7cf7be18b3875c78816b753639aa501513ae"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows-link",
+ "windows-result",
 ]
 
 [[package]]
@@ -3185,6 +3270,12 @@ checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
 dependencies = [
  "byteorder",
 ]
+
+[[package]]
+name = "hashbag"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7040a10f52cba493ddb09926e15d10a9d8a28043708a405931fe4c6f19fac064"
 
 [[package]]
 name = "hashbrown"
@@ -3638,7 +3729,7 @@ checksum = "d0acd33ff0285af998aaf9b57342af478078f53492322fafc47450e09397e0e9"
 dependencies = [
  "bitmaps",
  "rand_core 0.6.4",
- "rand_xoshiro",
+ "rand_xoshiro 0.6.0",
  "sized-chunks",
  "typenum",
  "version_check",
@@ -4158,6 +4249,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "left-right"
+version = "0.11.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bc015ded5d9b3054dbbdb63332cdd6ee42352ccef19e911e25117490e2f48ee"
+dependencies = [
+ "crossbeam-utils",
+ "loom",
+ "slab",
+]
+
+[[package]]
 name = "lexical"
 version = "7.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4312,6 +4414,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
+name = "loom"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
+dependencies = [
+ "cfg-if",
+ "generator",
+ "scoped-tls",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4356,6 +4471,48 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "metrics"
+version = "0.24.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89550ee9f79e88fef3119de263694973a8adb26c21d75322164fb8c493039fe2"
+dependencies = [
+ "portable-atomic",
+ "rapidhash",
+]
+
+[[package]]
+name = "metrics-exporter-prometheus"
+version = "0.18.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1db0d8f1fc9e62caebd0319e11eaec5822b0186c171568f0480b46a0137f9108"
+dependencies = [
+ "base64",
+ "evmap",
+ "indexmap 2.14.0",
+ "metrics",
+ "metrics-util",
+ "quanta",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "metrics-util"
+version = "0.20.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96f8722f8562635f92f8ed992f26df0532266eb03d5202607c20c0d7e9745e13"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+ "hashbrown 0.16.1",
+ "metrics",
+ "quanta",
+ "rand 0.9.5",
+ "rand_xoshiro 0.7.0",
+ "rapidhash",
+ "sketches-ddsketch",
+]
 
 [[package]]
 name = "mimalloc"
@@ -4681,6 +4838,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744"
+dependencies = [
+ "bit-set",
+ "bit-vec",
+ "bitflags 2.13.1",
+ "num-traits",
+ "rand 0.9.5",
+ "rand_chacha",
+ "rand_xorshift",
+ "regex-syntax",
+ "rusty-fork",
+ "tempfile",
+ "unarray",
+]
+
+[[package]]
+name = "quanta"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3ab5a9d756f0d97bdc89019bd2e4ea098cf9cde50ee7564dde6b81ccc8f06c7"
+dependencies = [
+ "crossbeam-utils",
+ "libc",
+ "once_cell",
+ "raw-cpuid",
+ "wasi",
+ "web-sys",
+ "winapi",
+]
+
+[[package]]
+name = "quick-error"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
 name = "quick-xml"
 version = "0.39.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4830,6 +5027,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_xorshift"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "513962919efc330f829edb2535844d1b912b0fbe2ca165d613e4e8788bb05a5a"
+dependencies = [
+ "rand_core 0.9.5",
+]
+
+[[package]]
 name = "rand_xoshiro"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4839,16 +5045,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_xoshiro"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f703f4665700daf5512dcca5f43afa6af89f09db47fb56be587f80636bda2d41"
+dependencies = [
+ "rand_core 0.9.5",
+]
+
+[[package]]
 name = "range-traits"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d20581732dd76fa913c7dff1a2412b714afe3573e94d41c34719de73337cc8ab"
 
 [[package]]
+name = "rapidhash"
+version = "4.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5da7e78a036ce858e8d55b7e7dc8ba3a88b78350fd2155d3591bbd966b58589e"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "raw-btree"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6bd1f6fba6db8161b6818f9061152e751b4d6030b39b561bbbb0153b36a6cfc5"
+
+[[package]]
+name = "raw-cpuid"
+version = "11.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "498cd0dc59d73224351ee52a95fee0f1a617a2eae0e7d9d720cc622c73a54186"
+dependencies = [
+ "bitflags 2.13.1",
+]
 
 [[package]]
 name = "rayon"
@@ -5253,6 +5486,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "rusty-fork"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc6bf79ff24e648f6da1f8d1f011e9cac26491b619e6b9280f2b47f1774e6ee2"
+dependencies = [
+ "fnv",
+ "quick-error",
+ "tempfile",
+ "wait-timeout",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5311,6 +5556,12 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "scoped-tls"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
 
 [[package]]
 name = "scopeguard"
@@ -5651,6 +5902,12 @@ dependencies = [
  "bitmaps",
  "typenum",
 ]
+
+[[package]]
+name = "sketches-ddsketch"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c6f73aeb92d671e0cc4dca167e59b2deb6387c375391bc99ee743f326994a2b"
 
 [[package]]
 name = "slab"
@@ -6089,6 +6346,19 @@ name = "tagptr"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "terminal_size"
@@ -6569,6 +6839,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
+name = "unarray"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
 name = "unicode-bidi"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6698,6 +6974,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 
 [[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "walkdir"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6822,6 +7107,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "626c4bac6755d76ffc12cb01b2eac751db1996b9e0041de9aa02c8c211ddc82c"
 
 [[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
 name = "winapi-util"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6829,6 +7130,12 @@ checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-core"

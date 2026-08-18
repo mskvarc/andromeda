@@ -81,7 +81,7 @@ pub struct TemporalEvolutionDeletion {
 /// deletion can address.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OrphanedTemporalRows {
-    /// Attribute history rows whose `stream_id` names no stream.
+    /// Attribute history rows whose `stream_key` names no stream.
     pub attribute_history_rows: i64,
     /// Scope history rows whose `temporal_entity_key` names no temporal entity.
     pub scope_history_rows: i64,
@@ -188,13 +188,13 @@ fn lock_temporal_entity_statement(id: &str) -> SelectStatement {
 /// Remove one entity's attribute history, reporting each removed write identity.
 fn delete_attribute_history_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
     let owned_streams = Query::select()
-        .column((S, TemporalAttributeStreams::Id))
+        .column((S, TemporalAttributeStreams::StreamKey))
         .from_as(TemporalAttributeStreams::Table, S)
         .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key.get()))
         .to_owned();
     Query::delete()
         .from_table(AttributeHistory::Table)
-        .and_where(Expr::col(AttributeHistory::StreamId).in_subquery(owned_streams))
+        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(owned_streams))
         .returning(Query::returning().column(AttributeHistory::WriteId))
         .to_owned()
 }
@@ -244,9 +244,9 @@ fn audit_orphaned_statement() -> SelectStatement {
             JoinType::LeftJoin,
             TemporalAttributeStreams::Table,
             S,
-            Expr::col((S, TemporalAttributeStreams::Id)).equals((Ah, AttributeHistory::StreamId)),
+            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
         )
-        .and_where(Expr::col((S, TemporalAttributeStreams::Id)).is_null())
+        .and_where(Expr::col((S, TemporalAttributeStreams::StreamKey)).is_null())
         .to_owned();
     let orphaned_scope = Query::select()
         .expr(count_all())

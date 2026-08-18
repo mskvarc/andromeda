@@ -8,6 +8,7 @@ use crate::{
     error::ContextStoreError,
     subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
+use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::{
     EntitySelector,
@@ -20,7 +21,7 @@ use andromeda_ngsi_ld_model::subscription::{
     SubscriptionSelection,
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
-use andromeda_subscription::{stored_subscription::StoredSubscription, subscription_key::SubscriptionKey};
+use andromeda_subscription::stored_subscription::StoredSubscription;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;

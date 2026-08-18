@@ -22,9 +22,14 @@ use futures::future::BoxFuture;
 
 /// Leasing, completing and reaping notification deliveries.
 pub trait DeliveryStore: Send + Sync + 'static {
-    /// Claim up to `batch_size` deliveries that are due, below `max_attempts`
-    /// and either unleased or held under an expired lease, lease each claimed
-    /// delivery to `worker_id` for `lease`, and return it joined to its event.
+    /// Claim up to `batch_size` deliveries that are still queued — neither
+    /// delivered nor exhausted — and claimable, meaning due and either unleased
+    /// or held under an expired lease; lease each claimed delivery to
+    /// `worker_id` for `lease`, and return it joined to its event.
+    ///
+    /// The attempt ceiling is not the store's concern: the worker acknowledges
+    /// the final failed attempt through [`DeliveryStore::mark_terminal`], which
+    /// is what takes a delivery out of the claimable set.
     ///
     /// Deliveries whose stored shape cannot be read back are skipped by the
     /// implementation rather than failing the claim: one unreadable row must
@@ -34,7 +39,6 @@ pub trait DeliveryStore: Send + Sync + 'static {
         worker_id: &'life1 WorkerInstanceId,
         lease: LeaseTerm,
         batch_size: i32,
-        max_attempts: i32,
     ) -> BoxFuture<'async_trait, Result<Vec<DeliveryEntry>, NotificationError>>
     where
         'life0: 'async_trait,
@@ -70,9 +74,10 @@ pub trait DeliveryStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
-    /// Record a terminal failure, release the lease and make the delivery
-    /// permanently ineligible for claims, provided `worker_id` still holds that
-    /// lease.
+    /// Record a terminal failure — a failure no retry can fix, or the failure
+    /// of the attempt that reached the configured ceiling — stamp the delivery
+    /// exhausted, release the lease and make it permanently ineligible for
+    /// claims, provided `worker_id` still holds that lease.
     ///
     /// `error` arrives already truncated to the bound the schema accepts.
     fn mark_terminal<'life0, 'life1, 'life2, 'async_trait>(
@@ -95,15 +100,9 @@ pub trait DeliveryStore: Send + Sync + 'static {
         'life0: 'async_trait,
         Self: 'async_trait;
 
-    /// Reap exhausted deliveries -- dead by the configured `max_attempts`
-    /// ceiling, whether stamped by a terminal failure or reached one retry at
-    /// a time -- whose event predates `cutoff`. Returns the count of
+    /// Reap deliveries stamped exhausted before `cutoff`. Returns the count of
     /// deliveries removed.
-    fn delete_exhausted_before<'life0, 'async_trait>(
-        &'life0 self,
-        cutoff: DateTime<Utc>,
-        max_attempts: i32,
-    ) -> BoxFuture<'async_trait, Result<u64, NotificationError>>
+    fn delete_exhausted_before<'life0, 'async_trait>(&'life0 self, cutoff: DateTime<Utc>) -> BoxFuture<'async_trait, Result<u64, NotificationError>>
     where
         'life0: 'async_trait,
         Self: 'async_trait;

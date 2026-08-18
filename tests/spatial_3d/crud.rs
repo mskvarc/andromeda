@@ -29,10 +29,10 @@ use serde_json::json;
 use sqlx::{PgPool, Row};
 
 /// Reads `ST_Zmflag` for an entity's hoisted `location` column: 0 for an XY
-/// geometry, 2 for XYZ. Migration 0032 constrains the column to those two.
+/// geometry, 2 for XYZ. Migration 0005 constrains the column to those two.
 async fn location_zmflag(pool: &PgPool, id: &str) -> i32 {
     // ST_Zmflag returns smallint; the cast keeps the binding type unambiguous.
-    let row = sqlx::query("SELECT ST_Zmflag(location)::int AS zmflag FROM entities WHERE id = $1")
+    let row = sqlx::query("SELECT ST_Zmflag(s.location)::int AS zmflag FROM entities e JOIN entity_search s ON s.entity_key = e.entity_key WHERE e.id = $1")
         .bind(id)
         .fetch_one(pool)
         .await

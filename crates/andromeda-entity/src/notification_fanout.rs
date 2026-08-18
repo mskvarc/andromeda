@@ -9,9 +9,10 @@ use crate::{EntityService, NotificationWriteConfig};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
-use andromeda_subscription::matching::matches_entity_filters;
+use andromeda_subscription::{matching::matches_entity_filters, spatial_narrowing::narrow_by_spatial_index};
 use chrono::Utc;
 use serde_json::Value;
+use tracing::debug;
 
 impl EntityService {
     /// Build one record for every subscription this mutation matches.
@@ -39,22 +40,36 @@ impl EntityService {
             .changed_attributes(changed_attrs.to_vec())
             .build();
 
-        let matching = subscription_cache.find_matching(&event);
+        let outcome = subscription_cache.find_matching(&event);
+        debug!(
+            entity = %entity_id,
+            trigger = %trigger,
+            active = outcome.funnel.active,
+            routed = outcome.funnel.routed,
+            watched = outcome.funnel.watched,
+            evaluated = outcome.funnel.evaluated,
+            matched = outcome.funnel.matched,
+            "Subscription candidate funnel"
+        );
+        outcome.funnel.record();
 
         let matching: Vec<_> = if let Some(data) = entity_snapshot {
-            matching.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
+            narrow_by_spatial_index(subscription_cache, outcome.matched, data, entity_types)
+                .into_iter()
+                .filter(|sub| matches_entity_filters(sub, data))
+                .collect()
         } else {
-            matching
+            outcome.matched
         };
 
         matching
             .into_iter()
             .map(|sub| {
-                // clone: every entry owns its own copy of the subscription and
-                // entity ids, the snapshots and the attribute names, all of which
-                // are borrowed here.
+                // clone: every entry owns its own copy of the entity id, the
+                // snapshots and the attribute names, all of which are borrowed
+                // here.
                 SubscriptionMatch::builder()
-                    .subscription_id(sub.id.clone())
+                    .subscription_key(sub.key)
                     .entity_id(entity_id.clone())
                     .trigger(trigger)
                     .entity_snapshot(entity_snapshot.cloned())

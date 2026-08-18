@@ -1,10 +1,7 @@
-//! Attribute-name dictionary resolution for a compiled `q` filter: which names
-//! a filter references, and the ids they resolved to.
+//! Which attribute names a compiled `q` filter references by dictionary key.
 
-use crate::attribute_name_id::AttributeNameId;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::filter::{expression::Expr, path::QueryPath};
-use std::collections::HashMap;
 
 /// Attribute names a `q` expression references at the top level of each entity
 /// it addresses.
@@ -35,43 +32,6 @@ fn path_attribute_names(path: &QueryPath, out: &mut Vec<AttributeName>) {
             out.push(relationship.clone());
             path_attribute_names(inner, out);
         }
-    }
-}
-
-/// Attribute-name dictionary ids for the IRIs a compiled `q` filter mentions.
-///
-/// An IRI that is absent has no `attribute_names` row, and therefore no
-/// `current_attribute_values` row either, so its predicates compile to constant
-/// `FALSE`.
-///
-/// There is deliberately no way to represent a *cached* miss. Resolution runs
-/// per query execution against a cache that only ever stores hits, so an
-/// attribute created after a filter was first compiled becomes visible on the
-/// next execution instead of being pinned absent.
-#[derive(Debug, Default, Clone)]
-pub struct ResolvedAttributeNames {
-    /// Expanded attribute name to dictionary id, hits only.
-    ids: HashMap<AttributeName, AttributeNameId>,
-}
-
-impl ResolvedAttributeNames {
-    /// Build from resolved `(expanded name, dictionary id)` pairs.
-    pub fn from_pairs(pairs: impl IntoIterator<Item = (AttributeName, AttributeNameId)>) -> ResolvedAttributeNames {
-        ResolvedAttributeNames {
-            ids: pairs.into_iter().collect(),
-        }
-    }
-
-    /// Dictionary id for an expanded attribute name, if the broker knows it.
-    pub fn get(&self, attr: &AttributeName) -> Option<AttributeNameId> {
-        self.ids.get(attr).copied()
-    }
-
-    /// Whether no attribute IRI in the filter resolved to a dictionary id, in
-    /// which case every projection probe the filter would compile is already
-    /// known to be unsatisfiable.
-    pub fn is_empty(&self) -> bool {
-        self.ids.is_empty()
     }
 }
 

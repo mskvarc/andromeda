@@ -12,7 +12,9 @@
 
 pub mod csr;
 pub mod entity;
+pub mod entity_relations;
 pub mod order_geography;
+pub mod snapshot_key;
 pub mod snapshot_listing;
 pub mod snapshot_purge;
 

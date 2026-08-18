@@ -1,4 +1,8 @@
-//! The statements that read the `entities` table.
+//! The statements that read one entity's current state.
+//!
+//! The payload and its version token live on `entity_documents`, the
+//! identifier and lifecycle instants on `entities`; every read here joins the
+//! two on the surrogate key and names its columns by relation.
 
 use crate::{
     entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
@@ -9,10 +13,14 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_postgresql_context_query::entity as entity_sql;
-use andromeda_postgresql_query::{projected_attribute_names::projected_attribute_names, q_predicate::attribute_names::ResolvedAttributeNames};
-use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_query::{
+    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+    projected_attribute_names::projected_attribute_names,
+    projected_type_names::projected_type_names,
+};
+use andromeda_postgresql_schema::current::{Entities, EntityDocuments};
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
-use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use serde_json::Value;
 use sqlx::{Row, postgres::PgRow};
@@ -126,8 +134,8 @@ impl EntityRepository {
     /// those extensions changes.
     pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, ContextStoreError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
-        let attribute_names = self.resolve_projected_attributes(&planned.query).await?;
-        let built = entity_sql::build_query(&planned.query, &attribute_names)?;
+        let names = self.resolve_names(&planned.query).await?;
+        let built = entity_sql::build_query(&planned.query, &names)?;
 
         let has_count = built.count.is_some();
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
@@ -156,8 +164,8 @@ impl EntityRepository {
     /// statement never counts, so the outcome carries no total either way.
     pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
-        let attribute_names = self.resolve_projected_attributes(&planned.query).await?;
-        let statement = entity_sql::build_ids_query(&planned.query, &attribute_names)?;
+        let names = self.resolve_names(&planned.query).await?;
+        let statement = entity_sql::build_ids_query(&planned.query, &names)?;
 
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
@@ -165,25 +173,44 @@ impl EntityRepository {
         Ok(planned.outcome(ids, None))
     }
 
-    /// Resolve the attribute IRIs a compiled query reads by dictionary key.
+    /// Resolve the attribute and entity type IRIs a compiled query reads by
+    /// dictionary key.
     ///
-    /// A clause 4.9 linked-entity traversal contributes more than one name per
-    /// predicate: the Relationship each hop descends through is probed by
-    /// dictionary key just as the terminal attribute is, and both come back from
-    /// the same collection walk. A geo-query and a distance ordering each
-    /// contribute their target GeoProperty, which is read from the same
-    /// projection (clauses 4.10 and 4.23).
+    /// A clause 5.5.9 `attrs` term is answered by the search row's interned
+    /// attribute names, so every term resolves. A clause 4.9 linked-entity
+    /// traversal contributes more than one name per predicate: the Relationship
+    /// each hop descends through is probed by dictionary key just as the
+    /// terminal attribute is, and both come back from the same collection walk.
+    /// A geo-query and a distance ordering each contribute their target
+    /// GeoProperty, which is read from the same projection (clauses 4.10 and
+    /// 4.23). The type selection of every selector
+    /// (clause 4.17) and the type guard of every traversal hop are tested
+    /// against the interned `type_ids` column, so they resolve through the type
+    /// dictionary.
     ///
-    /// The lookup needs no barrier in front of it. Dictionary rows and the
-    /// projected values keyed on them are written in the entity's own
-    /// transaction, so a name that resolves to nothing is a name nothing has
-    /// ever written, not one written moments ago.
-    async fn resolve_projected_attributes(&self, compiled: &CompiledEntityQuery) -> Result<ResolvedAttributeNames, ContextStoreError> {
-        let names = projected_attribute_names(compiled.selection.q_expr.as_ref(), compiled.selection.geo.as_ref(), &compiled.ordering.terms);
-        if names.is_empty() {
-            return Ok(ResolvedAttributeNames::default());
-        }
-        Ok(self.attribute_names.lookup(&names).await?)
+    /// The lookups need no barrier in front of them. Dictionary rows and the
+    /// rows keyed on them are written in the entity's own transaction, so a
+    /// name that resolves to nothing is a name nothing has ever written, not
+    /// one written moments ago.
+    async fn resolve_names(&self, compiled: &CompiledEntityQuery) -> Result<QueryNames, ContextStoreError> {
+        let attribute_names = projected_attribute_names(
+            &compiled.selection.attrs,
+            compiled.selection.q_expr.as_ref(),
+            compiled.selection.geo.as_ref(),
+            &compiled.ordering.terms,
+        );
+        let attributes = if attribute_names.is_empty() {
+            ResolvedNames::default()
+        } else {
+            self.attribute_names.lookup(&attribute_names).await?
+        };
+        let type_names = projected_type_names(&compiled.selection);
+        let types = if type_names.is_empty() {
+            ResolvedNames::default()
+        } else {
+            self.entity_type_names.lookup(&type_names).await?
+        };
+        Ok(QueryNames { attributes, types })
     }
 }
 
@@ -207,58 +234,74 @@ fn extract_payloads(rows: Vec<PgRow>, read_total_count: bool) -> Result<(Vec<Val
     Ok((results, None))
 }
 
+/// `FROM entities JOIN entity_documents ON entity_documents.entity_key = entities.entity_key`,
+/// the source every read of a payload or version token starts from.
+pub(super) fn identity_with_documents() -> SelectStatement {
+    Query::select()
+        .from(Entities::Table)
+        .join(
+            JoinType::Join,
+            EntityDocuments::Table,
+            Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
+        )
+        .take()
+}
+
 /// The payload of the entity identified by `id`.
 fn payload_by_id_query(id: &str) -> SelectStatement {
-    Query::select()
-        .column(Entities::Payload)
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::Id).eq(id))
-        .to_owned()
+    identity_with_documents()
+        .column((EntityDocuments::Table, EntityDocuments::Payload))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
+        .take()
 }
 
 /// The identifier and payload of every entity in `ids`.
 fn payloads_by_ids_query(ids: &[&str]) -> SelectStatement {
-    Query::select()
-        .columns([Entities::Id, Entities::Payload])
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::Id).eq(any(text_array(ids))))
-        .to_owned()
+    identity_with_documents()
+        .column((Entities::Table, Entities::Id))
+        .column((EntityDocuments::Table, EntityDocuments::Payload))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
+        .take()
 }
 
 /// The payload and version token of the entity identified by `id`.
 fn snapshot_by_id_query(id: &str) -> SelectStatement {
-    Query::select()
-        .columns([Entities::Payload, Entities::ModifiedAt])
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::Id).eq(id))
-        .to_owned()
+    identity_with_documents()
+        .column((EntityDocuments::Table, EntityDocuments::Payload))
+        .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
+        .take()
 }
 
 /// The identifier, payload and version token of every entity in `ids`.
 fn snapshots_by_ids_query(ids: &[&str]) -> SelectStatement {
-    Query::select()
-        .columns([Entities::Id, Entities::Payload, Entities::ModifiedAt])
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::Id).eq(any(text_array(ids))))
-        .to_owned()
+    identity_with_documents()
+        .column((Entities::Table, Entities::Id))
+        .column((EntityDocuments::Table, EntityDocuments::Payload))
+        .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
+        .take()
 }
 
 /// The system attributes of the entity identified by `id`.
 fn sys_attrs_by_id_query(id: &str) -> SelectStatement {
-    Query::select()
-        .columns([Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt])
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::Id).eq(id))
-        .to_owned()
+    identity_with_documents()
+        .column((Entities::Table, Entities::CreatedAt))
+        .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
+        .column((Entities::Table, Entities::ExpiresAt))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
+        .take()
 }
 
 /// The identifier and system attributes of every entity in `ids`.
 fn sys_attrs_by_ids_query(ids: &[&str]) -> SelectStatement {
-    Query::select()
-        .columns([Entities::Id, Entities::CreatedAt, Entities::ModifiedAt, Entities::ExpiresAt])
-        .from(Entities::Table)
-        .and_where(Expr::col(Entities::Id).eq(any(text_array(ids))))
-        .to_owned()
+    identity_with_documents()
+        .column((Entities::Table, Entities::Id))
+        .column((Entities::Table, Entities::CreatedAt))
+        .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
+        .column((Entities::Table, Entities::ExpiresAt))
+        .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
+        .take()
 }
 
 #[cfg(test)]
@@ -266,32 +309,44 @@ mod tests {
     use crate::entity::read::{payload_by_id_query, payloads_by_ids_query, snapshot_by_id_query, sys_attrs_by_id_query, sys_attrs_by_ids_query};
     use sea_query::PostgresQueryBuilder;
 
+    const JOIN: &str = r#"FROM "entities" JOIN "entity_documents" ON "entity_documents"."entity_key" = "entities"."entity_key""#;
+
     #[test]
-    fn a_single_payload_reads_by_id() {
+    fn a_single_payload_reads_by_id_through_the_document_join() {
         assert_eq!(
             payload_by_id_query("urn:x").to_string(PostgresQueryBuilder),
-            "SELECT \"payload\" FROM \"entities\" WHERE \"id\" = 'urn:x'"
+            format!(r#"SELECT "entity_documents"."payload" {JOIN} WHERE "entities"."id" = 'urn:x'"#)
         );
     }
 
     #[test]
     fn a_batch_reads_through_one_array_membership_test() {
         let sql = payloads_by_ids_query(&["urn:a", "urn:b"]).to_string(PostgresQueryBuilder);
-        assert!(sql.contains("SELECT \"id\", \"payload\" FROM \"entities\""), "{sql}");
-        assert!(sql.contains("\"id\" = ANY("), "a batch must not expand to a placeholder per id: {sql}");
+        assert!(
+            sql.contains(&format!(r#"SELECT "entities"."id", "entity_documents"."payload" {JOIN}"#)),
+            "{sql}"
+        );
+        assert!(
+            sql.contains(r#""entities"."id" = ANY("#),
+            "a batch must not expand to a placeholder per id: {sql}"
+        );
     }
 
     #[test]
-    fn a_snapshot_reads_the_payload_with_its_version_token() {
+    fn a_snapshot_reads_the_payload_with_its_version_token_from_the_document_row() {
         let sql = snapshot_by_id_query("urn:x").to_string(PostgresQueryBuilder);
-        assert!(sql.contains("\"payload\"") && sql.contains("\"modified_at\""), "{sql}");
+        assert!(sql.contains(r#""entity_documents"."payload", "entity_documents"."modified_at""#), "{sql}");
     }
 
     #[test]
-    fn system_attributes_read_the_three_lifecycle_instants() {
+    fn system_attributes_read_the_three_lifecycle_instants_from_their_relations() {
         let single = sys_attrs_by_id_query("urn:x").to_string(PostgresQueryBuilder);
         let batch = sys_attrs_by_ids_query(&["urn:a"]).to_string(PostgresQueryBuilder);
-        for column in ["\"created_at\"", "\"modified_at\"", "\"expires_at\""] {
+        for column in [
+            r#""entities"."created_at""#,
+            r#""entity_documents"."modified_at""#,
+            r#""entities"."expires_at""#,
+        ] {
             assert!(single.contains(column), "{single}");
             assert!(batch.contains(column), "{batch}");
         }

@@ -25,7 +25,7 @@ use andromeda_ngsi_ld_lexicon::{
 use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_schema::{
-    attribute_dictionary::AttributeNames,
+    name_dictionary::AttributeNames,
     temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{clock::now, placeholder::external_placeholder, postgis::validated_geom_from_ewkb};
@@ -274,7 +274,7 @@ impl InstanceColumn {
 /// entity id (`$2`) and attribute name (`$3`) are bound by the caller's chain.
 fn attribute_streams_subquery() -> SelectStatement {
     Query::select()
-        .column((S, TemporalAttributeStreams::Id))
+        .column((S, TemporalAttributeStreams::StreamKey))
         .from_as(TemporalAttributeStreams::Table, S)
         .join_as(
             JoinType::InnerJoin,
@@ -298,7 +298,7 @@ fn delete_instance_sql(column: InstanceColumn) -> String {
     Query::delete()
         .from_table(AttributeHistory::Table)
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
-        .and_where(Expr::col(AttributeHistory::StreamId).in_subquery(attribute_streams_subquery()))
+        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery()))
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -370,7 +370,7 @@ fn update_instance_sql(column: InstanceColumn) -> String {
             (AttributeHistory::ModifiedAt, now()),
         ])
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
-        .and_where(Expr::col(AttributeHistory::StreamId).in_subquery(attribute_streams_subquery()))
+        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery()))
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -381,14 +381,14 @@ fn select_instance_sql(column: InstanceColumn) -> String {
         .column((Ah, AttributeHistory::RecordedAt))
         .column((Ah, AttributeHistory::WriteId))
         .column((Ah, AttributeHistory::WriteOrdinal))
-        .column((Ah, AttributeHistory::StreamId))
+        .column((Ah, AttributeHistory::StreamKey))
         .column((Ah, AttributeHistory::AttributeKind))
         .column((Ah, AttributeHistory::ValueKind))
         .column((Ah, AttributeHistory::ObservedAt))
         .column((Ah, AttributeHistory::DeletedAt))
         .from_as(AttributeHistory::Table, Ah)
         .and_where(Expr::col((Ah, column.column())).eq(external_placeholder(1)))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamId)).in_subquery(attribute_streams_subquery()))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).in_subquery(attribute_streams_subquery()))
         .limit(1)
         .to_owned()
         .to_string(PostgresQueryBuilder)

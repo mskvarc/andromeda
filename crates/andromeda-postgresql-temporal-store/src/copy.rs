@@ -28,6 +28,7 @@ use andromeda_postgresql_encoding::{
         write_header,
         write_i16_opt,
         write_i32_opt,
+        write_i64,
         write_jsonb_opt,
         write_text_opt,
         write_timestamptz,
@@ -48,7 +49,7 @@ const CREATE_STAGE_ATTRIBUTE_HISTORY_SQL: &str = r#"
 CREATE TEMP TABLE stage_attribute_history (
     recorded_at             timestamptz NOT NULL,
     write_id                uuid NOT NULL,
-    stream_id               uuid NOT NULL,
+    stream_key              bigint NOT NULL,
     write_ordinal           integer NOT NULL,
     attribute_kind          smallint NOT NULL,
     value_kind              smallint NOT NULL,
@@ -70,20 +71,20 @@ CREATE TEMP TABLE stage_attribute_history (
 ) ON COMMIT DROP
 "#;
 
-const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, write_id, stream_id, write_ordinal, attribute_kind, \
+const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, \
      value_kind, observed_at, created_at, modified_at, deleted_at, value_datetime, generated_instance_uuid, unit_code_id, \
      value_bool, verbatim_instance_id, value_number, value_string, value_geo, value_object, value_uri, metadata) \
      FROM STDIN WITH (FORMAT binary)";
 
 const INSERT_FROM_STAGE_SQL: &str = r#"
 INSERT INTO attribute_history (
-    recorded_at, write_id, stream_id, write_ordinal, attribute_kind, value_kind,
+    recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
     observed_at, created_at, modified_at, deleted_at, value_datetime,
     generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id,
     value_number, value_string, value_geo, value_object, value_uri, metadata
 )
 SELECT
-    s.recorded_at, s.write_id, s.stream_id, s.write_ordinal, s.attribute_kind, s.value_kind,
+    s.recorded_at, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
     s.observed_at, s.created_at, s.modified_at, s.deleted_at, s.value_datetime,
     s.generated_instance_uuid, s.unit_code_id, s.value_bool, s.verbatim_instance_id,
     s.value_number::numeric, s.value_string,
@@ -128,7 +129,7 @@ pub(crate) fn encode_history_copy_stream(rows: &[AttributeHistoryRow]) -> Result
         write_field_count(&mut buf, STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT);
         write_timestamptz(&mut buf, row.recorded_at);
         write_uuid(&mut buf, row.write_id());
-        write_uuid(&mut buf, row.stream_id.get());
+        write_i64(&mut buf, row.stream_key.get());
         write_i32_opt(&mut buf, Some(row.write_ordinal()?));
         write_i16_opt(&mut buf, Some(AttributeKind::code(row.attribute_kind)));
         write_i16_opt(&mut buf, Some(ValueKind::code(row.value.kind())));
@@ -169,7 +170,7 @@ mod tests {
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
     use andromeda_ngsi_ld_number::JsonNumber;
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::StreamId};
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey};
     use andromeda_postgresql_encoding::copy::COPY_HEADER_SIGNATURE;
     use andromeda_temporal::append_intent::TemporalObservationIdentity;
     use andromeda_unit_catalog::unit_code_id::UnitCodeId;
@@ -190,14 +191,14 @@ mod tests {
         1_700_000_000_i64.saturating_mul(1_000_000) - 946_684_800_000_000_i64
     }
 
-    fn row(stream_id: Uuid, value: AttributeHistoryValue) -> AttributeHistoryRow {
+    fn row(stream_key: i64, value: AttributeHistoryValue) -> AttributeHistoryRow {
         AttributeHistoryRow {
             recorded_at: instant(),
             identity: TemporalObservationIdentity {
                 write_id: WriteId::from_uuid(Uuid::nil()),
                 ordinal: WriteOrdinal::at(0),
             },
-            stream_id: StreamId::from(stream_id),
+            stream_key: StreamKey::try_from(stream_key).expect("positive stream key"),
             attribute_kind: AttributeKind::Property,
             value,
             axes: SemanticTimeAxes::default(),
@@ -213,7 +214,7 @@ mod tests {
 
     #[test]
     fn the_stream_opens_with_the_pgcopy_signature_and_closes_with_the_terminator() {
-        let buf = encode_history_copy_stream(&[row(Uuid::nil(), AttributeHistoryValue::Boolean(true))]).expect("copy stream encodes");
+        let buf = encode_history_copy_stream(&[row(1, AttributeHistoryValue::Boolean(true))]).expect("copy stream encodes");
         assert!(buf.starts_with(COPY_HEADER_SIGNATURE));
         pretty_assertions::assert_eq!(&buf[buf.len() - 2..], &[0xff, 0xff]);
     }
@@ -228,17 +229,14 @@ mod tests {
 
     #[test]
     fn every_tuple_announces_the_rebuilt_tables_column_count() {
-        let rows = [
-            row(Uuid::nil(), AttributeHistoryValue::Boolean(true)),
-            row(Uuid::nil(), AttributeHistoryValue::Boolean(false)),
-        ];
+        let rows = [row(1, AttributeHistoryValue::Boolean(true)), row(1, AttributeHistoryValue::Boolean(false))];
         let buf = encode_history_copy_stream(&rows).expect("copy stream encodes");
         pretty_assertions::assert_eq!(&buf[HEADER_BYTES..HEADER_BYTES + 2], &STAGE_ATTRIBUTE_HISTORY_FIELD_COUNT.to_be_bytes());
     }
 
     #[test]
     fn the_partition_column_leads_every_tuple() {
-        let buf = encode_history_copy_stream(&[row(Uuid::nil(), AttributeHistoryValue::Boolean(true))]).expect("copy stream encodes");
+        let buf = encode_history_copy_stream(&[row(1, AttributeHistoryValue::Boolean(true))]).expect("copy stream encodes");
         let offset = HEADER_BYTES + 2;
         pretty_assertions::assert_eq!(field_length(&buf, offset), 8);
         let micros = i64::from_be_bytes([
@@ -255,9 +253,9 @@ mod tests {
     }
 
     #[test]
-    fn the_write_identity_precedes_the_stream_identity() {
-        let stream_id = Uuid::from_bytes([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
-        let mut row = row(stream_id, AttributeHistoryValue::Boolean(true));
+    fn the_write_identity_precedes_the_stream_key() {
+        let stream_key = 0x0102_0304_0506_0708_i64;
+        let mut row = row(stream_key, AttributeHistoryValue::Boolean(true));
         let write_id = Uuid::from_u128(9);
         row.identity.write_id = WriteId::from_uuid(write_id);
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
@@ -266,16 +264,17 @@ mod tests {
         pretty_assertions::assert_eq!(field_length(&buf, write_offset), 16);
         pretty_assertions::assert_eq!(&buf[write_offset + 4..write_offset + 20], write_id.as_bytes());
         let stream_offset = write_offset + 4 + 16;
-        pretty_assertions::assert_eq!(&buf[stream_offset + 4..stream_offset + 20], stream_id.as_bytes());
+        pretty_assertions::assert_eq!(&buf[stream_offset..stream_offset + 4], &[0, 0, 0, 8]);
+        pretty_assertions::assert_eq!(&buf[stream_offset + 4..stream_offset + 12], &stream_key.to_be_bytes());
     }
 
     #[test]
     fn both_kind_codes_are_written_as_the_numbers_the_migration_assigned() {
-        let mut row = row(Uuid::nil(), AttributeHistoryValue::Boolean(true));
+        let mut row = row(1, AttributeHistoryValue::Boolean(true));
         row.attribute_kind = AttributeKind::GeoProperty;
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
-        // Partition column, write identity, stream identity, then the ordinal.
-        let attribute_kind_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 16) + (4 + 4);
+        // Partition column, write identity, stream key, then the ordinal.
+        let attribute_kind_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 8) + (4 + 4);
         pretty_assertions::assert_eq!(field_length(&buf, attribute_kind_offset), 2);
         pretty_assertions::assert_eq!(&buf[attribute_kind_offset + 4..attribute_kind_offset + 6], &3_i16.to_be_bytes());
         let value_kind_offset = attribute_kind_offset + 4 + 2;
@@ -286,7 +285,7 @@ mod tests {
     fn a_number_is_staged_as_the_decimal_literal_the_numeric_cast_reads() {
         // The value is one above 2^53: it has no exact double, so a stream that
         // encoded it as a float8 would have to refuse or round it.
-        let row = row(Uuid::nil(), AttributeHistoryValue::Number(JsonNumber::from(9_007_199_254_740_993_i64)));
+        let row = row(1, AttributeHistoryValue::Number(JsonNumber::from(9_007_199_254_740_993_i64)));
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
         let literal = b"9007199254740993";
         let found = buf.windows(literal.len()).any(|window| window == literal);
@@ -295,11 +294,11 @@ mod tests {
 
     #[test]
     fn a_tombstone_writes_its_deletion_instant_and_no_typed_value() {
-        let row = row(Uuid::nil(), AttributeHistoryValue::Tombstone { deleted_at: instant() });
+        let row = row(1, AttributeHistoryValue::Tombstone { deleted_at: instant() });
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
-        // Partition column, write identity, stream identity, ordinal, both kind
+        // Partition column, write identity, stream key, ordinal, both kind
         // codes, then the three nullable semantic axes.
-        let deleted_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 16) + (4 + 4) + (4 + 2) + (4 + 2) + 3 * NULL_FIELD_BYTES;
+        let deleted_offset = HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 8) + (4 + 4) + (4 + 2) + (4 + 2) + 3 * NULL_FIELD_BYTES;
         pretty_assertions::assert_eq!(field_length(&buf, deleted_offset), 8);
         // Every typed value column that follows the deletion instant is NULL:
         // value_datetime, then value_bool, value_number, value_string,
@@ -309,14 +308,14 @@ mod tests {
 
     #[test]
     fn the_unit_identity_is_written_as_its_catalog_number() {
-        let mut row = row(Uuid::nil(), AttributeHistoryValue::Boolean(true));
+        let mut row = row(1, AttributeHistoryValue::Boolean(true));
         row.unit_code_id = UnitCodeId::try_from(1121_i16).ok();
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
         let unit_offset = HEADER_BYTES
             + 2
             + (4 + 8)
             + (4 + 16)
-            + (4 + 16)
+            + (4 + 8)
             + (4 + 4)
             + (4 + 2)
             + (4 + 2)
@@ -331,11 +330,11 @@ mod tests {
     #[test]
     fn a_client_supplied_identifier_occupies_the_verbatim_column_and_not_the_uuid_one() {
         let identifier = "https://example.com/instances/1".parse().expect("a valid URI");
-        let mut row = row(Uuid::nil(), AttributeHistoryValue::Boolean(true));
+        let mut row = row(1, AttributeHistoryValue::Boolean(true));
         row.instance = InstanceIdentity::Verbatim(identifier);
         let buf = encode_history_copy_stream(&[row]).expect("copy stream encodes");
         let generated_offset =
-            HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 16) + (4 + 4) + (4 + 2) + (4 + 2) + 3 * NULL_FIELD_BYTES + NULL_FIELD_BYTES + NULL_FIELD_BYTES;
+            HEADER_BYTES + 2 + (4 + 8) + (4 + 16) + (4 + 8) + (4 + 4) + (4 + 2) + (4 + 2) + 3 * NULL_FIELD_BYTES + NULL_FIELD_BYTES + NULL_FIELD_BYTES;
         pretty_assertions::assert_eq!(field_length(&buf, generated_offset), -1);
         let expected = b"https://example.com/instances/1";
         assert!(buf.windows(expected.len()).any(|window| window == expected));

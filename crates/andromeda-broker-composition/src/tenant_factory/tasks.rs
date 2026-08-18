@@ -3,6 +3,8 @@
 mod expiry;
 mod maintenance;
 mod notification;
+mod pool_gauges;
+mod retention;
 mod temporal_retention;
 
 use crate::{
@@ -18,7 +20,12 @@ use crate::{
                 register_snapshot_preparation,
                 register_subscription_expiry,
             },
-            maintenance::{register_entity_side_effect_drain, register_spatial_reconciliation, register_spatial_synchronization},
+            maintenance::{
+                register_entity_side_effect_drain,
+                register_entity_side_effect_reap,
+                register_spatial_reconciliation,
+                register_spatial_synchronization,
+            },
             notification::{
                 register_csource_interval_notification,
                 register_csource_notification_processor,
@@ -26,6 +33,8 @@ use crate::{
                 register_notification_delivery,
                 register_notification_processor,
             },
+            pool_gauges::register_pool_gauges,
+            retention::retention_duration,
             temporal_retention::register_temporal_retention,
         },
     },
@@ -199,30 +208,40 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     } = signals;
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
     let mut drain_wakes = Vec::new();
+    register_pool_gauges(&task_supervisor, pool.clone(), &tenant)?; // clone: PgPool is a shared handle sampled by the gauge task.
 
-    if entity_config.batch_async_side_effect_threshold.is_some() {
-        let lease_seconds = i32::try_from(entity_config.pending_side_effects_lease_secs).unwrap_or(i32::MAX);
-        let batch_size = i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX);
-        let change_sink = Arc::new(BroadcastEntityChangeSink::new(entity.clone())) as Arc<dyn EntityChangeSink>;
-        let drain = EntitySideEffectDrain::new(
-            Arc::new(PendingSideEffectsRepository::new(pool)),
-            Arc::clone(&writes),
-            Some(change_sink),
-            EntitySideEffectDrainConfig {
-                lease_seconds,
-                batch_size,
-                max_attempts: entity_config.pending_side_effects_max_attempts,
-                base_backoff: Duration::from_secs(entity_config.pending_side_effects_base_backoff_secs),
-                lease_owner: SideEffectLeaseOwner::for_tenant(&info_config.source_id, uuid::Uuid::new_v4()),
-            },
-        );
-        drain_wakes.push(register_entity_side_effect_drain(
-            &task_supervisor,
-            Arc::new(drain),
-            Duration::from_secs(entity_config.pending_side_effects_poll_secs),
-            Duration::from_secs(entity_config.pending_side_effects_lease_secs),
-        )?);
-    }
+    // The drain always runs: `Prefer: respond-async` enqueues a durable job
+    // whenever the request opts in, with or without a configured batch-size
+    // threshold, so an unconditional drain is what keeps every enqueued job
+    // from waiting forever.
+    let lease_seconds = i32::try_from(entity_config.pending_side_effects_lease_secs).unwrap_or(i32::MAX);
+    let batch_size = i32::try_from(entity_config.pending_side_effects_batch_size).unwrap_or(i32::MAX);
+    let change_sink = Arc::new(BroadcastEntityChangeSink::new(entity.clone())) as Arc<dyn EntityChangeSink>;
+    let drain = EntitySideEffectDrain::new(
+        Arc::new(PendingSideEffectsRepository::new(pool)),
+        Arc::clone(&writes),
+        Some(change_sink),
+        EntitySideEffectDrainConfig {
+            lease_seconds,
+            batch_size,
+            max_attempts: entity_config.pending_side_effects_max_attempts,
+            base_backoff: Duration::from_secs(entity_config.pending_side_effects_base_backoff_secs),
+            lease_owner: SideEffectLeaseOwner::for_tenant(&info_config.source_id, uuid::Uuid::new_v4()),
+        },
+    );
+    let drain = Arc::new(drain);
+    drain_wakes.push(register_entity_side_effect_drain(
+        &task_supervisor,
+        Arc::clone(&drain),
+        Duration::from_secs(entity_config.pending_side_effects_poll_secs),
+        Duration::from_secs(entity_config.pending_side_effects_lease_secs),
+    )?);
+    register_entity_side_effect_reap(
+        &task_supervisor,
+        drain,
+        Duration::from_secs(entity_config.pending_side_effects_cleanup_interval_secs),
+        retention_duration(entity_config.pending_side_effects_dead_letter_after_secs, "pending side-effect dead-letter age")?,
+    )?;
 
     let health_shutdown = if tenant.is_unnamed_default() {
         let (shutdown, receiver) = watch::channel(false);

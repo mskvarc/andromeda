@@ -1,6 +1,7 @@
 //! SQL generation for entity queries using sea-query.
 
-use crate::order_geography::geo_order_distance;
+use crate::{entity_relations::EntityRelations, order_geography::geo_order_distance};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::EntitySelector,
@@ -16,23 +17,24 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_vocabulary::expanded::properties::VALUE;
 use andromeda_postgresql_encoding::ewkb::encode;
 use andromeda_postgresql_query::{
-    attribute_instance_correlation::CorrelatedEntityRow,
+    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+    entity_row_refs::EntityRowRefs,
+    entity_type_names::type_names_of,
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
     jsonb::attribute_value_jsonpath,
-    q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
+    q_predicate::projection as q_filter,
     scope_predicate::{ScopeTarget, condition as scope_condition},
-    type_predicate::{TypesColumn, condition as type_condition},
+    type_predicate::condition as type_condition,
 };
-use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{
     aggregate::count_over_all,
     collation::collate,
-    jsonb::{jsonb_key_exists, jsonb_path_query_first},
-    literal::int_literal,
-    operator::regex_match,
-    pg_operator::PgBinaryOperator,
+    jsonb::jsonb_path_query_first,
+    literal::false_literal,
+    operator::{array_contains_key, regex_match},
 };
 use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement, SimpleExpr};
 
@@ -50,22 +52,27 @@ pub struct EntityQuery {
     pub count: Option<SelectStatement>,
 }
 
-/// The `entities` row an entity statement filters and orders.
-///
-/// The entity path selects from `entities` without an alias, so every
-/// correlated subquery this module renders binds back to the bare table.
-const ENTITY_ROW: CorrelatedEntityRow<'static> = CorrelatedEntityRow::unaliased();
-
-/// Builds a parameterized SQL query to retrieve entity payloads from the `entities` table.
+/// Builds a parameterized SQL query to retrieve entity payloads.
 ///
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
-/// geo filter, scope query), ordering, and pagination clauses.
-pub fn build_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<EntityQuery, RenderError> {
-    let condition = build_entity_conditions(query, attribute_names)?;
+/// geo filter, scope query), ordering, and pagination clauses, joining only the
+/// relations those clauses read.
+pub fn build_query(query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
+    let relations = EntityRelations::for_query(query);
+    let rows = relations.rows();
+    let condition = build_entity_conditions(query, names, &rows)?;
 
     let mut select = Query::select();
-    // clone: the fallback count statement filters on the same condition
-    select.column(Entities::Payload).from(Entities::Table).cond_where(condition.clone());
+    // The payload is projected under the document column's own name whether it
+    // is read from the joined row or looked up by key, so the repository reads
+    // one column name in both shapes.
+    select.expr_as(rows.payload_column(), EntityDocuments::Payload);
+    relations.apply_from(&mut select);
+    // clone: the fallback count statement filters on the same condition. The
+    // count joins the document row only when a `q` filter reads it, and that
+    // is the only way the condition can reference the payload, so a condition
+    // rendered against this statement's rows names nothing the count lacks.
+    select.cond_where(condition.clone());
 
     // When a total count is requested, piggyback it on every row as
     // `COUNT(*) OVER ()` so the common case runs in a single round-trip.
@@ -81,19 +88,19 @@ pub fn build_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttrib
 
     add_order_clause(
         &mut select,
+        &rows,
         &query.ordering.terms,
         query.selection.geo.as_ref(),
         query.ordering.geometry.as_ref(),
-        attribute_names,
+        &names.attributes,
     )?;
 
     // Fallback count query covers the zero-row edge case described above.
     let count = if query.pagination.count == CountPolicy::Emit {
         let mut count_select = Query::select();
-        count_select
-            .expr(Func::count(SeaExpr::col(Asterisk)))
-            .from(Entities::Table)
-            .cond_where(condition);
+        count_select.expr(Func::count(SeaExpr::col(Asterisk)));
+        EntityRelations::for_count(query).apply_from(&mut count_select);
+        count_select.cond_where(condition);
         Some(count_select.take())
     } else {
         None
@@ -110,22 +117,28 @@ pub fn build_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttrib
 /// reason.
 pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 
-/// Builds a parameterized SQL query to retrieve only entity IDs from the `entities` table.
+/// Builds a parameterized SQL query to retrieve only entity IDs.
 ///
 /// Similar to [`build_query`] but selects `id` instead of `payload`, used for
-/// operations that only need to identify matching entities.
-pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<SelectStatement, RenderError> {
-    let condition = build_entity_conditions(query, attribute_names)?;
+/// operations that only need to identify matching entities; the document row
+/// is joined only when a filter or ordering reads the payload.
+pub fn build_ids_query(query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
+    let relations = EntityRelations::for_query(query);
+    let rows = relations.rows();
+    let condition = build_entity_conditions(query, names, &rows)?;
 
     let mut select = Query::select();
-    select.column(Entities::Id).from(Entities::Table).cond_where(condition);
+    select.column((Entities::Table, Entities::Id));
+    relations.apply_from(&mut select);
+    select.cond_where(condition);
 
     add_order_clause(
         &mut select,
+        &rows,
         &query.ordering.terms,
         query.selection.geo.as_ref(),
         query.ordering.geometry.as_ref(),
-        attribute_names,
+        &names.attributes,
     )?;
 
     select.limit(query.pagination.limit as u64).offset(query.pagination.offset as u64);
@@ -134,7 +147,7 @@ pub fn build_ids_query(query: &CompiledEntityQuery, attribute_names: &ResolvedAt
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
-fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
@@ -145,36 +158,40 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
     if query.selection.selectors_constrain() {
         let mut union = Condition::any();
         for selector in &query.selection.selectors {
-            union = union.add(selector_condition(selector));
+            union = union.add(selector_condition(rows, selector, &names.types));
         }
         condition = condition.add(union);
     }
 
-    // Attribute existence filter (clause 5.5.9 `attrs`). This axis names
-    // attributes by IRI without resolving them to a dictionary key, so it is
-    // compiled against the payload rather than `current_attribute_values`: the
-    // key-existence probe is served by the expression index on `payload->0`.
+    // Attribute existence filter (clause 5.5.9 `attrs`): the entity carries a
+    // member of at least one of the named attributes. The names the payload
+    // carries are recorded as dictionary keys on the search row, so each term
+    // is a containment test the GIN index answers; a name the dictionary has
+    // never recorded is carried by no entity and its term is constant `FALSE`.
     if !query.selection.attrs.is_empty() {
         let mut attr_cond = Condition::any();
         for attr in &query.selection.attrs {
-            attr_cond = attr_cond.add(jsonb_key_exists(
-                SimpleExpr::from(SeaExpr::col(Entities::Payload)).json_get(int_literal(0)),
-                SeaExpr::val(attr.as_str()),
-            ));
+            attr_cond = attr_cond.add(match names.attributes.get_str(attr.as_str()) {
+                Some(id) => array_contains_key(rows.search_column(EntitySearch::AttributeNameIds), id.get()),
+                None => false_literal(),
+            });
         }
         condition = condition.add(attr_cond);
     }
 
     if let Some(q_expr) = &query.selection.q_expr {
-        condition = condition.add(q_filter::compile(q_expr, &QFilterTarget::entities(), attribute_names)?);
+        condition = condition.add(q_filter::compile(q_expr, rows, names)?);
     }
 
     if let Some(geo) = &query.selection.geo {
-        condition = condition.add(geo_sql::condition(geo, GeometrySource::Entity { row: ENTITY_ROW }, attribute_names)?);
+        condition = condition.add(geo_sql::condition(geo, GeometrySource::Entity { rows }, &names.attributes)?);
     }
 
     if let Some(scope_q) = &query.selection.scope_q {
-        condition = condition.add(scope_condition(scope_q, &ScopeTarget::current_paths(Entities::ScopePaths)));
+        condition = condition.add(scope_condition(
+            scope_q,
+            &ScopeTarget::current_paths((EntitySearch::Table, EntitySearch::ScopePaths)),
+        ));
     }
 
     Ok(condition)
@@ -187,17 +204,17 @@ fn build_entity_conditions(query: &CompiledEntityQuery, attribute_names: &Resolv
 /// with no axis set contributes an empty conjunction, which sea-query renders
 /// as always-true — the unconstrained case the caller filters out before it
 /// gets here.
-fn selector_condition(selector: &EntitySelector) -> Condition {
+fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>) -> Condition {
     let mut condition = Condition::all();
     if !selector.ids.is_empty() {
         let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(SeaExpr::col(Entities::Id).is_in(ids));
+        condition = condition.add(rows.identity_column(Entities::Id).is_in(ids));
     }
     if let Some(pattern) = &selector.id_pattern {
-        condition = condition.add(regex_match(SeaExpr::col(Entities::Id), SeaExpr::val(pattern.as_str())));
+        condition = condition.add(regex_match(rows.identity_column(Entities::Id), SeaExpr::val(pattern.as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
-        condition = condition.add(type_condition(type_expr, TypesColumn::Entities));
+        condition = condition.add(type_condition(type_expr, &rows.search_column(EntitySearch::TypeIds), types));
     }
     condition
 }
@@ -205,18 +222,20 @@ fn selector_condition(selector: &EntitySelector) -> Condition {
 /// The SQL expression an `orderBy` term sorts on.
 ///
 /// Clause 4.23 admits `id` and `type` alongside attribute names. Those are
-/// columns of `entities`, not members of the payload, so they are read
-/// directly; every other term addresses an attribute value inside the JSONB
-/// payload.
-fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> SimpleExpr {
+/// columns of the identity and search rows, not members of the payload, so they
+/// are read directly; every other term addresses an attribute value inside the
+/// JSONB payload.
+fn order_value_expr(rows: &EntityRowRefs, target: &OrderTarget, collation: Option<&IcuCollation>) -> SimpleExpr {
     let base: SimpleExpr = match target {
-        OrderTarget::Id => SeaExpr::col(Entities::Id),
-        OrderTarget::Type => SeaExpr::col(Entities::Types),
+        OrderTarget::Id => rows.identity_column(Entities::Id),
+        // The interned keys sort by dictionary id, which is meaningless to a
+        // client; the IRIs are read back through the dictionary and sorted.
+        OrderTarget::Type => type_names_of(rows.search_column(EntitySearch::TypeIds)),
         // The scope path column is an `ltree[]`, which no client collation applies to.
-        OrderTarget::Scope => return SeaExpr::col(Entities::ScopePaths),
+        OrderTarget::Scope => return rows.search_column(EntitySearch::ScopePaths),
         OrderTarget::Attribute(name) => {
             let json_path = attribute_value_jsonpath(name.as_str(), &[], &[], VALUE.as_str());
-            jsonb_path_query_first(SeaExpr::col(Entities::Payload), &json_path)
+            jsonb_path_query_first(rows.payload_column(), &json_path)
         }
     };
     match collation {
@@ -233,10 +252,11 @@ fn order_value_expr(target: &OrderTarget, collation: Option<&IcuCollation>) -> S
 /// can repeat and skip rows between pages.
 fn add_order_clause(
     select: &mut SelectStatement,
+    rows: &EntityRowRefs,
     order_by: &[CompiledOrderTerm],
     geo: Option<&GeoQuery>,
     ordering_geometry: Option<&OrderingGeometry>,
-    attribute_names: &ResolvedAttributeNames,
+    attribute_names: &ResolvedNames<AttributeName>,
 ) -> Result<(), RenderError> {
     for term in order_by {
         let order = match term.direction {
@@ -253,15 +273,15 @@ fn add_order_clause(
                     return Err(RenderError::Query(QueryError::DistanceOrderWithoutReference));
                 }
             };
-            let dist_expr = geo_order_distance(&term.target, attribute_names, ENTITY_ROW, &ref_ewkb.to_vec());
+            let dist_expr = geo_order_distance(&term.target, attribute_names, rows, &ref_ewkb.to_vec());
             select.order_by_expr(dist_expr, order);
         } else {
-            select.order_by_expr(order_value_expr(&term.target, term.collation.as_ref()), order);
+            select.order_by_expr(order_value_expr(rows, &term.target, term.collation.as_ref()), order);
         }
     }
 
     // Always add id ASC as tiebreaker
-    select.order_by(Entities::Id, Order::Asc);
+    select.order_by((Entities::Table, Entities::Id), Order::Asc);
 
     Ok(())
 }
@@ -286,7 +306,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
     use iri_rs::IriBuf;
     use sea_query::{PostgresQueryBuilder, Value};
 
@@ -301,8 +321,8 @@ mod tests {
     /// Render an entity query the way the store executes it: the paginated
     /// statement and, when requested, its separate count, each with its own
     /// placeholder sequence.
-    fn build(query: &CompiledEntityQuery, attribute_names: &ResolvedAttributeNames) -> Built {
-        let entity_query = build_query(query, attribute_names).unwrap();
+    fn build(query: &CompiledEntityQuery, names: &QueryNames) -> Built {
+        let entity_query = build_query(query, names).unwrap();
         let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
         let count_sql = entity_query.count.map(|count| count.build(PostgresQueryBuilder).0);
         Built {
@@ -320,6 +340,26 @@ mod tests {
         IriBuf::new(value.to_string()).expect("valid IRI")
     }
 
+    /// The type dictionary every test resolves against: the example types the
+    /// selectors below name, keyed in declaration order.
+    fn known_types() -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::default(),
+            types: ResolvedNames::from_pairs(["Vehicle", "Home", "Motorhome", "T1", "T2"].into_iter().enumerate().map(|(index, name)| {
+                let key = i32::try_from(index + 1).expect("a handful of test types");
+                (format!("https://example.com/{name}").parse().expect("valid type name"), EntityTypeId::from(key))
+            })),
+        }
+    }
+
+    /// Attribute names alone, with no type resolved.
+    fn attributes_only(attributes: ResolvedNames<AttributeName>) -> QueryNames {
+        QueryNames {
+            attributes,
+            types: ResolvedNames::default(),
+        }
+    }
+
     /// A GeoJSON point reference geometry, for tests that vary the relation
     /// rather than the geometry.
     fn point(coordinates: serde_json::Value) -> Geometry {
@@ -334,7 +374,7 @@ mod tests {
     #[test]
     fn build_empty_query_returns_base_sql() {
         let q = empty_query();
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("SELECT"));
         assert!(built.sql.contains("\"payload\""));
         assert!(built.sql.contains("\"entities\""));
@@ -350,15 +390,79 @@ mod tests {
         // rather than leaving `LIMIT`/`OFFSET` over the plan's arbitrary order,
         // which can repeat and skip rows between pages.
         let q = empty_query();
-        let built = build(&q, &ResolvedAttributeNames::default());
-        assert!(built.sql.contains("ORDER BY \"id\""));
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("ORDER BY \"entities\".\"id\""), "{}", built.sql);
+    }
+
+    /// A payload query that filters on nothing reads the identity row alone
+    /// and fetches each page row's document by key, under the document column's
+    /// name: the lookup is deferred past the sort and the limit, so a page of
+    /// entities costs a page of document reads rather than a join over every
+    /// candidate.
+    #[test]
+    fn a_payload_query_with_no_filter_joins_nothing_and_reads_the_page_documents_by_key() {
+        let built = build(&empty_query(), &known_types());
+        assert!(
+            built.sql.starts_with(
+                r#"SELECT (SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "entities"."entity_key") AS "payload" FROM "entities" WHERE TRUE ORDER BY"#
+            ),
+            "{}",
+            built.sql
+        );
+        assert!(!built.sql.contains("JOIN"), "{}", built.sql);
+    }
+
+    /// A `q` filter reads the payload for its jsonpath fallback, so the document
+    /// row is joined and the projection reads the joined column.
+    #[test]
+    fn a_q_filter_joins_the_documents_and_projects_the_joined_column() {
+        let mut q = empty_query();
+        q.selection.q_expr = Some(parser::parse("\"https://example.com/temperature\">1").expect("valid q"));
+        let built = build(&q, &temperature_is_known());
+        assert!(built.sql.contains(r#"JOIN "entity_documents" ON"#), "{}", built.sql);
+        assert!(
+            built.sql.starts_with(r#"SELECT "entity_documents"."payload" AS "payload" FROM "entities""#),
+            "{}",
+            built.sql
+        );
+    }
+
+    /// Clause 5.5.9 `attrs` is answered by the search row's interned attribute
+    /// names, one containment test per term the GIN index serves; a name the
+    /// dictionary never recorded is carried by no entity and matches nothing.
+    #[test]
+    fn attrs_terms_are_containment_tests_on_the_search_rows_attribute_keys() {
+        let mut q = empty_query();
+        q.selection.attrs = vec![iri("https://example.com/speed"), iri("https://example.com/neverWritten")];
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameId::from(11))]),
+            types: ResolvedNames::default(),
+        };
+        let built = build(&q, &names);
+        assert!(built.sql.contains(r#"JOIN "entity_search" ON"#), "{}", built.sql);
+        assert!(
+            built.sql.contains(r#""entity_search"."attribute_name_ids" @> (ARRAY[11])"#),
+            "the key is inlined so the planner can estimate it: {}",
+            built.sql
+        );
+        assert!(built.sql.contains(" OR (FALSE)"), "the unresolved term is unsatisfiable: {}", built.sql);
+        assert!(
+            !built.sql.contains("payload\" ->") && !built.sql.contains(" ? "),
+            "no payload key probe remains: {}",
+            built.sql
+        );
+        assert!(
+            !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(11)))),
+            "the key is inlined, not bound: {:?}",
+            built.bind_values
+        );
     }
 
     #[test]
     fn build_with_ids() {
         let mut q = empty_query();
         q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("\"id\" IN"));
     }
 
@@ -370,7 +474,7 @@ mod tests {
                 .id_pattern(Some(Pattern::parse("urn:ngsi-ld:Vehicle:.*").unwrap()))
                 .build(),
         ];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("\"id\" ~"));
     }
 
@@ -382,8 +486,28 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
-        let built = build(&q, &ResolvedAttributeNames::default());
-        assert!(built.sql.contains("\"types\" @> ARRAY(SELECT "));
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("\"type_ids\" @> (ARRAY[1])"), "{}", built.sql);
+        assert!(
+            !built.bind_values.iter().any(|bind| matches!(bind, Value::Int(Some(1)))),
+            "the resolved key is inlined, not bound: {:?}",
+            built.bind_values
+        );
+    }
+
+    /// A type the dictionary has never recorded was never carried by any
+    /// entity, so a selector on it renders an unsatisfiable predicate.
+    #[test]
+    fn an_unknown_type_selector_matches_nothing() {
+        let mut q = empty_query();
+        q.selection.selectors = vec![
+            EntitySelector::builder()
+                .type_expr(Some(TypeExpr::Type(iri("https://example.com/NeverWritten"))))
+                .build(),
+        ];
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("WHERE FALSE"), "{}", built.sql);
+        assert!(!built.sql.contains("type_ids"), "no probe is rendered for an unresolved type: {}", built.sql);
     }
 
     #[test]
@@ -401,8 +525,8 @@ mod tests {
                 ])))
                 .build(),
         ];
-        let built = build(&q, &ResolvedAttributeNames::default());
-        assert!(built.sql.contains("\"types\" @> ARRAY(SELECT "));
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("\"type_ids\" @> (ARRAY["));
         assert!(built.sql.contains("AND"));
         assert!(built.sql.contains("OR"));
     }
@@ -416,7 +540,7 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/Vehicle"))))
                 .build(),
         ];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.count_sql.is_some());
         assert!(built.count_sql.unwrap().contains("COUNT(*)"));
     }
@@ -438,9 +562,9 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://example.com/T2"))))
                 .build(),
         ];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         // Two parenthesised groups ORed together: `(A AND T1) OR (B AND T2)`,
-        // each pairing one selector's id with its own type. The type IRIs are
+        // each pairing one selector's id with its own type. The type keys are
         // bound as parameters, so the union shows in the structure, not the text.
         assert!(built.sql.contains(") OR ("), "the two selectors must be ORed as groups: {}", built.sql);
         assert_eq!(
@@ -450,24 +574,23 @@ mod tests {
             built.sql
         );
         assert_eq!(
-            built.sql.matches("\"types\" @> ARRAY(SELECT ").count(),
+            built.sql.matches("\"type_ids\" @> (ARRAY[").count(),
             2,
             "each selector keeps its own type filter: {}",
             built.sql
         );
-        let type_binds = built
-            .bind_values
-            .iter()
-            .filter(|bind| matches!(bind, Value::String(Some(value)) if value.starts_with("https://example.com/T")))
-            .count();
-        assert_eq!(type_binds, 2, "both selector types survive as distinct binds: {:?}", built.bind_values);
+        assert!(
+            built.sql.contains("ARRAY[4]") && built.sql.contains("ARRAY[5]"),
+            "both selector types survive as distinct inlined keys: {}",
+            built.sql
+        );
     }
 
-    fn temperature_is_known() -> ResolvedAttributeNames {
-        ResolvedAttributeNames::from_pairs([(
+    fn temperature_is_known() -> QueryNames {
+        attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/temperature".parse().expect("valid attribute name"),
             AttributeNameId::from(12),
-        )])
+        )]))
     }
 
     #[test]
@@ -538,7 +661,7 @@ mod tests {
         let mut q = empty_query();
         q.pagination.limit = 50;
         q.pagination.offset = 100;
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("LIMIT"));
         assert!(built.sql.contains("OFFSET"));
         // sea-query parameterizes limit/offset as bind values
@@ -553,7 +676,7 @@ mod tests {
             direction: OrderDirection::Asc,
             collation: None,
         }];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("ORDER BY"));
         assert!(built.sql.contains("ASC"));
         assert!(built.sql.contains("hasValue"));
@@ -567,7 +690,7 @@ mod tests {
             direction: OrderDirection::Asc,
             collation: Some(IcuCollation::parse("und-u-ks-identic").expect("valid collation")),
         }];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("COLLATE \"und-u-ks-identic\""));
         assert!(built.sql.contains("ASC"));
     }
@@ -588,7 +711,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("ST_Distance"));
         assert!(built.sql.contains("ASC"));
     }
@@ -601,7 +724,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let result = build_query(&q, &ResolvedAttributeNames::default());
+        let result = build_query(&q, &known_types());
         assert!(result.is_err());
     }
 
@@ -619,7 +742,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("ST_Distance"));
         assert!(built.sql.contains("ASC"));
         assert!(built.sql.contains("ST_GeomFromEWKB"));
@@ -651,7 +774,7 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("ST_Distance"));
         // Ordering geometry (Berlin) takes precedence over the geo query (Paris);
         // since reference geometries are now bound as EWKB bytes, verify that the
@@ -676,12 +799,12 @@ mod tests {
         let mut flat_query = empty_query();
         flat_query.ordering.geometry = Some(OrderingGeometry::new(point(serde_json::json!([13.3986, 52.5547]))));
         flat_query.ordering.terms = vec![ordering_term.clone()]; // clone: the elevated query orders the same way
-        let flat = build(&flat_query, &ResolvedAttributeNames::default());
+        let flat = build(&flat_query, &known_types());
 
         let mut elevated_query = empty_query();
         elevated_query.ordering.geometry = Some(OrderingGeometry::new(point(serde_json::json!([13.3986, 52.5547, 34.5]))));
         elevated_query.ordering.terms = vec![ordering_term];
-        let elevated = build(&elevated_query, &ResolvedAttributeNames::default());
+        let elevated = build(&elevated_query, &known_types());
 
         assert_eq!(elevated.sql, flat.sql, "distance ordering must not vary with the reference dimensionality");
         assert!(elevated.sql.contains("ST_Distance"), "{}", elevated.sql);
@@ -735,11 +858,16 @@ mod tests {
             geometry: point(serde_json::json!([13.4, 52.5])),
             geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
         });
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("ST_DWithin"), "should contain spatial predicate");
-        assert!(built.sql.contains("EXISTS"), "should contain EXISTS expiration guard");
-        assert!(built.sql.contains("expiresAt"), "should reference expiresAt IRI");
-        assert!(built.sql.contains("NOW()"), "should compare against NOW()");
+        assert!(
+            built
+                .sql
+                .contains(r#""entity_search"."location_expires_at" IS NULL OR "entity_search"."location_expires_at" > NOW()"#),
+            "the guard reads the search row's expiry column: {}",
+            built.sql
+        );
+        assert!(!built.sql.contains("expiresAt"), "the guard no longer walks the payload: {}", built.sql);
     }
 
     #[test]
@@ -766,7 +894,7 @@ mod tests {
                 geometry: point(serde_json::json!([1.0, 2.0])),
                 geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
             });
-            let built = build(&q, &ResolvedAttributeNames::default());
+            let built = build(&q, &known_types());
             assert!(built.sql.contains("ST_GeomFromEWKB"), "{georel:?} SQL missing ST_GeomFromEWKB");
             // Default-location path must not re-decode GeoJSON for the reference side.
             assert!(
@@ -792,10 +920,10 @@ mod tests {
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
-        let names = ResolvedAttributeNames::from_pairs([(
+        let names = attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/customGeo".parse().expect("valid attribute name"),
             AttributeNameId::from(42_i32),
-        )]);
+        )]));
         let built = build(&q, &names);
         assert!(built.sql.contains("EXISTS(SELECT 1 FROM \"current_attribute_values\""), "{}", built.sql);
         assert!(built.sql.contains("\"attribute_name_id\" = "), "{}", built.sql);
@@ -818,7 +946,7 @@ mod tests {
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/neverRecorded".parse().expect("valid attribute name"),
         });
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("FALSE"), "{}", built.sql);
     }
 
@@ -826,7 +954,7 @@ mod tests {
     fn scope_complex_generates_mixed() {
         let mut q = empty_query();
         q.selection.scope_q = Some(ScopeQuery::parse("/A;/B,/C/#").expect("valid scope query"));
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains(" AND "), "SQL should contain AND");
         assert!(built.sql.contains(" OR "), "SQL should contain OR");
         assert!(built.sql.contains("::lquery"), "SQL should cast to lquery");
@@ -847,10 +975,10 @@ mod tests {
     /// an apostrophe in one cannot terminate a literal.
     #[test]
     fn a_geoproperty_iri_containing_an_apostrophe_never_reaches_the_statement_text() {
-        let names = ResolvedAttributeNames::from_pairs([(
+        let names = attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),
             AttributeNameId::from(9_i32),
-        )]);
+        )]));
         let relations = [
             GeoRel::Within,
             GeoRel::Near {
@@ -879,7 +1007,7 @@ mod tests {
             direction: OrderDirection::Asc,
             collation: None,
         }];
-        let built = build(&q, &ResolvedAttributeNames::default());
+        let built = build(&q, &known_types());
         assert!(built.sql.contains("o''brien"), "{}", built.sql);
         assert_eq!(apostrophe_count(&built.sql) % 2, 0, "unbalanced SQL literal: {}", built.sql);
     }
@@ -901,10 +1029,10 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let names = ResolvedAttributeNames::from_pairs([(
+        let names = attributes_only(ResolvedNames::from_pairs([(
             "https://example.com/o'brien".parse().expect("valid attribute name"),
             AttributeNameId::from(9_i32),
-        )]);
+        )]));
         let built = build(&q, &names);
         assert!(!built.sql.contains("brien"), "{}", built.sql);
         assert!(built.sql.contains("MIN(ST_Distance("), "the nearest instance decides: {}", built.sql);

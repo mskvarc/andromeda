@@ -50,6 +50,8 @@ pub enum NotificationDeliveries {
     NextAttemptAt,
     /// Instant the delivery was acknowledged as sent, `NULL` while pending
     DeliveredAt,
+    /// Instant the worker gave the delivery up for good, `NULL` unless dead-lettered
+    ExhaustedAt,
     /// Diagnostic recorded by the last failed attempt
     DeliveryError,
     /// Instant the current lease was taken
@@ -88,6 +90,7 @@ mod tests {
         assert_eq!(NotificationDeliveries::AttemptCount.to_string(), "attempt_count");
         assert_eq!(NotificationDeliveries::NextAttemptAt.to_string(), "next_attempt_at");
         assert_eq!(NotificationDeliveries::DeliveredAt.to_string(), "delivered_at");
+        assert_eq!(NotificationDeliveries::ExhaustedAt.to_string(), "exhausted_at");
         assert_eq!(NotificationDeliveries::DeliveryError.to_string(), "delivery_error");
         assert_eq!(NotificationDeliveries::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(NotificationDeliveries::ClaimedBy.to_string(), "claimed_by");

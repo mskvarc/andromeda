@@ -16,7 +16,7 @@ pub struct StoredHistoryRow {
     /// Expanded attribute name the row's stream is keyed by.
     pub attribute_name: String,
     /// Stream the row belongs to.
-    pub stream_id: Uuid,
+    pub stream_key: i64,
     /// `datasetId` of the stream, absent for the default instance.
     pub dataset_id: Option<String>,
     /// Migration-owned attribute-family code carried on the row.
@@ -63,7 +63,7 @@ pub async fn stored_history(pool: &PgPool, entity_id: &str) -> Vec<StoredHistory
         .into_iter()
         .map(|row| StoredHistoryRow {
             attribute_name: row.get("attribute_name"),
-            stream_id: row.get("stream_id"),
+            stream_key: row.get("stream_key"),
             dataset_id: row.get("dataset_id"),
             attribute_kind: row.get("attribute_kind"),
             value_kind: row.get("value_kind"),
@@ -129,7 +129,7 @@ pub async fn orphaned_temporal_rows(pool: &PgPool) -> (i64, i64, i64) {
 
 const STORED_HISTORY_SQL: &str = r#"
 SELECT an.name AS attribute_name,
-       s.id AS stream_id,
+       s.stream_key AS stream_key,
        s.dataset_id,
        ah.attribute_kind,
        ah.value_kind,
@@ -149,7 +149,7 @@ SELECT an.name AS attribute_name,
        num_nonnulls(ah.value_number, ah.value_string, ah.value_bool, ah.value_geo,
                     ah.value_object, ah.value_datetime, ah.value_uri)::int AS populated_value_columns
 FROM attribute_history ah
-JOIN temporal_attribute_streams s ON s.id = ah.stream_id
+JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
 JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
 JOIN attribute_names an ON an.id = s.attribute_name_id
 WHERE te.id = $1
@@ -173,8 +173,8 @@ SELECT (SELECT count(*)::bigint FROM temporal_entities WHERE id = $1) AS entitie
 const ORPHANED_TEMPORAL_ROWS_SQL: &str = r#"
 SELECT
     (SELECT count(*)::bigint FROM attribute_history ah
-        LEFT JOIN temporal_attribute_streams s ON s.id = ah.stream_id
-        WHERE s.id IS NULL) AS orphaned_attribute_history_rows,
+        LEFT JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
+        WHERE s.stream_key IS NULL) AS orphaned_attribute_history_rows,
     (SELECT count(*)::bigint FROM scope_history sh
         LEFT JOIN temporal_entities te ON te.entity_key = sh.temporal_entity_key
         WHERE te.entity_key IS NULL) AS orphaned_scope_history_rows,

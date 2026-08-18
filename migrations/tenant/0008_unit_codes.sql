@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0040: UN/CEFACT unit-code catalogue
+-- 0008: UN/CEFACT unit-code catalogue
 -- ============================================================================
 -- `unitCode` (NGSI-LD 5.2.5) is drawn from the UN/CEFACT Recommendation 20
 -- common-code list, a closed vocabulary of a few thousand short tokens. Storing
@@ -8,7 +8,7 @@
 -- the rows carry a two-byte identity instead.
 --
 -- The identities are not database-generated. They come from the append-only
--- assignment `crates/andromeda-unit-catalog` compiles in and 0041 seeds, which
+-- assignment `crates/andromeda-unit-catalog` compiles in and 0009 seeds, which
 -- is what makes an identity written by one broker readable by another: an
 -- accepted code keeps its number forever, a withdrawn code keeps its row so
 -- old attributes stay decodable, and a new code appends. `id` is therefore
@@ -20,7 +20,7 @@
 -- are deliberately absent: the broker never converts between units, and a
 -- factor column would invite it to (see `docs/unit-handling.md`).
 --
--- Privileges follow 0034: this deployment has no runtime-only role, so the pair
+-- Privileges follow 0021: this deployment has no runtime-only role, so the pair
 -- below states the durable intent -- reference data any non-owner role reads
 -- and cannot write, seeded and amended only by a migration running as owner.
 --

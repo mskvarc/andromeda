@@ -288,8 +288,8 @@ async fn get_temporal_entity_scoped(client: &Client, id: &str, snapshot_id: &str
 async fn seed_snapshot_entities(pool: &PgPool, snapshot_id: &str, entities: &[(String, Value)]) {
     for (entity_id, entity_data) in entities {
         sqlx::query(
-            "INSERT INTO snapshot_entities (snapshot_id, entity_id, entity_data) \
-             VALUES ($1, $2, $3)",
+            "INSERT INTO snapshot_entities (snapshot_key, entity_id, entity_data) \
+             VALUES ((SELECT snapshot_key FROM snapshots WHERE id = $1), $2, $3)",
         )
         .bind(snapshot_id)
         .bind(entity_id)
@@ -308,8 +308,8 @@ async fn seed_snapshot_entities(pool: &PgPool, snapshot_id: &str, entities: &[(S
 async fn seed_snapshot_temporal_entities(pool: &PgPool, snapshot_id: &str, entities: &[(String, Value)]) {
     for (entity_id, temporal_data) in entities {
         sqlx::query(
-            "INSERT INTO snapshot_temporal_entities (snapshot_id, entity_id, temporal_data) \
-             VALUES ($1, $2, $3)",
+            "INSERT INTO snapshot_temporal_entities (snapshot_key, entity_id, temporal_data) \
+             VALUES ((SELECT snapshot_key FROM snapshots WHERE id = $1), $2, $3)",
         )
         .bind(snapshot_id)
         .bind(entity_id)

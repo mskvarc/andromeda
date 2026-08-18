@@ -1,7 +1,7 @@
 //! The invariant that every stored entity carries at least one type.
 //!
 //! Clause 4.5.1 makes `type` a mandatory member of an Entity, and the
-//! `entities` table states the same thing as a check constraint. Stating it
+//! `entity_search` relation states the same thing as a check constraint. Stating it
 //! twice is deliberate: the constraint is what makes a typeless row
 //! unrepresentable no matter which statement wrote it, and the check below is
 //! what lets the write path name the offending entity instead of aborting the
@@ -14,7 +14,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 /// The name of the database check constraint that carries this invariant.
-pub const ENTITY_TYPES_PRESENT_CONSTRAINT: &str = "chk_entities_types_present";
+pub const ENTITY_TYPES_PRESENT_CONSTRAINT: &str = "chk_entity_search_types_present";
 
 /// An entity write carried no type.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -31,14 +31,14 @@ pub enum EntityTypesMissing {
 
 /// Refuse a column set in which any entity carries no type.
 ///
-/// A type column is a JSON array of expanded type IRIs; anything that is not a
-/// non-empty array would land in the table as an empty `text[]`, which is the
-/// state the constraint forbids.
+/// A type column is a JSON array of type dictionary keys; anything that is not
+/// a non-empty array would land in the table as an empty `integer[]`, which is
+/// the state the constraint forbids.
 pub fn types_present(columns: &PreparedEntityColumns) -> Result<(), EntityTypesMissing> {
     match columns
         .ids
         .iter()
-        .zip(&columns.types_json)
+        .zip(&columns.type_ids_json)
         .find(|(_, types)| !matches!(types, Value::Array(types) if !types.is_empty()))
     {
         Some((id, _)) => Err(EntityTypesMissing::Rejected(Uri::clone(id))), // clone: the error outlives the borrowed column set.
@@ -69,13 +69,13 @@ mod tests {
     fn columns_with_types(types: serde_json::Value) -> PreparedEntityColumns {
         let mut columns = PreparedEntityColumns::with_capacity(1);
         columns.ids.push("urn:ngsi-ld:Building:1".parse().expect("entity URI"));
-        columns.types_json.push(types);
+        columns.type_ids_json.push(types);
         columns
     }
 
     #[test]
     fn a_typed_entity_satisfies_the_invariant() {
-        assert_eq!(types_present(&columns_with_types(json!(["https://example.com/Building"]))), Ok(()));
+        assert_eq!(types_present(&columns_with_types(json!([7]))), Ok(()));
     }
 
     #[test]

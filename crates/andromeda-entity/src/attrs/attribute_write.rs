@@ -7,7 +7,8 @@
 
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
-    entity_mutation::{EntityMutation, EntityRecord},
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
     history_record::HistoryRecord,
     subscription_match::SubscriptionMatch,
 };

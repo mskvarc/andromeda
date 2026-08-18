@@ -106,8 +106,8 @@ async fn temporal_semantics_late_observations_stay_in_the_ingestion_chunk_and_re
     );
     assert_eq!(
         attribute_history_chunk_interval(&pool).await,
-        TimeDelta::days(30).num_microseconds().expect("30 days is representable in microseconds"),
-        "the chunk interval the ingest assumption rests on is the declared 30 days"
+        TimeDelta::days(7).num_microseconds().expect("7 days is representable in microseconds"),
+        "the chunk interval the ingest assumption rests on is the declared 7 days"
     );
 
     // Each replayed observation is selectable on its own window and nothing else is.
@@ -129,7 +129,7 @@ async fn temporal_semantics_late_observations_stay_in_the_ingestion_chunk_and_re
 const OCCUPIED_CHUNKS_SQL: &str = r#"
 SELECT count(DISTINCT ah.tableoid)::bigint AS chunks
 FROM attribute_history ah
-JOIN temporal_attribute_streams s ON s.id = ah.stream_id
+JOIN temporal_attribute_streams s ON s.stream_key = ah.stream_key
 JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key
 WHERE te.id = $1
 "#;

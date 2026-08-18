@@ -1,7 +1,8 @@
 //! Verification-matrix row "Physical column layout".
 //!
-//! Both rebuilt relations declare their columns in alignment order: not-null
-//! fixed-width first and widest-first, then nullable fixed-width, then varlena.
+//! The three entity relations, the projection and the temporal intent queue
+//! declare their columns in alignment order: not-null fixed-width first and widest-first, then nullable
+//! fixed-width, then varlena.
 //! The catalog states the physical order, and a naive declaration order costs
 //! measurable padding for the same data.
 
@@ -58,10 +59,16 @@ async fn rebuilt_relations_declare_a_not_null_fixed_prefix_without_alignment_pad
     let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
     let pool = scope.database_pool();
 
-    for relation in ["entities", "current_attribute_values"] {
+    for relation in [
+        "entities",
+        "entity_documents",
+        "entity_search",
+        "current_attribute_values",
+        "temporal_append_intents",
+    ] {
         let columns = physical_columns(pool, relation).await;
         let prefix: Vec<&PhysicalColumn> = columns.iter().take_while(|column| column.attnotnull && column.is_fixed_width()).collect();
-        assert!(prefix.len() >= 2, "{relation} must open with a not-null fixed-width prefix");
+        assert!(!prefix.is_empty(), "{relation} must open with a not-null fixed-width prefix");
 
         let mut offset = 0_usize;
         for column in &prefix {

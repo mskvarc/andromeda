@@ -5,7 +5,7 @@
 //! database is a no-op, and every verification empties the queue relations
 //! before it seeds its own fixture.
 
-use andromeda_context_commit::write_record::WriteRecord;
+use andromeda_context_commit::{subscription_key::SubscriptionKey, write_record::WriteRecord};
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent},
@@ -57,6 +57,11 @@ pub async fn subscription(pool: &PgPool, id: &str) -> i64 {
         .fetch_one(pool)
         .await
         .expect("seeded subscription")
+}
+
+/// The typed surrogate key of a seeded Subscription, as a matcher would carry it.
+pub fn subscription_key(stored: i64) -> SubscriptionKey {
+    SubscriptionKey::try_from(stored).expect("a seeded subscription key is positive")
 }
 
 /// Seed one dictionary entry and return the four-byte key an event stores.

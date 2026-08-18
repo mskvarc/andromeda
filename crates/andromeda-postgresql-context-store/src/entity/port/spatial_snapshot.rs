@@ -10,22 +10,29 @@ use andromeda_entity::{
 };
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_postgresql_encoding::ewkb::Ewkb;
-use andromeda_postgresql_schema::current::Entities;
+use andromeda_postgresql_query::entity_type_names::type_names_of;
+use andromeda_postgresql_schema::current::{Entities, EntitySearch};
 use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use async_trait::async_trait;
-use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, SelectStatement};
+use sea_query::{Expr, ExprTrait, JoinType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use tracing::warn;
 
 /// Read the typed columns required to reconstruct default-location index
-/// entries: the identifier, the type IRIs, and the location geometry as EWKB.
+/// entries: the identifier, the type IRIs (read back through the type
+/// dictionary), and the location geometry as EWKB.
 fn location_snapshots_statement() -> SelectStatement {
     Query::select()
-        .column(Entities::Id)
-        .column(Entities::Types)
-        .expr(cast(Expr::col(Entities::Location), PostgresType::Bytea))
+        .column((Entities::Table, Entities::Id))
+        .expr(type_names_of(Expr::col((EntitySearch::Table, EntitySearch::TypeIds))))
+        .expr(cast(Expr::col((EntitySearch::Table, EntitySearch::Location)), PostgresType::Bytea))
         .from(Entities::Table)
-        .and_where(Expr::col(Entities::Location).is_not_null())
+        .join(
+            JoinType::Join,
+            EntitySearch::Table,
+            Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
+        )
+        .and_where(Expr::col((EntitySearch::Table, EntitySearch::Location)).is_not_null())
         .to_owned()
 }
 
@@ -87,7 +94,8 @@ mod tests {
     fn the_snapshot_reads_the_typed_columns_of_located_entities() {
         let (sql, values) = location_snapshots_statement().build_sqlx(PostgresQueryBuilder);
         assert_eq!(
-            sql, r#"SELECT "id", "types", "location"::bytea FROM "entities" WHERE "location" IS NOT NULL"#,
+            sql,
+            r#"SELECT "entities"."id", ARRAY(SELECT "entity_type_names"."name" FROM "entity_type_names" WHERE "entity_type_names"."id" = ANY("entity_search"."type_ids") ORDER BY array_position("entity_search"."type_ids", "entity_type_names"."id") ASC), "entity_search"."location"::bytea FROM "entities" JOIN "entity_search" ON "entity_search"."entity_key" = "entities"."entity_key" WHERE "entity_search"."location" IS NOT NULL"#,
             "{sql}"
         );
         assert_eq!(values.0.0.len(), 0, "the snapshot reads every located entity, binding nothing: {sql}");

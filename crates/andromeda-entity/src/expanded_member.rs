@@ -5,21 +5,6 @@ use crate::error::EntityError;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use serde_json::Value;
 
-/// Every attribute name an expanded payload carries.
-///
-/// Keys that do not satisfy the NGSI-LD name grammar cannot name an attribute,
-/// so they are skipped rather than reported as changed.
-pub(crate) fn extract_attribute_keys(expanded: &Value) -> Vec<AttributeName> {
-    let obj = match expanded {
-        Value::Array(arr) => arr.first().and_then(|v| v.as_object()),
-        Value::Object(obj) => Some(obj),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
-
-    obj.map(|o| o.keys().filter(|k| !k.starts_with('@')).filter_map(|k| k.parse().ok()).collect())
-        .unwrap_or_default()
-}
-
 /// The node object inside an expanded payload's array wrapper.
 pub(crate) fn unwrap_expanded_ref(value: &Value) -> &Value {
     match value {

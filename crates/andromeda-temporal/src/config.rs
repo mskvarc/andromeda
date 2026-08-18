@@ -1,9 +1,24 @@
 //! Temporal policy configuration.
 
+use crate::storage_policy::TemporalStoragePolicy;
 use confique::Config;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroU32;
 use strum::{Display, EnumString};
 use thiserror::Error;
+
+/// The chunk interval the tenant schema declares when no override is set.
+///
+/// Mirrors the `create_hypertable` interval in the attribute-history and
+/// scope-history migrations; validation compares an override of one value
+/// against the default of the other.
+pub const DEFAULT_CHUNK_INTERVAL_DAYS: u32 = 7;
+
+/// The columnstore lag the tenant schema declares when no override is set.
+///
+/// Mirrors the `add_columnstore_policy` lag in the attribute-history and
+/// scope-history migrations.
+pub const DEFAULT_COLUMNSTORE_AFTER_DAYS: u32 = 30;
 
 /// Invalid temporal policy configuration.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
@@ -26,6 +41,21 @@ pub enum TemporalConfigError {
     /// Intent retry delay was configured as zero.
     #[error("temporal.intent_retry_secs must be at least 1")]
     ZeroIntentRetry,
+    /// Intent retry ceiling was configured below the base delay.
+    #[error("temporal.intent_retry_max_secs must be at least temporal.intent_retry_secs")]
+    IntentRetryCeilingBelowBase,
+    /// The stuck-intent warning threshold was configured as zero.
+    #[error("temporal.intent_stuck_after_attempts must be at least 1")]
+    ZeroIntentStuckThreshold,
+    /// The chunk interval override was configured as zero.
+    #[error("temporal.chunk_interval_days must be at least 1")]
+    ZeroChunkInterval,
+    /// The columnstore lag override was configured as zero.
+    #[error("temporal.columnstore_after_days must be at least 1")]
+    ZeroColumnstoreLag,
+    /// The columnstore lag would convert a chunk that is still being written.
+    #[error("temporal.columnstore_after_days must be at least temporal.chunk_interval_days")]
+    ColumnstoreLagBelowChunkInterval,
     /// A retention horizon was named but spans no time.
     #[error("temporal.retention_horizon_days must be at least 1 when retention is enabled")]
     ZeroRetentionHorizon,
@@ -70,6 +100,29 @@ pub struct TemporalConfig {
     /// Base retry delay for a sink rejection.
     #[config(env = "ANDROMEDA_TEMPORAL_INTENT_RETRY_SECS", default = 2)]
     pub intent_retry_secs: u64,
+    /// Ceiling the exponential retry delay is clamped to.
+    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_RETRY_MAX_SECS", default = 300)]
+    pub intent_retry_max_secs: u64,
+    /// Attempt count from which an intent that keeps failing is reported as stuck.
+    ///
+    /// There is no dead-letter for a temporal append intent: the intent is the
+    /// durable record of history the broker accepted, so it stays claimable
+    /// forever and is only reported, never discarded.
+    #[config(env = "ANDROMEDA_TEMPORAL_INTENT_STUCK_AFTER_ATTEMPTS", default = 10)]
+    pub intent_stuck_after_attempts: u32,
+    /// Override of the span one write-side history partition covers, in days.
+    ///
+    /// Absent, the schema's own default stands. Reconciled against the stored
+    /// hypertable dimension when a tenant is opened.
+    #[config(env = "ANDROMEDA_TEMPORAL_CHUNK_INTERVAL_DAYS")]
+    pub chunk_interval_days: Option<u32>,
+    /// Override of the age past which a history partition is converted to the
+    /// columnstore, in days.
+    ///
+    /// Absent, the schema's own default stands. Must not fall below the chunk
+    /// interval, or a partition still receiving rows would be converted.
+    #[config(env = "ANDROMEDA_TEMPORAL_COLUMNSTORE_AFTER_DAYS")]
+    pub columnstore_after_days: Option<u32>,
     /// Operator retention horizon in days, absent while retention is off.
     ///
     /// Retention ages temporal storage out and is not an NGSI-LD operation: the
@@ -104,6 +157,29 @@ impl TemporalConfig {
         if self.intent_retry_secs == 0 {
             return Err(TemporalConfigError::ZeroIntentRetry);
         }
+        if self.intent_retry_max_secs < self.intent_retry_secs {
+            return Err(TemporalConfigError::IntentRetryCeilingBelowBase);
+        }
+        if self.intent_stuck_after_attempts == 0 {
+            return Err(TemporalConfigError::ZeroIntentStuckThreshold);
+        }
+        if let Some(0) = self.chunk_interval_days {
+            return Err(TemporalConfigError::ZeroChunkInterval);
+        }
+        if let Some(0) = self.columnstore_after_days {
+            return Err(TemporalConfigError::ZeroColumnstoreLag);
+        }
+        let chunk_interval_days = match self.chunk_interval_days {
+            Some(days) => days,
+            None => DEFAULT_CHUNK_INTERVAL_DAYS,
+        };
+        let columnstore_after_days = match self.columnstore_after_days {
+            Some(days) => days,
+            None => DEFAULT_COLUMNSTORE_AFTER_DAYS,
+        };
+        if columnstore_after_days < chunk_interval_days {
+            return Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval);
+        }
         if let Some(0) = self.retention_horizon_days {
             return Err(TemporalConfigError::ZeroRetentionHorizon);
         }
@@ -112,11 +188,124 @@ impl TemporalConfig {
         }
         Ok(())
     }
+
+    /// The storage policy the overrides describe, for the backend to reconcile.
+    ///
+    /// Only meaningful on a validated configuration: a zero override is
+    /// refused by [`TemporalConfig::validate`] and treated as absent here.
+    pub const fn storage_policy(&self) -> TemporalStoragePolicy {
+        TemporalStoragePolicy {
+            chunk_interval_days: match self.chunk_interval_days {
+                Some(days) => NonZeroU32::new(days),
+                None => None,
+            },
+            columnstore_after_days: match self.columnstore_after_days {
+                Some(days) => NonZeroU32::new(days),
+                None => None,
+            },
+        }
+    }
 }
 
 #[cfg(test)]
 mod config_tests {
     use super::{TemporalAppendMode, TemporalConfig, TemporalConfigError};
+    use crate::storage_policy::TemporalStoragePolicy;
+    use std::num::NonZeroU32;
+
+    fn valid() -> TemporalConfig {
+        TemporalConfig {
+            append_mode: TemporalAppendMode::Native,
+            default_last_n: 19,
+            expiration_check_interval_secs: 30,
+            intent_fallback_secs: 1,
+            intent_batch_size: 64,
+            intent_lease_secs: 30,
+            intent_retry_secs: 2,
+            intent_retry_max_secs: 300,
+            intent_stuck_after_attempts: 10,
+            chunk_interval_days: None,
+            columnstore_after_days: None,
+            retention_horizon_days: None,
+            retention_sweep_interval_secs: 3600,
+        }
+    }
+
+    #[test]
+    fn a_retry_ceiling_below_the_base_delay_is_rejected() {
+        let config = TemporalConfig {
+            intent_retry_secs: 10,
+            intent_retry_max_secs: 5,
+            ..valid()
+        };
+        assert_eq!(config.validate(), Err(TemporalConfigError::IntentRetryCeilingBelowBase));
+    }
+
+    #[test]
+    fn a_zero_stuck_threshold_is_rejected() {
+        let config = TemporalConfig {
+            intent_stuck_after_attempts: 0,
+            ..valid()
+        };
+        assert_eq!(config.validate(), Err(TemporalConfigError::ZeroIntentStuckThreshold));
+    }
+
+    #[test]
+    fn a_zero_storage_override_is_rejected() {
+        let chunk = TemporalConfig {
+            chunk_interval_days: Some(0),
+            ..valid()
+        };
+        assert_eq!(chunk.validate(), Err(TemporalConfigError::ZeroChunkInterval));
+        let lag = TemporalConfig {
+            columnstore_after_days: Some(0),
+            ..valid()
+        };
+        assert_eq!(lag.validate(), Err(TemporalConfigError::ZeroColumnstoreLag));
+    }
+
+    #[test]
+    fn a_columnstore_lag_shorter_than_the_chunk_interval_is_rejected_against_either_default() {
+        let short_lag = TemporalConfig {
+            columnstore_after_days: Some(3),
+            ..valid()
+        };
+        assert_eq!(short_lag.validate(), Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval));
+        let long_chunk = TemporalConfig {
+            chunk_interval_days: Some(60),
+            ..valid()
+        };
+        assert_eq!(long_chunk.validate(), Err(TemporalConfigError::ColumnstoreLagBelowChunkInterval));
+        let both = TemporalConfig {
+            chunk_interval_days: Some(1),
+            columnstore_after_days: Some(3),
+            ..valid()
+        };
+        assert_eq!(both.validate(), Ok(()));
+    }
+
+    #[test]
+    fn the_storage_policy_carries_exactly_the_overrides_set() {
+        assert_eq!(
+            valid().storage_policy(),
+            TemporalStoragePolicy {
+                chunk_interval_days: None,
+                columnstore_after_days: None,
+            }
+        );
+        let overridden = TemporalConfig {
+            chunk_interval_days: Some(1),
+            columnstore_after_days: Some(3),
+            ..valid()
+        };
+        assert_eq!(
+            overridden.storage_policy(),
+            TemporalStoragePolicy {
+                chunk_interval_days: NonZeroU32::new(1),
+                columnstore_after_days: NonZeroU32::new(3),
+            }
+        );
+    }
 
     #[test]
     fn zero_intent_batch_size_is_rejected() {
@@ -128,6 +317,10 @@ mod config_tests {
             intent_batch_size: 0,
             intent_lease_secs: 30,
             intent_retry_secs: 2,
+            intent_retry_max_secs: 300,
+            intent_stuck_after_attempts: 10,
+            chunk_interval_days: None,
+            columnstore_after_days: None,
             retention_horizon_days: None,
             retention_sweep_interval_secs: 3600,
         };
@@ -144,6 +337,10 @@ mod config_tests {
             intent_batch_size: 64,
             intent_lease_secs: 30,
             intent_retry_secs: 2,
+            intent_retry_max_secs: 300,
+            intent_stuck_after_attempts: 10,
+            chunk_interval_days: None,
+            columnstore_after_days: None,
             retention_horizon_days: None,
             retention_sweep_interval_secs: 3600,
         };
@@ -161,6 +358,10 @@ mod config_tests {
             intent_batch_size: 64,
             intent_lease_secs: 30,
             intent_retry_secs: 2,
+            intent_retry_max_secs: 300,
+            intent_stuck_after_attempts: 10,
+            chunk_interval_days: None,
+            columnstore_after_days: None,
             retention_horizon_days: Some(0),
             retention_sweep_interval_secs: 3600,
         };

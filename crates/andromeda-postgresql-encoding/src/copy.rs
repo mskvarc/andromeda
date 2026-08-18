@@ -60,6 +60,20 @@ pub fn write_jsonb(buf: &mut Vec<u8>, value: &Value) {
     buf.extend_from_slice(&json);
 }
 
+/// Append a `jsonb` field from JSON already serialised to text — length
+/// prefix, version byte 0x01, then the text's bytes.
+///
+/// The text is written as given, so it must be valid JSON; a caller that
+/// serialised a [`Value`] once for another bind path hands the same bytes here
+/// instead of re-serialising the DOM.
+pub fn write_jsonb_text(buf: &mut Vec<u8>, json: &str) {
+    let bytes = json.as_bytes();
+    let total_len = bytes.len() as i32 + 1;
+    write_length(buf, total_len);
+    buf.push(0x01);
+    buf.extend_from_slice(bytes);
+}
+
 /// Append an optional `jsonb` field, encoding `None` as a NULL.
 pub fn write_jsonb_opt(buf: &mut Vec<u8>, value: Option<&Value>) {
     match value {
@@ -107,6 +121,12 @@ pub fn write_uuid_opt(buf: &mut Vec<u8>, value: Option<uuid::Uuid>) {
         Some(value) => write_uuid(buf, value),
         None => write_null(buf),
     }
+}
+
+/// Append a non-null 64-bit integer field in network byte order.
+pub fn write_i64(buf: &mut Vec<u8>, value: i64) {
+    write_length(buf, 8);
+    buf.extend_from_slice(&value.to_be_bytes());
 }
 
 /// Append an optional 16-bit integer field in network byte order.
@@ -208,6 +228,17 @@ mod tests {
     }
 
     #[test]
+    fn jsonb_text_carries_the_version_byte_and_the_same_bytes_as_the_dom_form() {
+        let value = serde_json::json!({"a": [1, 2]});
+        let mut from_dom = Vec::new();
+        write_jsonb(&mut from_dom, &value);
+        let mut from_text = Vec::new();
+        write_jsonb_text(&mut from_text, &serde_json::to_string(&value).expect("serialises"));
+        assert_eq!(from_text, from_dom);
+        assert_eq!(from_text[4], 0x01);
+    }
+
+    #[test]
     fn text_opt_none_is_null() {
         let mut buf = Vec::new();
         write_text_opt(&mut buf, None);
@@ -252,6 +283,13 @@ mod tests {
         write_uuid(&mut buf, uid);
         assert_eq!(&buf[..4], &[0, 0, 0, 16]);
         assert_eq!(&buf[4..], uid.as_bytes());
+    }
+
+    #[test]
+    fn i64_serialises_as_eight_big_endian_bytes() {
+        let mut buf = Vec::new();
+        write_i64(&mut buf, 0x0102_0304_0506_0708);
+        assert_eq!(buf, vec![0, 0, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8]);
     }
 
     #[test]

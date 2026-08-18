@@ -82,7 +82,7 @@ async fn temporal_semantics_a_later_kind_change_does_not_reinterpret_recorded_hi
 
     let rows = stored_attribute_history(&pool, &entity_id, &attribute_iri("signal")).await;
     assert_eq!(rows.len(), 3, "each change is its own recorded instance");
-    assert_eq!(rows[0].stream_id, rows[2].stream_id, "all three sit at the same clause 4.5.5 grain");
+    assert_eq!(rows[0].stream_key, rows[2].stream_key, "all three sit at the same clause 4.5.5 grain");
 
     // The first row is byte for byte what it was, after two later kind changes.
     assert_eq!(rows[0].attribute_kind, original.attribute_kind, "the recorded family is not reinterpreted");

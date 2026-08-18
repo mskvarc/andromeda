@@ -15,13 +15,14 @@ use crate::commit_refusal::persistence;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     error::CommitError,
+    subscription_key::SubscriptionKey,
     subscription_match::SubscriptionMatch,
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
+use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
@@ -35,7 +36,7 @@ struct EventGroup<'a> {
     /// one group; the first one seen is as good as any other.
     change: &'a SubscriptionMatch,
     /// The subscriptions the change is due to, in matcher order.
-    subscriptions: Vec<&'a Uri>,
+    subscriptions: Vec<SubscriptionKey>,
 }
 
 /// Persist the notification events of landed writes and the deliveries they
@@ -59,7 +60,7 @@ pub(crate) async fn apply(
     landed: &[&AtomicWrite],
     record: &WriteRecord,
     base: WriteOrdinal,
-    attribute_names: &dyn AttributeNameLookup,
+    attribute_names: &dyn NameLookup<AttributeName>,
 ) -> Result<WriteOrdinal, CommitError> {
     let groups = group(landed);
     if groups.is_empty() {
@@ -90,10 +91,10 @@ fn group<'a>(landed: &[&'a AtomicWrite]) -> Vec<EventGroup<'a>> {
     let mut groups: Vec<EventGroup<'a>> = Vec::new();
     for change in landed.iter().flat_map(|write| write.subscription_matches.iter()) {
         match groups.iter_mut().find(|group| same_change(group.change, change)) {
-            Some(group) => group.subscriptions.push(&change.subscription_id),
+            Some(group) => group.subscriptions.push(change.subscription_key),
             None => groups.push(EventGroup {
                 change,
-                subscriptions: vec![&change.subscription_id],
+                subscriptions: vec![change.subscription_key],
             }),
         }
     }
@@ -124,7 +125,7 @@ fn same_change(left: &SubscriptionMatch, right: &SubscriptionMatch) -> bool {
 async fn resolve_dictionary(
     tx: &mut Transaction<'_, Postgres>,
     groups: &[EventGroup<'_>],
-    attribute_names: &dyn AttributeNameLookup,
+    attribute_names: &dyn NameLookup<AttributeName>,
 ) -> Result<HashMap<AttributeName, AttributeNameId>, CommitError> {
     let mut names: Vec<AttributeName> = groups
         .iter()
@@ -167,7 +168,7 @@ fn event<'a>(
         changed_attribute_name_ids,
         entity_snapshot: group.change.entity_snapshot.as_ref(),
         previous_snapshot: group.change.previous_snapshot.as_ref(),
-        subscription_ids: group.subscriptions,
+        subscription_keys: group.subscriptions,
     })
 }
 
@@ -177,6 +178,7 @@ mod tests {
     use andromeda_context_commit::{
         atomic_write::AtomicWrite,
         entity_mutation::EntityMutation,
+        subscription_key::SubscriptionKey,
         subscription_match::SubscriptionMatch,
         write_ordinal::WriteOrdinal,
     };
@@ -189,9 +191,9 @@ mod tests {
         value.parse().expect("a valid URI")
     }
 
-    fn change(subscription: &str, trigger: NotificationTrigger) -> SubscriptionMatch {
+    fn change(subscription: i64, trigger: NotificationTrigger) -> SubscriptionMatch {
         SubscriptionMatch::builder()
-            .subscription_id(uri(subscription))
+            .subscription_key(SubscriptionKey::try_from(subscription).expect("a positive subscription key"))
             .entity_id(uri("urn:ngsi-ld:Vehicle:1"))
             .trigger(trigger)
             .entity_snapshot(Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" })))
@@ -209,8 +211,8 @@ mod tests {
     #[test]
     fn subscribers_of_one_change_share_a_single_event() {
         let written = write(vec![
-            change("urn:ngsi-ld:Subscription:1", NotificationTrigger::EntityUpdated),
-            change("urn:ngsi-ld:Subscription:2", NotificationTrigger::EntityUpdated),
+            change(1, NotificationTrigger::EntityUpdated),
+            change(2, NotificationTrigger::EntityUpdated),
         ]);
         let groups = group(&[&written]);
         pretty_assertions::assert_eq!(groups.len(), 1);
@@ -220,8 +222,8 @@ mod tests {
     #[test]
     fn two_triggers_on_one_entity_stay_two_events() {
         let written = write(vec![
-            change("urn:ngsi-ld:Subscription:1", NotificationTrigger::AttributeUpdated),
-            change("urn:ngsi-ld:Subscription:1", NotificationTrigger::EntityUpdated),
+            change(1, NotificationTrigger::AttributeUpdated),
+            change(1, NotificationTrigger::EntityUpdated),
         ]);
         let groups = group(&[&written]);
         pretty_assertions::assert_eq!(groups.len(), 2);
@@ -232,9 +234,9 @@ mod tests {
     #[test]
     fn the_grouping_follows_submission_order() {
         let written = write(vec![
-            change("urn:ngsi-ld:Subscription:1", NotificationTrigger::EntityUpdated),
-            change("urn:ngsi-ld:Subscription:2", NotificationTrigger::AttributeUpdated),
-            change("urn:ngsi-ld:Subscription:3", NotificationTrigger::EntityUpdated),
+            change(1, NotificationTrigger::EntityUpdated),
+            change(2, NotificationTrigger::AttributeUpdated),
+            change(3, NotificationTrigger::EntityUpdated),
         ]);
         let groups = group(&[&written]);
         pretty_assertions::assert_eq!(groups.len(), 2);
@@ -251,9 +253,9 @@ mod tests {
 
     #[test]
     fn changes_differing_only_in_their_previous_snapshot_are_not_folded_together() {
-        let mut second = change("urn:ngsi-ld:Subscription:2", NotificationTrigger::EntityUpdated);
+        let mut second = change(2, NotificationTrigger::EntityUpdated);
         second.previous_snapshot = Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" }));
-        assert!(!same_change(&change("urn:ngsi-ld:Subscription:1", NotificationTrigger::EntityUpdated), &second));
+        assert!(!same_change(&change(1, NotificationTrigger::EntityUpdated), &second));
     }
 
     /// The commit's temporal history entries have already drawn from the
@@ -262,10 +264,10 @@ mod tests {
     /// position alone.
     #[test]
     fn an_events_ordinal_is_the_commits_base_plus_its_position() {
-        let matched = change("urn:ngsi-ld:Subscription:1", NotificationTrigger::EntityUpdated);
+        let matched = change(1, NotificationTrigger::EntityUpdated);
         let group = EventGroup {
             change: &matched,
-            subscriptions: vec![&matched.subscription_id],
+            subscriptions: vec![matched.subscription_key],
         };
         let dictionary = HashMap::new();
         let built = event(WriteOrdinal::at(4), 2, group, &dictionary).expect("a valid group builds an event");

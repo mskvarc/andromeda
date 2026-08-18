@@ -10,9 +10,10 @@
 //! than "history disappears".
 
 use crate::{
-    alias::{Ah, An, CE_ALIAS, Ce, EntityIdColumn, S},
+    alias::{Ah, An, Ce, Cs, EntityIdColumn, S},
     axis::axis_column,
 };
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
     entity_selection::EntitySelector,
@@ -20,17 +21,18 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
 use andromeda_postgresql_query::{
-    attribute_instance_correlation::CorrelatedEntityRow,
+    dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+    entity_row_refs::{DocumentsRef, EntityRowRefs},
     error::RenderError,
     geo_predicate as geo_sql,
     geo_predicate::GeometrySource,
-    q_predicate::{attribute_names::ResolvedAttributeNames, projection as q_filter, target::QFilterTarget},
+    q_predicate::projection as q_filter,
     scope_predicate::{ScopeTarget, condition as scope_condition},
-    type_predicate::{TypesColumn, condition as type_condition},
+    type_predicate::condition as type_condition,
 };
 use andromeda_postgresql_schema::{
-    attribute_dictionary::AttributeNames,
-    current::{E, Entities},
+    current::{E, Entities, EntitySearch},
+    name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{literal::int_literal, operator::regex_match};
@@ -52,9 +54,9 @@ pub struct Stage1Query {
 }
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
-pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Stage1Query, RenderError> {
+pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
-    let entity_conditions = build_entity_conditions_for_temporal(compiled, attribute_names)?;
+    let entity_conditions = build_entity_conditions_for_temporal(compiled, names)?;
 
     let mut select = SelectStatement::new();
     select
@@ -102,7 +104,7 @@ fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectSta
             JoinType::Join,
             AttributeHistory::Table,
             Ah,
-            SeaExpr::col((Ah, AttributeHistory::StreamId)).equals((S, TemporalAttributeStreams::Id)),
+            SeaExpr::col((Ah, AttributeHistory::StreamKey)).equals((S, TemporalAttributeStreams::StreamKey)),
         );
     }
     Ok(select.take())
@@ -110,7 +112,7 @@ fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectSta
 
 /// Build entity-level conditions for temporal queries (using "e" alias for
 /// the `temporal_entities` table).
-fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Condition, RenderError> {
     let mut condition = Condition::all();
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
@@ -120,56 +122,56 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, attrib
     if compiled.entities.selectors_constrain() {
         let mut union = Condition::any();
         for selector in &compiled.entities.selectors {
-            union = union.add(temporal_selector_condition(selector));
+            union = union.add(temporal_selector_condition(selector, &names.types));
         }
         condition = condition.add(union);
     }
 
-    if let Some(probe) = current_state_probe(compiled, attribute_names)? {
+    if let Some(probe) = current_state_probe(compiled, names)? {
         condition = condition.add(SeaExpr::exists(probe));
     }
 
     Ok(condition)
 }
 
-/// The correlated `EXISTS` over `entities` carrying the current-state filters.
+/// The correlated `EXISTS` over the current-state relations carrying the
+/// current-state filters.
 ///
-/// `q` (clause 4.9) reads the `current_attribute_values` projection and, for paths the
-/// projection cannot answer, the entity's JSONB payload; a geo query (clause
-/// 4.10) reads the default `location` columns or the instance rows of a named
-/// GeoProperty. Both are statements about current state, and both name columns
-/// that live on `entities` alone, so they are evaluated inside one probe
-/// correlated to the temporal entity's URI. `None` when the query carries
-/// neither filter, so an unfiltered temporal query never touches `entities`.
-fn current_state_probe(compiled: &CompiledTemporalQuery, attribute_names: &ResolvedAttributeNames) -> Result<Option<SelectStatement>, RenderError> {
+/// `q` (clause 4.9) reads the `current_attribute_values` projection and, for
+/// paths the projection cannot answer, the entity's JSONB payload, which the
+/// probe reads by key lookup rather than by joining `entity_documents`; a geo
+/// query (clause 4.10) reads the default `location` columns of the
+/// `entity_search` row - joined as `cs` only then - or the instance rows of a
+/// named GeoProperty. Both are statements about current state, so they are
+/// evaluated inside one probe correlated to the temporal entity's URI. `None`
+/// when the query carries neither filter, so an unfiltered temporal query never
+/// touches current state.
+fn current_state_probe(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Option<SelectStatement>, RenderError> {
     if compiled.entities.q_expr.is_none() && compiled.entities.geo.is_none() {
         return Ok(None);
     }
 
+    let rows = EntityRowRefs::aliased(Ce, Cs, DocumentsRef::ByKeyLookup);
     let mut current_conditions = Condition::all();
 
     if let Some(q_expr) = &compiled.entities.q_expr {
-        current_conditions = current_conditions.add(q_filter::compile(
-            q_expr,
-            &QFilterTarget::correlated((Ce, Entities::EntityKey), (Ce, Entities::Payload)),
-            attribute_names,
-        )?);
-    }
-
-    if let Some(geo) = &compiled.entities.geo {
-        current_conditions = current_conditions.add(geo_sql::condition(
-            geo,
-            GeometrySource::Entity {
-                row: CorrelatedEntityRow::aliased(CE_ALIAS),
-            },
-            attribute_names,
-        )?);
+        current_conditions = current_conditions.add(q_filter::compile(q_expr, &rows, names)?);
     }
 
     let mut probe = SelectStatement::new();
+    probe.expr(int_literal(1)).from_as(Entities::Table, Ce);
+
+    if let Some(geo) = &compiled.entities.geo {
+        probe.join_as(
+            JoinType::Join,
+            EntitySearch::Table,
+            Cs,
+            SeaExpr::col((Cs, EntitySearch::EntityKey)).equals((Ce, Entities::EntityKey)),
+        );
+        current_conditions = current_conditions.add(geo_sql::condition(geo, GeometrySource::Entity { rows: &rows }, &names.attributes)?);
+    }
+
     probe
-        .expr(int_literal(1))
-        .from_as(Entities::Table, Ce)
         .cond_where(SeaExpr::col((Ce, Entities::Id)).equals((E, TemporalEntities::Id)))
         .cond_where(current_conditions);
     Ok(Some(probe.take()))
@@ -181,7 +183,7 @@ fn current_state_probe(compiled: &CompiledTemporalQuery, attribute_names: &Resol
 /// The entity path renders the same three axes against `entities`; the columns
 /// carry the same names on both relations, so the two cannot drift on what a
 /// selector means.
-fn temporal_selector_condition(selector: &EntitySelector) -> Condition {
+fn temporal_selector_condition(selector: &EntitySelector, types: &ResolvedNames<EntityTypeName>) -> Condition {
     let mut condition = Condition::all();
     if !selector.ids.is_empty() {
         let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
@@ -191,7 +193,7 @@ fn temporal_selector_condition(selector: &EntitySelector) -> Condition {
         condition = condition.add(regex_match(SeaExpr::col((E, TemporalEntities::Id)), SeaExpr::val(pattern.as_str())));
     }
     if let Some(type_expr) = &selector.type_expr {
-        condition = condition.add(type_condition(type_expr, TypesColumn::AliasedEntities));
+        condition = condition.add(type_condition(type_expr, &SeaExpr::col((E, TemporalEntities::TypeIds)), types));
     }
     condition
 }
@@ -254,7 +256,7 @@ mod tests {
         type_selection::grammar::TypeExpr,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-    use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
+    use andromeda_postgresql_query::{attribute_name_id::AttributeNameId, entity_type_id::EntityTypeId};
     use chrono::{DateTime, Utc};
     use sea_query::{PostgresQueryBuilder, Value, Values};
 
@@ -268,6 +270,17 @@ mod tests {
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
+    /// The type dictionary with the one type the selector tests name.
+    fn vehicle_is_known() -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::default(),
+            types: ResolvedNames::from_pairs([(
+                "https://uri.etsi.org/ngsi-ld/default-context/Vehicle".parse().expect("valid type name"),
+                EntityTypeId::from(3),
+            )]),
+        }
     }
 
     /// A GeoJSON point reference geometry, for tests that vary the relation
@@ -293,12 +306,12 @@ mod tests {
 
     /// The Stage 1 result statement, rendered with `$N` placeholders and its
     /// bound values, which is what the store hands to the driver.
-    fn built(compiled: &CompiledTemporalQuery, names: &ResolvedAttributeNames) -> (String, Values) {
+    fn built(compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
         build_stage1_entity_ids(compiled, names).unwrap().select.build(PostgresQueryBuilder)
     }
 
     /// The same for the count statement, panicking when no count was requested.
-    fn built_count(compiled: &CompiledTemporalQuery, names: &ResolvedAttributeNames) -> String {
+    fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> String {
         build_stage1_entity_ids(compiled, names)
             .unwrap()
             .count
@@ -319,10 +332,10 @@ mod tests {
                 .type_expr(Some(TypeExpr::Type(iri("https://uri.etsi.org/ngsi-ld/default-context/Vehicle"))))
                 .build(),
         ];
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &vehicle_is_known());
         assert!(!sql.contains("SELECT DISTINCT"), "{sql}");
         assert!(sql.contains("EXISTS(SELECT"), "{sql}");
-        assert!(sql.contains("\"e\".\"types\""), "{sql}");
+        assert!(sql.contains("\"e\".\"type_ids\" @> (ARRAY[3])"), "{sql}");
         assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
     }
 
@@ -332,7 +345,7 @@ mod tests {
     #[test]
     fn the_statement_drives_from_the_temporal_catalogue_and_never_joins_entities() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("FROM \"temporal_entities\" AS \"e\""), "{sql}");
         assert!(sql.contains("\"temporal_attribute_streams\""), "{sql}");
         assert!(!sql.contains("\"entities\""), "{sql}");
@@ -344,7 +357,7 @@ mod tests {
     #[test]
     fn the_stream_probe_correlates_on_the_temporal_entity_key() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("\"s\".\"temporal_entity_key\" = \"e\".\"entity_key\""), "{sql}");
     }
 
@@ -353,14 +366,14 @@ mod tests {
         // The driving temporal catalogue emits one row per id, and ordered
         // paging keeps clause 5.5.9 result pages stable.
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("ORDER BY \"e\".\"id\""), "{sql}");
     }
 
     #[test]
     fn stage1_projects_the_entity_uri_as_entity_id() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("\"e\".\"id\" AS \"entity_id\""), "{sql}");
     }
 
@@ -370,7 +383,7 @@ mod tests {
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
-        let (sql, values) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, values) = built(&compiled, &QueryNames::default());
 
         assert!(
             !sql.contains("< $1"),
@@ -395,7 +408,7 @@ mod tests {
             let mut compiled = minimal_compiled();
             compiled.window.timeproperty = prop;
             compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
-            let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+            let (sql, _) = built(&compiled, &QueryNames::default());
             assert!(sql.contains(column), "{prop}: {sql}");
             assert!(!sql.contains("COALESCE"), "{prop}: {sql}");
             assert!(!sql.contains("recorded_at"), "{prop}: {sql}");
@@ -407,13 +420,13 @@ mod tests {
     #[test]
     fn the_history_hypertable_is_joined_only_for_a_bounded_window() {
         let compiled = minimal_compiled();
-        let (unbounded, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (unbounded, _) = built(&compiled, &QueryNames::default());
         assert!(!unbounded.contains("attribute_history"), "{unbounded}");
 
         let mut compiled = minimal_compiled();
         compiled.window.interval = TimeInterval::After(instant("2024-01-01T00:00:00Z"));
-        let (bounded, _) = built(&compiled, &ResolvedAttributeNames::default());
-        assert!(bounded.contains("\"ah\".\"stream_id\" = \"s\".\"id\""), "{bounded}");
+        let (bounded, _) = built(&compiled, &QueryNames::default());
+        assert!(bounded.contains("\"ah\".\"stream_key\" = \"s\".\"stream_key\""), "{bounded}");
     }
 
     #[test]
@@ -423,8 +436,8 @@ mod tests {
         compiled.entities.selectors = vec![EntitySelector::builder().ids(ids(&["urn:ngsi-ld:Vehicle:1"])).build()];
         compiled.window.interval = TimeInterval::Before(instant("2030-01-01T00:00:00Z"));
 
-        let (_, values) = built(&compiled, &ResolvedAttributeNames::default());
-        let count_sql = built_count(&compiled, &ResolvedAttributeNames::default());
+        let (_, values) = built(&compiled, &QueryNames::default());
+        let count_sql = built_count(&compiled, &QueryNames::default());
 
         assert!(count_sql.contains("EXISTS(SELECT"), "{count_sql}");
         assert!(count_sql.contains("$1"), "{count_sql}");
@@ -435,7 +448,7 @@ mod tests {
     #[test]
     fn stage1_includes_attribute_names_join() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("JOIN \"attribute_names\""), "{sql}");
     }
 
@@ -443,7 +456,7 @@ mod tests {
     fn stage1_includes_scope_q_filter() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid/Gardens").expect("valid scope query"));
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("scope_history"), "SQL should reference scope_history table: {sql}");
         assert!(sql.contains("lquery"), "SQL should contain lquery cast: {sql}");
     }
@@ -454,7 +467,7 @@ mod tests {
     fn scope_history_correlates_on_the_temporal_entity_key() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/Madrid").expect("valid scope query"));
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("\"e\".\"entity_key\""), "{sql}");
     }
 
@@ -462,7 +475,7 @@ mod tests {
     fn stage1_scope_q_with_or_and_semantics() {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("AND"), "SQL should contain AND for semicolon-separated scopes: {sql}");
         assert!(sql.contains("OR"), "SQL should contain OR for comma-separated scopes: {sql}");
     }
@@ -475,7 +488,7 @@ mod tests {
             from: instant("2024-01-01T00:00:00Z"),
             to: instant("2024-06-01T00:00:00Z"),
         };
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains(">="), "Between should bound the scope probe from below: {sql}");
         assert!(sql.contains("<"), "Between should bound the scope probe from above: {sql}");
     }
@@ -485,7 +498,7 @@ mod tests {
         let mut compiled = minimal_compiled();
         compiled.entities.scope_q = Some(ScopeQuery::parse("/A;/B,/C").expect("valid scope query"));
         compiled.window.interval = TimeInterval::Before(instant("2024-06-01T00:00:00Z"));
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         // /A;/B -> AND, ,/C -> OR
         assert!(sql.contains("AND"), "Semicolon scopes produce AND: {sql}");
         assert!(sql.contains("OR"), "Comma scopes produce OR: {sql}");
@@ -504,7 +517,10 @@ mod tests {
     fn stage1_q_filter_probes_current_state_through_the_entity_surrogate_key() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/speed\">50").unwrap());
-        let names = ResolvedAttributeNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameId::from(7))]);
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([("https://example.com/speed".parse().expect("valid attribute name"), AttributeNameId::from(7))]),
+            types: ResolvedNames::default(),
+        };
         let (sql, _) = built(&compiled, &names);
         assert!(sql.contains("FROM \"entities\" AS \"ce\""), "{sql}");
         assert!(sql.contains("\"ce\".\"id\" = \"e\".\"id\""), "{sql}");
@@ -518,24 +534,47 @@ mod tests {
     fn stage1_q_filter_on_an_unknown_attribute_is_unsatisfiable() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("\"https://example.com/never-written\">50").unwrap());
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(sql.contains("FALSE"), "{sql}");
     }
 
-    /// The jsonpath fallback reads the payload, which only the current-state row
-    /// carries, so it is rendered against the probe's alias.
+    /// The jsonpath fallback reads the payload, which only current state
+    /// carries, so it is read by key lookup correlated to the probe's alias
+    /// rather than by joining the document row into every probe.
     #[test]
     fn a_q_predicate_on_a_compound_value_reads_the_current_state_payload() {
         let mut compiled = minimal_compiled();
         compiled.entities.q_expr = Some(parser::parse("address[city]==\"Berlin\"").unwrap());
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
-        assert!(sql.contains("\"ce\".\"payload\""), "{sql}");
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(
+            sql.contains(r#"(SELECT "payload" FROM "entity_documents" WHERE "entity_key" = "ce"."entity_key")"#),
+            "{sql}"
+        );
+        assert!(!sql.contains("entity_search"), "a q filter alone joins no search row: {sql}");
+    }
+
+    /// The default `location` columns live on the search row, which the probe
+    /// joins as `cs` only for a geo query.
+    #[test]
+    fn a_geo_query_joins_the_search_row_into_the_probe() {
+        let mut compiled = minimal_compiled();
+        compiled.entities.geo = Some(GeoQuery {
+            georel: GeoRel::Within,
+            geometry: Geometry::from_geojson_value(&serde_json::json!({"type": "Point", "coordinates": [1.0, 2.0]})).expect("point"),
+            geoproperty: "https://uri.etsi.org/ngsi-ld/location".parse().expect("valid attribute name"),
+        });
+        let (sql, _) = built(&compiled, &QueryNames::default());
+        assert!(
+            sql.contains(r#"FROM "entities" AS "ce" JOIN "entity_search" AS "cs" ON "cs"."entity_key" = "ce"."entity_key" WHERE "ce"."id" = "e"."id""#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""cs"."location""#), "{sql}");
     }
 
     #[test]
     fn no_scope_q_unchanged() {
         let compiled = minimal_compiled();
-        let (sql, _) = built(&compiled, &ResolvedAttributeNames::default());
+        let (sql, _) = built(&compiled, &QueryNames::default());
         assert!(!sql.contains("scope_history"), "No scope_history reference without scopeQ: {sql}");
     }
 
@@ -550,10 +589,13 @@ mod tests {
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/customGeo".parse().expect("valid attribute name"),
         });
-        let names = ResolvedAttributeNames::from_pairs([(
-            "https://example.com/customGeo".parse().expect("valid attribute name"),
-            AttributeNameId::from(42_i32),
-        )]);
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([(
+                "https://example.com/customGeo".parse().expect("valid attribute name"),
+                AttributeNameId::from(42_i32),
+            )]),
+            types: ResolvedNames::default(),
+        };
         let (sql, _) = built(&compiled, &names);
         assert!(sql.contains("FROM \"current_attribute_values\""), "{sql}");
         assert!(sql.contains("\"geo_instance\".\"attribute_name_id\" = $"), "the dictionary id is bound: {sql}");
@@ -573,10 +615,13 @@ mod tests {
             geometry: point(serde_json::json!([1.0, 2.0])),
             geoproperty: "https://example.com/o'brien".parse().expect("valid attribute name"),
         });
-        let names = ResolvedAttributeNames::from_pairs([(
-            "https://example.com/o'brien".parse().expect("valid attribute name"),
-            AttributeNameId::from(9_i32),
-        )]);
+        let names = QueryNames {
+            attributes: ResolvedNames::from_pairs([(
+                "https://example.com/o'brien".parse().expect("valid attribute name"),
+                AttributeNameId::from(9_i32),
+            )]),
+            types: ResolvedNames::default(),
+        };
         let (sql, _) = built(&compiled, &names);
         assert!(!sql.contains("brien"), "{sql}");
         // Every literal contributes a balanced pair of quotes, so the total is

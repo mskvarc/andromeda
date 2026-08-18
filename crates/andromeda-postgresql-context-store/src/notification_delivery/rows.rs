@@ -2,6 +2,7 @@
 
 use crate::notification_delivery::trigger_code::trigger_of;
 use andromeda_context_commit::{
+    subscription_key::SubscriptionKey,
     write_id::WriteId,
     write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
 };
@@ -199,10 +200,10 @@ impl TryFrom<RawClaimedDeliveryRow> for ClaimedDelivery {
 
 /// One notification event to write, and the subscriptions it is due to.
 ///
-/// The subscriptions are named by their external identifier rather than by the
-/// surrogate key `notification_deliveries` references: the caller building this
-/// value works in the subscription vocabulary the matcher produced, and the
-/// insert resolves the key in the same statement that writes the rows.
+/// The subscriptions are named by the surrogate key `notification_deliveries`
+/// references, resolved by the matcher from the loaded subscription: the insert
+/// then writes every delivery of the write from two parallel arrays with no
+/// lookup of its own.
 #[derive(Debug)]
 pub struct NewNotificationEvent<'a> {
     /// Position of this event within its write, unique across the whole batch.
@@ -218,7 +219,7 @@ pub struct NewNotificationEvent<'a> {
     /// Expanded entity state before the change, for `showChanges`.
     pub previous_snapshot: Option<&'a Value>,
     /// Subscriptions this event is due to, in matcher order.
-    pub subscription_ids: Vec<&'a Uri>,
+    pub subscription_keys: Vec<SubscriptionKey>,
 }
 
 #[cfg(test)]

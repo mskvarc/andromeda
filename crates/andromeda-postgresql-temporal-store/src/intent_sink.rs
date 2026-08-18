@@ -19,7 +19,7 @@ use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
     temporal::{TemporalHistoryRow, TemporalValue},
 };
-use andromeda_postgresql_codes::stream_id::StreamId;
+use andromeda_postgresql_codes::stream_key::StreamKey;
 use andromeda_temporal::{
     append_intent::{TemporalAppendEntry, TemporalAppendIntent, TemporalObservationIdentity},
     error::TemporalError,
@@ -79,8 +79,8 @@ impl PostgresTemporalHistorySink {
             };
             match entry {
                 TemporalAppendEntry::Observation { row } => {
-                    let stream_id = resolve_stream(&streams, &row.attribute_name, row.dataset_id.as_ref())?;
-                    history.push(observation_row(stream_id, row, recorded_at, identity)?);
+                    let stream_key = resolve_stream(&streams, &row.attribute_name, row.dataset_id.as_ref())?;
+                    history.push(observation_row(stream_key, row, recorded_at, identity)?);
                 }
                 TemporalAppendEntry::Tombstone {
                     attribute_name,
@@ -88,11 +88,11 @@ impl PostgresTemporalHistorySink {
                     attribute_type,
                     instance,
                 } => {
-                    let stream_id = resolve_stream(&streams, attribute_name, dataset_id.as_ref())?;
+                    let stream_key = resolve_stream(&streams, attribute_name, dataset_id.as_ref())?;
                     history.push(AttributeHistoryRow {
                         recorded_at,
                         identity,
-                        stream_id,
+                        stream_key,
                         // The family the ended instance belonged to is carried on
                         // the tombstone, which is what lets the render synthesise
                         // the null member that family prescribes.
@@ -181,10 +181,10 @@ fn catalog_upsert(intent: &TemporalAppendIntent) -> TemporalCatalogUpsert {
 
 /// Find the stream the catalogue upsert assigned to one attribute grain.
 fn resolve_stream(
-    streams: &HashMap<TemporalStreamKey, StreamId>,
+    streams: &HashMap<TemporalStreamKey, StreamKey>,
     attribute_name: &AttributeName,
     dataset_id: Option<&Uri>,
-) -> Result<StreamId, TemporalStoreError> {
+) -> Result<StreamKey, TemporalStoreError> {
     let key = TemporalStreamKey {
         attribute_name: attribute_name.clone(), // clone: the lookup key follows the catalogue's owned natural key.
         dataset_id: dataset_id.cloned(),
@@ -197,7 +197,7 @@ fn resolve_stream(
 
 /// Build one history row from a neutral observation.
 fn observation_row(
-    stream_id: StreamId,
+    stream_key: StreamKey,
     row: &TemporalHistoryRow,
     recorded_at: DateTime<Utc>,
     identity: TemporalObservationIdentity,
@@ -207,7 +207,7 @@ fn observation_row(
     Ok(AttributeHistoryRow {
         recorded_at,
         identity,
-        stream_id,
+        stream_key,
         attribute_kind: stored_attribute_kind(row.attribute_type),
         value: stored_value(row)?,
         axes: SemanticTimeAxes {

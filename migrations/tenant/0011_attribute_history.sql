@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0048: Rebuilt attribute history
+-- 0011: Attribute history
 -- ============================================================================
 -- One row per recorded attribute instance, on four semantic time axes plus one
 -- operational one.
@@ -40,15 +40,14 @@
 -- client. Exactly one of the two columns is populated.
 --
 -- `value_geo` is typmod-free `geometry` with explicit SRID and Zm-flag checks
--- rather than `GEOMETRY(Geometry, 4326)`: 0032 established that no typmod
--- spelling accepts XY and XYZ in one column, which RFC 7946 clause 3.1.1
--- altitudes require.
+-- rather than `GEOMETRY(Geometry, 4326)`: no typmod spelling accepts XY and
+-- XYZ in one column, which RFC 7946 clause 3.1.1 altitudes require.
 --
--- `unit_code_id` carries no foreign key to `unit_codes`, and `stream_id` none
--- to `temporal_attribute_streams`. 0023 removed hypertable-to-OLTP foreign
--- keys because TimescaleDB re-adds them per chunk under ShareRowExclusive and
--- deadlocks against concurrent upserts on the parent; 0042 restored the unit
--- guarantee in Rust plus an audit query. There is no cascade from current
+-- `unit_code_id` carries no foreign key to `unit_codes`, and `stream_key` none
+-- to `temporal_attribute_streams`. Hypertable-to-OLTP foreign keys are absent
+-- because TimescaleDB re-adds them per chunk under ShareRowExclusive and
+-- deadlocks against concurrent upserts on the parent; the unit guarantee is
+-- kept in Rust plus an audit query. There is no cascade from current
 -- state onto this table at all: Temporal Evolution deletion (clause 5.6.16)
 -- deletes history, then streams, then the temporal entity in one Rust
 -- transaction, with an orphan audit as the safety net.
@@ -71,6 +70,11 @@
 -- code-point-oriented order is a choice the specification admits.
 -- `docs/text-collation-invariant.md` states the invariant for the whole schema.
 --
+-- `stream_key` is the eight-byte key `temporal_attribute_streams` generates
+-- (migration 0010). It is the column every stream-led index below leads with
+-- and the column the columnstore segments by, so its width is paid on every
+-- row and every index entry; the BIGINT halves what the earlier UUID cost.
+--
 -- Column order is alignment order -- not-null fixed-width descending, then
 -- nullable fixed-width, then varlena -- and is the order the binary COPY path
 -- stages its fields in.
@@ -79,14 +83,38 @@
 -- time, so an ordinary CREATE INDEX inside this transaction is correct and
 -- avoids leaving an invalid index behind on failure. TimescaleDB refuses
 -- concurrent index creation on a hypertable outright, so this is the only
--- spelling available here in any case. No created/modified/deleted-axis index is
--- created yet; those are benchmark-gated.
+-- spelling available here in any case.
+--
+-- Chunks span seven days. The stream-led B-trees are per chunk, and only the
+-- chunks still receiving rows have index pages that must stay in memory; a
+-- shorter chunk keeps that active set bounded regardless of how far back the
+-- table reaches, while `compress_chunk_time_interval` below merges chunks back
+-- into four-week spans once they are converted, so the compressed tail is not
+-- fragmented by the write-side interval. The merge span is 28 rather than 30
+-- days because TimescaleDB requires it to be a whole multiple of the chunk
+-- interval. The chunk interval and the policy lag are defaults the broker
+-- reconciles at startup against its temporal configuration, so an operator
+-- change does not need a migration; an operator who changes the chunk interval
+-- to a value that does not divide 28 days must expect the merge to be refused
+-- with a warning rather than applied.
+--
+-- Columnstore. Chunks older than thirty days are converted to the columnstore
+-- by the policy added at the end of this migration; thirty days is the horizon
+-- within which history is expected to be mutated in place (instance
+-- modification and deletion, clauses 5.6.14 and 5.6.15, and the verbatim
+-- instanceId dedup that precedes a replacing write) and past which it is read
+-- as an immutable archive. Rows are segmented by `stream_key`: a temporal query
+-- names streams, so a segment holds exactly the rows one stream contributed to
+-- the chunk and a stream-led scan touches only its own segments. Within a
+-- segment rows are ordered by `recorded_at DESC, write_id, write_ordinal` --
+-- the write-deduplication key of `uq_attribute_history_write` -- so the newest
+-- observation of a stream leads its segment and a batch's rows stay contiguous.
 -- ============================================================================
 
 CREATE TABLE attribute_history (
     recorded_at TIMESTAMPTZ NOT NULL,
     write_id UUID NOT NULL,
-    stream_id UUID NOT NULL,
+    stream_key BIGINT NOT NULL,
     write_ordinal INTEGER NOT NULL,
     attribute_kind SMALLINT NOT NULL,
     value_kind SMALLINT NOT NULL,
@@ -136,21 +164,21 @@ CREATE TABLE attribute_history (
         CHECK (value_geo IS NULL OR ST_Zmflag(value_geo) IN (0, 2))
 );
 
-SELECT create_hypertable('attribute_history', by_range('recorded_at', INTERVAL '30 days'));
+SELECT create_hypertable('attribute_history', by_range('recorded_at', INTERVAL '7 days'));
 
 CREATE INDEX idx_attribute_history_stream_recorded_at
-    ON attribute_history (stream_id, recorded_at DESC);
+    ON attribute_history (stream_key, recorded_at DESC);
 
 CREATE INDEX idx_attribute_history_stream_observed_at
-    ON attribute_history (stream_id, observed_at DESC)
+    ON attribute_history (stream_key, observed_at DESC)
     WHERE observed_at IS NOT NULL;
 
 CREATE INDEX idx_attribute_history_stream_generated_instance
-    ON attribute_history (stream_id, generated_instance_uuid)
+    ON attribute_history (stream_key, generated_instance_uuid)
     WHERE generated_instance_uuid IS NOT NULL;
 
 CREATE INDEX idx_attribute_history_stream_verbatim_instance
-    ON attribute_history (stream_id, verbatim_instance_id)
+    ON attribute_history (stream_key, verbatim_instance_id)
     WHERE verbatim_instance_id IS NOT NULL;
 
 CREATE INDEX idx_attribute_history_value_geo
@@ -162,7 +190,7 @@ CREATE INDEX idx_attribute_history_value_geo
 -- ----------------------------------------------------------------------------
 -- `recorded_at` is the partition column, so a window on it is answered by chunk
 -- exclusion alone. `observed_at` is not, and the two indexes above lead with
--- `stream_id`, so a temporal query that bounds `observedAt` without naming a
+-- `stream_key`, so a temporal query that bounds `observedAt` without naming a
 -- stream -- which clause 5.7.2 permits, since `timerel` is independent of the
 -- entity selector -- has no access path but a full scan of every chunk.
 --
@@ -195,6 +223,37 @@ CREATE INDEX idx_attribute_history_value_geo
 -- chunk, which is precisely where this summary matters most.
 CREATE INDEX idx_attribute_history_observed_at_brin
     ON attribute_history USING BRIN (observed_at timestamptz_minmax_multi_ops);
+
+-- The three remaining semantic axes take the same summary for the same reason:
+-- clause 5.2.21 lets a temporal query select `createdAt`, `modifiedAt` or
+-- `deletedAt` as its timeproperty, and none of them is the partition column or
+-- leads any B-tree. Each is a nullable axis written only from what was
+-- observed, so the block summary is the whole access path a broad window on it
+-- has, at BRIN's per-block cost rather than a per-row B-tree's. Not partial,
+-- for the same two reasons as the `observed_at` summary.
+CREATE INDEX idx_attribute_history_created_at_brin
+    ON attribute_history USING BRIN (created_at timestamptz_minmax_multi_ops);
+
+CREATE INDEX idx_attribute_history_modified_at_brin
+    ON attribute_history USING BRIN (modified_at timestamptz_minmax_multi_ops);
+
+CREATE INDEX idx_attribute_history_deleted_at_brin
+    ON attribute_history USING BRIN (deleted_at timestamptz_minmax_multi_ops);
+
+-- ----------------------------------------------------------------------------
+-- Columnstore
+-- ----------------------------------------------------------------------------
+-- The rationale is in the header. Configured after the indexes so that every
+-- index exists before the first chunk could ever be converted; the policy's
+-- lag is what the broker's temporal configuration overrides at startup.
+ALTER TABLE attribute_history SET (
+    timescaledb.enable_columnstore,
+    timescaledb.segmentby = 'stream_key',
+    timescaledb.orderby = 'recorded_at DESC, write_id, write_ordinal',
+    timescaledb.compress_chunk_time_interval = '28 days'
+);
+
+CALL add_columnstore_policy('attribute_history', after => INTERVAL '30 days', if_not_exists => true);
 
 -- ----------------------------------------------------------------------------
 -- Verbatim instanceId uniqueness

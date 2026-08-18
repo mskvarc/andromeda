@@ -74,13 +74,23 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
 
     let mut transaction = scope.database_pool().begin().await.expect("transaction must start");
     let payload = json!([{ "@id": id, "@type": [BUILDING_TYPE] }]);
-    let entity_key: i64 = sqlx::query_scalar("INSERT INTO entities (id, types, payload) VALUES ($1, ARRAY[$2], $3) RETURNING entity_key")
-        .bind(&id)
-        .bind(BUILDING_TYPE)
-        .bind(&payload)
-        .fetch_one(&mut *transaction)
-        .await
-        .expect("entity insert must succeed");
+    let type_id: i32 =
+        sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
+            .bind(BUILDING_TYPE)
+            .fetch_one(&mut *transaction)
+            .await
+            .expect("type dictionary insert must succeed");
+    let entity_key: i64 = sqlx::query_scalar(
+        "WITH ins AS (INSERT INTO entities (id) VALUES ($1) RETURNING entity_key), \
+              doc AS (INSERT INTO entity_documents (entity_key, payload) SELECT entity_key, $3 FROM ins) \
+         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids) SELECT entity_key, ARRAY[$2], ARRAY[]::integer[] FROM ins RETURNING entity_key",
+    )
+    .bind(&id)
+    .bind(type_id)
+    .bind(&payload)
+    .fetch_one(&mut *transaction)
+    .await
+    .expect("entity insert must succeed");
 
     // A projection row whose declared value kind does not match its populated
     // column: exactly the corruption
@@ -92,8 +102,8 @@ async fn current_projection_constraint_violation_rolls_back_the_entity_row() {
         .expect("dictionary insert must succeed");
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, modified_at, attribute_name_id, attribute_kind, value_kind, value_string) \
-         VALUES ($1, now(), $2, 1, 1, 'not a number')",
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
+         VALUES ($1, $2, 1, 1, 'not a number')",
     )
     .bind(entity_key)
     .bind(name_id)
@@ -149,11 +159,12 @@ async fn current_projection_and_indexed_queries_preserve_neighboring_exact_decim
         "the NUMERIC projection column must hold an integer beyond u64 without rounding"
     );
 
-    let stored_payload: String = sqlx::query_scalar("SELECT payload::text FROM entities WHERE id = $1")
-        .bind(&exact_id)
-        .fetch_one(scope.database_pool())
-        .await
-        .expect("stored payload must be readable");
+    let stored_payload: String =
+        sqlx::query_scalar("SELECT d.payload::text FROM entities e JOIN entity_documents d ON d.entity_key = e.entity_key WHERE e.id = $1")
+            .bind(&exact_id)
+            .fetch_one(scope.database_pool())
+            .await
+            .expect("stored payload must be readable");
     assert!(stored_payload.contains("0.100000000000000005"), "stored payload: {stored_payload}");
     assert!(stored_payload.contains("18446744073709551616"), "stored payload: {stored_payload}");
 

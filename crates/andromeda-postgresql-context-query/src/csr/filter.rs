@@ -200,7 +200,9 @@ mod tests {
     use andromeda_ngsi_ld_query::filter::{eval::evaluate, parser};
     use andromeda_postgresql_query::{
         attribute_name_id::AttributeNameId,
-        q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile, target::QFilterTarget},
+        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        entity_row_refs::EntityRowRefs,
+        q_predicate::projection::compile,
     };
     use andromeda_postgresql_schema::current::Entities;
     use sea_query::{Alias, Condition, PostgresQueryBuilder, Query};
@@ -340,12 +342,15 @@ mod tests {
         serde_json::json!([{ "@id": "urn:ngsi-ld:Vehicle:A2" }])
     }
 
-    fn names() -> ResolvedAttributeNames {
-        ResolvedAttributeNames::from_pairs([
-            (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(1)),
-            (COLOR.parse().expect("valid attribute name"), AttributeNameId::from(2)),
-            (NAME.parse().expect("valid attribute name"), AttributeNameId::from(3)),
-        ])
+    fn names() -> QueryNames {
+        QueryNames {
+            attributes: ResolvedNames::from_pairs([
+                (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(1)),
+                (COLOR.parse().expect("valid attribute name"), AttributeNameId::from(2)),
+                (NAME.parse().expect("valid attribute name"), AttributeNameId::from(3)),
+            ]),
+            types: ResolvedNames::default(),
+        }
     }
 
     fn render_entity_condition(condition: Condition) -> String {
@@ -431,7 +436,7 @@ mod tests {
             assert!(!evaluate(&expr, &absent()), "{} must reject an entity without the attribute", case.expression);
 
             let projection_sql = render_entity_condition(
-                compile(&expr, &QFilterTarget::entities(), &names()).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)),
+                compile(&expr, &EntityRowRefs::unaliased(), &names()).unwrap_or_else(|error| unreachable!("{}: {error}", case.expression)),
             );
             assert!(
                 projection_sql.contains("EXISTS("),

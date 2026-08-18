@@ -19,7 +19,8 @@ use serde_json::Value;
 use serial_test::serial;
 use sqlx::PgPool;
 
-/// The attempt ceiling the queue's partial claim index carries.
+/// The attempt ceiling the delivery worker is configured with; the queue does
+/// not know it.
 const MAX_ATTEMPTS: i32 = 5;
 
 /// How many events the queue currently holds.
@@ -55,10 +56,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     let queue = NotificationDeliveryQueue::new(&pool);
     let worker = delivery_worker();
 
-    let claimed = queue
-        .claim_pending(&worker, holding_lease(), 10, MAX_ATTEMPTS)
-        .await
-        .expect("claim the fan-out");
+    let claimed = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the fan-out");
     assert_eq!(claimed.len(), 4);
     // clone: the payload is compared again after the claimed batch is consumed.
     let payload = claimed.first().expect("a claimed delivery").event.entity_snapshot.clone();
@@ -97,7 +95,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     // Dead-letter retention removes the exhausted delivery kept as evidence;
     // the delivered-row reap never touches an undelivered row.
     let dead_lettered = queue
-        .delete_exhausted_before(Utc::now() + Duration::minutes(1), MAX_ATTEMPTS)
+        .delete_exhausted_before(Utc::now() + Duration::minutes(1))
         .await
         .expect("dead-letter reap");
     assert_eq!(dead_lettered, 1, "only the exhausted delivery is past the dead-letter horizon");
@@ -117,10 +115,7 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
         .execute(&pool)
         .await
         .expect("make the retained delivery due");
-    let last = queue
-        .claim_pending(&worker, holding_lease(), 10, MAX_ATTEMPTS)
-        .await
-        .expect("claim the last delivery");
+    let last = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim the last delivery");
     assert_eq!(last.len(), 1);
     assert_eq!(
         last.first().expect("the last delivery").event.entity_snapshot,
@@ -136,13 +131,11 @@ async fn durable_queue_a_shared_event_outlives_every_delivery_that_still_referen
     pool.close().await;
 }
 
-/// A delivery that never receives a terminal disposition, and instead exhausts
-/// its retries one ordinary failure at a time, still stops being claimable the
-/// moment `attempt_count` reaches [`MAX_ATTEMPTS`] -- the claim predicate
-/// excludes it just as it would a delivery `mark_terminal` dead-lettered. The
-/// dead-letter reap must therefore match this delivery too, not only the one
-/// stamped by `mark_terminal`'s `i32::MAX` sentinel, or it accumulates in the
-/// table forever alongside its unreachable event.
+/// A delivery that fails one ordinary failure at a time is exhausted by the
+/// worker on the attempt that reaches [`MAX_ATTEMPTS`]: the drain acknowledges
+/// that last failure as terminal, which stamps `exhausted_at` exactly as a
+/// permanent transport failure would. The dead-letter reap keys on that stamp
+/// alone, so both routes to exhaustion are reaped by the same pass.
 #[tokio::test]
 #[serial(durable_queue)]
 async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
@@ -155,32 +148,38 @@ async fn durable_queue_a_delivery_exhausted_by_repeated_retries_is_reaped() {
 
     for attempt in 0..MAX_ATTEMPTS {
         let claimed = queue
-            .claim_pending(&worker, holding_lease(), 10, MAX_ATTEMPTS)
+            .claim_pending(&worker, holding_lease(), 10)
             .await
             .unwrap_or_else(|_| panic!("claim attempt {attempt}"));
         assert_eq!(claimed.len(), 1, "the delivery is still below the attempt ceiling on attempt {attempt}");
-        queue
-            .mark_failed(
-                DeliveryId::from(deliveries[0]),
-                &worker,
-                "endpoint unavailable",
-                Utc::now() - Duration::seconds(1),
-            )
-            .await
-            .unwrap_or_else(|_| panic!("retry failure {attempt}"));
+        // The worker's rule: a retryable failure below the ceiling is
+        // rescheduled, the one that reaches it is acknowledged as terminal.
+        if attempt + 1 < MAX_ATTEMPTS {
+            queue
+                .mark_failed(
+                    DeliveryId::from(deliveries[0]),
+                    &worker,
+                    "endpoint unavailable",
+                    Utc::now() - Duration::seconds(1),
+                )
+                .await
+                .unwrap_or_else(|_| panic!("retry failure {attempt}"));
+        } else {
+            queue
+                .mark_terminal(DeliveryId::from(deliveries[0]), &worker, "endpoint unavailable")
+                .await
+                .unwrap_or_else(|_| panic!("exhausting failure {attempt}"));
+        }
     }
 
-    let claimed_after_ceiling = queue
-        .claim_pending(&worker, holding_lease(), 10, MAX_ATTEMPTS)
-        .await
-        .expect("claim past the ceiling");
+    let claimed_after_ceiling = queue.claim_pending(&worker, holding_lease(), 10).await.expect("claim past the ceiling");
     assert!(
         claimed_after_ceiling.is_empty(),
-        "a delivery at the attempt ceiling is permanently unclaimable, exactly like a terminally failed one"
+        "a delivery exhausted at the attempt ceiling is permanently unclaimable, exactly like a terminally failed one"
     );
 
     let dead_lettered = queue
-        .delete_exhausted_before(Utc::now() + Duration::minutes(1), MAX_ATTEMPTS)
+        .delete_exhausted_before(Utc::now() + Duration::minutes(1))
         .await
         .expect("dead-letter reap");
     assert_eq!(

@@ -10,7 +10,7 @@ use thiserror::Error;
 /// Authoritative tenant reset SQL maintained alongside the test harness.
 pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
 
-/// Reset every mutable tenant table while preserving the cached `attribute_names` dictionary, the `schema_metadata` contract row, and the seeded unit-code catalogue.
+/// Reset every mutable tenant table while preserving the cached `attribute_names` and `entity_type_names` dictionaries, the `schema_metadata` contract row, and the seeded unit-code catalogue.
 pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseResetError> {
     let connection = lease.connection()?;
     connection.execute(RESET_TENANT_SQL).await.map_err(DatabaseResetError::Sqlx)?;
@@ -47,7 +47,7 @@ const PREFIX_DELETES: &[&str] = &[
     "DELETE FROM context_source_registrations WHERE id LIKE $1",
     "DELETE FROM snapshots WHERE id LIKE $1",
     "DELETE FROM entities WHERE id LIKE $1",
-    "DELETE FROM attribute_history WHERE stream_id IN (SELECT s.id FROM temporal_attribute_streams s \
+    "DELETE FROM attribute_history WHERE stream_key IN (SELECT s.stream_key FROM temporal_attribute_streams s \
      JOIN temporal_entities te ON te.entity_key = s.temporal_entity_key WHERE te.id LIKE $1)",
     "DELETE FROM scope_history WHERE temporal_entity_key IN (SELECT entity_key FROM temporal_entities WHERE id LIKE $1)",
     "DELETE FROM temporal_entities WHERE id LIKE $1",
@@ -111,15 +111,18 @@ mod tests {
     }
 
     #[test]
-    fn reset_script_covers_mutable_tables_and_preserves_cached_dictionary() {
+    fn reset_script_covers_mutable_tables_and_preserves_cached_dictionaries() {
         for table in [
             "entities",
+            "entity_documents",
+            "entity_search",
             "jsonld_contexts",
             "temporal_entities",
             "temporal_attribute_streams",
             "attribute_history",
             "attribute_history_instance_claims",
             "subscriptions",
+            "subscription_delivery_state",
             "context_source_registrations",
             "registration_information",
             "snapshots",
@@ -134,6 +137,7 @@ mod tests {
             assert!(truncated_relations().contains(table), "reset SQL must cover {table}");
         }
         assert!(!truncated_relations().contains("attribute_names"));
+        assert!(!truncated_relations().contains("entity_type_names"));
     }
 
     /// The rebuild detached Temporal Evolution from current entity state, so

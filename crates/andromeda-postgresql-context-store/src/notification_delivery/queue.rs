@@ -37,14 +37,8 @@ impl NotificationDeliveryQueue {
 
 #[async_trait]
 impl DeliveryStore for NotificationDeliveryQueue {
-    async fn claim_pending(
-        &self,
-        worker_id: &WorkerInstanceId,
-        lease: LeaseTerm,
-        batch_size: i32,
-        max_attempts: i32,
-    ) -> Result<Vec<DeliveryEntry>, NotificationError> {
-        let claimed = claim::claim_due(&self.pool, worker_id.as_ref(), lease, batch_size, max_attempts)
+    async fn claim_pending(&self, worker_id: &WorkerInstanceId, lease: LeaseTerm, batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
+        let claimed = claim::claim_due(&self.pool, worker_id.as_ref(), lease, batch_size)
             .await
             .map_err(|error| NotificationError::persistence(error.to_string()))?;
         Ok(claimed.into_iter().filter_map(readable).collect())
@@ -77,8 +71,8 @@ impl DeliveryStore for NotificationDeliveryQueue {
             .map_err(|error| NotificationError::persistence(error.to_string()))
     }
 
-    async fn delete_exhausted_before(&self, cutoff: DateTime<Utc>, max_attempts: i32) -> Result<u64, NotificationError> {
-        cleanup::purge_exhausted_before(&self.pool, cutoff, max_attempts)
+    async fn delete_exhausted_before(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
+        cleanup::purge_exhausted_before(&self.pool, cutoff)
             .await
             .map_err(|error| NotificationError::persistence(error.to_string()))
     }

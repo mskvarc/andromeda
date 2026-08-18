@@ -28,7 +28,7 @@ pub enum TemporalStoreError {
     Encoding(#[from] EwkbError),
     /// An attribute name could not be resolved in the dictionary.
     #[error("temporal store attribute lookup: {0}")]
-    AttributeLookup(String),
+    NameLookup(String),
     /// An extracted attribute value was invalid.
     #[error("temporal store validation: {0}")]
     Validation(String),
@@ -70,7 +70,7 @@ impl From<TemporalStoreError> for TemporalError {
             | TemporalStoreError::Decode(_)
             | TemporalStoreError::Query(_)
             | TemporalStoreError::Encoding(_)
-            | TemporalStoreError::AttributeLookup(_) => TemporalError::persistence(error.to_string()),
+            | TemporalStoreError::NameLookup(_) => TemporalError::persistence(error.to_string()),
         }
     }
 }

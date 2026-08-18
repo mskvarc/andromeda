@@ -24,15 +24,17 @@
 -- over-admitted registration costs one residual test, an omitted one
 -- silently disappears from distributed operations.
 --
--- A registration that constrains nothing has *no rows here at all*.
--- Information items are disjunctive, so an item that bounds no axis -- and
--- equally an empty `information` -- makes the whole registration a candidate
--- for every request. That is what lets
--- `chk_registration_information_selector_present` hold on every row that
--- does exist, and it is why every reader disjoins its dimension test with
--- `NOT EXISTS (SELECT 1 FROM registration_information ...)`. Reading this
--- table as an inner join would drop exactly the registrations that serve
--- everything.
+-- A registration that constrains nothing is stored as *one wildcard row*: the
+-- type set `{'*'}`, the identifier `''`, no pattern, and the sentinel key `{0}`
+-- on both attribute axes. Information items are disjunctive, so an item that
+-- bounds no axis -- and equally an empty `information` -- makes the whole
+-- registration a candidate for every request, and the wildcard row is what
+-- lets a reader express that as an ordinary indexed test instead of the
+-- `NOT EXISTS (SELECT 1 FROM registration_information ...)` disjunct an
+-- absent row would force on every dimension. Every column below is therefore
+-- `NOT NULL`, and each carries a sentinel that stands for "unconstrained on
+-- this axis": a reader's predicate is a single overlap or membership test that
+-- names the sentinel beside the requested value, one index behind each.
 --
 -- What the columns hold, and why they are typed as they are:
 --
@@ -44,20 +46,28 @@
 --     for equality, and byte-wise comparison keeps the btree free of any
 --     locale.
 --   * `entity_types` is the set of type names a selector's clause-4.17
---     expression mentions, or NULL where the expression admits every type. A
---     conjunction is stored as its members, which is wider than the
---     expression and therefore permitted; the typed expression still
---     decides. Readers ask `entity_types && ARRAY[...]`, which is what the
---     GIN index below serves.
---   * `entity_id` and `entity_id_pattern` stay text. An identifier is
---     matched for equality and a pattern is compared as written -- never
---     evaluated as a regular expression here, because PostgreSQL's dialect
---     is not the one clause 4.9 mandates and a dialect disagreement would
---     drop candidates rather than merely over-admit them.
+--     expression mentions, or `{'*'}` where the expression admits every type
+--     (`*` is not a legal type name, so the sentinel cannot collide). A
+--     conjunction is stored as its members, which is wider than the expression
+--     and therefore permitted; the typed expression still decides. Readers ask
+--     `entity_types && ARRAY[$1, '*']`, which is what the GIN index below
+--     serves.
+--   * `entity_id` is the exact identifier a selector names, or `''` where it
+--     names none (an identifier is a URI and never empty). `entity_id_pattern`
+--     stays nullable text: a pattern is compared as written -- never evaluated
+--     as a regular expression here, because PostgreSQL's dialect is not the one
+--     clause 4.9 mandates and a dialect disagreement would drop candidates
+--     rather than merely over-admit them. Readers ask
+--     `entity_id IN ($1, '') OR entity_id_pattern IS NOT NULL`.
 --   * `property_name_ids` and `relationship_name_ids` are the four-byte
 --     `attribute_names` keys, not expanded IRIs -- the same keys every other
---     relation in this schema indexes attribute names by. NULL on both
---     columns means the item declared no name at all.
+--     relation in this schema indexes attribute names by. Dictionary keys start
+--     at 1, so `{0}` is the sentinel for "declared no name on either axis";
+--     an item that declared names on one axis only stores `{}` on the other,
+--     which overlaps nothing. The sentinel is always set on both axes together
+--     because the writer widens both together when it cannot intern a declared
+--     name; the well-formedness check pins that. Readers ask
+--     `property_name_ids && (ARRAY(<resolved keys>) || 0)`.
 --   * `operations` is the registration-wide clause-5.2.9 member, replicated
 --     onto every row of that registration so one indexed row carries every
 --     dimension a preselect could test. It holds the numbers of the
@@ -79,43 +89,35 @@
 --
 -- The index set is exactly the predicates the readers emit
 -- (`andromeda-postgresql-context-query` `csr::projection`), one named
--- consumer each: `registration_id` for the correlation and the emptiness
--- test that every dimension disjoins with, and for the delete half of the
--- writer's wholesale rewrite; GIN on `entity_types`, `property_name_ids` and
--- `relationship_name_ids` for the three overlap tests; partial btrees on
--- `entity_id` and `entity_id_pattern` for the two identifier tests, partial
--- because a row that constrains neither is admitted without being looked up.
+-- consumer each: `registration_id` for the correlation and for the delete
+-- half of the writer's wholesale rewrite; GIN on `entity_types`,
+-- `property_name_ids` and `relationship_name_ids` for the three overlap
+-- tests; a btree on `entity_id` for the identifier membership test (not
+-- partial: the sentinel `''` is one of the two values every such test names)
+-- and a partial btree on `entity_id_pattern` for the pattern-presence branch.
 -- ============================================================================
 
 CREATE TABLE registration_information (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     registration_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL
         REFERENCES context_source_registrations(id) ON DELETE CASCADE,
-    entity_types TEXT[] COMPRESSION lz4 COLLATE "C",
-    entity_id TEXT COMPRESSION lz4 COLLATE "C",
+    entity_types TEXT[] COMPRESSION lz4 COLLATE "C" NOT NULL,
+    entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     entity_id_pattern TEXT COMPRESSION lz4,
-    property_name_ids INTEGER[] COMPRESSION lz4,
-    relationship_name_ids INTEGER[] COMPRESSION lz4,
+    property_name_ids INTEGER[] COMPRESSION lz4 NOT NULL,
+    relationship_name_ids INTEGER[] COMPRESSION lz4 NOT NULL,
     operations SMALLINT[] COMPRESSION lz4,
-    CONSTRAINT chk_registration_information_selector_present CHECK (
-        entity_types IS NOT NULL
-        OR entity_id IS NOT NULL
-        OR entity_id_pattern IS NOT NULL
-        OR property_name_ids IS NOT NULL
-        OR relationship_name_ids IS NOT NULL),
-    CONSTRAINT chk_registration_information_entity_types_populated CHECK (
-        entity_types IS NULL
-        OR (cardinality(entity_types) > 0 AND array_position(entity_types, NULL) IS NULL)),
-    CONSTRAINT chk_registration_information_property_name_ids_populated CHECK (
-        property_name_ids IS NULL
-        OR (cardinality(property_name_ids) > 0
-            AND array_position(property_name_ids, NULL) IS NULL
-            AND 0 < ALL (property_name_ids))),
-    CONSTRAINT chk_registration_information_relationship_name_ids_populated CHECK (
-        relationship_name_ids IS NULL
-        OR (cardinality(relationship_name_ids) > 0
-            AND array_position(relationship_name_ids, NULL) IS NULL
-            AND 0 < ALL (relationship_name_ids))),
+    CONSTRAINT chk_registration_information_wildcards_well_formed CHECK (
+        cardinality(entity_types) > 0
+        AND array_position(entity_types, NULL) IS NULL
+        AND ('*' <> ALL (entity_types) OR entity_types = ARRAY['*'])
+        AND array_position(property_name_ids, NULL) IS NULL
+        AND 0 <= ALL (property_name_ids)
+        AND (0 <> ALL (property_name_ids) OR property_name_ids = ARRAY[0])
+        AND array_position(relationship_name_ids, NULL) IS NULL
+        AND 0 <= ALL (relationship_name_ids)
+        AND (0 <> ALL (relationship_name_ids) OR relationship_name_ids = ARRAY[0])
+        AND ((property_name_ids = ARRAY[0]) = (relationship_name_ids = ARRAY[0]))),
     CONSTRAINT chk_registration_information_operations_registered CHECK (
         operations IS NULL
         OR (cardinality(operations) > 0
@@ -142,8 +144,7 @@ CREATE INDEX idx_registration_information_relationship_name_ids
     ON registration_information USING GIN (relationship_name_ids);
 
 CREATE INDEX idx_registration_information_entity_id
-    ON registration_information (entity_id)
-    WHERE entity_id IS NOT NULL;
+    ON registration_information (entity_id);
 
 CREATE INDEX idx_registration_information_entity_id_pattern
     ON registration_information (entity_id_pattern)

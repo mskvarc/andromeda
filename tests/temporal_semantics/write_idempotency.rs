@@ -75,7 +75,7 @@ async fn temporal_semantics_write_idempotency_replays_collide_instead_of_duplica
     let replayed = sqlx::query(REPLAY_HISTORY_ROW_SQL)
         .bind(original.recorded_at)
         .bind(original.write_id)
-        .bind(original.stream_id)
+        .bind(original.stream_key)
         .bind(original.write_ordinal)
         .bind(original.attribute_kind)
         .bind(original.value_kind)
@@ -170,7 +170,7 @@ async fn temporal_semantics_write_idempotency_records_release_only_with_their_ow
 
 const REPLAY_HISTORY_ROW_SQL: &str = r#"
 INSERT INTO attribute_history
-    (recorded_at, write_id, stream_id, write_ordinal, attribute_kind, value_kind,
+    (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
      generated_instance_uuid, value_number)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 55)
 "#;

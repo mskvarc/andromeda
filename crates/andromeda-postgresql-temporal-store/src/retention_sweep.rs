@@ -171,7 +171,7 @@ fn collect_empty_streams() -> DeleteStatement {
     let no_history = Query::select()
         .expr(Expr::val(1))
         .from_as(AttributeHistory::Table, Ah)
-        .and_where(Expr::col((Ah, AttributeHistory::StreamId)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::Id)))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).equals((TemporalAttributeStreams::Table, TemporalAttributeStreams::StreamKey)))
         .to_owned();
     Query::delete()
         .from_table(TemporalAttributeStreams::Table)
@@ -256,7 +256,7 @@ mod tests {
     fn garbage_collection_removes_only_catalogue_rows_nothing_names() {
         let streams = collect_empty_streams().to_string(PostgresQueryBuilder);
         assert!(
-            streams.contains(r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_id" = "temporal_attribute_streams"."id")"#),
+            streams.contains(r#"NOT EXISTS(SELECT 1 FROM "attribute_history" AS "ah" WHERE "ah"."stream_key" = "temporal_attribute_streams"."stream_key")"#),
             "{streams}"
         );
         let entities = collect_empty_temporal_entities().to_string(PostgresQueryBuilder);

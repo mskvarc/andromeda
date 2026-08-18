@@ -7,7 +7,7 @@
 
 use crate::{
     notification_fixture::{entity_id, entity_snapshot, subscription_id},
-    queue_database::{deliveries_of, queue_database, record_events, subscription},
+    queue_database::{deliveries_of, queue_database, record_events, subscription, subscription_key},
 };
 use andromeda_context_commit::{write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
@@ -53,7 +53,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
             changed_attribute_name_ids: Vec::new(),
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
-            subscription_ids: vec![&owner],
+            subscription_keys: vec![subscription_key(owner_key)],
         }],
     )
     .await

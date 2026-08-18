@@ -13,8 +13,8 @@ use andromeda_entity::{
     spatial_reconciliation::reconcile_location,
 };
 use andromeda_jsonld::{config::JsonLdConfig, engine::processor::JsonLdEngine};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
-use andromeda_postgresql_attribute_dictionary::{attribute_name_cache::AttributeNameCache, attribute_name_lookup::AttributeNameLookup};
 use andromeda_postgresql_context_store::{
     config::DatabaseConfig,
     csource_registration::registration_store::PostgresRegistrationStore,
@@ -24,11 +24,13 @@ use andromeda_postgresql_context_store::{
     subscription::repo::SubscriptionRepository,
     tenant_database::{configure_pool_options, migrate_tenant_db},
 };
+use andromeda_postgresql_name_dictionary::{name_cache::NameCache, name_lookup::NameLookup};
 use andromeda_postgresql_temporal_store::{bulk_write_mode::BulkWriteMode as TemporalBulkWriteMode, repo::TemporalRepository};
 use andromeda_registration::store::RegistrationStore;
 use andromeda_snapshot::store::SnapshotStore;
 use andromeda_spatial_index::entity::index::SpatialEntityIndex;
 use andromeda_subscription::cache::SubscriptionCache;
+use andromeda_temporal::config::TemporalConfig;
 use andromeda_tenancy::{config::TenancyConfig, tenant_ref::TenantRef};
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -39,7 +41,8 @@ pub(super) struct TenantStorage {
     pub(super) pool: PgPool,
     pub(super) engine: JsonLdEngine,
     pub(super) context_hit_flush: Option<ContextHitFlushWorker>,
-    pub(super) attribute_names: Arc<dyn AttributeNameLookup>,
+    pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
+    pub(super) entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     pub(super) temporal_repo: Arc<TemporalRepository>,
     pub(super) entity_ports: EntityStoragePorts,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
@@ -63,6 +66,7 @@ pub(super) async fn initialize_storage(
     tenancy_config: &TenancyConfig,
     jsonld_config: &JsonLdConfig,
     atomic_write_config: &AtomicWriteConfig,
+    temporal_config: &TemporalConfig,
     database_url: &Url,
     tenant: &TenantRef,
 ) -> Result<TenantStorage, TenantAssemblyError> {
@@ -84,22 +88,39 @@ pub(super) async fn initialize_storage(
         )
     });
 
-    let attribute_names = Arc::new(AttributeNameCache::new(&pool));
-    if database_config.preload_attribute_names
-        && let Err(error) = attribute_names.preload().await
-    {
-        tracing::warn!(%error, event = "attribute_names_preload_failed");
+    let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool));
+    let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool));
+    if database_config.preload_name_dictionaries {
+        if let Err(error) = attribute_names.preload().await {
+            tracing::warn!(%error, event = "attribute_names_preload_failed");
+        }
+        if let Err(error) = entity_type_names.preload().await {
+            tracing::warn!(%error, event = "entity_type_names_preload_failed");
+        }
     }
     let bulk_write_mode = match atomic_write_config.bulk_mode {
         BulkWriteMode::Unnest => TemporalBulkWriteMode::Unnest,
         BulkWriteMode::CopyStaging => TemporalBulkWriteMode::CopyStaging,
     };
-    // One dictionary cache per tenant, shared by every path that resolves an
-    // attribute IRI: the temporal catalogue, the entity repository's read path
-    // and the projection the commit writes.
-    let attribute_names = Arc::clone(&attribute_names) as Arc<dyn AttributeNameLookup>; // clone: the cache outlives each port that holds it.
-    let temporal_repo = Arc::new(TemporalRepository::new(&pool, bulk_write_mode, Arc::clone(&attribute_names)));
-    let entity_repository = Arc::new(EntityRepository::new(&pool, Arc::clone(&attribute_names)));
+    // One cache per dictionary per tenant, shared by every path that resolves
+    // an attribute or type IRI: the temporal catalogue, the entity repository's
+    // read path and the entity rows and projection the commit writes.
+    let attribute_names = Arc::clone(&attribute_names) as Arc<dyn NameLookup<AttributeName>>; // clone: the cache outlives each port that holds it.
+    let entity_type_names = Arc::clone(&entity_type_names) as Arc<dyn NameLookup<EntityTypeName>>; // clone: the cache outlives each port that holds it.
+    let temporal_repo = Arc::new(TemporalRepository::new(
+        &pool,
+        bulk_write_mode,
+        Arc::clone(&attribute_names),
+        Arc::clone(&entity_type_names),
+    ));
+    // The migrations declare the default chunk interval and columnstore lag;
+    // an operator override is applied here, after migration and before any
+    // history is written through this tenant's repository.
+    let storage_policy = temporal_repo.reconcile_storage_policy(&temporal_config.storage_policy()).await?;
+    if !storage_policy.is_unchanged() {
+        tracing::info!(outcome = ?storage_policy, event = "temporal_storage_policy_reconciled");
+    }
+    let entity_repository = Arc::new(EntityRepository::new(&pool, Arc::clone(&attribute_names), Arc::clone(&entity_type_names)));
     let entity_ports = EntityStoragePorts {
         reader: Arc::clone(&entity_repository) as Arc<dyn EntityReader>, // clone: every focused port shares one repository and pool.
         query: Arc::clone(&entity_repository) as Arc<dyn EntityQueryStore>, // clone: every focused port shares one repository and pool.
@@ -123,6 +144,7 @@ pub(super) async fn initialize_storage(
         engine,
         context_hit_flush,
         attribute_names,
+        entity_type_names,
         temporal_repo,
         entity_ports,
         registration_store,

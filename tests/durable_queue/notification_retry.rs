@@ -2,7 +2,8 @@
 //!
 //! Verification-matrix row "Outbox retry/dead state": delivery fails through
 //! the configured attempt limit; attempts increase monotonically, the claim
-//! fields clear on retry, the row stops being claimable at the limit, and the
+//! fields clear on retry, the queue itself never stops offering the row (the
+//! ceiling is the worker's decision, recorded as `exhausted_at`), and the
 //! schema's state constraints hold after every transition.
 
 use crate::{
@@ -20,7 +21,8 @@ use sqlx::PgPool;
 /// Deliveries claimed per pass, larger than any fixture in this module.
 const BATCH_SIZE: i32 = 10;
 
-/// The attempt ceiling the queue's partial claim index carries.
+/// The attempt ceiling the delivery worker is configured with; the queue does
+/// not know it.
 const MAX_ATTEMPTS: i32 = 5;
 
 /// Attempts recorded against one delivery, and how many of the claim columns it holds.
@@ -32,9 +34,18 @@ async fn attempts_and_claim_columns(pool: &PgPool, delivery: i64) -> (i32, i32) 
         .expect("delivery retry state")
 }
 
+/// Whether the delivery has been stamped exhausted.
+async fn is_exhausted(pool: &PgPool, delivery: i64) -> bool {
+    sqlx::query_scalar("SELECT exhausted_at IS NOT NULL FROM notification_deliveries WHERE id = $1")
+        .bind(delivery)
+        .fetch_one(pool)
+        .await
+        .expect("delivery exhaustion state")
+}
+
 #[tokio::test]
 #[serial(durable_queue)]
-async fn durable_queue_a_delivery_stops_being_claimable_once_it_reaches_the_attempt_limit() {
+async fn durable_queue_a_delivery_stays_claimable_through_repeated_failures_until_the_worker_exhausts_it() {
     let pool = queue_database().await;
     let queued = queue_notification(&pool, 1).await;
     let delivery = *delivery_ids(&pool, &queued.record).await.first().expect("one queued delivery");
@@ -42,10 +53,7 @@ async fn durable_queue_a_delivery_stops_being_claimable_once_it_reaches_the_atte
     let worker = delivery_worker();
 
     for attempt in 1..=MAX_ATTEMPTS {
-        let claimed = queue
-            .claim_pending(&worker, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
-            .await
-            .expect("claim before the limit");
+        let claimed = queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim before the limit");
         assert_eq!(claimed.len(), 1, "attempt {attempt} must still find the delivery claimable");
         assert_eq!(claimed[0].attempt_count, attempt - 1, "the claim reports the attempts already made");
 
@@ -63,11 +71,20 @@ async fn durable_queue_a_delivery_stops_being_claimable_once_it_reaches_the_atte
         assert_eq!(claim_columns, 0, "a retry releases the whole claim triple rather than half of it");
     }
 
-    let exhausted = queue
-        .claim_pending(&worker, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
+    // The queue does not enforce the ceiling: after five recorded failures the
+    // row is still offered, because the ceiling is delivery policy the worker
+    // owns and records through a terminal acknowledgement.
+    let still_offered = queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim at the limit");
+    assert_eq!(still_offered.len(), 1, "the queue keeps offering a delivery the worker has not exhausted");
+    assert_eq!(still_offered[0].attempt_count, MAX_ATTEMPTS);
+    queue
+        .mark_terminal(DeliveryId::from(delivery), &worker, "attempt ceiling reached")
         .await
-        .expect("claim at the limit");
-    assert!(exhausted.is_empty(), "a delivery at the attempt limit is no longer claimable");
+        .expect("record the exhausting attempt");
+    assert!(is_exhausted(&pool, delivery).await, "the worker's decision is recorded as exhausted_at");
+
+    let exhausted = queue.claim_pending(&worker, holding_lease(), BATCH_SIZE).await.expect("claim after exhaustion");
+    assert!(exhausted.is_empty(), "an exhausted delivery is no longer claimable");
     pool.close().await;
 }
 
@@ -81,7 +98,7 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
     let worker = delivery_worker();
 
     let claimed = queue
-        .claim_pending(&worker, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
+        .claim_pending(&worker, holding_lease(), BATCH_SIZE)
         .await
         .expect("claim before the terminal failure");
     assert_eq!(claimed.len(), 1);
@@ -92,11 +109,12 @@ async fn durable_queue_a_terminal_failure_retires_the_delivery_and_releases_its_
         .expect("record the terminal failure");
 
     let (attempts, claim_columns) = attempts_and_claim_columns(&pool, delivery).await;
-    assert_eq!(attempts, i32::MAX, "exhaustion is expressed by passing every reachable attempt ceiling");
+    assert_eq!(attempts, 1, "the terminal attempt is counted like any other");
     assert_eq!(claim_columns, 0, "a retired delivery holds no lease");
+    assert!(is_exhausted(&pool, delivery).await, "exhaustion is expressed as an instant of its own");
 
     let retired = queue
-        .claim_pending(&worker, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
+        .claim_pending(&worker, holding_lease(), BATCH_SIZE)
         .await
         .expect("claim after the terminal failure");
     assert!(retired.is_empty(), "a retired delivery is permanently unclaimable");

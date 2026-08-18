@@ -27,6 +27,10 @@ const ARRAY_OVERLAPS: &str = "&&";
 /// NULLs as equal rather than as the unknown `=` yields.
 const NOT_DISTINCT_FROM: &str = "IS NOT DISTINCT FROM";
 
+/// The null-aware inequality operator `IS DISTINCT FROM`, true when the two
+/// operands differ with NULL counting as a value.
+const DISTINCT_FROM: &str = "IS DISTINCT FROM";
+
 /// The JSONB member-access operator `->`, which yields a JSONB child by key or
 /// array index.
 const JSON_GET: &str = "->";
@@ -65,6 +69,11 @@ pub trait PgBinaryOperator {
     /// its column is NULL, and a plain `=` against NULL yields unknown rather
     /// than matching it.
     fn not_distinct_from(self, other: SimpleExpr) -> SimpleExpr;
+    /// `self IS DISTINCT FROM other` - null-aware inequality, where a NULL and
+    /// a value differ and two NULLs do not. A guard that rewrites a row only
+    /// when a nullable column actually changed is written with this rather
+    /// than `<>`, which yields unknown whenever either side is NULL.
+    fn distinct_from(self, other: SimpleExpr) -> SimpleExpr;
     /// `self -> key` - the JSONB child at a top-level `key` or array `index`.
     fn json_get(self, key: SimpleExpr) -> SimpleExpr;
     /// `self #>> path` - the text at a `text[]` `path` into `self`.
@@ -103,6 +112,10 @@ impl PgBinaryOperator for SimpleExpr {
 
     fn not_distinct_from(self, other: SimpleExpr) -> SimpleExpr {
         self.binary(BinOper::Custom(NOT_DISTINCT_FROM), other)
+    }
+
+    fn distinct_from(self, other: SimpleExpr) -> SimpleExpr {
+        self.binary(BinOper::Custom(DISTINCT_FROM), other)
     }
 
     fn json_get(self, key: SimpleExpr) -> SimpleExpr {
@@ -157,6 +170,13 @@ mod tests {
     fn is_not_distinct_from_renders_the_null_aware_equality_operator() {
         let sql = render(SimpleExpr::from(Expr::col(Alias::new("dataset_id"))).not_distinct_from(Expr::col(Alias::new("other"))));
         assert!(sql.contains(" IS NOT DISTINCT FROM "), "{sql}");
+    }
+
+    #[test]
+    fn is_distinct_from_renders_the_null_aware_inequality_operator() {
+        let sql = render(SimpleExpr::from(Expr::col(Alias::new("location"))).distinct_from(Expr::col(Alias::new("other"))));
+        assert!(sql.contains(" IS DISTINCT FROM "), "{sql}");
+        assert!(!sql.contains("NOT DISTINCT"), "{sql}");
     }
 
     #[test]

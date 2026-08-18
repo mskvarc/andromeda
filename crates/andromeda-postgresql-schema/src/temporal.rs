@@ -19,8 +19,8 @@ pub enum TemporalEntities {
     EntityKey,
     /// Entity URI, carried independently of `entities`
     Id,
-    /// Array of entity type IRIs
-    Types,
+    /// Array of `entity_type_names` keys, one per type the entity carries
+    TypeIds,
     /// Instant the Temporal Evolution began (clause 4.8 `createdAt`), never moved
     CreatedAt,
     /// Instant the Temporal Evolution was last extended (clause 4.8 `modifiedAt`)
@@ -32,8 +32,8 @@ pub enum TemporalEntities {
 pub enum TemporalAttributeStreams {
     /// Table name: `temporal_attribute_streams`
     Table,
-    /// Stream identifier, referenced by `attribute_history.stream_id`
-    Id,
+    /// Generated surrogate key, referenced by `attribute_history.stream_key`
+    StreamKey,
     /// Foreign key to `temporal_entities`
     TemporalEntityKey,
     /// Foreign key to `attribute_names`
@@ -47,8 +47,8 @@ pub enum TemporalAttributeStreams {
 pub enum AttributeHistory {
     /// Table name: `attribute_history`
     Table,
-    /// Foreign key to `temporal_attribute_streams`
-    StreamId,
+    /// Key of the `temporal_attribute_streams` row (no foreign key on a hypertable)
+    StreamKey,
     /// Write identity of the mutation that produced the row (clause 5.6.7)
     WriteId,
     /// Ordinal of the row within its write, part of the replay-collision key
@@ -146,7 +146,7 @@ mod tests {
         pretty_assertions::assert_eq!(TemporalEntities::Table.to_string(), "temporal_entities");
         pretty_assertions::assert_eq!(TemporalEntities::EntityKey.to_string(), "entity_key");
         pretty_assertions::assert_eq!(TemporalEntities::Id.to_string(), "id");
-        pretty_assertions::assert_eq!(TemporalEntities::Types.to_string(), "types");
+        pretty_assertions::assert_eq!(TemporalEntities::TypeIds.to_string(), "type_ids");
     }
 
     #[test]
@@ -160,6 +160,6 @@ mod tests {
     #[test]
     fn attribute_history_names() {
         pretty_assertions::assert_eq!(AttributeHistory::Table.to_string(), "attribute_history");
-        pretty_assertions::assert_eq!(AttributeHistory::StreamId.to_string(), "stream_id");
+        pretty_assertions::assert_eq!(AttributeHistory::StreamKey.to_string(), "stream_key");
     }
 }

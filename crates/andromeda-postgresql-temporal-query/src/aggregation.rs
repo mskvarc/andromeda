@@ -24,7 +24,7 @@ use crate::{
 use andromeda_ngsi_ld_lexicon::aggr_method::AggrMethod;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use andromeda_postgresql_schema::{
-    attribute_dictionary::AttributeNames,
+    name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams},
 };
 use andromeda_postgresql_seaquery::{
@@ -156,7 +156,7 @@ fn origin_subquery(axis: AttributeHistory) -> SelectStatement {
             JoinType::Join,
             TemporalAttributeStreams::Table,
             s2.clone(),
-            Expr::col((s2.clone(), TemporalAttributeStreams::Id)).equals((ah2, AttributeHistory::StreamId)),
+            Expr::col((s2.clone(), TemporalAttributeStreams::StreamKey)).equals((ah2, AttributeHistory::StreamKey)),
         )
         .and_where(Expr::col((s2, TemporalAttributeStreams::TemporalEntityKey)).equals((S, TemporalAttributeStreams::TemporalEntityKey)));
     origin.take()

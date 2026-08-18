@@ -1,11 +1,12 @@
 //! Which attribute names a compiled query has to resolve against the
 //! `attribute_names` dictionary before its SQL can be rendered.
 //!
-//! Three parts of a query reach an attribute by dictionary key rather than
-//! through the JSONB payload, and so have to be collected here: a `q` filter's
-//! predicate targets, the GeoProperty a geo-query names (clause 4.10), and the
-//! GeoProperty a distance ordering measures to (clause 4.23). Everything else is
-//! navigated inside the payload and has no dictionary row to look up.
+//! Four parts of a query reach an attribute by dictionary key rather than
+//! through the JSONB payload, and so have to be collected here: the `attrs`
+//! existence terms (clause 5.5.9), a `q` filter's predicate targets, the
+//! GeoProperty a geo-query names (clause 4.10), and the GeoProperty a distance
+//! ordering measures to (clause 4.23). Everything else is navigated inside the
+//! payload and has no dictionary row to look up.
 
 use crate::q_predicate::attribute_names::referenced_attribute_names;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -15,14 +16,18 @@ use andromeda_ngsi_ld_query::{
     ordering::term::{CompiledOrderTerm, OrderTarget},
 };
 use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
+use iri_rs::IriBuf;
 
 /// Collect the names a query reads by dictionary key.
 ///
-/// Each of the three axes is optional and contributes independently: a temporal
-/// query orders by time rather than by distance and so passes no ordering terms,
-/// while a query with neither filter nor geometry resolves nothing at all.
-pub fn projected_attribute_names(q_expr: Option<&Expr>, geo: Option<&GeoQuery>, order_terms: &[CompiledOrderTerm]) -> Vec<AttributeName> {
-    let mut names = Vec::new();
+/// Each of the four axes is optional and contributes independently: a temporal
+/// query has no `attrs` axis and orders by time rather than by distance and so
+/// passes neither, while a query with no filter and no geometry resolves
+/// nothing at all. An `attrs` IRI that does not satisfy the name grammar
+/// names no attribute and is skipped; the term it came from then resolves to
+/// nothing and matches nothing.
+pub fn projected_attribute_names(attrs: &[IriBuf], q_expr: Option<&Expr>, geo: Option<&GeoQuery>, order_terms: &[CompiledOrderTerm]) -> Vec<AttributeName> {
+    let mut names: Vec<AttributeName> = attrs.iter().filter_map(|attr| attr.as_str().parse().ok()).collect();
     if let Some(q_expr) = q_expr {
         referenced_attribute_names(q_expr, &mut names);
     }
@@ -71,6 +76,7 @@ mod tests {
         ordering::term::{CompiledOrderTerm, OrderDirection, OrderTarget},
     };
     use andromeda_ngsi_ld_vocabulary::expanded::properties::LOCATION;
+    use iri_rs::IriBuf;
 
     fn name(value: &str) -> AttributeName {
         value.parse().expect("valid attribute name")
@@ -96,13 +102,27 @@ mod tests {
         names.iter().map(AttributeName::as_str).map(str::to_string).collect()
     }
 
+    /// Clause 5.5.9: every `attrs` term is answered by dictionary key, so each
+    /// one is resolved; an IRI that cannot name an attribute is skipped.
+    #[test]
+    fn attrs_terms_contribute_their_names_and_skip_unparsable_iris() {
+        let attrs = [
+            IriBuf::new("https://example.com/speed".to_string()).expect("valid IRI"),
+            IriBuf::new("https://example.com/name".to_string()).expect("valid IRI"),
+        ];
+        assert_eq!(
+            collected(projected_attribute_names(&attrs, None, None, &[])),
+            vec!["https://example.com/speed", "https://example.com/name"]
+        );
+    }
+
     /// Clause 4.10: the geo-query's target GeoProperty is read by dictionary
     /// key, so it has to be resolved even when the query carries no `q` filter.
     #[test]
     fn a_geo_query_contributes_its_target_geoproperty() {
         let geo = geo_query("https://example.com/observationPoint");
         assert_eq!(
-            collected(projected_attribute_names(None, Some(&geo), &[])),
+            collected(projected_attribute_names(&[], None, Some(&geo), &[])),
             vec!["https://example.com/observationPoint"]
         );
     }
@@ -113,7 +133,7 @@ mod tests {
     #[test]
     fn a_geo_query_on_the_default_geoproperty_resolves_nothing() {
         let geo = geo_query(LOCATION.as_str());
-        assert!(projected_attribute_names(None, Some(&geo), &[]).is_empty());
+        assert!(projected_attribute_names(&[], None, Some(&geo), &[]).is_empty());
     }
 
     /// The clause 4.7 GeoProperties are stored in the projection like any other
@@ -122,7 +142,7 @@ mod tests {
     fn a_geo_query_on_a_spec_defined_geoproperty_still_resolves_it() {
         for iri in ["https://uri.etsi.org/ngsi-ld/observationSpace", "https://uri.etsi.org/ngsi-ld/operationSpace"] {
             let geo = geo_query(iri);
-            assert_eq!(collected(projected_attribute_names(None, Some(&geo), &[])), vec![iri.to_string()]);
+            assert_eq!(collected(projected_attribute_names(&[], None, Some(&geo), &[])), vec![iri.to_string()]);
         }
     }
 
@@ -135,7 +155,7 @@ mod tests {
             OrderDirection::DistAsc,
         )];
         assert_eq!(
-            collected(projected_attribute_names(None, None, &terms)),
+            collected(projected_attribute_names(&[], None, None, &terms)),
             vec!["https://example.com/observationPoint"]
         );
     }
@@ -145,14 +165,14 @@ mod tests {
     #[test]
     fn a_distance_ordering_on_the_default_geoproperty_resolves_nothing() {
         let terms = [order_term(OrderTarget::Attribute(name(LOCATION.as_str())), OrderDirection::DistAsc)];
-        assert!(projected_attribute_names(None, None, &terms).is_empty());
+        assert!(projected_attribute_names(&[], None, None, &terms).is_empty());
     }
 
     /// A value ordering navigates the payload, so it contributes nothing.
     #[test]
     fn a_value_ordering_contributes_no_name() {
         let terms = [order_term(OrderTarget::Attribute(name("https://example.com/temperature")), OrderDirection::Asc)];
-        assert!(projected_attribute_names(None, None, &terms).is_empty());
+        assert!(projected_attribute_names(&[], None, None, &terms).is_empty());
     }
 
     /// Clause 4.23's keywords name no attribute, whichever direction they sort.
@@ -163,7 +183,7 @@ mod tests {
             order_term(OrderTarget::Type, OrderDirection::DistDesc),
             order_term(OrderTarget::Scope, OrderDirection::DistAsc),
         ];
-        assert!(projected_attribute_names(None, None, &terms).is_empty());
+        assert!(projected_attribute_names(&[], None, None, &terms).is_empty());
     }
 
     /// The three axes accumulate rather than displacing one another.
@@ -176,7 +196,7 @@ mod tests {
             OrderDirection::DistAsc,
         )];
         assert_eq!(
-            collected(projected_attribute_names(Some(&expr), Some(&geo), &terms)),
+            collected(projected_attribute_names(&[], Some(&expr), Some(&geo), &terms)),
             vec![
                 "https://example.com/speed",
                 "https://example.com/observationPoint",
@@ -187,6 +207,6 @@ mod tests {
 
     #[test]
     fn a_query_with_neither_filter_nor_geometry_resolves_nothing() {
-        assert!(projected_attribute_names(None, None, &[]).is_empty());
+        assert!(projected_attribute_names(&[], None, None, &[]).is_empty());
     }
 }

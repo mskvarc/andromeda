@@ -1,6 +1,6 @@
 //! A Subscription as the store hands it back, with the identity it is stored under.
 
-use crate::subscription_key::SubscriptionKey;
+use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_model::subscription::Subscription;
 
 /// One stored Subscription together with its surrogate key.

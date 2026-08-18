@@ -4,9 +4,14 @@
 //! The runtime table and column names come from the caller because the same
 //! shape serves both the entity snapshot table and the temporal snapshot table;
 //! they are trusted identifiers the repository supplies, never request input.
+//! Both child tables are keyed by the snapshot's surrogate, which every
+//! statement here resolves from the URI through
+//! [`crate::snapshot_key::snapshot_key_of`].
 
+use crate::snapshot_key::snapshot_key_of;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
+use andromeda_postgresql_schema::snapshot::SnapshotEntities;
 use andromeda_postgresql_seaquery::{aggregate::count_all, literal::text_literal, pg_array::any, pg_operator::PgBinaryOperator};
 use sea_query::{Alias, Condition, Expr as SeaExpr, ExprTrait, Iden, Order, Query, SelectStatement, SimpleExpr};
 
@@ -42,7 +47,7 @@ pub struct SnapshotListing {
 
 /// The shared `WHERE` condition selecting a snapshot's matching entities.
 fn listing_condition(params: &SnapshotListingParams<'_>) -> Condition {
-    let mut condition = Condition::all().add(SeaExpr::expr(SeaExpr::col(Alias::new("snapshot_id"))).eq(params.snapshot_id.to_string()));
+    let mut condition = Condition::all().add(SeaExpr::col(SnapshotEntities::SnapshotKey).eq(snapshot_key_of(SeaExpr::val(params.snapshot_id.as_str()))));
 
     if let Some(entity_type) = params.entity_type {
         // The stored representation carries the type as a JSON member; a
@@ -56,7 +61,7 @@ fn listing_condition(params: &SnapshotListingParams<'_>) -> Condition {
         && !ids.is_empty()
     {
         let ids: Vec<String> = ids.iter().map(Uri::to_string).collect();
-        condition = condition.add(SeaExpr::expr(SeaExpr::col(Alias::new("entity_id"))).eq(any(SeaExpr::val(ids))));
+        condition = condition.add(SeaExpr::col(SnapshotEntities::EntityId).eq(any(SeaExpr::val(ids))));
     }
 
     condition
@@ -71,7 +76,7 @@ pub fn build_listing_query(params: &SnapshotListingParams<'_>) -> SnapshotListin
     data.expr(SeaExpr::col(Alias::new(params.data_column)))
         .from(Alias::new(params.table))
         .cond_where(condition.clone())
-        .order_by(Alias::new("entity_id"), Order::Asc)
+        .order_by(SnapshotEntities::EntityId, Order::Asc)
         .limit(<i64 as Ord>::max(params.limit, 0) as u64)
         .offset(<i64 as Ord>::max(params.offset, 0) as u64);
 
@@ -94,8 +99,8 @@ pub fn build_get_row_query(table: impl Iden + 'static, data_column: impl Iden + 
     select
         .expr(SeaExpr::col(data_column))
         .from(table)
-        .and_where(SeaExpr::expr(SeaExpr::col(Alias::new("snapshot_id"))).eq(snapshot_id.to_string()))
-        .and_where(SeaExpr::expr(SeaExpr::col(Alias::new("entity_id"))).eq(entity_id.to_string()));
+        .and_where(SeaExpr::col(SnapshotEntities::SnapshotKey).eq(snapshot_key_of(SeaExpr::val(snapshot_id.as_str()))))
+        .and_where(SeaExpr::col(SnapshotEntities::EntityId).eq(entity_id.as_str()));
     select
 }
 
@@ -122,7 +127,10 @@ mod tests {
         let listing = build_listing_query(&params(&snapshot_id, None, None));
         let data = listing.data.to_string(PostgresQueryBuilder);
         assert!(data.contains("SELECT \"entity_data\" FROM \"snapshot_entities\""), "{data}");
-        assert!(data.contains("\"snapshot_id\" = "), "{data}");
+        assert!(
+            data.contains("\"snapshot_key\" = (SELECT \"snapshots\".\"snapshot_key\" FROM \"snapshots\" WHERE \"snapshots\".\"id\" = "),
+            "{data}"
+        );
         assert!(data.contains("ORDER BY \"entity_id\" ASC"), "{data}");
         assert!(data.contains("LIMIT 25 OFFSET 50"), "{data}");
         let count = listing.count.to_string(PostgresQueryBuilder);
@@ -172,7 +180,10 @@ mod tests {
         let entity_id: Uri = "urn:ngsi-ld:A:1".parse().expect("valid entity id");
         let sql = build_get_row_query(Alias::new("snapshot_entities"), Alias::new("entity_data"), &snapshot_id, &entity_id).to_string(PostgresQueryBuilder);
         assert!(sql.contains("SELECT \"entity_data\" FROM \"snapshot_entities\""), "{sql}");
-        assert!(sql.contains("\"snapshot_id\" = "), "{sql}");
+        assert!(
+            sql.contains("\"snapshot_key\" = (SELECT \"snapshots\".\"snapshot_key\" FROM \"snapshots\" WHERE \"snapshots\".\"id\" = "),
+            "{sql}"
+        );
         assert!(sql.contains("\"entity_id\" = "), "{sql}");
     }
 }

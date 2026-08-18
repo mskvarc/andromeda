@@ -6,6 +6,9 @@ use axum::Router;
 use tower_http::normalize_path::NormalizePath;
 
 /// Fully assembled, state-complete public HTTP API.
+///
+/// The NGSI-LD families live under `/ngsi-ld/v1`; the metrics scrape route,
+/// when present, is served at the process root as scrapers expect.
 pub struct HttpApi {
     /// Process-stacked service with path normalization outside Axum routing.
     service: NormalizePath<Router>,
@@ -27,6 +30,10 @@ impl HttpApi {
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
         let router = Router::new().nest("/ngsi-ld/v1", stack.apply_api(v1));
+        let router = match routes.telemetry {
+            Some(telemetry) => router.merge(telemetry.into_router()),
+            None => router,
+        };
         HttpApi {
             service: stack.apply_process(router),
         }
@@ -74,12 +81,14 @@ mod tests {
         routes::SubscriptionRoutes,
         state::{SubscriptionRouteServices, SubscriptionStateResolver},
     };
+    use andromeda_http_telemetry::routes::TelemetryRoutes;
     use andromeda_http_temporal::{
         routes::TemporalRoutes,
         state::{TemporalRouteServices, TemporalStateResolver},
     };
     use andromeda_http_tenancy::routes::TenancyRoutes;
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
+    use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::{OrphanTenantEvictor, TenantDirectory},
         creation_policy::TenantCreationPolicy,
@@ -137,6 +146,10 @@ mod tests {
     }
 
     fn test_api() -> Result<HttpApi, Box<dyn Error>> {
+        test_api_with_telemetry(None)
+    }
+
+    fn test_api_with_telemetry(telemetry: Option<TelemetryRoutes>) -> Result<HttpApi, Box<dyn Error>> {
         let administration = Arc::new(TenantAdministration);
         let directory: Arc<dyn TenantDirectory> = administration.clone();
         let evictor: Arc<dyn OrphanTenantEvictor> = administration;
@@ -157,6 +170,7 @@ mod tests {
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
                 version: ComponentVersion::from("16.2".to_owned()),
             }]))
+            .telemetry(telemetry)
             .build();
         let stack = HttpStack::new(HttpStackConfig {
             request_timeout_secs: 30,
@@ -263,6 +277,24 @@ mod tests {
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {path} was not routed");
             assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path} lost its method");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_metrics_route_is_absent_unless_telemetry_is_supplied() -> Result<(), Box<dyn Error>> {
+        let response = test_api()?.into_service().oneshot(request(Method::GET, "/metrics")?).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_metrics_route_is_served_at_the_process_root_when_supplied() -> Result<(), Box<dyn Error>> {
+        let telemetry = TelemetryRoutes::new(Arc::new(TelemetryRecorder::detached()?))?;
+        let response = test_api_with_telemetry(Some(telemetry))?
+            .into_service()
+            .oneshot(request(Method::GET, "/metrics")?)
+            .await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::OK);
         Ok(())
     }
 }

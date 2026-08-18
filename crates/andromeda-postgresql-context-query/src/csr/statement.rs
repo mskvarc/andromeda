@@ -8,12 +8,7 @@ use crate::csr::{
 };
 use andromeda_ngsi_ld_lexicon::time_prop::TimeProp;
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, temporal::window::TimeInterval};
-use andromeda_postgresql_query::{
-    error::RenderError,
-    geo_predicate as geo_sql,
-    geo_predicate::GeometrySource,
-    q_predicate::attribute_names::ResolvedAttributeNames,
-};
+use andromeda_postgresql_query::{dictionary::resolved_names::ResolvedNames, error::RenderError, geo_predicate as geo_sql, geo_predicate::GeometrySource};
 use andromeda_postgresql_schema::csr::Csr;
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -150,7 +145,7 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
         condition = condition.add(geo_sql::condition(
             geo,
             GeometrySource::Registration { column: "location" },
-            &ResolvedAttributeNames::default(),
+            &ResolvedNames::default(),
         )?);
     }
 
@@ -370,9 +365,14 @@ mod tests {
         q.id_pattern = Some(Pattern::parse("urn:ngsi-ld:.*").unwrap());
         q.attrs = vec![iri("https://example.com/speed")];
         let built = build(&q);
-        assert!(built.sql.contains("\"ri\".\"entity_types\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains("\"ri\".\"entity_id_pattern\" IS NULL"), "{}", built.sql);
-        assert!(built.sql.contains("\"ri\".\"property_name_ids\" IS NULL"), "{}", built.sql);
+        assert!(
+            built.sql.contains("\"ri\".\"entity_types\" && ARRAY ['https://example.com/Vehicle','*']"),
+            "{}",
+            built.sql
+        );
+        assert!(built.sql.contains("\"ri\".\"entity_id_pattern\" = 'urn:ngsi-ld:.*'"), "{}", built.sql);
+        assert!(built.sql.contains("\"ri\".\"property_name_ids\" && array_append("), "{}", built.sql);
+        assert!(!built.sql.contains("NOT EXISTS"), "{}", built.sql);
         assert!(built.sql.contains("jsonb_array_elements(\"information\")"), "{}", built.sql);
     }
 

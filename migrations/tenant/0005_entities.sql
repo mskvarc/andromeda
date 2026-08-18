@@ -1,107 +1,175 @@
 -- ============================================================================
--- 0005: Entities -- current Entity state, keyed on a narrow surrogate identity
+-- 0005: Entities -- current Entity state, split by how it is written and read
 -- ============================================================================
--- `entity_key` is the internal identity every owned child relation carries and
--- joins on. `id` is the externally meaningful NGSI-LD URI (clause 5.6.5), stays
--- unique and stays indexed, and is what the API addresses an Entity by.
+-- One Entity is three rows in three relations that share the surrogate
+-- `entity_key`, and the split follows the write pattern rather than the data
+-- model. Every attribute write rewrites the payload; almost none of them
+-- changes the entity's types, scopes or geometries; and the identity of the
+-- row never changes at all. Keeping the three in one relation made every
+-- payload write a non-HOT update -- a modified column appearing in any index
+-- key or expression disqualifies a heap-only-tuple update, and the payload was
+-- indexed -- and made every such write rewrite the type, scope and geometry
+-- index entries of an entity whose types, scopes and geometries had not moved.
 --
--- `id` is `TEXT COLLATE "C"`. Byte-wise comparison gives anchored `idPattern`
--- prefixes (clause 4.9) a plain B-tree range scan without a pattern-operator
--- index, and gives sorts abbreviated keys. `idx_entities_id_trgm` covers the
--- patterns that carry no usable anchor.
+-- `entities` is identity and lifecycle: the surrogate key, the URI, when the
+-- row was created, and the two expiry instants the sweeper reads. `id` is the
+-- externally meaningful NGSI-LD URI (clause 5.6.5), stays unique and stays
+-- indexed, and is what the API addresses an Entity by. `id` is `TEXT COLLATE
+-- "C"`: byte-wise comparison gives anchored `idPattern` prefixes (clause 4.9) a
+-- plain B-tree range scan without a pattern-operator index, and gives sorts
+-- abbreviated keys. `idx_entities_id_trgm` covers the patterns that carry no
+-- usable anchor. The identity declares `CACHE 32`: entity creation is batched
+-- and concurrent, an uncached identity takes the sequence's lock once per row,
+-- and the gaps a cached sequence leaves after a restart are meaningless for a
+-- surrogate that is never rendered.
 --
--- The identity declares `CACHE 32`. Entity creation is batched and concurrent,
--- and an uncached identity takes the sequence's lock once per row. Thirty-two
--- is a deliberate default rather than a measurement, and the gaps a cached
--- sequence leaves after a restart are meaningless for a surrogate that is never
--- rendered.
+-- `expires_at` is the Entity-level `expiresAt` (clause 4.22).
+-- `min_attribute_expires_at` is the earliest `expiresAt` any attribute
+-- instance of the payload carries, computed by the broker from the expanded
+-- payload on every write and NULL when no instance expires. It exists so the
+-- attribute-expiry sweep is an index range scan over the entities that hold a
+-- due instance instead of a walk of every payload; the sweep re-reads the
+-- payload of each candidate and decides per instance. Both are timestamptz --
+-- pass-by-value, never indexed by expression -- so writing them keeps the
+-- update HOT-eligible, and both indexes are partial because most rows carry
+-- neither.
 --
--- fillfactor and autovacuum. `entities` is rewritten on every attribute write,
--- so it is a hot-update relation by traffic. It is not one by eligibility:
--- heap-only-tuple updates are disqualified whenever a modified column appears
--- in an index key, expression or partial predicate, and both `modified_at`
--- (`idx_entities_modified_at`) and `payload` (`idx_entities_payload_root_keys`,
--- a GIN index on the expression `payload -> 0`) change on every write. The
--- fillfactor below still keeps a new tuple version on its original page more
--- often, and the autovacuum settings are the real defence.
+-- `entity_documents` is the payload and its version token. `modified_at`
+-- (clause 4.8 `modifiedAt`) lives here and not on `entities` because it moves
+-- with the payload: it is the compare-and-set token an optimistic overwrite
+-- states, and it is stamped by the same statement that writes the payload.
+-- This relation carries no index other than its primary key, on purpose. Every
+-- payload write is an update of this row, and with nothing indexed but the
+-- immutable key every one of those updates is HOT-eligible; the fillfactor
+-- leaves the room on each page for the new tuple version to land beside the
+-- old one. Adding an index to this relation, on any column, is what would
+-- undo that -- do not.
+--
+-- `entity_search` is what the query axes filter on: the interned types
+-- (clause 4.17), the interned names of the attributes the payload carries
+-- (clause 5.5.9 `attrs`), the scope paths (clause 4.18) and the three
+-- hoisted geometries (clauses 4.10 and 4.5.4). Every index the query planner
+-- uses to find entities is on this relation, and the write path updates its
+-- row only when one of these projected columns actually changed, so a
+-- value-only write never touches a search index. `type_ids` and
+-- `attribute_name_ids` are `INTEGER[]` of `entity_type_names` and
+-- `attribute_names` keys (migration 0007) rather than arrays of IRIs: a type
+-- selection or an `attrs` term compiles to `column @> ARRAY[key]`, served by
+-- the GIN indexes below, at a few bytes per element instead of an IRI per
+-- element. The keys carry no foreign key -- an array element cannot be one --
+-- and are minted in the same transaction as the row that references them.
+-- `location_expires_at` is the latest `expiresAt` among the payload's
+-- `location` instances, NULL when any instance carries none: a geo query
+-- against the default GeoProperty excludes an entity whose every `location`
+-- instance has expired (clause 4.22) by reading this column rather than
+-- walking the payload.
 --
 -- Geometry columns are typmod-free `geometry` with explicit SRID and Zm-flag
 -- checks rather than `GEOMETRY(Geometry, 4326)`: no typmod spelling accepts XY
 -- and XYZ in one column, which RFC 7946 clause 3.1.1 altitudes require.
---
 -- `location_geo` is a stored generated column derived from `location` via
 -- `geom_to_geog`, computed by PostgreSQL and never named in an insert.
 --
--- Column order is alignment order: not-null fixed-width columns first,
--- descending in width, then nullable fixed-width, then varlena, LZ4 on each
--- varlena column.
+-- Autovacuum is set aggressively on all three: the workload updates rather than
+-- inserts, and dead tuples on a hot page defeat HOT as surely as an index does.
+-- `entity_search` keeps the default fillfactor because its updates are rare and
+-- rewrite indexed columns anyway.
+--
+-- Column order is alignment order in each relation: not-null fixed-width
+-- columns first, descending in width, then nullable fixed-width, then varlena,
+-- LZ4 on each varlena column.
 -- ============================================================================
 
 CREATE TABLE entities (
     entity_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32) PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
-    types TEXT[] COMPRESSION lz4 NOT NULL,
-    scope_paths ltree[] COMPRESSION lz4,
-    payload JSONB COMPRESSION lz4 NOT NULL,
-    location geometry COMPRESSION lz4,
-    location_geo geography GENERATED ALWAYS AS (geom_to_geog(location)) STORED,
-    observation_space geometry COMPRESSION lz4,
-    operation_space geometry COMPRESSION lz4,
-    CONSTRAINT chk_entities_types_present CHECK (cardinality(types) > 0),
-    CONSTRAINT chk_entities_location_valid
-        CHECK (location IS NULL OR ST_IsValid(location)),
-    CONSTRAINT chk_entities_location_srid
-        CHECK (location IS NULL OR ST_SRID(location) = 4326),
-    CONSTRAINT chk_entities_location_zm
-        CHECK (location IS NULL OR ST_Zmflag(location) IN (0, 2)),
-    CONSTRAINT chk_entities_observation_space_valid
-        CHECK (observation_space IS NULL OR ST_IsValid(observation_space)),
-    CONSTRAINT chk_entities_observation_space_srid
-        CHECK (observation_space IS NULL OR ST_SRID(observation_space) = 4326),
-    CONSTRAINT chk_entities_observation_space_zm
-        CHECK (observation_space IS NULL OR ST_Zmflag(observation_space) IN (0, 2)),
-    CONSTRAINT chk_entities_operation_space_valid
-        CHECK (operation_space IS NULL OR ST_IsValid(operation_space)),
-    CONSTRAINT chk_entities_operation_space_srid
-        CHECK (operation_space IS NULL OR ST_SRID(operation_space) = 4326),
-    CONSTRAINT chk_entities_operation_space_zm
-        CHECK (operation_space IS NULL OR ST_Zmflag(operation_space) IN (0, 2))
+    min_attribute_expires_at TIMESTAMPTZ,
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE
 ) WITH (
-    fillfactor = 90,
-    autovacuum_vacuum_scale_factor = 0.05,
+    autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_entities_types ON entities USING GIN (types);
-
-CREATE INDEX idx_entities_scope_paths ON entities USING GIST (scope_paths);
-
-CREATE INDEX idx_entities_location ON entities USING GIST (location)
-    WHERE location IS NOT NULL;
-
-CREATE INDEX idx_entities_location_geo ON entities USING GIST (location_geo);
-
-CREATE INDEX idx_entities_observation_space ON entities USING GIST (observation_space)
-    WHERE observation_space IS NOT NULL;
-
-CREATE INDEX idx_entities_operation_space ON entities USING GIST (operation_space)
-    WHERE operation_space IS NOT NULL;
-
 CREATE INDEX idx_entities_expires_at ON entities (expires_at)
     WHERE expires_at IS NOT NULL;
 
-CREATE INDEX idx_entities_modified_at ON entities (modified_at);
+CREATE INDEX idx_entities_min_attribute_expires_at ON entities (min_attribute_expires_at)
+    WHERE min_attribute_expires_at IS NOT NULL;
 
 CREATE INDEX idx_entities_id_trgm ON entities USING GIN (id gin_trgm_ops);
 
--- `attrs=` compiles to `payload -> 0 ? $n`; a GIN index on the bare payload
--- column cannot serve that expression.
-CREATE INDEX idx_entities_payload_root_keys ON entities USING GIN ((payload -> 0));
+CREATE TABLE entity_documents (
+    entity_key BIGINT PRIMARY KEY REFERENCES entities(entity_key) ON DELETE CASCADE,
+    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    payload JSONB COMPRESSION lz4 NOT NULL
+) WITH (
+    fillfactor = 70,
+    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_threshold = 500,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 500,
+    autovacuum_vacuum_cost_delay = 0
+);
 
-ALTER TABLE entities ALTER COLUMN types SET STATISTICS 1000;
+-- No other index on entity_documents: every payload write must stay HOT-eligible.
+
+CREATE TABLE entity_search (
+    entity_key BIGINT PRIMARY KEY REFERENCES entities(entity_key) ON DELETE CASCADE,
+    location_expires_at TIMESTAMPTZ,
+    type_ids INTEGER[] NOT NULL,
+    attribute_name_ids INTEGER[] NOT NULL,
+    scope_paths ltree[] COMPRESSION lz4,
+    location geometry COMPRESSION lz4,
+    location_geo geography GENERATED ALWAYS AS (geom_to_geog(location)) STORED,
+    observation_space geometry COMPRESSION lz4,
+    operation_space geometry COMPRESSION lz4,
+    CONSTRAINT chk_entity_search_types_present CHECK (cardinality(type_ids) > 0),
+    CONSTRAINT chk_entity_search_location_valid
+        CHECK (location IS NULL OR ST_IsValid(location)),
+    CONSTRAINT chk_entity_search_location_srid
+        CHECK (location IS NULL OR ST_SRID(location) = 4326),
+    CONSTRAINT chk_entity_search_location_zm
+        CHECK (location IS NULL OR ST_Zmflag(location) IN (0, 2)),
+    CONSTRAINT chk_entity_search_observation_space_valid
+        CHECK (observation_space IS NULL OR ST_IsValid(observation_space)),
+    CONSTRAINT chk_entity_search_observation_space_srid
+        CHECK (observation_space IS NULL OR ST_SRID(observation_space) = 4326),
+    CONSTRAINT chk_entity_search_observation_space_zm
+        CHECK (observation_space IS NULL OR ST_Zmflag(observation_space) IN (0, 2)),
+    CONSTRAINT chk_entity_search_operation_space_valid
+        CHECK (operation_space IS NULL OR ST_IsValid(operation_space)),
+    CONSTRAINT chk_entity_search_operation_space_srid
+        CHECK (operation_space IS NULL OR ST_SRID(operation_space) = 4326),
+    CONSTRAINT chk_entity_search_operation_space_zm
+        CHECK (operation_space IS NULL OR ST_Zmflag(operation_space) IN (0, 2))
+) WITH (
+    autovacuum_vacuum_scale_factor = 0.02,
+    autovacuum_vacuum_threshold = 500,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 500,
+    autovacuum_vacuum_cost_delay = 0
+);
+
+CREATE INDEX idx_entity_search_type_ids ON entity_search USING GIN (type_ids);
+
+CREATE INDEX idx_entity_search_attribute_name_ids ON entity_search USING GIN (attribute_name_ids);
+
+CREATE INDEX idx_entity_search_scope_paths ON entity_search USING GIST (scope_paths);
+
+CREATE INDEX idx_entity_search_location ON entity_search USING GIST (location)
+    WHERE location IS NOT NULL;
+
+CREATE INDEX idx_entity_search_location_geo ON entity_search USING GIST (location_geo)
+    WHERE location_geo IS NOT NULL;
+
+CREATE INDEX idx_entity_search_observation_space ON entity_search USING GIST (observation_space)
+    WHERE observation_space IS NOT NULL;
+
+CREATE INDEX idx_entity_search_operation_space ON entity_search USING GIST (operation_space)
+    WHERE operation_space IS NOT NULL;
+
+ALTER TABLE entity_search ALTER COLUMN type_ids SET STATISTICS 1000;

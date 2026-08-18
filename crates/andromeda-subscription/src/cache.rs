@@ -1,51 +1,41 @@
 //! Shared subscription cache for fast in-memory matching.
 //!
-//! Extracts the compilation and caching logic formerly owned by
-//! `NotificationWorker` into a shared, concurrency-safe structure
-//! backed by `DashMap`. Used by both the notification worker (event
-//! matching) and the entity service (notification-event generation).
+//! One instance per tenant, used by both the notification worker (event
+//! matching) and the entity service (notification-event generation). The
+//! compiled subscriptions and every routing bucket live in a
+//! [`CandidateIndex`] behind a single read-write lock; the geo index is the
+//! shared [`SpatialSubscriptionIndex`] the spatial narrowing consults.
 
 use crate::{
+    candidate_funnel::MatchOutcome,
+    candidate_index::CandidateIndex,
     change::SubscriptionChange,
     compilation::compile_subscription,
     compiled::CompiledSubscription,
     error::SubscriptionError,
-    matching::find_matching,
     store::SubscriptionStore,
 };
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_spatial_index::{
     key::SpatialKey,
     subscription::{entry::SubEntry, index::SpatialSubscriptionIndex},
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use dashmap::DashMap;
 use iri_rs::IriBuf;
-use std::{collections::HashSet, sync::Arc};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use tracing::debug;
 
-/// Thread-safe, lock-free subscription cache for fast event matching.
+/// Thread-safe subscription cache for fast event matching.
 ///
-/// Stores pre-compiled subscriptions keyed by subscription ID. Uses
-/// `DashMap` for concurrent read/write access without explicit locking.
-///
-/// Maintains two auxiliary indexes so event matching scans only the
-/// subscriptions that plausibly match the event type, instead of every
-/// active subscription:
-///
-/// - `by_type`: expanded type IRI -> set of subscription ids whose selectors
-///   include that type. A subscription with N selectors is indexed under all
-///   N types.
-/// - `untyped`: subscription ids with no selectors, or selectors whose types
-///   are alternation regex patterns that cannot be resolved to a single IRI.
-///   These are always candidates regardless of event type.
+/// Reads take the index lock shared; a matching pass therefore sees one
+/// consistent generation of every bucket. Writes are rare (subscription
+/// lifecycle changes) and take it exclusively.
 #[derive(Debug)]
 pub struct SubscriptionCache {
-    inner: DashMap<Uri, Arc<CompiledSubscription>>,
-    by_type: DashMap<EntityTypeName, HashSet<Uri>>,
-    untyped: dashmap::DashSet<Uri>,
+    index: RwLock<CandidateIndex>,
     spatial: Arc<SpatialSubscriptionIndex>,
     tenant: TenantRef,
 }
@@ -60,9 +50,7 @@ impl SubscriptionCache {
     /// the given shared [`SpatialSubscriptionIndex`].
     pub fn with_spatial(tenant: TenantRef, spatial: Arc<SpatialSubscriptionIndex>) -> SubscriptionCache {
         SubscriptionCache {
-            inner: DashMap::new(),
-            by_type: DashMap::new(),
-            untyped: dashmap::DashSet::new(),
+            index: RwLock::new(CandidateIndex::default()),
             spatial,
             tenant,
         }
@@ -74,13 +62,12 @@ impl SubscriptionCache {
     /// subscriptions. Failed compilations are logged and skipped.
     pub async fn reload(&self, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
         let subscriptions = repo.list_active().await?;
-        self.inner.clear();
-        self.by_type.clear();
-        self.untyped.clear();
-        for stored in subscriptions {
-            let compiled = compile_subscription(&stored);
-            self.index_insert(&compiled);
-            self.inner.insert(stored.subscription.id.clone(), Arc::new(compiled)); // clone: the map owns its key
+        let compiled: Vec<CompiledSubscription> = subscriptions.iter().map(compile_subscription).collect();
+        let mut index = self.index.write();
+        index.clear();
+        for compiled in compiled {
+            self.spatial_insert(&compiled);
+            index.insert(Arc::new(compiled));
         }
         Ok(())
     }
@@ -88,60 +75,50 @@ impl SubscriptionCache {
     /// Handle a single subscription change event (upsert or removal).
     pub async fn handle_change(&self, change: &SubscriptionChange, repo: &(impl SubscriptionStore + ?Sized)) {
         match change {
-            SubscriptionChange::Upserted(id) => {
-                match repo.get(id).await {
-                    Ok(Some(stored)) => {
-                        if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
-                            let compiled = compile_subscription(&stored);
-                            self.index_remove(id);
-                            self.index_insert(&compiled);
-                            self.inner.insert(id.clone(), Arc::new(compiled)); // clone: the map owns its key
-                        } else {
-                            self.index_remove(id);
-                            self.inner.remove(id);
-                        }
-                    }
-                    Ok(None) => {
-                        self.index_remove(id);
-                        self.inner.remove(id);
-                    }
-                    Err(e) => {
-                        debug!("Failed to load subscription {} for cache update: {}", id, e);
+            SubscriptionChange::Upserted(id) => match repo.get(id).await {
+                Ok(Some(stored)) => {
+                    if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
+                        self.insert(compile_subscription(&stored));
+                    } else {
+                        self.remove(id);
                     }
                 }
-            }
-            SubscriptionChange::Deleted(id) => {
-                self.index_remove(id);
-                self.inner.remove(id);
-            }
+                Ok(None) => self.remove(id),
+                Err(e) => {
+                    debug!("Failed to load subscription {} for cache update: {}", id, e);
+                }
+            },
+            SubscriptionChange::Deleted(id) => self.remove(id),
         }
+    }
+
+    /// Index one compiled subscription, replacing any earlier entry with the
+    /// same identifier in both the candidate and the spatial index.
+    pub fn insert(&self, compiled: CompiledSubscription) {
+        self.spatial.remove(&compiled.id);
+        self.spatial_insert(&compiled);
+        self.index.write().insert(Arc::new(compiled));
+    }
+
+    /// Drop the subscription with this identifier from both indexes.
+    pub fn remove(&self, id: &Uri) {
+        self.spatial.remove(id);
+        self.index.write().remove(id);
     }
 
     /// Find all compiled subscriptions that match the given change event.
     ///
-    /// Gathers the candidate set from the type index (`by_type` entries for
-    /// each of the event's types, union with `untyped`), then evaluates the
-    /// full matching predicate only on those candidates. Uses lock-free
-    /// `DashMap`/`DashSet` reads throughout.
-    pub fn find_matching(&self, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
-        let mut candidate_ids: HashSet<Uri> = self.untyped.iter().map(|entry| entry.key().clone()).collect();
-        for event_type in &event.entity_types {
-            if let Some(entry) = self.by_type.get(event_type) {
-                for id in entry.value() {
-                    candidate_ids.insert(id.clone());
-                }
-            }
-        }
-
-        let candidates = candidate_ids
-            .into_iter()
-            .filter_map(|id| self.inner.get(&id).map(|entry| Arc::clone(entry.value())));
-        find_matching(candidates, event)
+    /// Routes the event through the candidate funnel (selectors, trigger,
+    /// watched attributes) and evaluates the authoritative matcher only on
+    /// the survivors. The outcome carries the funnel counts for the caller to
+    /// log and record.
+    pub fn find_matching(&self, event: &ChangeEvent) -> MatchOutcome {
+        self.index.read().find_matching(event)
     }
 
     /// Look up a single compiled subscription by ID.
     pub fn get(&self, id: &Uri) -> Option<Arc<CompiledSubscription>> {
-        self.inner.get(id).map(|entry| Arc::clone(entry.value()))
+        self.index.read().get(id).map(Arc::clone)
     }
 
     /// Tenant scope of this cache (used by callers building [`SpatialKey`]s
@@ -155,52 +132,14 @@ impl SubscriptionCache {
         Arc::clone(&self.spatial)
     }
 
-    fn index_insert(&self, compiled: &CompiledSubscription) {
-        self.spatial_insert(compiled);
-        if compiled.selectors.is_empty() {
-            self.untyped.insert(compiled.id.clone());
-            return;
-        }
-        // A selector whose type is a boolean expression can match several
-        // expanded IRIs that the cache cannot enumerate ahead of time; it falls
-        // back to the untyped bucket so `find_matching` still considers it.
-        let mut indexed_any = false;
-        for selector in &compiled.selectors {
-            match selector.type_.as_single_type() {
-                Some(entity_type) => {
-                    self.by_type.entry(entity_type.clone()).or_default().insert(compiled.id.clone());
-                }
-                None => {
-                    self.untyped.insert(compiled.id.clone());
-                }
-            }
-            indexed_any = true;
-        }
-        if !indexed_any {
-            self.untyped.insert(compiled.id.clone());
-        }
-    }
-
-    fn index_remove(&self, id: &Uri) {
-        self.spatial.remove(id);
-        self.untyped.remove(id);
-        // Drop the id from every type bucket it appears in. `retain` scans
-        // the map once; the keys per bucket are short (one `HashSet<Uri>`
-        // per indexed entity type) so removal stays cheap.
-        self.by_type.iter_mut().for_each(|mut entry| {
-            entry.value_mut().remove(id);
-        });
-        self.by_type.retain(|_, ids| !ids.is_empty());
-    }
-
     /// Returns the number of cached subscriptions.
     pub fn len(&self) -> usize {
-        self.inner.len()
+        self.index.read().len()
     }
 
     /// Whether the cache contains no compiled subscriptions.
     pub fn is_empty(&self) -> bool {
-        self.inner.is_empty()
+        self.index.read().is_empty()
     }
 
     fn spatial_insert(&self, compiled: &CompiledSubscription) {
@@ -254,7 +193,8 @@ impl SubscriptionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{error::SubscriptionError, subscription_key::SubscriptionKey};
+    use crate::error::SubscriptionError;
+    use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
@@ -316,11 +256,11 @@ mod tests {
         assert_eq!(cache.len(), 0);
 
         let sub1 = make_compiled_sub("sub1", 1, "Vehicle", vec!["entityCreated"])?;
-        cache.inner.insert(sub1.id.clone(), Arc::new(sub1)); // clone: the map owns its key
+        cache.insert(sub1);
         assert_eq!(cache.len(), 1);
 
         let sub2 = make_compiled_sub("sub2", 2, "Building", vec!["entityCreated"])?;
-        cache.inner.insert(sub2.id.clone(), Arc::new(sub2)); // clone: the map owns its key
+        cache.insert(sub2);
         assert_eq!(cache.len(), 2);
         Ok(())
     }
@@ -330,7 +270,7 @@ mod tests {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
         let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"])?;
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
-        cache.inner.insert(id.clone(), Arc::new(subscription)); // clone: the map owns its key
+        cache.insert(subscription);
 
         assert_eq!(cache.get(&id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
         Ok(())

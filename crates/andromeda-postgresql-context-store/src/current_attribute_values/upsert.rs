@@ -6,13 +6,18 @@ use crate::{
 };
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
+    pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
 };
+use andromeda_telemetry::statement::{StatementName, observe_statement};
 use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SimpleExpr};
 use sqlx::{Postgres, Transaction};
+
+/// The statement name the projection upsert is observed under.
+const CAV_UPSERT: StatementName = StatementName("cav-upsert");
 
 /// The `UNNEST` set-write's staging alias, `d`.
 ///
@@ -28,12 +33,37 @@ struct Staging;
 #[iden = "ordinality"]
 struct Ordinality;
 
+/// The `excluded` pseudo-relation an `ON CONFLICT DO UPDATE` action reads the
+/// proposed row from.
+#[derive(Iden, Clone, Copy)]
+#[iden = "excluded"]
+struct Excluded;
+
+/// The columns the upsert refreshes on conflict, in table order: everything the
+/// row carries except the three grain columns the conflict target names.
+///
+/// This is also the exact column set the no-op guard compares, so a projected
+/// row and its stored predecessor are value-identical when and only when every
+/// column here is; the grain columns are equal by construction on a conflict.
+const REFRESHED_COLUMNS: [CurrentAttributeValues; 10] = [
+    CurrentAttributeValues::AttributeKind,
+    CurrentAttributeValues::ValueKind,
+    CurrentAttributeValues::ValueDatetime,
+    CurrentAttributeValues::UnitCodeId,
+    CurrentAttributeValues::ValueBool,
+    CurrentAttributeValues::ValueNumber,
+    CurrentAttributeValues::ValueString,
+    CurrentAttributeValues::ValueGeo,
+    CurrentAttributeValues::ValueObject,
+    CurrentAttributeValues::ValueUri,
+];
+
 /// Upsert a batch of attribute instances into the projection.
 ///
 /// Runs in the caller's transaction, which is the transaction that writes the
 /// entity itself: the projection and the entity state it projects commit
 /// together or not at all, so a query can never be answered from a projection
-/// that disagrees with `entities.payload`.
+/// that disagrees with `entity_documents.payload`.
 ///
 /// Set-based — one statement per batch regardless of how many instances a
 /// mutation touches. A batch is permitted to name the same instance more than
@@ -41,7 +71,16 @@ struct Ordinality;
 /// it address the same attribute; the later row wins, decided by position
 /// within the batch rather than by any timestamp a client supplied.
 ///
-/// The fourteen column arrays bind through `sqlx` rather than sea-query because
+/// A row whose projection is value-identical to what is stored is not written
+/// at all: the conflict action carries a `WHERE ROW(stored) IS DISTINCT FROM
+/// ROW(excluded)` guard over every non-grain column, so a restated reading
+/// leaves no new heap tuple, no index tuples and no WAL beyond the conflict
+/// probe. The equality is each column type's own -- PostGIS geometry `=` is
+/// exact geometry equality, jsonb `=` is structural, and `NUMERIC` `=` ignores
+/// scale (`1.0 = 1.00`), which is acceptable because no reader renders a
+/// projected number, only compares it.
+///
+/// The thirteen column arrays bind through `sqlx` rather than sea-query because
 /// nine of them carry NULLs (`Vec<Option<T>>`), which `sea-query-sqlx` cannot
 /// represent — see [`external_placeholder`]. The statement structure is still
 /// built by sea-query; only the array values are bound outside it, in the marker
@@ -58,9 +97,8 @@ pub async fn upsert_projection_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &
 
     let binds = ProjectionBinds::from_rows(rows)?;
     let sql = projection_upsert_sql()?;
-    sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+    let statement = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(&binds.entity_keys)
-        .bind(&binds.modified_ats)
         .bind(&binds.attribute_name_ids)
         .bind(&binds.attribute_kinds)
         .bind(&binds.value_kinds)
@@ -73,21 +111,20 @@ pub async fn upsert_projection_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &
         .bind(&binds.value_geos)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
-        .execute(&mut **tx)
-        .await?;
+        .execute(&mut **tx);
+    observe_statement(CAV_UPSERT, statement).await?;
 
     Ok(())
 }
 
-/// The fourteen staging columns, in the order the batch binds them.
+/// The thirteen staging columns, in the order the batch binds them.
 ///
 /// Each pairs the name the row column takes in the `AS d(…)` alias with the
 /// array element type its `UNNEST` argument casts to. The `value_number` array
 /// is `numeric[]`, so exact decimals are bound without a text or binary64 hop.
-fn staging_columns() -> [UnnestColumn; 14] {
+fn staging_columns() -> [UnnestColumn; 13] {
     [
         UnnestColumn::new(CurrentAttributeValues::EntityKey, PostgresType::BigintArray),
-        UnnestColumn::new(CurrentAttributeValues::ModifiedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(CurrentAttributeValues::AttributeNameId, PostgresType::IntegerArray),
         UnnestColumn::new(CurrentAttributeValues::AttributeKind, PostgresType::SmallintArray),
         UnnestColumn::new(CurrentAttributeValues::ValueKind, PostgresType::SmallintArray),
@@ -108,6 +145,20 @@ fn staged(column: CurrentAttributeValues) -> SimpleExpr {
     Expr::col((Staging, column))
 }
 
+/// The no-op guard of the conflict action: the stored row's refreshed columns,
+/// as one row value, are distinct from the proposed row's.
+///
+/// `IS DISTINCT FROM` over row values compares field by field with NULL
+/// counting as a value, so a NULL typed column that stays NULL is equal, and a
+/// value that moves into a different typed column is a difference on two
+/// fields at once. Written over every refreshed column rather than a subset so
+/// the guard and the `SET` list can never disagree about what "identical" means.
+fn stored_row_differs_from_proposed() -> SimpleExpr {
+    let stored = Expr::tuple(REFRESHED_COLUMNS.map(|column| Expr::col((CurrentAttributeValues::Table, column))));
+    let proposed = Expr::tuple(REFRESHED_COLUMNS.map(|column| Expr::col((Excluded, column))));
+    stored.distinct_from(proposed)
+}
+
 /// Build the projection upsert statement for one batch.
 ///
 /// `DISTINCT ON` collapses repeats of the clause 4.5.5 grain before the insert
@@ -120,7 +171,9 @@ fn staged(column: CurrentAttributeValues) -> SimpleExpr {
 /// The conflict target is the natural grain, whose unique index treats two
 /// absent `datasetId` values as the same instance. That is the whole reason a
 /// default instance stays singular under repeated writes rather than
-/// accumulating a row per write.
+/// accumulating a row per write. The conflict action is guarded by
+/// [`stored_row_differs_from_proposed`], so a value-identical restatement
+/// touches no row.
 ///
 /// The `value_geo` column is wrapped as
 /// `CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END`:
@@ -130,7 +183,7 @@ fn staged(column: CurrentAttributeValues) -> SimpleExpr {
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Internal`] if the projection's expression count
-/// ever stops matching the insert's fourteen-wide column list, which the fixed
+/// ever stops matching the insert's thirteen-wide column list, which the fixed
 /// shapes here make unreachable.
 fn projection_upsert_sql() -> Result<String, ContextStoreError> {
     let columns = staging_columns();
@@ -152,7 +205,6 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
             (Staging, CurrentAttributeValues::DatasetId),
         ])
         .expr(staged(CurrentAttributeValues::EntityKey))
-        .expr(staged(CurrentAttributeValues::ModifiedAt))
         .expr(staged(CurrentAttributeValues::AttributeNameId))
         .expr(staged(CurrentAttributeValues::AttributeKind))
         .expr(staged(CurrentAttributeValues::ValueKind))
@@ -177,25 +229,13 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         CurrentAttributeValues::AttributeNameId,
         CurrentAttributeValues::DatasetId,
     ])
-    .update_columns([
-        CurrentAttributeValues::ModifiedAt,
-        CurrentAttributeValues::AttributeKind,
-        CurrentAttributeValues::ValueKind,
-        CurrentAttributeValues::ValueDatetime,
-        CurrentAttributeValues::UnitCodeId,
-        CurrentAttributeValues::ValueBool,
-        CurrentAttributeValues::ValueNumber,
-        CurrentAttributeValues::ValueString,
-        CurrentAttributeValues::ValueGeo,
-        CurrentAttributeValues::ValueObject,
-        CurrentAttributeValues::ValueUri,
-    ])
+    .update_columns(REFRESHED_COLUMNS)
+    .action_and_where(stored_row_differs_from_proposed())
     .to_owned();
 
     let mut insert = Query::insert();
     insert.into_table(CurrentAttributeValues::Table).columns([
         CurrentAttributeValues::EntityKey,
-        CurrentAttributeValues::ModifiedAt,
         CurrentAttributeValues::AttributeNameId,
         CurrentAttributeValues::AttributeKind,
         CurrentAttributeValues::ValueKind,
@@ -210,7 +250,7 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         CurrentAttributeValues::ValueUri,
     ]);
     // `select_from` fails only on a column/expression arity mismatch, which the
-    // fixed fourteen-wide column list and projection above make unreachable.
+    // fixed thirteen-wide column list and projection above make unreachable.
     insert.select_from(select).map_err(|error| ContextStoreError::Internal(error.to_string()))?;
     insert.on_conflict(conflict);
 
@@ -225,7 +265,7 @@ mod tests {
 
     /// The rendered upsert statement, unwrapped for assertion.
     fn rendered() -> String {
-        projection_upsert_sql().expect("the fixed fourteen-wide projection builds")
+        projection_upsert_sql().expect("the fixed thirteen-wide projection builds")
     }
 
     /// Every `$n` placeholder in `sql`, as numbers.
@@ -240,7 +280,7 @@ mod tests {
 
     #[test]
     fn the_upsert_binds_one_contiguous_array_per_column() {
-        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=14).collect::<BTreeSet<u32>>());
+        pretty_assertions::assert_eq!(placeholders(&rendered()), (1..=13).collect::<BTreeSet<u32>>());
     }
 
     #[test]
@@ -248,13 +288,14 @@ mod tests {
         let sql = rendered();
         for cast in [
             "$1::bigint[]",
-            "$2::timestamptz[]",
-            "$3::integer[]",
+            "$2::integer[]",
+            "$3::smallint[]",
             "$4::smallint[]",
-            "$8::boolean[]",
-            "$10::numeric[]",
-            "$12::bytea[]",
-            "$13::jsonb[]",
+            "$5::timestamptz[]",
+            "$7::boolean[]",
+            "$9::numeric[]",
+            "$11::bytea[]",
+            "$12::jsonb[]",
         ] {
             assert!(sql.contains(cast), "missing {cast} in {sql}");
         }
@@ -285,7 +326,7 @@ mod tests {
     #[test]
     fn a_number_reaches_the_arbitrary_precision_column_rather_than_a_double() {
         let sql = rendered();
-        assert!(sql.contains(r#"$10::numeric[]"#), "{sql}");
+        assert!(sql.contains(r#"$9::numeric[]"#), "{sql}");
         assert!(!sql.contains(r#""d"."value_number"::numeric"#), "{sql}");
         assert!(!sql.contains("double precision"), "{sql}");
         assert!(!sql.contains("float8"), "{sql}");
@@ -307,7 +348,7 @@ mod tests {
         assert!(!sql.contains(r#"AS "d""#), "the closed table-source alias must be rewritten: {sql}");
         assert!(
             sql.contains(
-                "WITH ORDINALITY AS d(entity_key, modified_at, attribute_name_id, attribute_kind, value_kind, value_datetime, unit_code_id, value_bool, dataset_id, value_number, value_string, value_geo, value_object, value_uri, ordinality)"
+                "WITH ORDINALITY AS d(entity_key, attribute_name_id, attribute_kind, value_kind, value_datetime, unit_code_id, value_bool, dataset_id, value_number, value_string, value_geo, value_object, value_uri, ordinality)"
             ),
             "{sql}"
         );
@@ -317,7 +358,6 @@ mod tests {
     fn the_upsert_refreshes_every_projected_column() {
         let sql = rendered();
         for column in [
-            "modified_at",
             "attribute_kind",
             "value_kind",
             "value_datetime",
@@ -332,6 +372,39 @@ mod tests {
             assert!(
                 sql.contains(&format!(r#""{column}" = "excluded"."{column}""#)),
                 "a superseded row must not keep its old {column}: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_upsert_touches_no_row_whose_projection_is_value_identical() {
+        let sql = rendered();
+        let (_, action) = sql.split_once("DO UPDATE SET").expect("the statement carries a conflict action");
+        let (_, guard) = action.split_once(" WHERE ").expect("the conflict action is guarded");
+        assert!(guard.starts_with("(\"current_attribute_values\".\"attribute_kind\", "), "{guard}");
+        assert!(guard.contains(") IS DISTINCT FROM (\"excluded\".\"attribute_kind\", "), "{guard}");
+        assert!(guard.trim_end().ends_with("\"excluded\".\"value_uri\")"), "{guard}");
+        for grain in ["entity_key", "attribute_name_id", "dataset_id"] {
+            assert!(
+                !guard.contains(grain),
+                "a grain column is equal on conflict by construction and must not be compared: {guard}"
+            );
+        }
+        for column in [
+            "attribute_kind",
+            "value_kind",
+            "value_datetime",
+            "unit_code_id",
+            "value_bool",
+            "value_number",
+            "value_string",
+            "value_geo",
+            "value_object",
+            "value_uri",
+        ] {
+            assert!(
+                guard.contains(&format!("\"current_attribute_values\".\"{column}\"")) && guard.contains(&format!("\"excluded\".\"{column}\"")),
+                "the guard must compare {column} on both sides: {guard}"
             );
         }
     }

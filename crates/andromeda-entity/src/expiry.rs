@@ -4,7 +4,8 @@ use crate::{EntityService, entity_snapshot::EntitySnapshot, error::EntityError, 
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
-    entity_mutation::{EntityMutation, EntityRecord},
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
     history_record::HistoryRecord,
     precondition::Precondition,
     write_outcome::WriteOutcome,
@@ -17,6 +18,7 @@ use andromeda_ngsi_ld_model::{
 use chrono::{DateTime, Utc};
 use std::{num::NonZeroU32, sync::Arc};
 use thiserror::Error;
+use tracing::warn;
 
 /// One entity-policy-owned bounded expiry operation.
 pub struct EntityExpirySweep {
@@ -128,7 +130,18 @@ impl EntityService {
         let candidates = source.entities_with_expired_attributes(cutoff, batch_size).await?;
         let (writes, identifiers): (Vec<_>, Vec<_>) = candidates
             .into_iter()
-            .filter_map(|(identifier, snapshot)| purge_write(&identifier, snapshot, cutoff).map(|write| (write, identifier)))
+            .filter_map(|(identifier, snapshot)| match purge_write(&identifier, snapshot, cutoff) {
+                Some(write) => Some((write, identifier)),
+                None => {
+                    // The source selects candidates by the earliest instance
+                    // expiry it recorded for the payload; a candidate whose
+                    // payload holds no due instance means that record and the
+                    // payload disagree, which a concurrent write explains once
+                    // but a persistent drift would not.
+                    warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
+                    None
+                }
+            })
             .unzip();
         if writes.is_empty() {
             return Ok(0);

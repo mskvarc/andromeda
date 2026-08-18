@@ -11,6 +11,8 @@ pub mod csource_processor;
 pub mod delivery_attempt_ceiling;
 /// Retry wait for a failed notification delivery.
 pub mod delivery_backoff;
+/// In-flight bound for one notification delivery pass.
+pub mod delivery_concurrency;
 /// Notification delivery runtime configuration.
 pub mod delivery_config;
 /// One bounded notification delivery pass.
@@ -53,6 +55,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-registration",
         "andromeda-spatial-index",
         "andromeda-subscription",
+        "andromeda-telemetry",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],

@@ -1,11 +1,11 @@
 //! The number of delivery attempts after which a notification is dead-lettered.
 //!
-//! The schema, not the worker, owns the ceiling: the migration that creates the
-//! delivery queue writes the number into `chk_notification_deliveries_exhausted_state`
-//! and into the claim's partial index, so a worker configured to attempt more
-//! would claim a delivery the check constraint then refuses — aborting the claim
-//! and stalling the queue rather than merely losing an index. The bound is
-//! therefore validated at configuration time, before any delivery is claimed.
+//! The worker, not the schema, owns the ceiling: the attempt that reaches it is
+//! acknowledged as exhausted, which stamps the delivery's `exhausted_at` and
+//! takes it out of the claimable set for good. The queue never repeats the
+//! number — neither in a check constraint nor in the claim index — so the
+//! setting can be raised or lowered without a migration. The only bound
+//! validated at configuration time is that at least one attempt is allowed.
 
 use std::num::NonZeroI32;
 use thiserror::Error;
@@ -16,15 +16,6 @@ pub enum DeliveryAttemptCeilingError {
     /// A ceiling of zero or less leaves every delivery permanently exhausted.
     #[error("notification delivery attempt ceiling must be at least one attempt")]
     NonPositiveAttempts,
-    /// A ceiling above what the schema constrains would make the claim abort on
-    /// a check violation instead of dead-lettering the delivery.
-    #[error("notification delivery attempt ceiling of {attempts} exceeds the schema maximum of {maximum}")]
-    AboveSchemaMaximum {
-        /// The rejected ceiling.
-        attempts: i32,
-        /// The largest ceiling the schema accepts.
-        maximum: i32,
-    },
 }
 
 /// The number of attempts a delivery is given before it is dead-lettered.
@@ -32,22 +23,13 @@ pub enum DeliveryAttemptCeilingError {
 pub struct DeliveryAttemptCeiling(NonZeroI32);
 
 impl DeliveryAttemptCeiling {
-    /// The largest ceiling the delivery schema accepts.
-    pub const SCHEMA_MAXIMUM_ATTEMPTS: i32 = 5;
-
     /// Build a ceiling from a whole number of attempts.
     ///
     /// # Errors
     ///
-    /// Returns [`DeliveryAttemptCeilingError`] when the number is not positive
-    /// or exceeds what the delivery schema constrains.
+    /// Returns [`DeliveryAttemptCeilingError::NonPositiveAttempts`] when the
+    /// number is zero or negative.
     pub const fn from_attempts(attempts: i32) -> Result<DeliveryAttemptCeiling, DeliveryAttemptCeilingError> {
-        if attempts > DeliveryAttemptCeiling::SCHEMA_MAXIMUM_ATTEMPTS {
-            return Err(DeliveryAttemptCeilingError::AboveSchemaMaximum {
-                attempts,
-                maximum: DeliveryAttemptCeiling::SCHEMA_MAXIMUM_ATTEMPTS,
-            });
-        }
         match NonZeroI32::new(attempts) {
             Some(attempts) if attempts.get() > 0 => Ok(DeliveryAttemptCeiling(attempts)),
             Some(_) | None => Err(DeliveryAttemptCeilingError::NonPositiveAttempts),
@@ -57,6 +39,17 @@ impl DeliveryAttemptCeiling {
     /// The ceiling as a whole number of attempts.
     pub const fn attempts(self) -> i32 {
         self.0.get()
+    }
+
+    /// Whether an attempt made after `attempts_before` earlier attempts is the
+    /// last one the ceiling allows.
+    ///
+    /// A delivery claimed with `attempts_before` failed attempts on record is
+    /// about to make attempt `attempts_before + 1`; when that number reaches
+    /// the ceiling, a failure of this attempt exhausts the delivery instead of
+    /// scheduling another retry.
+    pub const fn is_final_attempt(self, attempts_before: i32) -> bool {
+        attempts_before.saturating_add(1) >= self.0.get()
     }
 }
 
@@ -74,19 +67,24 @@ mod tests {
         }
     }
 
-    /// The check constraint the delivery table carries names the literal 5, so
-    /// a claim above it aborts the transaction rather than dead-lettering.
     #[test]
-    fn a_ceiling_above_the_schema_maximum_is_rejected() {
-        assert_eq!(
-            DeliveryAttemptCeiling::from_attempts(6),
-            Err(DeliveryAttemptCeilingError::AboveSchemaMaximum { attempts: 6, maximum: 5 })
-        );
+    fn a_ceiling_above_five_is_accepted_because_the_schema_no_longer_pins_one() {
+        let ceiling = DeliveryAttemptCeiling::from_attempts(12).expect("any positive ceiling is accepted");
+        assert_eq!(ceiling.attempts(), 12);
     }
 
     #[test]
-    fn a_ceiling_reports_the_attempt_count_it_was_built_from() {
-        let ceiling = DeliveryAttemptCeiling::from_attempts(5).expect("the schema maximum is accepted");
-        assert_eq!(ceiling.attempts(), 5);
+    fn the_attempt_that_reaches_the_ceiling_is_the_final_one() {
+        let ceiling = DeliveryAttemptCeiling::from_attempts(3).expect("a positive ceiling");
+        assert!(!ceiling.is_final_attempt(0));
+        assert!(!ceiling.is_final_attempt(1));
+        assert!(ceiling.is_final_attempt(2));
+        assert!(ceiling.is_final_attempt(7));
+    }
+
+    #[test]
+    fn a_ceiling_of_one_makes_the_first_attempt_final() {
+        let ceiling = DeliveryAttemptCeiling::from_attempts(1).expect("a positive ceiling");
+        assert!(ceiling.is_final_attempt(0));
     }
 }

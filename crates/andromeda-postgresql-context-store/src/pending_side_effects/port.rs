@@ -17,6 +17,7 @@ use andromeda_entity::{
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use andromeda_postgresql_seaquery::interval::make_interval_secs;
+use andromeda_telemetry::statement::{StatementName, observe_statement};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sea_query::{DeleteStatement, Expr, ExprTrait, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
@@ -27,14 +28,21 @@ use std::sync::Arc;
 use tracing::error;
 use uuid::Uuid;
 
+/// The statement name the side-effect lease claim is observed under.
+const SIDE_EFFECT_CLAIM: StatementName = StatementName("pending-side-effect-claim");
+/// The statement name every side-effect acknowledgement (ack, nack, dead) is observed under.
+const SIDE_EFFECT_ACKNOWLEDGE: StatementName = StatementName("pending-side-effect-acknowledge");
+
 #[async_trait]
 impl SideEffectQueue for PendingSideEffectsRepository {
     async fn lease_batch(&self, worker_id: &SideEffectLeaseOwner, batch_size: i32, lease_seconds: i32) -> Result<Vec<LeasedSideEffect>, EntityError> {
         let (sql, values) = lease_batch_statement(worker_id.as_ref(), batch_size, f64::from(lease_seconds)).build_sqlx(PostgresQueryBuilder);
-        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .fetch_all(self.pool())
-            .await
-            .map_err(persistence)?;
+        let rows = observe_statement(
+            SIDE_EFFECT_CLAIM,
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(self.pool()),
+        )
+        .await
+        .map_err(persistence)?;
 
         let mut leased = Vec::with_capacity(rows.len());
         for row in rows {
@@ -53,10 +61,12 @@ impl SideEffectQueue for PendingSideEffectsRepository {
 
     async fn ack(&self, id: SideEffectJobId, owner: &SideEffectLeaseOwner) -> Result<LeaseAcknowledgement, EntityError> {
         let (sql, values) = ack_statement(id.as_uuid(), owner.as_ref()).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .execute(self.pool())
-            .await
-            .map_err(persistence)?;
+        let result = observe_statement(
+            SIDE_EFFECT_ACKNOWLEDGE,
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
+        )
+        .await
+        .map_err(persistence)?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
@@ -68,20 +78,33 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         next_attempt_at: DateTime<Utc>,
     ) -> Result<LeaseAcknowledgement, EntityError> {
         let (sql, values) = nack_statement(id.as_uuid(), owner.as_ref(), error, next_attempt_at).build_sqlx(PostgresQueryBuilder);
-        let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-            .execute(self.pool())
-            .await
-            .map_err(persistence)?;
+        let result = observe_statement(
+            SIDE_EFFECT_ACKNOWLEDGE,
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
+        )
+        .await
+        .map_err(persistence)?;
         Ok(lease_acknowledgement(result.rows_affected()))
     }
 
     async fn mark_dead(&self, id: SideEffectJobId, owner: &SideEffectLeaseOwner, error: &str) -> Result<LeaseAcknowledgement, EntityError> {
         let (sql, values) = mark_dead_statement(id.as_uuid(), owner.as_ref(), error).build_sqlx(PostgresQueryBuilder);
+        let result = observe_statement(
+            SIDE_EFFECT_ACKNOWLEDGE,
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(self.pool()),
+        )
+        .await
+        .map_err(persistence)?;
+        Ok(lease_acknowledgement(result.rows_affected()))
+    }
+
+    async fn purge_dead_before(&self, cutoff: DateTime<Utc>) -> Result<u64, EntityError> {
+        let (sql, values) = purge_dead_statement(cutoff).build_sqlx(PostgresQueryBuilder);
         let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .execute(self.pool())
             .await
             .map_err(persistence)?;
-        Ok(lease_acknowledgement(result.rows_affected()))
+        Ok(result.rows_affected())
     }
 }
 
@@ -229,6 +252,19 @@ fn mark_dead_statement(id: Uuid, owner: &str, error: &str) -> UpdateStatement {
         .to_owned()
 }
 
+/// Remove dead-lettered jobs created before `cutoff`.
+///
+/// `idx_pse_dead` is the partial index on `created_at WHERE dead` this range
+/// scan runs on; a dead row holds no lease (`chk_pse_dead_state`), so no
+/// worker can be mid-flight on a row this removes.
+fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
+    Query::delete()
+        .from_table(PendingSideEffects::Table)
+        .and_where(Expr::col(PendingSideEffects::Dead).eq(true))
+        .and_where(Expr::col(PendingSideEffects::CreatedAt).lt(cutoff))
+        .to_owned()
+}
+
 /// Decode one persisted queue payload into the semantic side-effect job.
 fn decode_job(payload: Value) -> Result<BatchSideEffectJob, EntityError> {
     let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::persistence(error.to_string()))?;
@@ -275,7 +311,7 @@ fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffec
 #[cfg(test)]
 mod tests {
     use crate::pending_side_effects::{
-        port::{ack_statement, lease_acknowledgement, lease_batch_statement, mark_dead_statement, nack_statement},
+        port::{ack_statement, lease_acknowledgement, lease_batch_statement, mark_dead_statement, nack_statement, purge_dead_statement},
         repo::PendingSideEffectsRepository,
     };
     use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
@@ -321,6 +357,15 @@ mod tests {
         let sql = mark_dead_statement(Uuid::nil(), "w", "boom").to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""dead" = TRUE"#), "{sql}");
         assert!(sql.contains(r#""locked_until" = NULL"#), "{sql}");
+    }
+
+    #[test]
+    fn the_dead_letter_reap_removes_only_dead_rows_older_than_the_cutoff() {
+        let sql = purge_dead_statement(Utc::now()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#"DELETE FROM "pending_side_effects""#), "{sql}");
+        assert!(sql.contains(r#""dead" = TRUE"#), "{sql}");
+        assert!(sql.contains(r#""created_at" <"#), "{sql}");
+        assert!(!sql.contains("locked_by"), "the reap must not be lease-guarded: {sql}");
     }
 
     #[test]

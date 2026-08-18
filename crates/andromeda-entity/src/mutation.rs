@@ -3,17 +3,12 @@
 //!
 //! Attribute-level mutations live in `attrs.rs`; batch forms live in `batch/`.
 
-use crate::{
-    EntityService,
-    attribute_envelope::validate_attribute_envelopes,
-    error::EntityError,
-    expanded_member::extract_attribute_keys,
-    geo_property_geometry::validate_geo_property_geometries,
-};
+use crate::{EntityService, attribute_envelope::validate_attribute_envelopes, error::EntityError, geo_property_geometry::validate_geo_property_geometries};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
-    entity_mutation::{EntityMutation, EntityRecord},
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
     history_record::{HistoryRecord, deletion_history, mutation_history},
     precondition::Precondition,
     write_outcome::single,
@@ -22,7 +17,10 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
-    expanded::{entity_member::extract_types, mutation::entity::merge_entity},
+    expanded::{
+        entity_member::{extract_attribute_names, extract_types},
+        mutation::entity::merge_entity,
+    },
     notification::{ChangeOrigin, NotificationTrigger},
 };
 use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
@@ -63,7 +61,7 @@ impl EntityService {
 
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
-        let changed_attrs = extract_attribute_keys(&payload);
+        let changed_attrs = extract_attribute_names(&payload);
         let subscription_matches =
             self.build_subscription_matches(&entity.id, &types, NotificationTrigger::EntityCreated, &changed_attrs, Some(&payload), None);
 
@@ -119,7 +117,7 @@ impl EntityService {
             previous_attributes,
         } = self
             .commit_computed_write(&entity_uri, |previous| {
-                let attrs_before: HashSet<AttributeName> = extract_attribute_keys(previous).into_iter().collect();
+                let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
                 let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
 
                 let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
@@ -127,8 +125,8 @@ impl EntityService {
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
-                let changed_attrs = extract_attribute_keys(&patch_expanded);
-                let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&merged).into_iter().collect();
+                let changed_attrs = extract_attribute_names(&patch_expanded);
+                let attrs_after: HashSet<AttributeName> = extract_attribute_names(&merged).into_iter().collect();
                 let deleted_attrs: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
                 let mut subscription_matches = Vec::new();
@@ -218,7 +216,7 @@ impl EntityService {
         validate_geo_property_geometries(&expanded)?;
 
         let payload = Arc::new(expanded);
-        let changed_attrs = extract_attribute_keys(&payload);
+        let changed_attrs = extract_attribute_names(&payload);
         let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.
 
         // The types the notification carries are the stored ones, read off the
@@ -272,7 +270,7 @@ impl EntityService {
             }
         };
 
-        let attr_keys = extract_attribute_keys(&entity_snapshot);
+        let attr_keys = extract_attribute_names(&entity_snapshot);
 
         let mut subscription_matches = Vec::new();
         if !attr_keys.is_empty() {

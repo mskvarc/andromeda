@@ -1,15 +1,21 @@
 //! PostgreSQL implementation of the registration persistence port.
 
-use crate::csource_registration::{information_projection::replace_registration_information, mapper::row_to_csr};
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
+use crate::csource_registration::{mapper::row_to_csr, routing_rewrite::replace_registration_information};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    context_source_pseudonym::ContextSourcePseudonym,
+    scope::grammar::ScopeBuf,
+    tenant::TenantName,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
 use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
-use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
 use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
     statement as csr_sql,
 };
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_postgresql_schema::csr::{Csr, RegistrationInformation};
 use andromeda_postgresql_seaquery::{
     aggregate::count_all,
@@ -45,13 +51,13 @@ pub struct PostgresRegistrationStore {
     pool: PgPool,
     /// The tenant's attribute-name dictionary, which the routing projection
     /// interns registered property and relationship names through.
-    attribute_names: Arc<dyn AttributeNameLookup>,
+    attribute_names: Arc<dyn NameLookup<AttributeName>>,
 }
 
 impl PostgresRegistrationStore {
     /// Create a registration store backed by the supplied tenant pool and the
     /// tenant's shared attribute-name dictionary.
-    pub fn new(pool: &PgPool, attribute_names: Arc<dyn AttributeNameLookup>) -> PostgresRegistrationStore {
+    pub fn new(pool: &PgPool, attribute_names: Arc<dyn NameLookup<AttributeName>>) -> PostgresRegistrationStore {
         PostgresRegistrationStore {
             pool: pool.clone(), // clone: `PgPool` is an atomically reference-counted pool handle.
             attribute_names,

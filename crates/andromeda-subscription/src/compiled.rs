@@ -7,7 +7,7 @@
 //! reference the query AST and the renderer's system-attribute policy. Transport
 //! selection remains in delivery bindings and is not compiled here.
 
-use crate::subscription_key::SubscriptionKey;
+use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,

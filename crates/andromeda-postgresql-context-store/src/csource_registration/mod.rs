@@ -8,5 +8,7 @@ pub mod mapper;
 pub mod operation_code;
 /// PostgreSQL registration store.
 pub mod registration_store;
+/// The wholesale rewrite of a registration's routing rows.
+pub mod routing_rewrite;
 /// Placeholder for persistence-shaped row structs.
 pub mod rows;

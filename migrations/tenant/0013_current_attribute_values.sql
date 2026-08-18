@@ -36,11 +36,27 @@
 -- Column order is alignment order: not-null fixed-width descending, then
 -- nullable fixed-width, then varlena, LZ4 on each varlena column.
 --
+-- No `modified_at`. The projection records what an instance holds now, and
+-- nothing reads when it was last written: `entity_documents.modified_at`
+-- carries the entity's own instant. A per-row instant here would make every
+-- restatement of an unchanged value a genuine row rewrite, which is the one
+-- write the no-op suppression below exists to avoid.
+--
+-- No-op suppression. The upsert's `ON CONFLICT ... DO UPDATE` carries a
+-- `WHERE ROW(stored columns) IS DISTINCT FROM ROW(excluded columns)` guard
+-- over every non-grain column, so an instance whose projection is
+-- value-identical is not rewritten at all: no new heap tuple, no index
+-- tuples, no WAL beyond the conflict probe. A telemetry stream that restates
+-- the same reading is therefore free here. Equality is the column type's own:
+-- PostGIS geometry `=` is exact geometry equality, jsonb `=` is structural,
+-- and `NUMERIC` `=` ignores scale (`1.0 = 1.00`) -- acceptable because no
+-- reader renders a projected number, only compares it.
+--
 -- fillfactor and autovacuum. Every update to a value column also updates a
 -- partial index keyed on it, so heap-only-tuple updates are disqualified for
 -- exactly the updates this table receives. The fillfactor keeps the new
--- tuple version on its own page more often, and vacuum cadence is the
--- primary defence.
+-- tuple version on its own page more often, and the aggressive vacuum
+-- cadence is the primary defence.
 --
 -- Every text column here is `COLLATE "C"`, `value_string` included. Clause
 -- 4.9 orders string values with `<`, `>`, `<=` and `>=` and clause 4.5.19
@@ -62,11 +78,19 @@
 --     are `COLLATE "C"`, so the default B-tree opclass already compares
 --     byte-wise and already serves anchored `LIKE` and anchored regex
 --     prefixes.
---   * one trigram GIN on `value_string`, for the unanchored POSIX patterns
---     `~=` / `!~=` compile to (clause 4.9), which no B-tree can serve. It
---     declares `fastupdate = off`: the projection is written inside the
---     Entity transaction, and an unbounded GIN pending list turns into
---     unpredictable flush latency on the request path.
+--   * one attribute-aware trigram GIN on `(attribute_name_id, value_string)`,
+--     for the unanchored POSIX patterns `~=` / `!~=` compile to (clause
+--     4.9), which no B-tree can serve. `btree_gin` supplies the `int4_ops`
+--     opclass so the attribute key is a GIN entry alongside the trigrams:
+--     the planner intersects the two posting lists, and a pattern that is
+--     common across attributes stops producing candidates from every
+--     attribute that happens to share its trigrams. It declares
+--     `fastupdate = off`: the projection is written inside the Entity
+--     transaction, and an unbounded GIN pending list turns into
+--     unpredictable flush latency on the request path. The alternative
+--     (`fastupdate = on`) is an A/B in the database-performance decision
+--     records; the setting is flipped here in place only if the measured
+--     insert tail latency is acceptable with the pending list on.
 --   * no trigram on `value_uri` -- a second trigram index would be written
 --     on every Relationship write to serve a disjunct nothing drives from.
 --   * one composite GiST on `(attribute_name_id, value_geo)` for clause 4.10
@@ -88,7 +112,6 @@
 
 CREATE TABLE current_attribute_values (
     entity_key BIGINT NOT NULL REFERENCES entities(entity_key) ON DELETE CASCADE,
-    modified_at TIMESTAMPTZ NOT NULL,
     attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
     attribute_kind SMALLINT NOT NULL,
     value_kind SMALLINT NOT NULL,
@@ -123,8 +146,8 @@ CREATE TABLE current_attribute_values (
     CONSTRAINT chk_current_attribute_values_value_geo_zm
         CHECK (value_geo IS NULL OR ST_Zmflag(value_geo) IN (0, 2))
 ) WITH (
-    fillfactor = 90,
-    autovacuum_vacuum_scale_factor = 0.05,
+    fillfactor = 80,
+    autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
     autovacuum_analyze_scale_factor = 0.02,
     autovacuum_analyze_threshold = 500,
@@ -139,8 +162,8 @@ CREATE INDEX idx_cav_attr_string
     ON current_attribute_values (attribute_name_id, value_string)
     WHERE value_string IS NOT NULL;
 
-CREATE INDEX idx_cav_string_trgm
-    ON current_attribute_values USING GIN (value_string gin_trgm_ops)
+CREATE INDEX idx_cav_attr_string_trgm
+    ON current_attribute_values USING GIN (attribute_name_id int4_ops, value_string gin_trgm_ops)
     WITH (fastupdate = off)
     WHERE value_string IS NOT NULL;
 

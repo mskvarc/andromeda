@@ -1,10 +1,10 @@
 //! The parallel bind vectors every entity statement is driven from.
 //!
-//! One entity or a thousand, the statements bind the same nine arrays, so this
-//! is the only shape the write path builds. Everything that turns a
+//! One entity or a thousand, the statements bind the same arrays, so this is
+//! the only shape the write path builds. Everything that turns a
 //! specification value into a column — the `ltree` rendering of a scope, the
-//! exact JSON pre-serialisation of a payload, the EWKB encoding of a geometry —
-//! happens on the way in here.
+//! exact JSON pre-serialisation of a payload, the EWKB encoding of a geometry
+//! — happens on the way in here.
 
 use crate::error::ContextStoreError;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
@@ -14,20 +14,22 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 /// Parallel column vectors for one fused entity statement.
+///
+/// The payload is carried once, as the JSON text the statements bind (as
+/// `text[]` cast to `jsonb`, or as the bytes of a binary `COPY` field): the
+/// DOM it was serialised from is not kept, because no consumer of the column
+/// set reads it and one serialisation per entity is the whole cost.
 #[derive(Debug)]
 pub struct PreparedEntityColumns {
     /// Entity identifiers.
     pub ids: Vec<Uri>,
-    /// Type arrays as JSON.
-    pub types_json: Vec<Value>,
+    /// Type dictionary-key arrays as JSON arrays of integers.
+    pub type_ids_json: Vec<Value>,
+    /// Attribute-name dictionary-key arrays as JSON arrays of integers.
+    pub attribute_name_ids_json: Vec<Value>,
     /// Scope arrays as JSON, already in `ltree` dot notation.
     pub scope_paths_json: Vec<Value>,
-    /// Expanded payloads retained for the in-process side-effect consumers
-    /// that still require a DOM view.
-    pub payloads: Vec<Value>,
-    /// Pre-serialised JSON text for each payload, produced once so that the SQL
-    /// bind path can pass the wire bytes directly to Postgres (bound as
-    /// `text[]` and cast to `jsonb`) instead of walking the DOM per row in SQLx.
+    /// Pre-serialised JSON text for each payload.
     pub payload_json: Vec<String>,
     /// Location EWKB buffers.
     pub locations: Vec<Option<Vec<u8>>>,
@@ -35,8 +37,13 @@ pub struct PreparedEntityColumns {
     pub obs_spaces: Vec<Option<Vec<u8>>>,
     /// Operation-space EWKB buffers.
     pub op_spaces: Vec<Option<Vec<u8>>>,
-    /// Expiration timestamps.
+    /// The instant after which every `location` instance has expired, when
+    /// every instance carries one.
+    pub location_expires_ats: Vec<Option<DateTime<Utc>>>,
+    /// Entity expiration timestamps.
     pub expires_ats: Vec<Option<DateTime<Utc>>>,
+    /// Earliest attribute-instance expiration timestamps.
+    pub min_attribute_expires_ats: Vec<Option<DateTime<Utc>>>,
 }
 
 impl PreparedEntityColumns {
@@ -44,24 +51,23 @@ impl PreparedEntityColumns {
     pub fn with_capacity(len: usize) -> PreparedEntityColumns {
         PreparedEntityColumns {
             ids: Vec::with_capacity(len),
-            types_json: Vec::with_capacity(len),
+            type_ids_json: Vec::with_capacity(len),
+            attribute_name_ids_json: Vec::with_capacity(len),
             scope_paths_json: Vec::with_capacity(len),
-            payloads: Vec::with_capacity(len),
             payload_json: Vec::with_capacity(len),
             locations: Vec::with_capacity(len),
             obs_spaces: Vec::with_capacity(len),
             op_spaces: Vec::with_capacity(len),
+            location_expires_ats: Vec::with_capacity(len),
             expires_ats: Vec::with_capacity(len),
+            min_attribute_expires_ats: Vec::with_capacity(len),
         }
     }
 
-    /// Pre-serialise an expanded payload and append it to both `payloads` (DOM
-    /// view) and `payload_json` (wire bytes). Always use this rather than
-    /// pushing `payloads` directly so the two parallel vectors stay aligned.
-    pub fn push_payload(&mut self, payload: Value) -> Result<(), ContextStoreError> {
-        let json = serde_json::to_string(&payload).map_err(|error| ContextStoreError::Internal(format!("serialise entity payload: {error}")))?;
+    /// Serialise an expanded payload once and append its JSON text.
+    pub fn push_payload(&mut self, payload: &Value) -> Result<(), ContextStoreError> {
+        let json = serde_json::to_string(payload).map_err(|error| ContextStoreError::Internal(format!("serialise entity payload: {error}")))?;
         self.payload_json.push(json);
-        self.payloads.push(payload);
         Ok(())
     }
 

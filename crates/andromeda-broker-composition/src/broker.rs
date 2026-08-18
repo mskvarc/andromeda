@@ -2,7 +2,7 @@
 
 use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
-    config::runtime::RuntimeConfig,
+    config::{observability::MetricsExposure, runtime::RuntimeConfig},
     outcome::ProcessExitOutcome,
     routes::{
         context_registry::BrokerContextRegistryStateResolver,
@@ -29,6 +29,7 @@ use andromeda_http_snapshot::routes::SnapshotRoutes;
 use andromeda_http_source_identity::{routes::SourceIdentityRoutes, state::SourceIdentityState};
 use andromeda_http_stack::stack::HttpStack;
 use andromeda_http_subscription::routes::SubscriptionRoutes;
+use andromeda_http_telemetry::{error::TelemetryHttpError, routes::TelemetryRoutes};
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::TenancyRoutes;
 use andromeda_postgresql_context_store::{
@@ -38,6 +39,7 @@ use andromeda_postgresql_context_store::{
     tenant_registry::PostgresTenantRegistry,
 };
 use andromeda_task_runtime::supervisor::TaskSupervisor;
+use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
     administration::{OrphanTenantEvictor, TenantDirectory},
     creation_policy::TenantCreationPolicy,
@@ -80,6 +82,12 @@ enum BrokerStartupError {
     /// Active component discovery failed.
     #[error(transparent)]
     ComponentReport(#[from] ComponentReportError),
+    /// The metrics recorder could not be installed.
+    #[error(transparent)]
+    Telemetry(#[from] TelemetryError),
+    /// The metrics scrape route could not be constructed.
+    #[error(transparent)]
+    TelemetryHttp(#[from] TelemetryHttpError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -90,7 +98,14 @@ pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
     }
     report_startup(&config);
     let config = Arc::new(config);
-    let BrokerExecution { api, tenants, process_tasks } = match construct(Arc::clone(&config)).await {
+    let telemetry = match install_telemetry(config.observability.metrics) {
+        Ok(telemetry) => telemetry,
+        Err(startup_error) => {
+            error!(error = %startup_error, event = "broker_startup_failed");
+            return ProcessExitOutcome::StartupFailure;
+        }
+    };
+    let BrokerExecution { api, tenants, process_tasks } = match construct(Arc::clone(&config), telemetry).await {
         Ok(execution) => execution,
         Err(startup_error) => {
             error!(error = %startup_error, event = "broker_startup_failed");
@@ -115,8 +130,19 @@ pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
     }
 }
 
+/// Install the process metrics recorder when exposure is enabled.
+///
+/// The recorder is installed before any pool or worker opens so the first
+/// statement the broker runs is already observed.
+fn install_telemetry(exposure: MetricsExposure) -> Result<Option<Arc<TelemetryRecorder>>, BrokerStartupError> {
+    match exposure {
+        MetricsExposure::Disabled => Ok(None),
+        MetricsExposure::Prometheus => Ok(Some(Arc::new(TelemetryRecorder::install()?))),
+    }
+}
+
 /// Construct tenant composition, focused route fragments and the complete HTTP API.
-async fn construct(config: Arc<RuntimeConfig>) -> Result<BrokerExecution, BrokerStartupError> {
+async fn construct(config: Arc<RuntimeConfig>, telemetry: Option<Arc<TelemetryRecorder>>) -> Result<BrokerExecution, BrokerStartupError> {
     let database_url = DatabaseUrl::new(config.database.url.clone()); // clone: the tenant factory retains the validated base URL
     let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit.as_postgres_setting())
         .connect(config.database.url.as_str())
@@ -156,6 +182,7 @@ async fn construct(config: Arc<RuntimeConfig>) -> Result<BrokerExecution, Broker
     let snapshot_routes = SnapshotRoutes::new(Arc::new(BrokerSnapshotStateResolver::new(Arc::clone(&tenants))));
     let directory: Arc<dyn TenantDirectory> = tenants.clone(); // clone: HTTP administration and shutdown share the manager
     let evictor: Arc<dyn OrphanTenantEvictor> = tenants.clone(); // clone: both focused capabilities share the manager
+    let telemetry_routes = telemetry.map(TelemetryRoutes::new).transpose()?;
     let routes = ApiRoutes::builder()
         .entity(entity_routes)
         .temporal(temporal_routes)
@@ -171,6 +198,7 @@ async fn construct(config: Arc<RuntimeConfig>) -> Result<BrokerExecution, Broker
         .tenancy(TenancyRoutes::new(directory, evictor))
         .health(HealthRoutes::new(health.build()))
         .component_report(ComponentReportRoutes::new(component_reports))
+        .telemetry(telemetry_routes)
         .build();
     let stack = HttpStack::new(config.http.clone()); // clone: the assembled stack owns its process-wide configuration
     Ok(BrokerExecution {
@@ -194,6 +222,7 @@ fn report_startup(config: &RuntimeConfig) {
         tenancy_enabled = config.tenancy.enabled,
         notification_delivery_enabled = config.notification_delivery.enabled,
         log_level = %config.observability.log_level,
+        metrics = %config.observability.metrics,
         precedence = RuntimeConfig::precedence_summary(),
         "Starting Andromeda"
     );

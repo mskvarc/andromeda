@@ -2,6 +2,7 @@
 
 use andromeda_jsonld::error::JsonLdError;
 use andromeda_postgresql_context_store::error::ContextStoreError;
+use andromeda_postgresql_temporal_store::error::TemporalStoreError;
 use sqlx::{Error as SqlxError, migrate::MigrateError};
 use thiserror::Error;
 
@@ -20,6 +21,9 @@ pub(super) enum TenantAssemblyError {
     /// JSON-LD engine construction failed.
     #[error("tenant JSON-LD construction failed: {0}")]
     JsonLd(#[from] JsonLdError),
+    /// The temporal hypertables' storage policy could not be reconciled.
+    #[error("tenant temporal storage policy reconciliation failed: {0}")]
+    TemporalStoragePolicy(#[from] TemporalStoreError),
     /// A typed construction invariant could not be established.
     #[error("tenant runtime construction failed: {0}")]
     Invariant(String),

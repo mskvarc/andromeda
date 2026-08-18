@@ -5,14 +5,17 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::{UpdatedAttrs, payload_write},
     error::EntityError,
-    expanded_member::{extract_attribute_keys, unwrap_expanded_ref},
+    expanded_member::unwrap_expanded_ref,
     geo_property_geometry::validate_geo_property_geometries,
 };
 use andromeda_context_commit::history_record::mutation_history;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, mutation::entity::update_entity_attrs},
+    expanded::{
+        entity_member::{extract_attribute_names, extract_types},
+        mutation::entity::update_entity_attrs,
+    },
     notification::NotificationTrigger,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
@@ -36,7 +39,7 @@ impl EntityService {
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
-        let all_changed = extract_attribute_keys(&expanded);
+        let all_changed = extract_attribute_names(&expanded);
 
         let UpdatedAttrs {
             merged,
@@ -49,12 +52,12 @@ impl EntityService {
         } = self
             .commit_computed_write(&entity_uri, |previous| {
                 let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-                let attrs_before: HashSet<AttributeName> = extract_attribute_keys(previous).into_iter().collect();
+                let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
 
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 let not_updated = update_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded))?;
 
-                let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
+                let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
                 let deleted: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
 
                 let merged = Arc::new(existing);

@@ -16,6 +16,7 @@ use andromeda_temporal::{
     config::TemporalConfig,
     error::TemporalError,
     intent_drain::TemporalIntentDrain,
+    intent_retry_policy::TemporalIntentRetryPolicy,
     port::{
         mutation_barrier::TemporalMutationBarrier,
         pending_intent_reader::PendingTemporalIntentReader,
@@ -60,6 +61,14 @@ pub(super) fn register_temporal_intent_drain(
     let batch_size = NonZeroU32::new(config.intent_batch_size)
         .map(TemporalIntentBatchSize::new)
         .ok_or_else(|| TenantAssemblyError::invariant("temporal intent batch size must be non-zero"))?;
+    let stuck_after = NonZeroU32::new(config.intent_stuck_after_attempts)
+        .ok_or_else(|| TenantAssemblyError::invariant("temporal intent stuck threshold must be non-zero"))?;
+    let retry_policy = TemporalIntentRetryPolicy::new(
+        Duration::from_secs(config.intent_retry_secs),
+        Duration::from_secs(config.intent_retry_max_secs),
+        stuck_after,
+    )
+    .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let drain = Arc::new(TemporalIntentDrain::new(
         queue,
         pending,
@@ -67,7 +76,7 @@ pub(super) fn register_temporal_intent_drain(
         TemporalIntentLeaseOwner::mint(),
         batch_size,
         Duration::from_secs(config.intent_lease_secs),
-        Duration::from_secs(config.intent_retry_secs),
+        retry_policy,
     ));
     let scheduled_drain = Arc::clone(&drain);
     let name = TaskName::try_from("temporal-intent-delivery").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;

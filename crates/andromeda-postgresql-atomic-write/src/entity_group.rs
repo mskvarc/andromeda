@@ -84,26 +84,14 @@ pub(crate) fn delete_outcome(precondition: Precondition, deleted: Option<Deleted
 #[cfg(test)]
 mod tests {
     use crate::entity_group::{RowReturned, delete_outcome, group, insert_outcome, update_outcome};
-    use andromeda_context_commit::{
-        atomic_write::AtomicWrite,
-        entity_mutation::{EntityMutation, EntityRecord},
-        precondition::Precondition,
-    };
+    use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, precondition::Precondition};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::Utc;
     use serde_json::json;
     use std::sync::Arc;
 
     fn record() -> EntityRecord {
-        EntityRecord {
-            payload: Arc::new(json!([{"@id": "urn:ngsi-ld:A"}])),
-            types: Vec::new(),
-            scopes: Vec::new(),
-            location: None,
-            observation_space: None,
-            operation_space: None,
-            expires_at: None,
-        }
+        EntityRecord::from_expanded(Arc::new(json!([{"@id": "urn:ngsi-ld:A"}])))
     }
 
     fn write(id: &str, entity: EntityMutation) -> AtomicWrite {

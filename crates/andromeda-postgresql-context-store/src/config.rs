@@ -60,9 +60,10 @@ pub struct DatabaseConfig {
     /// Commit durability applied to each connection.
     #[config(env = "ANDROMEDA_DATABASE_SYNCHRONOUS_COMMIT", default = "off")]
     pub synchronous_commit: SynchronousCommit,
-    /// Populate the attribute-name cache at tenant startup.
-    #[config(env = "ANDROMEDA_DATABASE_PRELOAD_ATTRIBUTE_NAMES", default = true)]
-    pub preload_attribute_names: bool,
+    /// Populate the attribute-name and entity-type-name caches at tenant
+    /// startup.
+    #[config(env = "ANDROMEDA_DATABASE_PRELOAD_NAME_DICTIONARIES", default = true)]
+    pub preload_name_dictionaries: bool,
     /// Interval between JSON-LD hit-counter flushes.
     #[config(env = "ANDROMEDA_DATABASE_CONTEXT_HIT_FLUSH_SECS", default = 5)]
     pub context_hit_flush_secs: u64,
@@ -109,7 +110,7 @@ mod tests {
             url: "postgres://localhost/postgres".parse().expect("database URL"),
             max_connections: 1,
             synchronous_commit: SynchronousCommit::Off,
-            preload_attribute_names: true,
+            preload_name_dictionaries: true,
             context_hit_flush_secs: 0,
         };
         assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroContextHitFlushCadence));

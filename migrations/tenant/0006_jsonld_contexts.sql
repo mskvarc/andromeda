@@ -1,5 +1,5 @@
 -- ============================================================================
--- 005: JSON-LD Contexts
+-- 0006: JSON-LD Contexts
 -- ============================================================================
 -- Stores JSON-LD @context documents used by the broker for compaction and
 -- expansion (spec clause 5.2.19, operations 5.13.x).
@@ -12,23 +12,29 @@
 -- The broker resolves @context references by looking up contexts in this
 -- table. The url column is indexed with a UNIQUE constraint for fast
 -- deduplication of cached remote contexts.
+--
+-- `id` and `url` are identifiers compared for equality only, so both are
+-- `COLLATE "C"`: byte-wise comparison keeps their btrees free of any locale.
+-- The two JSONB documents are `COMPRESSION lz4`; a context is written once and
+-- read on every request that names it, and lz4 decompresses far faster than
+-- pglz for the same width.
 -- ============================================================================
 
 CREATE TABLE jsonld_contexts (
     -- Local identifier, e.g. "urn:ngsi-ld:Context:550e8400-e29b...".
     -- This is the primary identifier for API operations.
-    id TEXT PRIMARY KEY,
+    id TEXT COMPRESSION lz4 COLLATE "C" PRIMARY KEY,
 
     -- Original URL the context was fetched from.
     -- Nullable for Hosted or ImplicitlyCreated contexts without an origin.
     -- Unique constraint prevents double-caching the same URL.
-    url TEXT UNIQUE,
+    url TEXT COMPRESSION lz4 COLLATE "C" UNIQUE,
 
     -- Context kind
     kind jsonld_context_kind NOT NULL,
 
     -- The actual JSON-LD @context payload
-    payload JSONB NOT NULL,
+    payload JSONB COMPRESSION lz4 NOT NULL,
 
     -- Metadata required by spec
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -39,7 +45,7 @@ CREATE TABLE jsonld_contexts (
     expires_at TIMESTAMPTZ,
 
     -- Custom extra info, e.g. headers from the source
-    extra_info JSONB
+    extra_info JSONB COMPRESSION lz4
 );
 
 -- Fast filtering by kind (List operation)

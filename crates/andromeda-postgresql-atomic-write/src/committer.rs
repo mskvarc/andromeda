@@ -8,6 +8,7 @@ use crate::{
     entity_group::{EntityGroups, IndexedWrite, RowReturned, delete_outcome, group, insert_outcome, update_outcome},
     history,
     history_mode::TemporalHistoryCommitMode,
+    name_resolution::{ResolvedWriteNames, resolve_attribute_names, resolve_write_names},
     projection,
 };
 use andromeda_context_commit::{
@@ -20,10 +21,10 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
     write_record::WriteRecord,
 };
-use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_postgresql_attribute_dictionary::attribute_name_lookup::AttributeNameLookup;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::entity::{copy::create_batch_via_copy_in_tx, repo::EntityRepository, written_entity::WrittenEntity};
+use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
 use andromeda_temporal::append_intent::TemporalAppendIntent;
 use chrono::Utc;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -58,7 +59,9 @@ pub struct PostgresAtomicCommitter {
     /// Fused insert statement strategy.
     entity_insert_mode: EntityInsertMode,
     /// Dictionary the projection's attribute keys are minted through.
-    attribute_names: Arc<dyn AttributeNameLookup>,
+    attribute_names: Arc<dyn NameLookup<AttributeName>>,
+    /// Dictionary the entity rows' type keys are minted through.
+    entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
 }
 
 impl PostgresAtomicCommitter {
@@ -67,13 +70,15 @@ impl PostgresAtomicCommitter {
         pool: &PgPool,
         history_mode: TemporalHistoryCommitMode,
         entity_insert_mode: EntityInsertMode,
-        attribute_names: Arc<dyn AttributeNameLookup>,
+        attribute_names: Arc<dyn NameLookup<AttributeName>>,
+        entity_type_names: Arc<dyn NameLookup<EntityTypeName>>,
     ) -> PostgresAtomicCommitter {
         PostgresAtomicCommitter {
             pool: pool.clone(), // clone: SQLx pools are shared reference-counted handles.
             history_mode,
             entity_insert_mode,
             attribute_names,
+            entity_type_names,
         }
     }
 
@@ -88,12 +93,15 @@ impl PostgresAtomicCommitter {
         } = group(writes);
         let mut outcomes: Vec<Option<WriteOutcome>> = writes.iter().map(|_| None).collect();
         let mut keys: HashMap<Uri, EntityKey> = HashMap::new();
-        for index in untouched {
+        for &index in &untouched {
             outcomes[index] = Some(WriteOutcome::NoEntityChange);
         }
-        self.apply_inserts(tx, &inserts, &mut outcomes, &mut keys).await?;
-        self.apply_updates(tx, &updates, &mut outcomes, &mut keys).await?;
+        // Minted before the fused statements run: both bind the key arrays.
+        let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
+        self.apply_inserts(tx, &inserts, &names, &mut outcomes, &mut keys).await?;
+        self.apply_updates(tx, &updates, &names, &mut outcomes, &mut keys).await?;
         self.apply_deletes(tx, &deletes, &mut outcomes).await?;
+        resolve_untouched_keys(tx, writes, &untouched, &mut keys).await?;
         let outcomes = outcomes
             .into_iter()
             .enumerate()
@@ -111,13 +119,14 @@ impl PostgresAtomicCommitter {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         inserts: &[IndexedWrite<'_>],
+        names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
         keys: &mut HashMap<Uri, EntityKey>,
     ) -> Result<(), CommitError> {
         if inserts.is_empty() {
             return Ok(());
         }
-        let columns = columns_for(inserts)?;
+        let columns = columns_for(inserts, names)?;
         let inserted = match self.entity_insert_mode {
             EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, &columns).await,
             EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, &columns).await,
@@ -135,13 +144,14 @@ impl PostgresAtomicCommitter {
         &self,
         tx: &mut Transaction<'_, Postgres>,
         updates: &[IndexedWrite<'_>],
+        names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
         keys: &mut HashMap<Uri, EntityKey>,
     ) -> Result<(), CommitError> {
         if updates.is_empty() {
             return Ok(());
         }
-        let columns = columns_for(updates)?;
+        let columns = columns_for(updates, names)?;
         let expected = expectations(updates);
         let saved = EntityRepository::save_batch_in_tx(tx, &columns, &expected).await.map_err(context_store)?;
         record_keys(keys, saved);
@@ -177,6 +187,33 @@ impl PostgresAtomicCommitter {
         }
         Ok(())
     }
+}
+
+/// Fetch the surrogate keys of untouched writes that still carry history.
+///
+/// A write with `EntityMutation::None` runs no entity statement, so no
+/// statement returns its key — yet its history (a replayed batch of
+/// observations, say) is projected against exactly that key. Without this
+/// lookup the projection silently skips every such entity. Only writes with
+/// history are resolved; a bare no-op has nothing to project.
+async fn resolve_untouched_keys(
+    tx: &mut Transaction<'_, Postgres>,
+    writes: &[AtomicWrite],
+    untouched: &[usize],
+    keys: &mut HashMap<Uri, EntityKey>,
+) -> Result<(), CommitError> {
+    let ids: Vec<Uri> = untouched
+        .iter()
+        .map(|&index| &writes[index])
+        .filter(|write| !write.history.is_empty())
+        .map(|write| write.entity_id.as_ref().clone()) // clone: the SQL bind list owns identifiers borrowed from writes.
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let resolved = EntityRepository::keys_by_ids_in_tx(tx, &ids).await.map_err(context_store)?;
+    record_keys(keys, resolved);
+    Ok(())
 }
 
 /// Whether a fused statement returned an entity identifier.
@@ -259,7 +296,10 @@ impl PostgresAtomicCommitter {
             TemporalHistoryCommitMode::Native { recorder } => history::apply(recorder, &mut tx, &record, &intents).await?,
             TemporalHistoryCommitMode::Deferred { .. } => deferred_history::apply(&mut tx, &intents).await?,
         }
-        projection::apply(&mut tx, &intents, &keys, self.attribute_names.as_ref()).await?;
+        // Minted from the interpreted intents so the projection references
+        // only keys this transaction holds.
+        let attribute_keys = resolve_attribute_names(&mut tx, &intents, self.attribute_names.as_ref()).await?;
+        projection::apply(&mut tx, &intents, &keys, &attribute_keys).await?;
         let next = notification_events::apply(&mut tx, &landed, &record, next, self.attribute_names.as_ref()).await?;
         side_effects::apply(&mut tx, &landed, &record, next).await?;
 

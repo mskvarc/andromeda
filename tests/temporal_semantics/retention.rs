@@ -19,7 +19,8 @@ use crate::{
     stored_history::{stored_history, temporal_catalog_rows},
     unique_id,
 };
-use andromeda_postgresql_attribute_dictionary::attribute_name_cache::AttributeNameCache;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_postgresql_name_dictionary::name_cache::NameCache;
 use andromeda_postgresql_temporal_store::{
     bulk_write_mode::BulkWriteMode,
     repo::TemporalRepository,
@@ -89,14 +90,13 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
 
     // Storage the horizon ages out: a write recorded well behind it.
     let aged_write = Uuid::now_v7();
-    let aged_stream = Uuid::now_v7();
     let entity_key = seed_temporal_entity(&pool, &aged_id, "Sensor").await;
     let name_id = attribute_name_id(&pool, &attribute_iri("reading")).await;
-    seed_stream(&pool, aged_stream, entity_key, name_id).await;
+    let aged_stream = seed_stream(&pool, entity_key, name_id).await;
     seed_history_row(
         &pool,
         &SeededHistoryRow {
-            stream_id: aged_stream,
+            stream_key: aged_stream,
             recorded_at: Utc::now() - TimeDelta::days(AGED_DAYS),
             write_id: aged_write,
             generated_instance_uuid: Uuid::now_v7(),
@@ -108,7 +108,12 @@ async fn temporal_semantics_operator_retention_ages_storage_out_without_deletion
     assert_eq!(stored_history(&pool, &aged_id).await.len(), 1, "the aged fixture is in storage");
     let tombstones_before = tombstone_rows(&pool).await;
 
-    let repository = TemporalRepository::new(&pool, BulkWriteMode::Unnest, Arc::new(AttributeNameCache::new(&pool)));
+    let repository = TemporalRepository::new(
+        &pool,
+        BulkWriteMode::Unnest,
+        Arc::new(NameCache::<AttributeName>::new(&pool)),
+        Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+    );
     let horizon = TemporalRetentionHorizon::new(TimeDelta::days(RETENTION_DAYS)).expect("a positive retention horizon");
     let outcome = repository
         .sweep_retention(TemporalRetention::Enabled { horizon }, Utc::now())
@@ -165,7 +170,12 @@ async fn temporal_semantics_operator_retention_is_off_until_a_horizon_is_configu
     .await;
     assert_eq!(created, StatusCode::CREATED);
 
-    let repository = TemporalRepository::new(&pool, BulkWriteMode::Unnest, Arc::new(AttributeNameCache::new(&pool)));
+    let repository = TemporalRepository::new(
+        &pool,
+        BulkWriteMode::Unnest,
+        Arc::new(NameCache::<AttributeName>::new(&pool)),
+        Arc::new(NameCache::<EntityTypeName>::new(&pool)),
+    );
     let outcome = repository
         .sweep_retention(TemporalRetention::Disabled, Utc::now())
         .await

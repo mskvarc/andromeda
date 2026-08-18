@@ -32,6 +32,7 @@ pub mod pg_operator;
 pub mod pg_type;
 pub mod placeholder;
 pub mod postgis;
+pub mod queue;
 pub mod timescale;
 pub mod unnest;
 

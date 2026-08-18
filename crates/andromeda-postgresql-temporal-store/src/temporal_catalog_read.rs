@@ -9,8 +9,9 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_postgresql_query::entity_type_names::type_names_of;
 use andromeda_postgresql_schema::{
-    attribute_dictionary::AttributeNames,
+    name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
@@ -71,12 +72,12 @@ impl TemporalRepository {
                 .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.id '{raw_id}': {error}")))?;
             let raw_types: Vec<String> = row
                 .try_get("types")
-                .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.types: {error}")))?;
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid temporal_entities.type_ids names: {error}")))?;
             let types = raw_types
                 .into_iter()
                 .map(|raw| {
                     raw.parse::<EntityTypeName>()
-                        .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.types entry '{raw}': {error}")))
+                        .map_err(|error| TemporalStoreError::Decode(format!("temporal_entities.type_ids name '{raw}': {error}")))
                 })
                 .collect::<Result<Vec<EntityTypeName>, TemporalStoreError>>()?;
             types_by_entity.insert(entity_id, types);
@@ -165,12 +166,12 @@ impl TemporalRepository {
         let (select_sql, select_values) =
             select_attribute_streams_query(entity_id.as_str(), attribute_name.as_str(), dataset_selector).build_sqlx(PostgresQueryBuilder);
         let mut tx = self.pool.begin().await?;
-        let stream_ids: Vec<Uuid> = sqlx::query_scalar_with(AssertSqlSafe(select_sql), select_values).fetch_all(&mut *tx).await?;
-        if stream_ids.is_empty() {
+        let stream_keys: Vec<i64> = sqlx::query_scalar_with(AssertSqlSafe(select_sql), select_values).fetch_all(&mut *tx).await?;
+        if stream_keys.is_empty() {
             tx.rollback().await?;
             return Ok(0);
         }
-        let (history_sql, history_values) = delete_stream_history_query(&stream_ids).build_sqlx(PostgresQueryBuilder);
+        let (history_sql, history_values) = delete_stream_history_query(&stream_keys).build_sqlx(PostgresQueryBuilder);
         let removed = sqlx::query_with(AssertSqlSafe(history_sql), history_values).fetch_all(&mut *tx).await?;
         let touched_writes = removed
             .iter()
@@ -179,7 +180,7 @@ impl TemporalRepository {
                     .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.write_id: {error}")))
             })
             .collect::<Result<Vec<Uuid>, _>>()?;
-        let (streams_sql, streams_values) = delete_streams_query(&stream_ids).build_sqlx(PostgresQueryBuilder);
+        let (streams_sql, streams_values) = delete_streams_query(&stream_keys).build_sqlx(PostgresQueryBuilder);
         let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
             .execute(&mut *tx)
             .await?
@@ -201,12 +202,12 @@ enum DatasetSelector<'a> {
     Default,
 }
 
-/// A bound `uuid[]` value from a batch of stream identifiers.
+/// A bound `bigint[]` value from a batch of stream keys.
 ///
 /// The array value owns its elements, so the slice is copied: a bound parameter
 /// cannot borrow from the caller's slice across the round trip.
-fn uuid_array(ids: &[Uuid]) -> sea_query::SimpleExpr {
-    Expr::val(ids.to_vec())
+fn stream_key_array(keys: &[i64]) -> sea_query::SimpleExpr {
+    Expr::val(keys.to_vec())
 }
 
 /// Join a stream to its temporal entity and its attribute name.
@@ -243,10 +244,12 @@ fn temporal_entity_exists_query(entity_id: &str) -> SelectStatement {
     statement
 }
 
-/// The identifier and types of every entity in `ids`.
+/// The identifier and type IRIs of every entity in `ids`, the IRIs read back
+/// through the type dictionary in stored order under the `types` column.
 fn temporal_entity_types_query(ids: &[&str]) -> SelectStatement {
     Query::select()
-        .columns([TemporalEntities::Id, TemporalEntities::Types])
+        .column(TemporalEntities::Id)
+        .expr_as(type_names_of(Expr::col(TemporalEntities::TypeIds)), Alias::new("types"))
         .from(TemporalEntities::Table)
         .and_where(Expr::col(TemporalEntities::Id).eq(any(text_array(ids))))
         .to_owned()
@@ -293,7 +296,7 @@ fn temporal_attribute_names_query(entity_id: &str) -> SelectStatement {
 /// a sentinel value, so a stream with no dataset is matched by `IS NULL`.
 fn select_attribute_streams_query(entity_id: &str, attribute_name: &str, dataset: DatasetSelector<'_>) -> SelectStatement {
     let mut statement = Query::select();
-    statement.column((S, TemporalAttributeStreams::Id));
+    statement.column((S, TemporalAttributeStreams::StreamKey));
     stream_catalog_join(&mut statement);
     statement
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(entity_id))
@@ -313,19 +316,19 @@ fn select_attribute_streams_query(entity_id: &str, attribute_name: &str, dataset
 
 /// Remove every observation of the addressed streams, returning the write
 /// identity each removed row belonged to.
-fn delete_stream_history_query(stream_ids: &[Uuid]) -> DeleteStatement {
+fn delete_stream_history_query(stream_keys: &[i64]) -> DeleteStatement {
     Query::delete()
         .from_table(AttributeHistory::Table)
-        .and_where(Expr::col(AttributeHistory::StreamId).eq(any(uuid_array(stream_ids))))
+        .and_where(Expr::col(AttributeHistory::StreamKey).eq(any(stream_key_array(stream_keys))))
         .returning_col(AttributeHistory::WriteId)
         .to_owned()
 }
 
 /// Remove the addressed streams themselves.
-fn delete_streams_query(stream_ids: &[Uuid]) -> DeleteStatement {
+fn delete_streams_query(stream_keys: &[i64]) -> DeleteStatement {
     Query::delete()
         .from_table(TemporalAttributeStreams::Table)
-        .and_where(Expr::col(TemporalAttributeStreams::Id).eq(any(uuid_array(stream_ids))))
+        .and_where(Expr::col(TemporalAttributeStreams::StreamKey).eq(any(stream_key_array(stream_keys))))
         .to_owned()
 }
 
@@ -342,7 +345,6 @@ mod tests {
         temporal_entity_exists_query,
     };
     use sea_query::PostgresQueryBuilder;
-    use uuid::Uuid;
 
     fn read_sql() -> Vec<String> {
         vec![
@@ -378,8 +380,8 @@ mod tests {
 
     #[test]
     fn attribute_deletion_removes_the_observations_before_the_stream_holding_them() {
-        let history = delete_stream_history_query(&[Uuid::nil()]).to_string(PostgresQueryBuilder);
-        let streams = delete_streams_query(&[Uuid::nil()]).to_string(PostgresQueryBuilder);
+        let history = delete_stream_history_query(&[1]).to_string(PostgresQueryBuilder);
+        let streams = delete_streams_query(&[1]).to_string(PostgresQueryBuilder);
         assert!(history.starts_with("DELETE FROM \"attribute_history\""), "{history}");
         assert!(history.contains("RETURNING \"write_id\""), "{history}");
         assert!(streams.starts_with("DELETE FROM \"temporal_attribute_streams\""), "{streams}");
@@ -387,7 +389,7 @@ mod tests {
 
     #[test]
     fn attribute_deletion_records_no_tombstone() {
-        for statement in [delete_stream_history_query(&[Uuid::nil()]), delete_streams_query(&[Uuid::nil()])] {
+        for statement in [delete_stream_history_query(&[1]), delete_streams_query(&[1])] {
             let sql = statement.to_string(PostgresQueryBuilder);
             assert!(!sql.contains("INSERT"), "{sql}");
             assert!(!sql.contains("deleted_at"), "{sql}");

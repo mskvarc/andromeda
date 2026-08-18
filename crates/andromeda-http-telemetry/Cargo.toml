@@ -1,0 +1,22 @@
+[package]
+name = "andromeda-http-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-telemetry.workspace = true
+axum = "0.8.9"
+mediatype = "0.23.0"
+thiserror = "2.0.20"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+metrics = "0.24.6"
+pretty_assertions = "1.4.1"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tower = { version = "0.5.3", features = ["util"] }

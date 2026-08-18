@@ -4,6 +4,12 @@
 
 /// Shared compiled subscription cache.
 pub mod cache;
+/// The outcome of one matching pass.
+pub mod candidate_funnel;
+/// The routing index over active subscriptions.
+pub mod candidate_index;
+#[cfg(test)]
+mod candidate_index_property;
 /// Subscription lifecycle change values.
 pub mod change;
 /// Subscription compilation policy.
@@ -24,15 +30,19 @@ mod fields;
 pub mod lifecycle;
 /// In-memory subscription matching policy.
 pub mod matching;
+/// The reverse map from a subscription to its index buckets.
+pub mod membership;
 mod normalization;
+/// How selectors are placed into the candidate index.
+pub mod selector_routing;
+/// Spatial-index narrowing of matched subscriptions.
+pub mod spatial_narrowing;
 /// Subscription lifecycle status transitions.
 pub mod status;
 /// Subscription persistence ports and write values.
 pub mod store;
 /// A stored Subscription paired with its surrogate key.
 pub mod stored_subscription;
-/// The surrogate key a stored Subscription is referenced by.
-pub mod subscription_key;
 /// Throttling-window arithmetic.
 pub mod throttle;
 mod validation;
@@ -50,6 +60,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-spatial-index",
+        "andromeda-telemetry",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [

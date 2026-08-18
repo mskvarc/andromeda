@@ -77,8 +77,6 @@ impl ProjectedAttributeValue {
 pub struct ProjectedAttributeRow {
     /// The instance this row projects.
     pub key: ProjectedAttributeKey,
-    /// The instant the entity mutation that wrote this value took effect.
-    pub modified_at: DateTime<Utc>,
     /// The NGSI-LD attribute family the instance was written as (clause 5.2.4).
     pub attribute_kind: AttributeKind,
     /// The value the instance currently holds.

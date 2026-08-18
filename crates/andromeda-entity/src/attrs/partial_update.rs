@@ -5,14 +5,18 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
-    expanded_member::{attr_name_of, extract_attribute_keys, unwrap_expanded_ref},
+    expanded_member::{attr_name_of, unwrap_expanded_ref},
     geo_property_geometry::validate_geo_property_geometries,
 };
 use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, instance_key::attribute_instance_family, mutation::attribute::partial_update_attr},
+    expanded::{
+        entity_member::{extract_attribute_names, extract_types},
+        instance_key::attribute_instance_family,
+        mutation::attribute::partial_update_attr,
+    },
     notification::NotificationTrigger,
 };
 use serde_json::Value;
@@ -50,14 +54,14 @@ impl EntityService {
         } = self
             .commit_computed_write(&entity_uri, |previous| {
                 let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-                let attrs_before: HashSet<AttributeName> = extract_attribute_keys(previous).into_iter().collect();
+                let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
 
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 partial_update_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
                 // A null sentinel in the fragment deletes the attribute rather
                 // than updating it, which the diff is the only way to tell.
-                let attrs_after: HashSet<AttributeName> = extract_attribute_keys(&existing).into_iter().collect();
+                let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
                 let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
 
                 let (history, trigger) = if was_deleted {

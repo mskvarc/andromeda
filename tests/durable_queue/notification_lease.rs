@@ -27,9 +27,6 @@ use tokio::time::sleep;
 /// Deliveries claimed per pass, larger than any fixture in this module.
 const BATCH_SIZE: i32 = 10;
 
-/// The attempt ceiling the queue's partial claim index carries.
-const MAX_ATTEMPTS: i32 = 5;
-
 /// The claim triple one delivery row currently holds.
 async fn claim_triple(pool: &PgPool, delivery: i64) -> (Option<DateTime<Utc>>, Option<String>, Option<DateTime<Utc>>) {
     sqlx::query_as("SELECT claimed_at, claimed_by, lease_until FROM notification_deliveries WHERE id = $1")
@@ -49,17 +46,11 @@ async fn durable_queue_a_due_delivery_is_leased_to_exactly_one_worker() {
 
     let first = delivery_worker();
     let second = delivery_worker();
-    let claimed = queue
-        .claim_pending(&first, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
-        .await
-        .expect("first claim");
+    let claimed = queue.claim_pending(&first, holding_lease(), BATCH_SIZE).await.expect("first claim");
     assert_eq!(claimed.len(), 1, "the due delivery must be leased to the first worker");
     assert_eq!(claimed[0].id, DeliveryId::from(delivery));
 
-    let contended = queue
-        .claim_pending(&second, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
-        .await
-        .expect("second claim");
+    let contended = queue.claim_pending(&second, holding_lease(), BATCH_SIZE).await.expect("second claim");
     assert!(contended.is_empty(), "a live lease must exclude every other worker");
 
     let (claimed_at, claimed_by, lease_until) = claim_triple(&pool, delivery).await;
@@ -83,10 +74,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
     let queue = NotificationDeliveryQueue::new(&pool);
 
     let stale = delivery_worker();
-    let claimed = queue
-        .claim_pending(&stale, expiring_lease(), BATCH_SIZE, MAX_ATTEMPTS)
-        .await
-        .expect("first claim");
+    let claimed = queue.claim_pending(&stale, expiring_lease(), BATCH_SIZE).await.expect("first claim");
     assert_eq!(claimed.len(), 1);
 
     // The lease is the shortest the term type accepts, so waiting past it is
@@ -95,7 +83,7 @@ async fn durable_queue_a_stale_worker_cannot_acknowledge_a_reclaimed_delivery() 
 
     let reclaiming = delivery_worker();
     let reclaimed = queue
-        .claim_pending(&reclaiming, holding_lease(), BATCH_SIZE, MAX_ATTEMPTS)
+        .claim_pending(&reclaiming, holding_lease(), BATCH_SIZE)
         .await
         .expect("reclaim after expiry");
     assert_eq!(reclaimed.len(), 1, "an expired lease makes the delivery claimable again");

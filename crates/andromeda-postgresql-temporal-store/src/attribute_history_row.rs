@@ -2,7 +2,7 @@
 
 use crate::{attribute_history_value::AttributeHistoryValue, error::TemporalStoreError, semantic_time_axes::SemanticTimeAxes};
 use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::StreamId};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey};
 use andromeda_temporal::append_intent::TemporalObservationIdentity;
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use chrono::{DateTime, Utc};
@@ -28,7 +28,7 @@ pub struct AttributeHistoryRow {
     /// The atomic write that produced this row, and this row's place in it.
     pub identity: TemporalObservationIdentity,
     /// The stream this observation extends.
-    pub stream_id: StreamId,
+    pub stream_key: StreamKey,
     /// The attribute family the row was written as.
     ///
     /// Recorded per row rather than per stream so that an attribute whose type
@@ -73,7 +73,7 @@ mod tests {
     use crate::{attribute_history_row::AttributeHistoryRow, attribute_history_value::AttributeHistoryValue, semantic_time_axes::SemanticTimeAxes};
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
     use andromeda_ngsi_ld_lexicon::instance_identity::InstanceIdentity;
-    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::StreamId};
+    use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey};
     use andromeda_temporal::append_intent::TemporalObservationIdentity;
     use chrono::{TimeZone, Utc};
     use uuid::Uuid;
@@ -85,7 +85,7 @@ mod tests {
                 write_id: WriteId::from_uuid(Uuid::nil()),
                 ordinal,
             },
-            stream_id: StreamId::from(Uuid::nil()),
+            stream_key: StreamKey::try_from(1).expect("positive"),
             attribute_kind: AttributeKind::Property,
             value: AttributeHistoryValue::Boolean(true),
             axes: SemanticTimeAxes::default(),

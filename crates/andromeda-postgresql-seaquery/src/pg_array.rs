@@ -18,6 +18,37 @@ pub fn array_of_subquery(subquery: SelectStatement) -> SimpleExpr {
 #[iden = "ANY"]
 struct AnyQuantifier;
 
+/// The `array_position` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "array_position"]
+struct ArrayPosition;
+
+/// `array_position(array, element)` - the one-based position of the first
+/// occurrence of `element` in `array`, or NULL when it is absent.
+///
+/// The ordering key that reads a dictionary-keyed array back in its stored
+/// order: a subquery over the dictionary is sorted by each key's position in
+/// the row's own array, so a rendered type list comes back in the order the
+/// entity declared it.
+pub fn array_position(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
+    Func::cust(ArrayPosition).args([array, element]).into()
+}
+
+/// The `array_append` function.
+#[derive(Iden, Clone, Copy)]
+#[iden = "array_append"]
+struct ArrayAppend;
+
+/// `array_append(array, element)` - `array` with `element` added at its end.
+///
+/// The way a routing predicate names a sentinel beside the values it resolved:
+/// an overlap against `array_append(ARRAY(<resolved keys>), 0)` admits both the
+/// rows declaring one of the keys and the rows whose stored set is the
+/// wildcard `{0}`, in one operator a GIN index serves.
+pub fn array_append(array: SimpleExpr, element: SimpleExpr) -> SimpleExpr {
+    Func::cust(ArrayAppend).args([array, element]).into()
+}
+
 /// `ARRAY(subquery)` - the array-valued subquery constructor, which collects a
 /// single-column result set into one Postgres array.
 ///
@@ -50,11 +81,23 @@ pub fn text_array(values: &[&str]) -> SimpleExpr {
 
 #[cfg(test)]
 mod tests {
-    use crate::pg_array::{any, array_subquery};
+    use crate::pg_array::{any, array_append, array_position, array_subquery};
     use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn render_expr(expr: SimpleExpr) -> String {
         Query::select().expr(expr).to_owned().to_string(PostgresQueryBuilder)
+    }
+
+    #[test]
+    fn array_position_renders_the_two_argument_function() {
+        let sql = render_expr(array_position(Expr::col(Alias::new("type_ids")), Expr::col(Alias::new("id"))));
+        assert_eq!(sql, "SELECT array_position(\"type_ids\", \"id\")");
+    }
+
+    #[test]
+    fn array_append_renders_the_two_argument_function() {
+        let sql = render_expr(array_append(Expr::col(Alias::new("keys")), Expr::val(0)));
+        assert_eq!(sql, "SELECT array_append(\"keys\", 0)");
     }
 
     #[test]

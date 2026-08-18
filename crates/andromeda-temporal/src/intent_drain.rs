@@ -2,6 +2,7 @@
 
 use crate::{
     error::TemporalError,
+    intent_retry_policy::TemporalIntentRetryPolicy,
     port::{
         mutation_barrier::TemporalMutationBarrier,
         pending_intent_reader::PendingTemporalIntentReader,
@@ -9,7 +10,9 @@ use crate::{
         temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue, TemporalIntentRetry},
     },
 };
+use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use async_lock::Mutex;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, Utc};
@@ -22,6 +25,9 @@ pub struct TemporalIntentDrainOutcome {
     pub acknowledged: usize,
     /// Intents retained with retry metadata after sink rejection.
     pub retried: usize,
+    /// Intents whose lease had lapsed before their outcome could be recorded,
+    /// left to the worker that now holds them.
+    pub lease_lost: usize,
     /// Whether a full claim indicates more durable work may remain.
     pub work_may_remain: bool,
 }
@@ -40,8 +46,8 @@ pub struct TemporalIntentDrain {
     batch_size: TemporalIntentBatchSize,
     /// Claim lease duration.
     lease_duration: Duration,
-    /// Base delay multiplied by the next attempt number.
-    retry_delay: Duration,
+    /// How a rejected intent is rescheduled and when it is reported as stuck.
+    retry_policy: TemporalIntentRetryPolicy,
     /// Executor-independent gate preventing scheduled and request-driven passes from overlapping.
     execution_gate: Mutex<()>,
 }
@@ -55,7 +61,7 @@ impl TemporalIntentDrain {
         owner: TemporalIntentLeaseOwner,
         batch_size: TemporalIntentBatchSize,
         lease_duration: Duration,
-        retry_delay: Duration,
+        retry_policy: TemporalIntentRetryPolicy,
     ) -> TemporalIntentDrain {
         TemporalIntentDrain {
             queue,
@@ -64,7 +70,7 @@ impl TemporalIntentDrain {
             owner,
             batch_size,
             lease_duration,
-            retry_delay,
+            retry_policy,
             execution_gate: Mutex::new(()),
         }
     }
@@ -83,34 +89,76 @@ impl TemporalIntentDrain {
         let work_may_remain = claimed.len() == usize::try_from(self.batch_size.get()).unwrap_or(usize::MAX);
         let mut acknowledged = 0usize;
         let mut retried = 0usize;
+        let mut lease_lost = 0usize;
         for claim in claimed {
-            match self.sink.append(&claim.pending.intent).await {
-                Ok(()) => {
-                    self.queue.acknowledge(self.owner, &claim.pending).await?;
-                    acknowledged += 1;
-                }
+            let (recorded, delivery) = match self.sink.append(&claim.pending.intent).await {
+                Ok(()) => (self.queue.acknowledge(self.owner, &claim.pending).await?, Delivery::Landed),
                 Err(error) => {
-                    let retry_at = retry_at(now, self.retry_delay, claim.attempts)?;
-                    self.queue
-                        .retry(
-                            self.owner,
-                            &claim.pending,
-                            TemporalIntentRetry {
-                                eligible_at: retry_at,
-                                summary: error.to_string(),
-                            },
-                        )
-                        .await?;
-                    retried += 1;
+                    self.report_if_stuck(&claim, &error);
+                    let retry = TemporalIntentRetry {
+                        eligible_at: self.retry_policy.retry_at(now, claim.attempts)?,
+                        summary: TemporalIntentRetryPolicy::summary(&error),
+                    };
+                    (self.queue.retry(self.owner, &claim.pending, retry).await?, Delivery::Rejected)
                 }
-            }
+            };
+            let outcome = match (recorded, delivery) {
+                (LeaseAcknowledgement::Applied, Delivery::Landed) => {
+                    acknowledged += 1;
+                    QueueOutcome::Completed
+                }
+                (LeaseAcknowledgement::Applied, Delivery::Rejected) => {
+                    retried += 1;
+                    QueueOutcome::Retried
+                }
+                (LeaseAcknowledgement::Lost, Delivery::Landed | Delivery::Rejected) => {
+                    lease_lost += 1;
+                    QueueOutcome::LeaseLost
+                }
+            };
+            record_queue_outcome(QueueName::TemporalAppendIntents, outcome, 1);
         }
         Ok(TemporalIntentDrainOutcome {
             acknowledged,
             retried,
+            lease_lost,
             work_may_remain,
         })
     }
+}
+
+impl TemporalIntentDrain {
+    /// Report an intent whose attempt count has reached the stuck threshold.
+    ///
+    /// There is no dead-letter for a temporal append intent: it is the durable
+    /// record of history the broker accepted, so it stays claimable and is
+    /// reported, never discarded.
+    fn report_if_stuck(&self, claim: &ClaimedTemporalAppendIntent, error: &TemporalError) {
+        // The attempt that just failed completes; the row reports the count
+        // before it.
+        let attempts = claim.attempts.saturating_add(1);
+        if !self.retry_policy.is_stuck(attempts) {
+            return;
+        }
+        tracing::warn!(
+            sequence = %claim.pending.sequence,
+            write_id = %claim.pending.intent.record.write_id(),
+            entity_id = %claim.pending.intent.entity_id,
+            attempts,
+            %error,
+            event = "temporal_intent_stuck"
+        );
+        record_queue_outcome(QueueName::TemporalAppendIntents, QueueOutcome::Stuck, 1);
+    }
+}
+
+/// Whether the sink accepted one claimed intent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Delivery {
+    /// The sink confirmed the intent durable.
+    Landed,
+    /// The sink rejected the intent and it is rescheduled.
+    Rejected,
 }
 
 #[async_trait]
@@ -131,19 +179,11 @@ impl TemporalMutationBarrier for TemporalIntentDrain {
             return Err(TemporalError::persistence("pending temporal history is leased by another delivery owner"));
         }
         let outcome = self.process_claimed(claimed, now).await?;
-        if outcome.retried > 0 || !self.pending.pending_for_entity(entity_id).await?.is_empty() {
+        if outcome.retried > 0 || outcome.lease_lost > 0 || !self.pending.pending_for_entity(entity_id).await?.is_empty() {
             return Err(TemporalError::persistence(
                 "pending temporal history remains after the bounded mutation barrier",
             ));
         }
         Ok(())
     }
-}
-
-/// Calculate the next eligible claim time from the completed-attempt count.
-fn retry_at(now: DateTime<Utc>, base: Duration, attempts: u32) -> Result<DateTime<Utc>, TemporalError> {
-    let multiplier = attempts.saturating_add(1);
-    let delay = base.saturating_mul(multiplier);
-    let delay = TimeDelta::from_std(delay).map_err(|error| TemporalError::internal(format!("temporal intent retry delay is out of range: {error}")))?;
-    Ok(now + delay)
 }

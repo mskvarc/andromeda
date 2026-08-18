@@ -20,7 +20,7 @@ use andromeda_ngsi_ld_query::{
     temporal::{compiled::CompiledTemporalQuery, window::TimeInterval},
 };
 use andromeda_postgresql_schema::{
-    attribute_dictionary::AttributeNames,
+    name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::{
@@ -97,7 +97,7 @@ pub(crate) fn base_history_source(select: &mut SelectStatement) {
             JoinType::Join,
             TemporalAttributeStreams::Table,
             S,
-            Expr::col((S, TemporalAttributeStreams::Id)).equals((Ah, AttributeHistory::StreamId)),
+            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
         )
         .join_as(
             JoinType::Join,
@@ -123,7 +123,7 @@ pub(crate) fn base_history_source(select: &mut SelectStatement) {
 fn project_base_columns(select: &mut SelectStatement) {
     for column in [
         AttributeHistory::RecordedAt,
-        AttributeHistory::StreamId,
+        AttributeHistory::StreamKey,
         AttributeHistory::AttributeKind,
         AttributeHistory::ValueKind,
         AttributeHistory::ObservedAt,
@@ -162,7 +162,7 @@ fn build_history_query(compiled: &CompiledTemporalQuery, condition: Condition) -
         // `(recorded_at, write_id, write_ordinal)` is the hypertable's unique
         // key, so it separates every pair of rows, including two instances that
         // share a value on the requested axis.
-        let mut rank_window = WindowStatement::partition_by((Ah, AttributeHistory::StreamId));
+        let mut rank_window = WindowStatement::partition_by((Ah, AttributeHistory::StreamKey));
         rank_window
             .order_by((Ah, axis), Order::Desc)
             .order_by((Ah, AttributeHistory::RecordedAt), Order::Desc)
@@ -174,7 +174,7 @@ fn build_history_query(compiled: &CompiledTemporalQuery, condition: Condition) -
         ranked.expr_window_as(row_number(), rank_window, Alias::new("rn"));
         ranked.expr_window_as(
             count_all(),
-            WindowStatement::partition_by((Ah, AttributeHistory::StreamId)),
+            WindowStatement::partition_by((Ah, AttributeHistory::StreamKey)),
             Alias::new("partition_total"),
         );
         base_history_source(&mut ranked);
@@ -262,7 +262,7 @@ mod tests {
     fn history_reaches_the_entity_through_the_temporal_catalogue() {
         let sql = sql_of(&minimal_compiled());
         assert!(
-            sql.contains("JOIN \"temporal_attribute_streams\" AS \"s\" ON \"s\".\"id\" = \"ah\".\"stream_id\""),
+            sql.contains("JOIN \"temporal_attribute_streams\" AS \"s\" ON \"s\".\"stream_key\" = \"ah\".\"stream_key\""),
             "{sql}"
         );
         assert!(
@@ -330,7 +330,7 @@ mod tests {
         compiled.instances.last_n = Some(5);
         let sql = sql_of(&compiled);
         assert!(sql.contains("ROW_NUMBER()"), "{sql}");
-        assert!(sql.contains("PARTITION BY \"ah\".\"stream_id\""), "{sql}");
+        assert!(sql.contains("PARTITION BY \"ah\".\"stream_key\""), "{sql}");
         assert!(sql.contains("\"ah\".\"write_ordinal\" DESC"), "{sql}");
     }
 

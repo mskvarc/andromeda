@@ -212,7 +212,7 @@ pub fn print_effective_reported(config_file: &Path, format: ConfigurationOutputF
 
 #[cfg(test)]
 mod tests {
-    use crate::config::observability::LogLevel;
+    use crate::config::observability::{LogLevel, MetricsExposure};
     use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
     use andromeda_federation::config::FederationConfig;
     use andromeda_http_server::config::ServerConfig;
@@ -258,7 +258,7 @@ mod tests {
                 url: "postgres://postgres:postgres@localhost:5432/postgres".parse().expect("database URL"),
                 max_connections: 32,
                 synchronous_commit: SynchronousCommit::Off,
-                preload_attribute_names: true,
+                preload_name_dictionaries: true,
                 context_hit_flush_secs: 5,
             },
             jsonld: JsonLdConfig {
@@ -278,6 +278,10 @@ mod tests {
                 intent_batch_size: 64,
                 intent_lease_secs: 30,
                 intent_retry_secs: 2,
+                intent_retry_max_secs: 300,
+                intent_stuck_after_attempts: 10,
+                chunk_interval_days: None,
+                columnstore_after_days: None,
                 retention_horizon_days: None,
                 retention_sweep_interval_secs: 3600,
             },
@@ -307,6 +311,8 @@ mod tests {
                 pending_side_effects_batch_size: 32,
                 pending_side_effects_max_attempts: 5,
                 pending_side_effects_base_backoff_secs: 2,
+                pending_side_effects_dead_letter_after_secs: 604_800,
+                pending_side_effects_cleanup_interval_secs: 300,
             },
             federation: FederationConfig { forward_concurrency: 16 },
             postgresql_write: AtomicWriteConfig {
@@ -319,6 +325,7 @@ mod tests {
                 base_backoff_secs: 5,
                 poll_interval_secs: 1,
                 batch_size: 50,
+                concurrency: 20,
                 lease_secs: 30,
                 error_max_chars: 1024,
                 cleanup_after_secs: 86400,
@@ -341,7 +348,10 @@ mod tests {
                 change_channel_capacity: 65_536,
                 lag_log_interval_secs: 5,
             },
-            observability: ObservabilityConfig { log_level: LogLevel::Info },
+            observability: ObservabilityConfig {
+                log_level: LogLevel::Info,
+                metrics: MetricsExposure::Disabled,
+            },
         }
     }
 

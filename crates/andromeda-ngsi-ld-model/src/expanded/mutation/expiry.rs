@@ -1,7 +1,6 @@
 //! Removing attribute instances whose `expiresAt` has passed (clause 4.22).
 
-use crate::expanded::node::expanded_object_mut;
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
+use crate::expanded::{attribute_expiry::instance_expires_at, node::expanded_object_mut};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -55,14 +54,7 @@ pub fn remove_expired_attribute_instances(entity: &mut Value, cutoff: DateTime<U
 
 /// Whether one attribute instance carries an `expiresAt` at or before `cutoff`.
 fn has_passed(instance: &Value, cutoff: DateTime<Utc>) -> bool {
-    instance
-        .get(properties::EXPIRES_AT.as_str())
-        .and_then(Value::as_array)
-        .and_then(|values| values.first())
-        .and_then(|value| value.get("@value"))
-        .and_then(Value::as_str)
-        .and_then(|raw| DateTime::parse_from_rfc3339(raw).ok())
-        .is_some_and(|expires_at| expires_at.with_timezone(&Utc) <= cutoff)
+    instance_expires_at(instance).is_some_and(|expires_at| expires_at <= cutoff)
 }
 
 #[cfg(test)]

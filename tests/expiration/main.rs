@@ -402,6 +402,22 @@ async fn expiration_worker_partial_multi_instance_expired_instance_removed() {
     let body = fetch(client, &id, "options=sysAttrs").await;
     let speed = body["speed"].as_array().expect("speed must be multi-instance array");
     assert_eq!(speed.len(), 2, "expired instance must be removed");
+
+    // The sweep found the entity through the earliest instance expiry the
+    // write path records on its row; after the purge that record must have
+    // moved on to the surviving instance's expiry, or the next sweep would
+    // read the entity as due again.
+    let recorded: Option<String> =
+        sqlx::query_scalar("SELECT to_char(min_attribute_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') FROM entities WHERE id = $1")
+            .bind(&id)
+            .fetch_one(scope.database_pool())
+            .await
+            .expect("the entity row must be readable");
+    assert_eq!(
+        recorded.as_deref(),
+        Some("2099-12-31T23:59:59Z"),
+        "the recorded minimum must be the surviving instance's expiry"
+    );
     scope.finish().await.expect("cleanup failed");
 }
 

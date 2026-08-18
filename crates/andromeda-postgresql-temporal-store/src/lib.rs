@@ -51,6 +51,8 @@ pub mod recorder;
 pub mod repo;
 /// Operator retention: ageing temporal storage out without NGSI-LD semantics.
 pub mod retention_sweep;
+/// TimescaleDB procedural DDL SeaQuery has no form for.
+pub mod schema_ddl;
 /// One scope observation offered to the scope-history bulk insert.
 pub mod scope_history_entry;
 /// The value one scope-history row carries.
@@ -59,6 +61,8 @@ pub mod scope_history_value;
 pub mod scope_history_write;
 /// The NGSI-LD time axes a stored temporal row carries besides its write clock.
 pub mod semantic_time_axes;
+/// Reconciling the temporal hypertables' storage policy with configuration.
+pub mod storage_policy;
 /// The JSON number a stored `NUMERIC` column names.
 pub(crate) mod stored_decimal;
 /// Splitting one stored instance identity across its two history columns.
@@ -93,13 +97,14 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-vocabulary",
-        "andromeda-postgresql-attribute-dictionary",
+        "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-query",
+        "andromeda-telemetry",
         "andromeda-temporal",
         "andromeda-unit-catalog",
     ],

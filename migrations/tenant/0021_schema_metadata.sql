@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0034: Per-tenant schema contract singleton
+-- 0021: Per-tenant schema contract singleton
 -- ============================================================================
 -- Database-per-tenant means the schema exists in as many copies as there are
 -- tenants, and every copy can drift: a migration that fails mid-fleet, a tenant

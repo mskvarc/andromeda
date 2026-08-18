@@ -124,7 +124,7 @@ async fn the_routing_projection_refuses_an_operation_number_no_release_assigned(
 
     let highest = CsrOperationCode::ALL.last().expect("the operation registry is not empty").code();
     let unassigned = highest + 1;
-    let refused = sqlx::query("INSERT INTO registration_information (registration_id, entity_types, operations) VALUES ($1, ARRAY['https://example.test/Device'], ARRAY[$2::SMALLINT])")
+    let refused = sqlx::query("INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_ids, relationship_name_ids, operations) VALUES ($1, ARRAY['https://example.test/Device'], '', ARRAY[0], ARRAY[0], ARRAY[$2::SMALLINT])")
         .bind(&registration_id)
         .bind(unassigned)
         .execute(scope.database_pool())
@@ -135,7 +135,7 @@ async fn the_routing_projection_refuses_an_operation_number_no_release_assigned(
 
     // The highest number the registry does assign is accepted, so the check
     // pins the registry's range rather than an arbitrary smaller one.
-    let accepted = sqlx::query("INSERT INTO registration_information (registration_id, entity_types, operations) VALUES ($1, ARRAY['https://example.test/Device'], ARRAY[$2::SMALLINT])")
+    let accepted = sqlx::query("INSERT INTO registration_information (registration_id, entity_types, entity_id, property_name_ids, relationship_name_ids, operations) VALUES ($1, ARRAY['https://example.test/Device'], '', ARRAY[0], ARRAY[0], ARRAY[$2::SMALLINT])")
         .bind(&registration_id)
         .bind(highest)
         .execute(scope.database_pool())

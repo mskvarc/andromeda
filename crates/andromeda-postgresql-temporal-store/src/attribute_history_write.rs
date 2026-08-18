@@ -10,7 +10,7 @@ use crate::{
     stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_id::StreamId, value_kind::ValueKind};
+use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, AttributeHistoryInstanceClaims, TemporalAttributeStreams};
 use andromeda_postgresql_seaquery::{
@@ -19,6 +19,7 @@ use andromeda_postgresql_seaquery::{
     postgis::validated_geom_from_ewkb,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
+use andromeda_telemetry::statement::{StatementName, observe_statement};
 use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
@@ -26,6 +27,10 @@ use sea_query::{CaseStatement, Expr, ExprTrait, Iden, JoinType, Keyword, OnConfl
 use serde_json::Value;
 use sqlx::{AssertSqlSafe, Postgres, Transaction};
 use uuid::Uuid;
+
+/// The statement name the history batch insert is observed under, in either
+/// bulk-write mode.
+const HISTORY_INSERT: StatementName = StatementName("attribute-history-insert");
 
 /// The `UNNEST` staging alias, `d`.
 #[derive(Iden, Clone, Copy)]
@@ -53,7 +58,7 @@ struct S;
 #[derive(Iden, Clone, Copy)]
 enum DedupStaged {
     /// The stream each targeted row extends.
-    StreamId,
+    StreamKey,
     /// The verbatim identifier each targeted row carries.
     VerbatimInstanceId,
 }
@@ -67,7 +72,7 @@ enum HistoryStaged {
     /// Atomic write the row belongs to.
     WriteId,
     /// Stream the row extends.
-    StreamId,
+    StreamKey,
     /// Position of the row within its atomic write.
     WriteOrdinal,
     /// Attribute family the row was written as.
@@ -122,8 +127,8 @@ impl TemporalRepository {
         run_history_dedup_deletes(tx, &targets).await?;
         claim_verbatim_instances(tx, &targets).await?;
         match self.bulk_write_mode {
-            BulkWriteMode::Unnest => insert_history_batch_unnest_in_tx(tx, rows).await?,
-            BulkWriteMode::CopyStaging => insert_history_batch_via_copy_in_tx(tx, rows).await?,
+            BulkWriteMode::Unnest => observe_statement(HISTORY_INSERT, insert_history_batch_unnest_in_tx(tx, rows)).await?,
+            BulkWriteMode::CopyStaging => observe_statement(HISTORY_INSERT, insert_history_batch_via_copy_in_tx(tx, rows)).await?,
         }
         Ok(())
     }
@@ -141,7 +146,7 @@ impl TemporalRepository {
 /// catch.
 struct VerbatimInstanceTargets<'a> {
     /// The stream each targeted row extends.
-    streams: Vec<Uuid>,
+    streams: Vec<i64>,
     /// The verbatim identifier each targeted row carries.
     ids: Vec<&'a str>,
 }
@@ -151,7 +156,7 @@ struct VerbatimInstanceTargets<'a> {
 fn verbatim_instance_targets(rows: &[AttributeHistoryRow]) -> VerbatimInstanceTargets<'_> {
     let (streams, ids) = rows
         .iter()
-        .filter_map(|row| verbatim_instance_id(&row.instance).map(|identifier| (row.stream_id.get(), identifier)))
+        .filter_map(|row| verbatim_instance_id(&row.instance).map(|identifier| (row.stream_key.get(), identifier)))
         .unzip();
     VerbatimInstanceTargets { streams, ids }
 }
@@ -242,12 +247,12 @@ async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &
 /// The two staging columns the verbatim-dedup and claim statements read.
 fn dedup_staging_columns() -> [UnnestColumn; 2] {
     [
-        UnnestColumn::new(DedupStaged::StreamId, PostgresType::UuidArray),
+        UnnestColumn::new(DedupStaged::StreamKey, PostgresType::BigintArray),
         UnnestColumn::new(DedupStaged::VerbatimInstanceId, PostgresType::TextArray),
     ]
 }
 
-/// The `UNNEST($1::uuid[], $2::text[])` staging call the dedup/claim statements
+/// The `UNNEST($1::bigint[], $2::text[])` staging call the dedup/claim statements
 /// share; the two arrays bind through the caller's chain.
 fn dedup_unnest() -> sea_query::FunctionCall {
     let columns = dedup_staging_columns();
@@ -261,7 +266,7 @@ fn dedup_unnest() -> sea_query::FunctionCall {
 /// sea-query has no `USING`.
 fn history_verbatim_dedup_sql() -> String {
     let sibling_streams = Query::select()
-        .column((S2, TemporalAttributeStreams::Id))
+        .column((S2, TemporalAttributeStreams::StreamKey))
         .from_as(TemporalAttributeStreams::Table, S2)
         .and_where(Expr::col((S2, TemporalAttributeStreams::TemporalEntityKey)).equals((S1, TemporalAttributeStreams::TemporalEntityKey)))
         .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameId)).equals((S1, TemporalAttributeStreams::AttributeNameId)))
@@ -273,10 +278,10 @@ fn history_verbatim_dedup_sql() -> String {
             JoinType::InnerJoin,
             TemporalAttributeStreams::Table,
             S1,
-            Expr::col((S1, TemporalAttributeStreams::Id)).equals((D, DedupStaged::StreamId)),
+            Expr::col((S1, TemporalAttributeStreams::StreamKey)).equals((D, DedupStaged::StreamKey)),
         )
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId)).equals((D, DedupStaged::VerbatimInstanceId)))
-        .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamId)).in_subquery(sibling_streams))
+        .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamKey)).in_subquery(sibling_streams))
         .to_owned();
     let sql = Query::delete()
         .from_table(AttributeHistory::Table)
@@ -296,7 +301,7 @@ fn claim_verbatim_dedup_delete_sql() -> String {
             JoinType::InnerJoin,
             TemporalAttributeStreams::Table,
             S1,
-            Expr::col((S1, TemporalAttributeStreams::Id)).equals((D, DedupStaged::StreamId)),
+            Expr::col((S1, TemporalAttributeStreams::StreamKey)).equals((D, DedupStaged::StreamKey)),
         )
         .and_where(
             Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::VerbatimInstanceId)).equals((D, DedupStaged::VerbatimInstanceId)),
@@ -331,7 +336,7 @@ fn claim_verbatim_instances_sql() -> Result<String, TemporalStoreError> {
             JoinType::InnerJoin,
             TemporalAttributeStreams::Table,
             S,
-            Expr::col((S, TemporalAttributeStreams::Id)).equals((D, DedupStaged::StreamId)),
+            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((D, DedupStaged::StreamKey)),
         )
         .to_owned();
     let mut insert = Query::insert();
@@ -352,7 +357,7 @@ struct AttributeHistoryBinds<'a> {
     /// Atomic write each row belongs to.
     write_ids: Vec<Uuid>,
     /// Stream each row extends.
-    stream_ids: Vec<Uuid>,
+    stream_keys: Vec<i64>,
     /// Position of each row within its atomic write.
     write_ordinals: Vec<i32>,
     /// Attribute family each row was written as.
@@ -396,7 +401,7 @@ fn attribute_history_binds<'a>(rows: &'a [AttributeHistoryRow]) -> Result<Attrib
     let mut binds = AttributeHistoryBinds {
         recorded_ats: Vec::with_capacity(rows.len()),
         write_ids: Vec::with_capacity(rows.len()),
-        stream_ids: Vec::with_capacity(rows.len()),
+        stream_keys: Vec::with_capacity(rows.len()),
         write_ordinals: Vec::with_capacity(rows.len()),
         attribute_kinds: Vec::with_capacity(rows.len()),
         value_kinds: Vec::with_capacity(rows.len()),
@@ -419,7 +424,7 @@ fn attribute_history_binds<'a>(rows: &'a [AttributeHistoryRow]) -> Result<Attrib
     for row in rows {
         binds.recorded_ats.push(row.recorded_at);
         binds.write_ids.push(row.write_id());
-        binds.stream_ids.push(StreamId::get(row.stream_id));
+        binds.stream_keys.push(StreamKey::get(row.stream_key));
         binds.write_ordinals.push(row.write_ordinal()?);
         binds.attribute_kinds.push(AttributeKind::code(row.attribute_kind));
         binds.value_kinds.push(ValueKind::code(row.value.kind()));
@@ -449,7 +454,7 @@ fn history_staging_columns() -> [UnnestColumn; 21] {
     [
         UnnestColumn::new(HistoryStaged::RecordedAt, PostgresType::TimestamptzArray),
         UnnestColumn::new(HistoryStaged::WriteId, PostgresType::UuidArray),
-        UnnestColumn::new(HistoryStaged::StreamId, PostgresType::UuidArray),
+        UnnestColumn::new(HistoryStaged::StreamKey, PostgresType::BigintArray),
         UnnestColumn::new(HistoryStaged::WriteOrdinal, PostgresType::IntegerArray),
         UnnestColumn::new(HistoryStaged::AttributeKind, PostgresType::SmallintArray),
         UnnestColumn::new(HistoryStaged::ValueKind, PostgresType::SmallintArray),
@@ -499,7 +504,7 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
     select
         .expr(staged(HistoryStaged::RecordedAt))
         .expr(staged(HistoryStaged::WriteId))
-        .expr(staged(HistoryStaged::StreamId))
+        .expr(staged(HistoryStaged::StreamKey))
         .expr(staged(HistoryStaged::WriteOrdinal))
         .expr(staged(HistoryStaged::AttributeKind))
         .expr(staged(HistoryStaged::ValueKind))
@@ -525,7 +530,7 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
     insert.into_table(AttributeHistory::Table).columns([
         AttributeHistory::RecordedAt,
         AttributeHistory::WriteId,
-        AttributeHistory::StreamId,
+        AttributeHistory::StreamKey,
         AttributeHistory::WriteOrdinal,
         AttributeHistory::AttributeKind,
         AttributeHistory::ValueKind,
@@ -565,7 +570,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, r
     sqlx::query(AssertSqlSafe(sql))
         .bind(&binds.recorded_ats)
         .bind(&binds.write_ids)
-        .bind(&binds.stream_ids)
+        .bind(&binds.stream_keys)
         .bind(&binds.write_ordinals)
         .bind(&binds.attribute_kinds)
         .bind(&binds.value_kinds)
@@ -645,7 +650,7 @@ mod tests {
     #[test]
     fn the_insert_carries_the_partition_column_and_the_whole_write_identity() {
         let sql = attribute_history_insert_sql().expect("the fixed attribute-history insert builds");
-        assert!(sql.contains(r#"("recorded_at", "write_id", "stream_id", "write_ordinal""#), "{sql}");
+        assert!(sql.contains(r#"("recorded_at", "write_id", "stream_key", "write_ordinal""#), "{sql}");
     }
 
     #[test]

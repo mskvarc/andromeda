@@ -1,9 +1,9 @@
 //! Notification task registration and runtime failure classification.
 
-use crate::tenant_factory::tasks::EntityNotificationDelivery;
-use std::future::Future;
-
-use crate::tenant_factory::error::TenantAssemblyError;
+use crate::tenant_factory::{
+    error::TenantAssemblyError,
+    tasks::{EntityNotificationDelivery, retention::retention_duration},
+};
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
@@ -37,7 +37,7 @@ use andromeda_task_runtime::{
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::{DateTime, Utc};
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 use tokio::sync::{
     broadcast,
     broadcast::error::{RecvError, TryRecvError},
@@ -219,11 +219,6 @@ where
 
 /// Convert a configured retention in seconds into a [`chrono::Duration`],
 /// naming the offending setting in the error rather than the raw number.
-fn retention_duration(seconds: u64, name: &'static str) -> Result<chrono::Duration, TenantAssemblyError> {
-    let seconds = i64::try_from(seconds).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    chrono::Duration::try_seconds(seconds).ok_or_else(|| TenantAssemblyError::invariant(format!("{name} is out of range")))
-}
-
 fn classify_notification_failure(error: NotificationError) -> TaskFailure {
     let summary = error.to_string();
     match error {

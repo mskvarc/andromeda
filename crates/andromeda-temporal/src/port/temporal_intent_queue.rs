@@ -1,6 +1,7 @@
 //! Durable claim, acknowledgement and retry state for temporal intent delivery.
 
 use crate::{append_intent::SequencedTemporalAppendIntent, error::TemporalError};
+use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -82,10 +83,23 @@ pub trait TemporalIntentQueue: Send + Sync {
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError>;
 
     /// Acknowledge one intent only after the sink confirmed durability.
+    ///
+    /// The acknowledgement is guarded by the caller's live lease: a lease that
+    /// expired before the sink confirmed is reported as
+    /// [`LeaseAcknowledgement::Lost`], and the intent stays queued for the
+    /// worker that now holds it. The sink is idempotent under the write
+    /// identity, so a second delivery lands nothing twice.
     #[must_use = "temporal intent acknowledgements must be awaited"]
-    async fn acknowledge(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<(), TemporalError>;
+    async fn acknowledge(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError>;
 
     /// Release one failed intent with explicit retry metadata.
+    ///
+    /// Guarded by the caller's live lease exactly as [`TemporalIntentQueue::acknowledge`] is.
     #[must_use = "temporal intent retries must be recorded"]
-    async fn retry(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<(), TemporalError>;
+    async fn retry(
+        &self,
+        owner: TemporalIntentLeaseOwner,
+        intent: &SequencedTemporalAppendIntent,
+        retry: TemporalIntentRetry,
+    ) -> Result<LeaseAcknowledgement, TemporalError>;
 }

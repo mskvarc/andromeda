@@ -1,53 +1,62 @@
 //! SQL rendering of an expanded type selection expression (clause 4.17).
 //!
-//! Entity types are stored as a `text[]` column, so every leaf of the
-//! expression renders to one array-membership test and the boolean structure
-//! renders to `AND` / `OR` around them. The only thing that varies between
-//! callers is which relation the column is read from.
+//! Entity types are stored as an `integer[]` of `entity_type_names` keys, so
+//! every leaf of the expression renders to one array-containment test on the
+//! key the type resolved to, and the boolean structure renders to `AND` /
+//! `OR` around them. A type the dictionary has never recorded has no key, and
+//! no entity can carry a type that was never interned, so its leaf renders as
+//! constant `FALSE`. The only thing that varies between callers is which
+//! relation's `type_ids` column is read.
 
+use crate::dictionary::resolved_names::ResolvedNames;
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
-use andromeda_postgresql_schema::current::{E, Entities};
-use andromeda_postgresql_seaquery::operator::array_contains;
-use sea_query::{Condition, Expr as SeaExpr, SimpleExpr};
+use andromeda_postgresql_seaquery::{literal::false_literal, operator::array_contains_key};
+use sea_query::{Condition, SimpleExpr};
 
-/// Which relation's `types` column a rendering reads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypesColumn {
-    /// `entities.types`, read unaliased by entity queries, which select from
-    /// `entities` directly.
-    Entities,
-    /// `e.types`, the alias temporal stage 1 left-joins `entities` under.
-    AliasedEntities,
-}
-
-impl TypesColumn {
-    /// The column reference this target reads.
-    fn expr(self) -> SimpleExpr {
-        match self {
-            TypesColumn::Entities => SeaExpr::col(Entities::Types),
-            TypesColumn::AliasedEntities => SeaExpr::col((E, Entities::Types)),
-        }
-    }
-}
-
-/// Render a type expression against the given `types` column.
-pub fn condition(expr: &TypeExpr, column: TypesColumn) -> Condition {
+/// Render a type expression against the given `type_ids` column.
+pub fn condition(expr: &TypeExpr, type_ids: &SimpleExpr, types: &ResolvedNames<EntityTypeName>) -> Condition {
     match expr {
         TypeExpr::Wildcard => Condition::all(),
-        TypeExpr::Type(iri) => Condition::all().add(array_contains(column.expr(), SeaExpr::val(iri.as_str()))),
-        TypeExpr::And(children) => children.iter().fold(Condition::all(), |cond, child| cond.add(condition(child, column))),
-        TypeExpr::Or(children) => children.iter().fold(Condition::any(), |cond, child| cond.add(condition(child, column))),
+        TypeExpr::Type(iri) => Condition::all().add(match types.get_str(iri.as_str()) {
+            Some(id) => array_contains_key(type_ids.clone(), id.get()), // clone: each leaf names the same column
+            None => false_literal(),
+        }),
+        TypeExpr::And(children) => children
+            .iter()
+            .fold(Condition::all(), |cond, child| cond.add(condition(child, type_ids, types))),
+        TypeExpr::Or(children) => children
+            .iter()
+            .fold(Condition::any(), |cond, child| cond.add(condition(child, type_ids, types))),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{dictionary::resolved_names::ResolvedNames, entity_type_id::EntityTypeId, type_predicate::condition};
+    use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
+    use andromeda_ngsi_ld_query::type_selection::grammar::TypeExpr;
+    use andromeda_postgresql_schema::{
+        current::{E, Entities, EntitySearch},
+        temporal::TemporalEntities,
+    };
     use iri_rs::IriBuf;
-    use sea_query::{PostgresQueryBuilder, Query};
+    use sea_query::{Condition, Expr, PostgresQueryBuilder, Query, SimpleExpr};
 
     fn iri(value: &str) -> IriBuf {
         IriBuf::new(value.to_string()).expect("valid IRI")
+    }
+
+    fn known(pairs: &[(&str, i32)]) -> ResolvedNames<EntityTypeName> {
+        ResolvedNames::from_pairs(
+            pairs
+                .iter()
+                .map(|(name, id)| (name.parse::<EntityTypeName>().expect("valid type name"), EntityTypeId::from(*id))),
+        )
+    }
+
+    fn unaliased() -> SimpleExpr {
+        Expr::col(EntitySearch::TypeIds)
     }
 
     fn render(condition: Condition) -> String {
@@ -58,31 +67,59 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
-    /// Clause 4.17 selects on membership, and the containment spelling is the
-    /// one the `types` GIN index can answer.
+    /// Clause 4.17 selects on membership, and the containment spelling over
+    /// the resolved key is the one the `type_ids` GIN index can answer.
     #[test]
-    fn a_single_type_renders_an_array_containment_test() {
-        let sql = render(condition(&TypeExpr::Type(iri("https://example.com/Vehicle")), TypesColumn::Entities));
-        assert!(sql.contains("\"types\" @> ARRAY(SELECT "), "{sql}");
+    fn a_known_type_renders_an_array_containment_test_on_its_key() {
+        let sql = render(condition(
+            &TypeExpr::Type(iri("https://example.com/Vehicle")),
+            &unaliased(),
+            &known(&[("https://example.com/Vehicle", 7)]),
+        ));
+        assert!(sql.contains("\"type_ids\" @> (ARRAY[7])"), "the key is inlined for the planner: {sql}");
         assert!(!sql.contains("= ANY"), "{sql}");
+        assert!(!sql.contains("Vehicle"), "the type IRI itself never reaches the statement: {sql}");
+    }
+
+    /// A type the dictionary never recorded was never written to any entity,
+    /// so the leaf is unsatisfiable rather than an unbound probe.
+    #[test]
+    fn an_unknown_type_renders_false() {
+        let sql = render(condition(
+            &TypeExpr::Type(iri("https://example.com/Vehicle")),
+            &unaliased(),
+            &ResolvedNames::default(),
+        ));
+        assert!(sql.contains("WHERE FALSE"), "{sql}");
     }
 
     #[test]
     fn a_disjunction_renders_or_between_membership_tests() {
         let expr = TypeExpr::Or(vec![TypeExpr::Type(iri("https://example.com/A")), TypeExpr::Type(iri("https://example.com/B"))]);
-        let sql = render(condition(&expr, TypesColumn::Entities));
-        assert!(sql.contains(" OR "), "{sql}");
+        let sql = render(condition(
+            &expr,
+            &unaliased(),
+            &known(&[("https://example.com/A", 1), ("https://example.com/B", 2)]),
+        ));
+        assert!(sql.contains("(ARRAY[1])) OR ("), "{sql}");
+        assert!(sql.contains("(ARRAY[2])"), "{sql}");
     }
 
     #[test]
     fn a_conjunction_renders_and_between_membership_tests() {
         let expr = TypeExpr::And(vec![TypeExpr::Type(iri("https://example.com/A")), TypeExpr::Type(iri("https://example.com/B"))]);
-        let sql = render(condition(&expr, TypesColumn::Entities));
+        let sql = render(condition(
+            &expr,
+            &unaliased(),
+            &known(&[("https://example.com/A", 1), ("https://example.com/B", 2)]),
+        ));
         assert!(sql.contains(" AND "), "{sql}");
     }
 
+    /// One unresolved alternative does not poison the others: the disjunction
+    /// keeps its resolved arms and only the unknown one is constant `FALSE`.
     #[test]
-    fn a_nested_expression_keeps_its_grouping() {
+    fn a_nested_expression_keeps_its_grouping_around_an_unresolved_leaf() {
         let expr = TypeExpr::Or(vec![
             TypeExpr::And(vec![
                 TypeExpr::Type(iri("https://example.com/Home")),
@@ -90,18 +127,25 @@ mod tests {
             ]),
             TypeExpr::Type(iri("https://example.com/Motorhome")),
         ]);
-        let sql = render(condition(&expr, TypesColumn::Entities));
-        assert!(sql.contains(" AND "), "{sql}");
-        assert!(sql.contains(" OR "), "{sql}");
+        let sql = render(condition(
+            &expr,
+            &unaliased(),
+            &known(&[("https://example.com/Home", 1), ("https://example.com/Vehicle", 2)]),
+        ));
+        assert!(
+            sql.contains("((\"type_ids\" @> (ARRAY[1])) AND (\"type_ids\" @> (ARRAY[2]))) OR (FALSE)"),
+            "{sql}"
+        );
     }
 
-    /// The two targets differ in one thing only, and this is it. Before the two
-    /// renderings were merged, a change to the leaf shape had to be made twice.
+    /// The two callers differ in one thing only, and this is it: temporal
+    /// stage 1 reads the catalogue's column under its `e` alias.
     #[test]
-    fn the_two_targets_differ_only_in_which_relation_they_read() {
+    fn the_aliased_temporal_column_differs_only_in_which_relation_it_reads() {
         let expr = TypeExpr::Type(iri("https://example.com/Vehicle"));
-        let unaliased = render(condition(&expr, TypesColumn::Entities));
-        let aliased = render(condition(&expr, TypesColumn::AliasedEntities));
-        assert_eq!(unaliased.replace("\"types\"", "\"e\".\"types\""), aliased);
+        let names = known(&[("https://example.com/Vehicle", 7)]);
+        let unaliased = render(condition(&expr, &unaliased(), &names));
+        let aliased = render(condition(&expr, &Expr::col((E, TemporalEntities::TypeIds)), &names));
+        assert_eq!(unaliased.replace("\"type_ids\"", "\"e\".\"type_ids\""), aliased);
     }
 }

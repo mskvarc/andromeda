@@ -1,10 +1,10 @@
 //! Readers for the entity-level members of an expanded payload: `@id`,
-//! `@type`, `scope` and `expiresAt`. A named GeoProperty's geometry is read by
+//! `@type`, `scope`, `expiresAt` and the names of the attributes it carries. A named GeoProperty's geometry is read by
 //! [`crate::expanded::geo_property::extract_geo_property_geometry`], the single
 //! reader shared by the write/index and read/match paths.
 
 use crate::expanded::node::expanded_object_ref;
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
 use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -26,6 +26,20 @@ pub fn extract_types(expanded: &Value) -> Vec<EntityTypeName> {
         .and_then(|obj| obj.get("@type"))
         .and_then(|t| t.as_array())
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).filter_map(|raw| raw.parse().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Extract the names of the top-level members an expanded entity payload
+/// carries, in the payload map's key order: every member that is not a
+/// JSON-LD keyword and satisfies the NGSI-LD name grammar.
+///
+/// This is the key-existence reading of clause 5.5.9 `attrs`: an entity
+/// matches an `attrs` term when its payload carries a member of that name,
+/// which is what the write path records against each entity so the term is
+/// answered by index. A key that cannot name an attribute is skipped.
+pub fn extract_attribute_names(expanded: &Value) -> Vec<AttributeName> {
+    expanded_object_ref(expanded)
+        .map(|obj| obj.keys().filter(|key| !key.starts_with('@')).filter_map(|key| key.parse().ok()).collect())
         .unwrap_or_default()
 }
 
@@ -64,7 +78,7 @@ pub fn extract_expires_at(expanded: &Value) -> Option<DateTime<Utc>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::entity_member::{extract_expires_at, extract_id, extract_scopes};
+    use crate::expanded::entity_member::{extract_attribute_names, extract_expires_at, extract_id, extract_scopes};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::Datelike;
     use serde_json::json;
@@ -78,6 +92,28 @@ mod tests {
     #[test]
     fn an_expanded_payload_without_an_identifier_yields_none() {
         assert!(extract_id(&json!([{"@type": ["https://example.com/Building"]}])).is_none());
+    }
+
+    #[test]
+    fn attribute_names_are_the_non_keyword_members_in_key_order() {
+        let entity = json!([{
+            "@id": "urn:ngsi-ld:Building:001",
+            "@type": ["https://example.com/Building"],
+            "https://example.com/name": [{"@value": "x"}],
+            "https://uri.etsi.org/ngsi-ld/scope": [{"@value": "/a"}],
+            "https://example.com/address": [{"@value": "y"}]
+        }]);
+        let names = extract_attribute_names(&entity);
+        pretty_assertions::assert_eq!(
+            names.iter().map(|name| name.as_str()).collect::<Vec<&str>>(),
+            vec!["https://example.com/address", "https://example.com/name", "https://uri.etsi.org/ngsi-ld/scope"]
+        );
+    }
+
+    #[test]
+    fn a_payload_with_only_keywords_carries_no_attribute_names() {
+        assert!(extract_attribute_names(&json!([])).is_empty());
+        assert!(extract_attribute_names(&json!({"@id": "urn:x", "@type": ["https://example.com/T"]})).is_empty());
     }
 
     #[test]

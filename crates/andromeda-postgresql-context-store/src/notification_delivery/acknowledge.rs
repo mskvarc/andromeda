@@ -15,20 +15,15 @@
 use crate::error::ContextStoreError;
 use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
 use andromeda_postgresql_schema::notification::NotificationDeliveries;
+use andromeda_telemetry::statement::{StatementName, observe_statement};
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, Keyword, PostgresQueryBuilder, Query, SimpleExpr, UpdateStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::postgres::PgPool;
 
-/// The attempt count an exhausted delivery carries.
-///
-/// Exhaustion is expressed by pushing the counter past any reachable ceiling
-/// rather than by a separate flag, so the one claim predicate that already
-/// excludes deliveries over the configured maximum excludes dead ones too.
-///
-/// Shared with [`crate::notification_delivery::cleanup`], which selects
-/// exhausted rows by this same sentinel when applying dead-letter retention.
-pub(crate) const EXHAUSTED_ATTEMPT_COUNT: i32 = i32::MAX;
+/// The statement name every delivery acknowledgement (delivered, failed,
+/// exhausted) is observed under.
+const DELIVERY_ACKNOWLEDGE: StatementName = StatementName("notification-delivery-acknowledge");
 
 /// Record that `worker_id` delivered the notification.
 ///
@@ -42,7 +37,7 @@ pub(crate) const EXHAUSTED_ATTEMPT_COUNT: i32 = i32::MAX;
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn mark_delivered(pool: &PgPool, id: i64, worker_id: &str) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_delivered_statement(id, worker_id).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
+    let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 
@@ -59,18 +54,23 @@ pub async fn mark_failed(
     next_attempt_at: DateTime<Utc>,
 ) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_failed_statement(id, worker_id, failure, next_attempt_at).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
+    let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 
 /// Record a terminal failure and make the delivery permanently unclaimable.
+///
+/// Exhaustion is a decision the worker takes — on a failure no retry can fix,
+/// or on the attempt that reached the configured ceiling — and it is recorded
+/// as an instant of its own so the claim predicate and the dead-letter reap
+/// need not know the ceiling.
 ///
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the statement fails.
 pub async fn mark_exhausted(pool: &PgPool, id: i64, worker_id: &str, failure: &str) -> Result<LeaseAcknowledgement, ContextStoreError> {
     let (sql, values) = mark_exhausted_statement(id, worker_id, failure).build_sqlx(PostgresQueryBuilder);
-    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
+    let result = observe_statement(DELIVERY_ACKNOWLEDGE, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool)).await?;
     Ok(acknowledgement(result.rows_affected()))
 }
 
@@ -107,11 +107,17 @@ fn mark_failed_statement(id: i64, worker_id: &str, failure: &str, next_attempt_a
         .to_owned()
 }
 
-/// Push the attempt count past the ceiling and release the lease for good.
+/// Count the final attempt, stamp the exhaustion instant and release the lease
+/// for good.
+///
+/// The claim triple is cleared in the same statement because
+/// `chk_notification_deliveries_exhausted_state` forbids an exhausted row that
+/// still holds a claim.
 fn mark_exhausted_statement(id: i64, worker_id: &str, failure: &str) -> UpdateStatement {
     Query::update()
         .table(NotificationDeliveries::Table)
-        .value(NotificationDeliveries::AttemptCount, EXHAUSTED_ATTEMPT_COUNT)
+        .value(NotificationDeliveries::AttemptCount, Expr::col(NotificationDeliveries::AttemptCount).add(1))
+        .value(NotificationDeliveries::ExhaustedAt, Expr::current_timestamp())
         .value(NotificationDeliveries::DeliveryError, failure)
         .value(NotificationDeliveries::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
         .value(NotificationDeliveries::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
@@ -179,9 +185,13 @@ mod tests {
     }
 
     #[test]
-    fn an_exhausted_row_pushes_the_counter_past_the_ceiling() {
+    fn an_exhausted_row_is_stamped_with_the_exhaustion_instant_and_releases_its_claim() {
         let sql = mark_exhausted_statement(1, "w", "boom").to_string(PostgresQueryBuilder);
-        assert!(sql.contains(&format!(r#""attempt_count" = {}"#, i32::MAX)), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" = CURRENT_TIMESTAMP"#), "{sql}");
+        assert!(sql.contains(r#""attempt_count" = "attempt_count" + 1"#), "{sql}");
+        assert!(sql.contains(r#""claimed_at" = NULL"#), "{sql}");
+        assert!(sql.contains(r#""claimed_by" = NULL"#), "{sql}");
         assert!(sql.contains(r#""lease_until" = NULL"#), "{sql}");
+        assert!(!sql.contains(&i32::MAX.to_string()), "no sentinel attempt count: {sql}");
     }
 }

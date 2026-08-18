@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
-use strum::{Display, EnumIter, EnumString};
+use strum::{Display, EnumCount, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
 constant_string!(NotificationType, "Notification");
@@ -28,7 +28,7 @@ pub enum ChangeOrigin {
 /// triggers it listens for (`Subscription::notification_trigger`), and a
 /// [`ChangeEvent`] carries the one that fired. [`EnumIter`] yields the default
 /// set — every trigger — without a hand-written token copy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, EnumIter, EnumCount)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
 pub enum NotificationTrigger {

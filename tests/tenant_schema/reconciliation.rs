@@ -29,7 +29,7 @@ struct Invariant {
 const INVARIANTS: &[Invariant] = &[
     Invariant {
         description: "history rows whose stream no longer exists",
-        count: "SELECT COUNT(*) FROM attribute_history ah WHERE NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.id = ah.stream_id)",
+        count: "SELECT COUNT(*) FROM attribute_history ah WHERE NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.stream_key = ah.stream_key)",
     },
     Invariant {
         description: "streams whose temporal entity no longer exists",
@@ -44,6 +44,30 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM current_attribute_values cav WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = cav.entity_key)",
     },
     Invariant {
+        description: "document rows whose entity no longer exists",
+        count: "SELECT COUNT(*) FROM entity_documents d WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = d.entity_key)",
+    },
+    Invariant {
+        description: "search rows whose entity no longer exists",
+        count: "SELECT COUNT(*) FROM entity_search s WHERE NOT EXISTS (SELECT 1 FROM entities e WHERE e.entity_key = s.entity_key)",
+    },
+    Invariant {
+        description: "entities without a document row",
+        count: "SELECT COUNT(*) FROM entities e WHERE NOT EXISTS (SELECT 1 FROM entity_documents d WHERE d.entity_key = e.entity_key)",
+    },
+    Invariant {
+        description: "entities without a search row",
+        count: "SELECT COUNT(*) FROM entities e WHERE NOT EXISTS (SELECT 1 FROM entity_search s WHERE s.entity_key = e.entity_key)",
+    },
+    Invariant {
+        description: "search rows naming a type key that does not exist",
+        count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.type_ids) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM entity_type_names n WHERE n.id = declared.key)",
+    },
+    Invariant {
+        description: "search rows naming an attribute key that does not exist",
+        count: "SELECT COUNT(*) FROM entity_search s CROSS JOIN LATERAL unnest(s.attribute_name_ids) AS declared(key) WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = declared.key)",
+    },
+    Invariant {
         description: "streams naming a dictionary key that does not exist",
         count: "SELECT COUNT(*) FROM temporal_attribute_streams s WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = s.attribute_name_id)",
     },
@@ -52,10 +76,22 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM current_attribute_values cav WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = cav.attribute_name_id)",
     },
     Invariant {
-        description: "routing projection rows naming a dictionary key that does not exist",
+        description: "routing projection rows naming a dictionary key that does not exist (the wildcard sentinel 0 names none)",
         count: "SELECT COUNT(*) FROM registration_information ri \
-                CROSS JOIN LATERAL unnest(COALESCE(ri.property_name_ids, ARRAY[]::INTEGER[]) || COALESCE(ri.relationship_name_ids, ARRAY[]::INTEGER[])) AS declared(key) \
-                WHERE NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = declared.key)",
+                CROSS JOIN LATERAL unnest(ri.property_name_ids || ri.relationship_name_ids) AS declared(key) \
+                WHERE declared.key <> 0 AND NOT EXISTS (SELECT 1 FROM attribute_names an WHERE an.id = declared.key)",
+    },
+    Invariant {
+        description: "registrations without a routing row (an unconstrained registration has its wildcard row)",
+        count: "SELECT COUNT(*) FROM context_source_registrations csr WHERE NOT EXISTS (SELECT 1 FROM registration_information ri WHERE ri.registration_id = csr.id)",
+    },
+    Invariant {
+        description: "captured snapshot entities whose snapshot does not exist",
+        count: "SELECT COUNT(*) FROM snapshot_entities se WHERE NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.snapshot_key = se.snapshot_key)",
+    },
+    Invariant {
+        description: "captured snapshot temporal entities whose snapshot does not exist",
+        count: "SELECT COUNT(*) FROM snapshot_temporal_entities ste WHERE NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.snapshot_key = ste.snapshot_key)",
     },
     Invariant {
         description: "history rows naming a unit the catalogue does not hold",
@@ -64,6 +100,11 @@ const INVARIANTS: &[Invariant] = &[
     Invariant {
         description: "history rows naming a write record that does not exist",
         count: "SELECT COUNT(*) FROM attribute_history ah WHERE NOT EXISTS (SELECT 1 FROM write_records wr WHERE wr.write_id = ah.write_id)",
+    },
+    Invariant {
+        description: "subscriptions without a delivery-state row, or state rows without a subscription",
+        count: "SELECT (SELECT COUNT(*) FROM subscriptions s WHERE NOT EXISTS (SELECT 1 FROM subscription_delivery_state d WHERE d.subscription_key = s.subscription_key)) \
+                + (SELECT COUNT(*) FROM subscription_delivery_state d WHERE NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.subscription_key = d.subscription_key))",
     },
     Invariant {
         description: "history rows populating neither instance identity column exactly once",
@@ -83,6 +124,8 @@ const REPLACED_RELATIONS: &[&str] = &["attribute_current", "temporal_entity_attr
 /// precondition left to the suite that happened to run before it.
 const POPULATED_RELATIONS: &[&str] = &[
     "entities",
+    "entity_documents",
+    "entity_search",
     "temporal_entities",
     "temporal_attribute_streams",
     "attribute_history",
@@ -90,8 +133,22 @@ const POPULATED_RELATIONS: &[&str] = &[
     "attribute_names",
     "write_records",
     "registration_information",
+    "subscriptions",
+    "subscription_delivery_state",
     "unit_codes",
 ];
+
+/// A subscription, so the delivery-state row created with it is there to be
+/// checked against.
+fn reconciled_subscription(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Subscription",
+        "entities": [{"type": "Device"}],
+        "notification": {"endpoint": {"uri": "http://127.0.0.1:8085/notify", "accept": "application/json"}},
+        "@context": [CORE_CONTEXT]
+    })
+}
 
 /// An entity exercising every relation the invariants join across: a unit-
 /// bearing Property, a Relationship, and a scope.
@@ -116,6 +173,18 @@ fn reconciled_registration(id: &str) -> Value {
         "operations": ["retrieveEntity"],
         "endpoint": "http://localhost:9/csource",
         "@context": [CORE_CONTEXT]
+    })
+}
+
+/// A snapshot whose control record and one captured entity populate the
+/// snapshot relations the invariants join across. The captured row is written
+/// directly under the snapshot's surrogate, as the preparation worker would,
+/// so the invariant does not wait on the worker's cadence.
+fn reconciled_snapshot(id: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "Snapshot",
+        "snapshotQueries": [{"type": "Query", "entities": [{"type": "Device"}]}]
     })
 }
 
@@ -153,8 +222,29 @@ async fn the_backfilled_schema_holds_no_orphan_row_and_no_unresolvable_reference
         .await
         .expect("create registration request failed");
     assert_eq!(registered.status, StatusCode::CREATED, "create registration: {:?}", registered.body);
+    let subscription_id = scope.id("Subscription:reconciliation");
+    let subscribed = client
+        .create_subscription(&reconciled_subscription(&subscription_id))
+        .await
+        .expect("create subscription request failed");
+    assert_eq!(subscribed.status, StatusCode::CREATED, "create subscription: {:?}", subscribed.body);
+    let snapshot_id = scope.id("Snapshot:reconciliation");
+    let snapshotted = client
+        .create_snapshot(&reconciled_snapshot(&snapshot_id))
+        .await
+        .expect("create snapshot request failed");
+    assert_eq!(snapshotted.status, StatusCode::CREATED, "create snapshot: {:?}", snapshotted.body);
 
     let pool = scope.database_pool();
+    sqlx::query(
+        "INSERT INTO snapshot_entities (snapshot_key, entity_id, entity_data) \
+         VALUES ((SELECT snapshot_key FROM snapshots WHERE id = $1), $2, '{}'::jsonb) ON CONFLICT DO NOTHING",
+    )
+    .bind(&snapshot_id)
+    .bind(&entity_id)
+    .execute(pool)
+    .await
+    .expect("the captured snapshot row must be writable");
     for relation in POPULATED_RELATIONS {
         assert!(
             population(pool, relation).await > 0,
@@ -182,7 +272,7 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
     let pool = scope.database_pool();
 
     let orphan_history = "SELECT COUNT(*) FROM attribute_history ah \
-                          WHERE ah.write_id = $1 AND NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.id = ah.stream_id)";
+                          WHERE ah.write_id = $1 AND NOT EXISTS (SELECT 1 FROM temporal_attribute_streams s WHERE s.stream_key = ah.stream_key)";
     let write_id = uuid::Uuid::new_v4();
     let before: i64 = sqlx::query_scalar(orphan_history)
         .bind(write_id)
@@ -193,8 +283,8 @@ async fn an_invariant_violation_is_actually_counted_rather_than_silently_passing
 
     sqlx::query(
         "INSERT INTO attribute_history \
-         (recorded_at, write_id, stream_id, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
-         VALUES (now(), $1, gen_random_uuid(), 0, 1, 1, gen_random_uuid(), 1::numeric)",
+         (recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind, generated_instance_uuid, value_number) \
+         VALUES (now(), $1, 9223372036854775807, 0, 1, 1, gen_random_uuid(), 1::numeric)",
     )
     .bind(write_id)
     .execute(pool)

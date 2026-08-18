@@ -5,7 +5,7 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::payload_write,
     error::EntityError,
-    expanded_member::{extract_attribute_keys, unwrap_expanded_ref},
+    expanded_member::unwrap_expanded_ref,
     geo_property_geometry::validate_geo_property_geometries,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::HistoryRecord};
@@ -13,7 +13,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{
-        entity_member::extract_types,
+        entity_member::{extract_attribute_names, extract_types},
         mutation::{entity::append_entity_attrs, selection::OverwritePolicy},
     },
     notification::{ChangeOrigin, NotificationTrigger},
@@ -59,7 +59,7 @@ impl EntityService {
                 // set the change describes to `watchedAttributes` matching and to
                 // the notification's `changedAttributes`; the entity's other
                 // attributes did not change.
-                let appended_keys: Vec<AttributeName> = extract_attribute_keys(&expanded)
+                let appended_keys: Vec<AttributeName> = extract_attribute_names(&expanded)
                     .into_iter()
                     .filter(|name| !not_appended.contains(name))
                     .collect();
@@ -80,7 +80,7 @@ impl EntityService {
             })
             .await?;
 
-        let attr_keys = extract_attribute_keys(&merged);
+        let attr_keys = extract_attribute_names(&merged);
         self.emit_change(
             ChangeEvent::builder()
                 .entity_id(entity_uri)

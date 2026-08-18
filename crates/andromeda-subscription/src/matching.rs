@@ -15,7 +15,6 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_query::filter::eval;
 use chrono::Utc;
 use serde_json::Value;
-use std::sync::Arc;
 use tracing::debug;
 
 /// Match a context-source subscription against one registration representation (clause 5.12).
@@ -71,14 +70,6 @@ pub fn matches_csource_subscription(sub: &CompiledCsrSubscription, registration:
         }
     }
     sub.compiled_csf.as_ref().is_none_or(|expression| eval::evaluate(expression, registration))
-}
-
-/// Find matching subscriptions from an arbitrary iterator of compiled subscriptions.
-///
-/// Filters the given subscriptions against the event using [`matches_subscription`],
-/// returning only those that match.
-pub fn find_matching(subs: impl Iterator<Item = Arc<CompiledSubscription>>, event: &ChangeEvent) -> Vec<Arc<CompiledSubscription>> {
-    subs.filter(|sub| matches_subscription(sub, event)).collect()
 }
 
 /// Determine whether a compiled subscription matches a change event.
@@ -225,8 +216,8 @@ pub fn matches_entity_filters(sub: &CompiledSubscription, entity_data: &Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{compilation::compile_geo_q, error::SubscriptionError, subscription_key::SubscriptionKey};
-    use andromeda_context_commit::change_event::ChangeEvent;
+    use crate::{compilation::compile_geo_q, error::SubscriptionError};
+    use andromeda_context_commit::{change_event::ChangeEvent, subscription_key::SubscriptionKey};
     use andromeda_ngsi_ld_model::{notification::NotificationTrigger, subscription::SubscriptionStatus};
     use andromeda_ngsi_ld_query::{
         error::QueryError,

@@ -24,6 +24,14 @@ pub const READING_ATTRIBUTE: &str = "https://example.test/query-access-paths/rea
 /// Expanded IRI of the seeded GeoProperty attribute.
 pub const ENTRANCE_ATTRIBUTE: &str = "https://example.test/query-access-paths/entrance";
 
+/// Expanded IRI of the attribute every seeded Entity carries, so an `attrs`
+/// term on it selects the whole corpus.
+pub const CITY_ATTRIBUTE: &str = "https://example.test/query-access-paths/city";
+
+/// Expanded IRI of the attribute every 1000th seeded Entity carries, selective
+/// enough that an `attrs` term on it prefers the index.
+pub const ALARM_ATTRIBUTE: &str = "https://example.test/query-access-paths/alarm";
+
 /// The dictionary identifiers of a seeded corpus, resolved once so a plan
 /// assertion binds an integer instead of joining the dictionary.
 pub struct SeededCorpus {
@@ -33,6 +41,14 @@ pub struct SeededCorpus {
     reading: i32,
     /// Dictionary identifier of [`ENTRANCE_ATTRIBUTE`].
     entrance: i32,
+    /// Type dictionary identifier of [`RARE_TYPE`].
+    rare_type: i32,
+    /// Type dictionary identifier of [`COMMON_TYPE`].
+    common_type: i32,
+    /// Dictionary identifier of [`CITY_ATTRIBUTE`].
+    city: i32,
+    /// Dictionary identifier of [`ALARM_ATTRIBUTE`].
+    alarm: i32,
 }
 
 impl SeededCorpus {
@@ -49,6 +65,26 @@ impl SeededCorpus {
     /// Dictionary identifier of the seeded GeoProperty attribute.
     pub const fn entrance(&self) -> i32 {
         self.entrance
+    }
+
+    /// Type dictionary identifier of the rare seeded type.
+    pub const fn rare_type(&self) -> i32 {
+        self.rare_type
+    }
+
+    /// Type dictionary identifier of the common seeded type.
+    pub const fn common_type(&self) -> i32 {
+        self.common_type
+    }
+
+    /// Dictionary identifier of the attribute every seeded Entity carries.
+    pub const fn city(&self) -> i32 {
+        self.city
+    }
+
+    /// Dictionary identifier of the rare seeded attribute.
+    pub const fn alarm(&self) -> i32 {
+        self.alarm
     }
 
     /// Identifier of one seeded Entity by ordinal.
@@ -68,26 +104,59 @@ async fn dictionary_id(pool: &PgPool, name: &str) -> i32 {
         .expect("attribute dictionary insert must succeed")
 }
 
-/// Write the corpus and analyze the two relations the plans read.
+/// Resolve, creating if necessary, the type dictionary identifier of an entity
+/// type IRI. Like the attribute dictionary, it is never truncated by the
+/// harness, so a repeated run reuses the same identifier.
+async fn type_dictionary_id(pool: &PgPool, name: &str) -> i32 {
+    sqlx::query_scalar("INSERT INTO entity_type_names (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id")
+        .bind(name)
+        .fetch_one(pool)
+        .await
+        .expect("type dictionary insert must succeed")
+}
+
+/// Write the corpus and analyze the relations the plans read.
+///
+/// Every Entity lands in all three current-state relations: the identity row,
+/// a document row carrying a payload with the city attribute (and, on every
+/// 1000th Entity, the alarm attribute), and a search row carrying the type,
+/// the attribute keys, the location and the scope. The projection receives a
+/// numeric reading, a GeoProperty entrance and the city string per Entity.
 pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let reading = dictionary_id(pool, READING_ATTRIBUTE).await;
     let entrance = dictionary_id(pool, ENTRANCE_ATTRIBUTE).await;
+    let city = dictionary_id(pool, CITY_ATTRIBUTE).await;
+    let alarm = dictionary_id(pool, ALARM_ATTRIBUTE).await;
+    let rare_type = type_dictionary_id(pool, RARE_TYPE).await;
+    let common_type = type_dictionary_id(pool, COMMON_TYPE).await;
 
     sqlx::query(
-        "INSERT INTO entities (id, types, payload, location, scope_paths) \
-         SELECT $1::text || ':seed:' || lpad(g::text, 6, '0'), \
-                ARRAY[CASE WHEN g % 997 = 0 THEN $2::text ELSE $3::text END], \
-                jsonb_build_array(jsonb_build_object('@id', $1::text || ':seed:' || lpad(g::text, 6, '0'), \
-                                                     'https://example.test/query-access-paths/city', \
-                                                     to_jsonb('city-' || (g % 1000)::text))), \
-                ST_SetSRID(ST_MakePoint(13.0 + (g % 1000) * 0.001, 52.0 + (g % 1000) * 0.001), 4326), \
-                ARRAY[('seed.' || (g % 997)::text)::ltree] \
-         FROM generate_series(1, $4::bigint) AS g",
+        "WITH seeded AS ( \
+             SELECT g, $1::text || ':seed:' || lpad(g::text, 6, '0') AS id FROM generate_series(1, $4::bigint) AS g), \
+         ins AS ( \
+             INSERT INTO entities (id) SELECT id FROM seeded RETURNING entity_key, id), \
+         docs AS ( \
+             INSERT INTO entity_documents (entity_key, payload) \
+             SELECT ins.entity_key, \
+                    jsonb_build_array(jsonb_build_object('@id', ins.id, $7::text, to_jsonb('city-' || (seeded.g % 1000)::text)) \
+                                      || CASE WHEN seeded.g % 1000 = 0 THEN jsonb_build_object($8::text, to_jsonb(true)) ELSE '{}'::jsonb END) \
+             FROM ins JOIN seeded ON seeded.id = ins.id) \
+         INSERT INTO entity_search (entity_key, type_ids, attribute_name_ids, scope_paths, location) \
+         SELECT ins.entity_key, \
+                ARRAY[CASE WHEN seeded.g % 997 = 0 THEN $2::integer ELSE $3::integer END], \
+                CASE WHEN seeded.g % 1000 = 0 THEN ARRAY[$5::integer, $6::integer] ELSE ARRAY[$5::integer] END, \
+                ARRAY[('seed.' || (seeded.g % 997)::text)::ltree], \
+                ST_SetSRID(ST_MakePoint(13.0 + (seeded.g % 1000) * 0.001, 52.0 + (seeded.g % 1000) * 0.001), 4326) \
+         FROM ins JOIN seeded ON seeded.id = ins.id",
     )
     .bind(prefix)
-    .bind(RARE_TYPE)
-    .bind(COMMON_TYPE)
+    .bind(rare_type)
+    .bind(common_type)
     .bind(SEEDED_ENTITIES)
+    .bind(city)
+    .bind(alarm)
+    .bind(CITY_ATTRIBUTE)
+    .bind(ALARM_ATTRIBUTE)
     .execute(pool)
     .await
     .expect("entity corpus must be writable");
@@ -95,8 +164,8 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     let like = format!("{prefix}:seed:%");
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, modified_at, attribute_name_id, attribute_kind, value_kind, value_number) \
-         SELECT e.entity_key, now(), $1, 1, 1, (e.entity_key % 20000)::numeric \
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+         SELECT e.entity_key, $1, 1, 1, (e.entity_key % 20000)::numeric \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
     .bind(reading)
@@ -107,8 +176,8 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
 
     sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, modified_at, attribute_name_id, attribute_kind, value_kind, value_geo) \
-         SELECT e.entity_key, now(), $1, 3, 4, \
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_geo) \
+         SELECT e.entity_key, $1, 3, 4, \
                 ST_SetSRID(ST_MakePoint(13.0 + (e.entity_key % 1000) * 0.001, 52.0 + (e.entity_key % 1000) * 0.001), 4326) \
          FROM entities AS e WHERE e.id LIKE $2::text",
     )
@@ -118,18 +187,39 @@ pub async fn seed(pool: &PgPool, prefix: &str) -> SeededCorpus {
     .await
     .expect("geometry projection corpus must be writable");
 
+    sqlx::query(
+        "INSERT INTO current_attribute_values \
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_string) \
+         SELECT e.entity_key, $1, 1, 2, 'city-' || (e.entity_key % 1000)::text \
+         FROM entities AS e WHERE e.id LIKE $2::text",
+    )
+    .bind(city)
+    .bind(&like)
+    .execute(pool)
+    .await
+    .expect("string projection corpus must be writable");
+
     analyze(pool).await;
 
     SeededCorpus {
         prefix: prefix.to_owned(),
         reading,
         entrance,
+        rare_type,
+        common_type,
+        city,
+        alarm,
     }
 }
 
-/// Refresh the statistics the planner reads for both relations.
+/// Refresh the statistics the planner reads for every relation the plans touch.
 pub async fn analyze(pool: &PgPool) {
-    for statement in ["ANALYZE entities", "ANALYZE current_attribute_values"] {
+    for statement in [
+        "ANALYZE entities",
+        "ANALYZE entity_documents",
+        "ANALYZE entity_search",
+        "ANALYZE current_attribute_values",
+    ] {
         sqlx::query(statement).execute(pool).await.expect("analyze must succeed");
     }
 }

@@ -62,6 +62,41 @@ pub(super) fn register_entity_side_effect_drain(
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
 }
 
+/// Register the periodic reap of dead-lettered side-effect jobs.
+///
+/// A dead job is retained as evidence for `dead_letter_after`; this schedule
+/// removes older ones every `cadence`. It is `Observed` rather than
+/// tenant-degrading: a missed reap costs disk, not correctness.
+pub(super) fn register_entity_side_effect_reap(
+    supervisor: &TaskSupervisor,
+    drain: Arc<EntitySideEffectDrain>,
+    cadence: Duration,
+    dead_letter_after: chrono::Duration,
+) -> Result<(), TenantAssemblyError> {
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::AfterCadence, MissedTickPolicy::Skip)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("entity-side-effect-dead-letter-reap").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let registration = TaskRegistration::new(
+        name,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        ShutdownPolicy::new(cadence),
+    );
+    let task = ScheduledTask::new(registration, schedule, move |execution| {
+        let drain = Arc::clone(&drain); // clone: each reap execution owns the policy operation while executing.
+        async move {
+            let now = DateTime::<Utc>::from(execution.cutoff());
+            let purged = drain.purge_dead(now - dead_letter_after).await.map_err(classify_entity_expiry_failure)?;
+            tracing::debug!(purged, "pending side-effect dead-letter reap completed");
+            Ok(())
+        }
+    });
+    supervisor
+        .register_scheduled(task)
+        .map(drop)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+}
+
 pub(super) fn register_spatial_synchronization(
     supervisor: &TaskSupervisor,
     changes: broadcast::Sender<ChangeEvent>,

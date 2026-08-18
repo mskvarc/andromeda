@@ -11,22 +11,18 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     batch::execution::{BatchExecution, decide_batch_execution},
     error::EntityError,
-    expanded_member::extract_attribute_keys,
     geo_property_geometry::validate_geo_property_geometries,
     port::blocking_executor::BlockingTask,
 };
+use andromeda_context_commit::entity_record::SearchProjection;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::{batch_context::BatchContextHandle, processor::JsonLdEngine},
 };
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, scope::grammar::ScopeBuf, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::{
-        entity_member::{extract_expires_at, extract_scopes, extract_types},
-        geo_property::{extract_location_geometry, extract_observation_space_geometry, extract_operation_space_geometry},
-    },
+    expanded::{attribute_expiry::min_attribute_expires_at, entity_member::extract_expires_at},
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use chrono::{DateTime, Utc};
@@ -47,20 +43,14 @@ pub(super) struct PreparedEntity {
     pub id: Uri,
     /// Expanded JSON-LD payload (the canonical stored form).
     pub expanded: Value,
-    /// Entity type names extracted from the expanded payload.
-    pub types: Vec<EntityTypeName>,
-    /// Scope values extracted from the expanded payload.
-    pub scopes: Vec<ScopeBuf>,
+    /// The members a query filters on, extracted from the expanded payload.
+    pub projection: SearchProjection,
     /// Attribute names changed by this request payload.
     pub changed_attributes: Vec<AttributeName>,
-    /// The `location` geometry, if present.
-    pub location: Option<Geometry>,
-    /// The `observationSpace` geometry, if present.
-    pub observation_space: Option<Geometry>,
-    /// The `operationSpace` geometry, if present.
-    pub operation_space: Option<Geometry>,
     /// Entity expiration timestamp (clause 4.22).
     pub expires_at: Option<DateTime<Utc>>,
+    /// The earliest attribute-instance expiration, when one exists (clause 4.22).
+    pub min_attribute_expires_at: Option<DateTime<Utc>>,
 }
 
 /// One entity entered into the batch classifier. Carries the input index
@@ -172,24 +162,20 @@ impl EntityService {
         // 5.6.7's multi-status answer reports it without failing its siblings.
         validate_attribute_envelopes(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
         validate_geo_property_geometries(&expanded).map_err(|error| Box::new((id.clone(), error)))?; // clone: the success path retains the identifier
-        let changed_attributes = extract_attribute_keys(&expanded);
-        let types = extract_types(&expanded);
-        let scopes = extract_scopes(&expanded);
-        let location = extract_location_geometry(&expanded);
-        let observation_space = extract_observation_space_geometry(&expanded);
-        let operation_space = extract_operation_space_geometry(&expanded);
+        let projection = SearchProjection::from_expanded(&expanded);
+        // The names the request changed are the names the payload carries: a
+        // batch create or replace writes the whole payload.
+        let changed_attributes = projection.attribute_names.clone(); // clone: the projection keeps the names for the row, the change event for its subscribers
         let expires_at = extract_expires_at(&expanded);
+        let min_attribute_expires_at = min_attribute_expires_at(&expanded);
 
         Ok(PreparedEntity {
             id,
             expanded,
-            types,
-            scopes,
+            projection,
             changed_attributes,
-            location,
-            observation_space,
-            operation_space,
             expires_at,
+            min_attribute_expires_at,
         })
     }
 

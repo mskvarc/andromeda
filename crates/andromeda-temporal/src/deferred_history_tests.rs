@@ -2,6 +2,7 @@ use crate::{
     append_intent::{SequencedTemporalAppendIntent, TemporalAppendEntry, TemporalAppendIntent, TemporalIntentSequence, TemporalObservationIdentity},
     error::TemporalError,
     intent_drain::TemporalIntentDrain,
+    intent_retry_policy::{ERROR_SUMMARY_LIMIT, TemporalIntentRetryPolicy},
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
     pending_overlay::PendingTemporalHistoryOverlay,
     port::{
@@ -19,7 +20,7 @@ use crate::{
         temporal_intent_queue::{ClaimedTemporalAppendIntent, TemporalIntentBatchSize, TemporalIntentLeaseOwner, TemporalIntentQueue, TemporalIntentRetry},
     },
 };
-use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
@@ -36,7 +37,7 @@ use andromeda_ngsi_ld_query::{
 };
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use std::{collections::HashMap, num::NonZeroU32, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
@@ -45,6 +46,8 @@ struct RecordingQueueState {
     pending: Vec<ClaimedTemporalAppendIntent>,
     acknowledged: Vec<WriteId>,
     retries: Vec<TemporalIntentRetry>,
+    /// When set, every acknowledgement and retry reports a lapsed lease.
+    lease_lapsed: bool,
 }
 
 #[derive(Default)]
@@ -67,6 +70,14 @@ impl RecordingQueue {
 
     async fn retry_count(&self) -> usize {
         self.state.lock().await.retries.len()
+    }
+
+    async fn retries(&self) -> Vec<TemporalIntentRetry> {
+        self.state.lock().await.retries.clone()
+    }
+
+    async fn lapse_leases(&self) {
+        self.state.lock().await.lease_lapsed = true;
     }
 }
 
@@ -121,17 +132,28 @@ impl TemporalIntentQueue for RecordingQueue {
             .collect())
     }
 
-    async fn acknowledge(&self, _owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<(), TemporalError> {
+    async fn acknowledge(&self, _owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
+        if state.lease_lapsed {
+            return Ok(LeaseAcknowledgement::Lost);
+        }
         state
             .pending
             .retain(|claim| claim.pending.intent.record.write_id() != intent.intent.record.write_id());
         state.acknowledged.push(intent.intent.record.write_id());
-        Ok(())
+        Ok(LeaseAcknowledgement::Applied)
     }
 
-    async fn retry(&self, _owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent, retry: TemporalIntentRetry) -> Result<(), TemporalError> {
+    async fn retry(
+        &self,
+        _owner: TemporalIntentLeaseOwner,
+        intent: &SequencedTemporalAppendIntent,
+        retry: TemporalIntentRetry,
+    ) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
+        if state.lease_lapsed {
+            return Ok(LeaseAcknowledgement::Lost);
+        }
         if let Some(claim) = state
             .pending
             .iter_mut()
@@ -140,14 +162,15 @@ impl TemporalIntentQueue for RecordingQueue {
             claim.attempts = claim.attempts.saturating_add(1);
         }
         state.retries.push(retry);
-        Ok(())
+        Ok(LeaseAcknowledgement::Applied)
     }
 }
 
 #[derive(Default)]
 struct RecordingSinkState {
     observations: HashMap<WriteId, (Uri, Vec<TemporalHistoryObservation>)>,
-    reject: bool,
+    /// The failure every append reports while set.
+    reject: Option<String>,
 }
 
 #[derive(Default)]
@@ -157,7 +180,11 @@ struct RecordingSink {
 
 impl RecordingSink {
     async fn reject(&self) {
-        self.state.lock().await.reject = true;
+        self.reject_with("recording sink rejected append".to_owned()).await;
+    }
+
+    async fn reject_with(&self, detail: String) {
+        self.state.lock().await.reject = Some(detail);
     }
 
     async fn logical_effect_count(&self) -> usize {
@@ -169,8 +196,8 @@ impl RecordingSink {
 impl TemporalHistorySink for RecordingSink {
     async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
         let mut state = self.state.lock().await;
-        if state.reject {
-            return Err(TemporalError::persistence("recording sink rejected append"));
+        if let Some(detail) = &state.reject {
+            return Err(TemporalError::persistence(detail.clone())); // clone: the error owns its detail; the sink keeps rejecting.
         }
         let observations = intent
             .history_entries()
@@ -321,6 +348,13 @@ fn query() -> CompiledTemporalQuery {
         .build()
 }
 
+/// The retry schedule the drains under test use: two seconds a step, capped
+/// at five, stuck from the third completed attempt.
+fn retry_policy() -> TemporalIntentRetryPolicy {
+    TemporalIntentRetryPolicy::new(Duration::from_secs(2), Duration::from_secs(5), NonZeroU32::new(3).expect("non-zero threshold"))
+        .expect("the ceiling is above the base delay")
+}
+
 fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntentDrain {
     TemporalIntentDrain::new(
         Arc::clone(&queue) as Arc<dyn TemporalIntentQueue>,
@@ -329,7 +363,7 @@ fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntent
         TemporalIntentLeaseOwner::mint(),
         TemporalIntentBatchSize::new(NonZeroU32::new(8).expect("non-zero batch")),
         Duration::from_secs(30),
-        Duration::from_secs(2),
+        retry_policy(),
     )
 }
 
@@ -442,8 +476,67 @@ async fn sink_failure_records_retry_and_keeps_pending_overlay_visible() {
         .await
         .expect("failure is retained per item");
     assert_eq!(outcome.retried, 1);
+    assert_eq!(outcome.lease_lost, 0);
     assert_eq!(queue.retry_count().await, 1);
     assert_eq!(queue.pending_count().await, 1);
     assert_eq!(queue.acknowledged_count().await, 0);
     assert_eq!(overlay_rows(queue, sink, &entity_id).await.len(), 1);
+}
+
+/// The retry delay grows a base step per completed attempt and stops at the
+/// policy ceiling, so an intent that keeps failing is retried at a bounded
+/// cadence instead of backing off without limit.
+#[tokio::test]
+async fn repeated_sink_failures_back_off_linearly_up_to_the_configured_ceiling() {
+    let queue = Arc::new(RecordingQueue::default());
+    let sink = Arc::new(RecordingSink::default());
+    let (pending, _entity_id) = fixture();
+    queue.insert(pending).await;
+    sink.reject().await;
+    let drain = drain(Arc::clone(&queue), Arc::clone(&sink));
+    for _ in 0..4 {
+        drain.execute(instant()).await.expect("failure is retained per item");
+    }
+    let delays: Vec<TimeDelta> = queue.retries().await.iter().map(|retry| retry.eligible_at - instant()).collect();
+    assert_eq!(
+        delays,
+        vec![TimeDelta::seconds(2), TimeDelta::seconds(4), TimeDelta::seconds(5), TimeDelta::seconds(5)],
+        "two seconds a step, clamped at the five-second ceiling"
+    );
+}
+
+/// An acknowledgement or retry whose lease has lapsed is counted as lost, not
+/// as delivered or retried, and is left to the worker that now holds the row.
+#[tokio::test]
+async fn a_lapsed_lease_is_reported_as_lost_rather_than_as_an_outcome() {
+    let queue = Arc::new(RecordingQueue::default());
+    let sink = Arc::new(RecordingSink::default());
+    let (pending, _entity_id) = fixture();
+    queue.insert(pending).await;
+    queue.lapse_leases().await;
+    let outcome = drain(Arc::clone(&queue), Arc::clone(&sink))
+        .execute(instant())
+        .await
+        .expect("a lapsed lease is an outcome, not a failure");
+    assert_eq!(outcome.acknowledged, 0);
+    assert_eq!(outcome.retried, 0);
+    assert_eq!(outcome.lease_lost, 1);
+    assert_eq!(queue.acknowledged_count().await, 0, "the row is left to its new owner");
+    assert_eq!(queue.pending_count().await, 1);
+}
+
+/// The sink's failure summary is cut to what the queue row can hold.
+#[tokio::test]
+async fn a_long_sink_failure_summary_is_cut_to_the_column_limit() {
+    let queue = Arc::new(RecordingQueue::default());
+    let sink = Arc::new(RecordingSink::default());
+    let (pending, _entity_id) = fixture();
+    queue.insert(pending).await;
+    sink.reject_with("x".repeat(5000)).await;
+    drain(Arc::clone(&queue), Arc::clone(&sink))
+        .execute(instant())
+        .await
+        .expect("failure is retained per item");
+    let summaries: Vec<usize> = queue.retries().await.iter().map(|retry| retry.summary.len()).collect();
+    assert_eq!(summaries, vec![ERROR_SUMMARY_LIMIT]);
 }

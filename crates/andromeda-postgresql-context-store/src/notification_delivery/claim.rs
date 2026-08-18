@@ -6,7 +6,7 @@ use crate::{
 };
 use andromeda_notification::delivery_lease::LeaseTerm;
 use andromeda_postgresql_schema::{
-    attribute_dictionary::AttributeNames,
+    name_dictionary::AttributeNames,
     notification::{NotificationDeliveries, NotificationEvents},
     subscriptions::Subscriptions,
 };
@@ -15,8 +15,10 @@ use andromeda_postgresql_seaquery::{
     interval::make_interval_secs,
     pg_array::{any, text_array},
     pg_type::PostgresType,
+    queue::claimable_at,
     unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
 };
+use andromeda_telemetry::statement::{StatementName, observe_statement};
 use sea_query::{
     Alias,
     Expr,
@@ -35,6 +37,9 @@ use sea_query::{
 };
 use sea_query_sqlx::SqlxBinder;
 use sqlx::postgres::PgPool;
+
+/// The statement name the delivery claim is observed under.
+const DELIVERY_CLAIM: StatementName = StatementName("notification-delivery-claim");
 
 /// Claim up to `batch_size` due deliveries for `worker_id` under `lease`.
 ///
@@ -65,12 +70,12 @@ pub async fn claim_due(
     worker_id: &str,
     lease: LeaseTerm,
     batch_size: i32,
-    max_attempts: i32,
 ) -> Result<Vec<Result<ClaimedDelivery, ClaimedDeliveryError>>, ContextStoreError> {
     let mut tx = pool.begin().await?;
 
-    let (sql, values) = claim_statement(worker_id, batch_size, max_attempts, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
-    let claimed_ids: Vec<i64> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx).await?;
+    let (sql, values) = claim_statement(worker_id, batch_size, f64::from(lease.seconds())).build_sqlx(PostgresQueryBuilder);
+    let claim = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&mut *tx);
+    let claimed_ids: Vec<i64> = observe_statement(DELIVERY_CLAIM, claim).await?;
     if claimed_ids.is_empty() {
         tx.commit().await?;
         return Ok(Vec::new());
@@ -102,24 +107,26 @@ fn ordinality_alias() -> (Alias, [UnnestColumn; 1], Alias) {
 /// Claim a batch of due deliveries for `worker_id`, returning their identifiers.
 ///
 /// The candidate predicate is exactly the one the queue's partial claim index
-/// carries: undelivered, below the attempt ceiling, due, and either unleased or
-/// held under a lease that has expired. A predicate that drifted from the index
-/// would leave the index unusable rather than incorrect, which is the failure
-/// mode that shows up only under load. `FOR UPDATE SKIP LOCKED` in the candidate
-/// subquery steps over a row another worker holds instead of waiting on it.
-fn claim_statement(worker_id: &str, batch_size: i32, max_attempts: i32, lease_seconds: f64) -> UpdateStatement {
+/// carries: still queued (neither delivered nor exhausted) and claimable — the
+/// later of its due instant and its lease expiry has passed. That instant is
+/// the index's expression, spelled through the one shared helper so the
+/// statement and the index match structurally; ordering by it, then by `id`,
+/// is the index's own key order, so the claim is one bounded range scan whose
+/// depth is the batch size. `FOR UPDATE SKIP LOCKED` in the candidate subquery
+/// steps over a row another worker holds instead of waiting on it.
+///
+/// The attempt ceiling is not part of the predicate: a delivery that has run
+/// out of attempts is stamped `exhausted_at` by the worker that made the last
+/// attempt, so the queue never needs to know the configured maximum.
+fn claim_statement(worker_id: &str, batch_size: i32, lease_seconds: f64) -> UpdateStatement {
     let candidates = Query::select()
         .column(NotificationDeliveries::Id)
         .from(NotificationDeliveries::Table)
         .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
-        .and_where(Expr::col(NotificationDeliveries::AttemptCount).lt(max_attempts))
-        .and_where(Expr::col(NotificationDeliveries::NextAttemptAt).lte(Expr::current_timestamp()))
-        .and_where(
-            Expr::col(NotificationDeliveries::LeaseUntil)
-                .is_null()
-                .or(Expr::col(NotificationDeliveries::LeaseUntil).lte(Expr::current_timestamp())),
-        )
-        .order_by(NotificationDeliveries::NextAttemptAt, Order::Asc)
+        .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_null())
+        .and_where(delivery_claimable_at().lte(Expr::current_timestamp()))
+        .order_by_expr(delivery_claimable_at(), Order::Asc)
+        .order_by(NotificationDeliveries::Id, Order::Asc)
         .limit(<i32 as Ord>::max(batch_size, 0) as u64)
         .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
         .to_owned();
@@ -135,6 +142,11 @@ fn claim_statement(worker_id: &str, batch_size: i32, max_attempts: i32, lease_se
         .and_where(Expr::col(NotificationDeliveries::Id).in_subquery(candidates))
         .returning_col(NotificationDeliveries::Id)
         .to_owned()
+}
+
+/// The instant a delivery row becomes claimable, as `idx_notification_deliveries_claimable` indexes it.
+fn delivery_claimable_at() -> SimpleExpr {
+    claimable_at(Expr::col(NotificationDeliveries::NextAttemptAt), Expr::col(NotificationDeliveries::LeaseUntil))
 }
 
 /// Read the claimed deliveries back with the events they answer.
@@ -219,29 +231,41 @@ mod tests {
 
     #[test]
     fn the_claim_scans_and_updates_deliveries_alone() {
-        let sql = claim_statement("w", 10, 5, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement("w", 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "notification_deliveries""#), "{sql}");
         assert!(!sql.contains("notification_events"), "the claim must not touch the events table: {sql}");
     }
 
     #[test]
     fn the_candidate_predicate_matches_the_partial_claim_index() {
-        let sql = claim_statement("w", 10, 5, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement("w", 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
-        assert!(sql.contains(r#""attempt_count" < 5"#), "{sql}");
-        assert!(sql.contains(r#""next_attempt_at" <= CURRENT_TIMESTAMP"#), "{sql}");
-        assert!(sql.contains(r#""lease_until" IS NULL OR "lease_until" <= CURRENT_TIMESTAMP"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" IS NULL"#), "{sql}");
+        assert!(
+            sql.contains(r#"GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) <= CURRENT_TIMESTAMP"#),
+            "{sql}"
+        );
+        assert!(!sql.contains("attempt_count"), "the claim must not repeat the attempt ceiling: {sql}");
+    }
+
+    #[test]
+    fn the_candidates_are_ordered_by_the_claimable_instant_then_identifier() {
+        let sql = claim_statement("w", 10, 30.0).to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"ORDER BY GREATEST("next_attempt_at", COALESCE("lease_until", '-infinity'::timestamptz)) ASC, "id" ASC LIMIT 10"#),
+            "{sql}"
+        );
     }
 
     #[test]
     fn a_row_another_worker_holds_is_skipped_rather_than_waited_on() {
-        let sql = claim_statement("w", 10, 5, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement("w", 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
     }
 
     #[test]
     fn the_claim_takes_a_lease_alongside_the_claim_triple() {
-        let sql = claim_statement("w", 10, 5, 30.0).to_string(PostgresQueryBuilder);
+        let sql = claim_statement("w", 10, 30.0).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""claimed_at" = CURRENT_TIMESTAMP"#), "{sql}");
         assert!(sql.contains(r#""claimed_by" = 'w'"#), "{sql}");
         assert!(sql.contains("make_interval(secs =>"), "{sql}");

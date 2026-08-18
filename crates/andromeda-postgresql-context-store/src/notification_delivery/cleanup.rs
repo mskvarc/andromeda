@@ -2,8 +2,8 @@
 //!
 //! Three independent passes cover the ways a `notification_events` row can
 //! stop being owed a delivery: [`purge_delivered_before`] reaps deliveries
-//! acknowledged as sent, [`purge_exhausted_before`] reaps deliveries that ran
-//! out of attempts and were kept only as evidence, and
+//! acknowledged as sent, [`purge_exhausted_before`] reaps deliveries the worker
+//! gave up on and that were kept only as evidence, and
 //! [`purge_orphan_events_before`] reaps events left with zero referencing
 //! deliveries by any path the first two do not observe directly -- a
 //! subscription that vanished between the match and the delivery insert, or a
@@ -52,22 +52,13 @@ pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Res
     Ok(removed)
 }
 
-/// Remove exhausted deliveries whose event was created before `cutoff`.
+/// Remove deliveries exhausted before `cutoff`.
 ///
-/// A delivery is dead by two distinct routes: `acknowledge::mark_exhausted`
-/// stamps the `i32::MAX` sentinel on a terminal failure, and an ordinary
-/// retryable failure that keeps missing (`acknowledge::mark_failed`) reaches
-/// the same dead end one attempt at a time, stopping at `attempt_count ==
-/// max_attempts` because the claim predicate (`attempt_count < max_attempts`)
-/// then excludes it forever. Matching only the sentinel reaps the first route
-/// and leaves the second accumulating without limit, so this statement matches
-/// the terminal condition both routes share -- `attempt_count` has reached or
-/// passed the configured ceiling -- rather than the sentinel alone.
-/// `notification_deliveries` carries no timestamp of its own for when
-/// exhaustion happened, so the retention clock reads the immutable
-/// `notification_events.created_at` of the event it answers -- the event is
-/// written once, inside the same write that first queued the delivery, so its
-/// age is a stable lower bound on how long the delivery has been sitting dead.
+/// A delivery is exhausted by one path only: the worker that made its last
+/// attempt — a terminal transport failure, or the attempt that reached the
+/// configured ceiling — stamped `exhausted_at`. That instant is the retention
+/// clock, so the reap is a range scan over `idx_notification_deliveries_exhausted`
+/// and needs neither the event's age nor the ceiling.
 ///
 /// The event a dead-lettered row released is picked up by
 /// [`purge_orphan_events_before`], not by this statement: the two are kept
@@ -79,8 +70,8 @@ pub async fn purge_delivered_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Res
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the statement fails.
-pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>, max_attempts: i32) -> Result<u64, ContextStoreError> {
-    let (sql, values) = purge_exhausted_statement(cutoff, max_attempts).build_sqlx(PostgresQueryBuilder);
+pub async fn purge_exhausted_before(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, ContextStoreError> {
+    let (sql, values) = purge_exhausted_statement(cutoff).build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(pool).await?;
     Ok(result.rows_affected())
 }
@@ -141,25 +132,12 @@ fn purge_orphan_events_among_statement(event_ids: &[i64]) -> DeleteStatement {
         .to_owned()
 }
 
-/// Delete undelivered deliveries at or past the attempt ceiling whose event
-/// predates `cutoff`.
-///
-/// The original `DELETE ... USING notification_events` is expressed as a
-/// correlated `EXISTS`: the join to the event exists only to read its
-/// `created_at`, and a delivery is removed exactly when an event older than the
-/// cutoff answers it, which is what the existence test asserts.
-fn purge_exhausted_statement(cutoff: DateTime<Utc>, max_attempts: i32) -> DeleteStatement {
-    let dead_event = Query::select()
-        .expr(Expr::val(1))
-        .from(NotificationEvents::Table)
-        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::Id)).equals((NotificationDeliveries::Table, NotificationDeliveries::EventId)))
-        .and_where(Expr::col((NotificationEvents::Table, NotificationEvents::CreatedAt)).lt(cutoff))
-        .to_owned();
+/// Delete deliveries stamped exhausted before `cutoff`.
+fn purge_exhausted_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
     Query::delete()
         .from_table(NotificationDeliveries::Table)
-        .and_where(Expr::col(NotificationDeliveries::DeliveredAt).is_null())
-        .and_where(Expr::col(NotificationDeliveries::AttemptCount).gte(max_attempts))
-        .and_where(Expr::exists(dead_event))
+        .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).is_not_null())
+        .and_where(Expr::col(NotificationDeliveries::ExhaustedAt).lt(cutoff))
         .to_owned()
 }
 
@@ -205,12 +183,12 @@ mod tests {
     }
 
     #[test]
-    fn the_exhausted_reap_removes_dead_deliveries_older_than_the_cutoff() {
-        let sql = purge_exhausted_statement(Utc::now(), 5).to_string(PostgresQueryBuilder);
+    fn the_exhausted_reap_removes_deliveries_stamped_exhausted_before_the_cutoff() {
+        let sql = purge_exhausted_statement(Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"DELETE FROM "notification_deliveries""#), "{sql}");
-        assert!(sql.contains(r#""delivered_at" IS NULL"#), "{sql}");
-        assert!(sql.contains(r#""attempt_count" >= 5"#), "{sql}");
-        assert!(sql.contains("EXISTS") && !sql.contains("NOT EXISTS"), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" IS NOT NULL"#), "{sql}");
+        assert!(sql.contains(r#""exhausted_at" <"#), "{sql}");
+        assert!(!sql.contains("attempt_count") && !sql.contains("notification_events"), "{sql}");
     }
 
     #[test]

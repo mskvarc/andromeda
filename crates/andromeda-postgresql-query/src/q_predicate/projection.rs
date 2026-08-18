@@ -3,12 +3,12 @@
 
 use crate::{
     attribute_name_id::AttributeNameId,
+    dictionary::query_names::QueryNames,
+    entity_row_refs::EntityRowRefs,
     error::RenderError,
     operator::{compare, pattern as pattern_predicate},
     q_predicate::{
-        attribute_names::ResolvedAttributeNames,
         fallback::{fallback_equality, fallback_exists, fallback_ordering, fallback_pattern},
-        target::QFilterTarget,
         traversal::LinkedHop,
     },
 };
@@ -37,81 +37,71 @@ fn probe_column(column: CurrentAttributeValues) -> SimpleExpr {
 }
 
 /// Compile a parsed `q` expression into a sea-query [`Condition`].
-pub fn compile(expr: &Expr, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+pub fn compile(expr: &Expr, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
     match expr {
-        Expr::And(terms) => terms
-            .iter()
-            .try_fold(Condition::all(), |cond, term| Ok(cond.add(compile(term, target, names)?))),
-        Expr::Or(terms) => terms
-            .iter()
-            .try_fold(Condition::any(), |cond, term| Ok(cond.add(compile(term, target, names)?))),
-        Expr::Pred(pred) => compile_predicate(pred, target, names),
+        Expr::And(terms) => terms.iter().try_fold(Condition::all(), |cond, term| Ok(cond.add(compile(term, rows, names)?))),
+        Expr::Or(terms) => terms.iter().try_fold(Condition::any(), |cond, term| Ok(cond.add(compile(term, rows, names)?))),
+        Expr::Pred(pred) => compile_predicate(pred, rows, names),
     }
 }
 
 /// Compile one leaf predicate, descending any linked-entity hops its axis
 /// carries before compiling the comparison against the entity it lands on.
-fn compile_predicate(pred: &Predicate, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
-    compile_along_path(pred, pred.path(), target, names, 0)
+fn compile_predicate(pred: &Predicate, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
+    compile_along_path(pred, pred.path(), rows, names, 0)
 }
 
 /// Compile a predicate against the entity reached by the remaining axis.
 ///
 /// `depth` is the number of hops already descended; it suffixes the aliases so
 /// a nested traversal's probes cannot shadow an enclosing one's.
-fn compile_along_path(
-    pred: &Predicate,
-    path: &QueryPath,
-    target: &QFilterTarget,
-    names: &ResolvedAttributeNames,
-    depth: usize,
-) -> Result<Condition, RenderError> {
+fn compile_along_path(pred: &Predicate, path: &QueryPath, rows: &EntityRowRefs, names: &QueryNames, depth: usize) -> Result<Condition, RenderError> {
     match path {
-        QueryPath::Local(local) => compile_local_predicate(pred, local, target, names),
+        QueryPath::Local(local) => compile_local_predicate(pred, local, rows, names),
         QueryPath::Linked {
             relationship,
             guard_types,
             inner,
         } => {
-            let Some(relationship_id) = names.get(relationship) else {
+            let Some(relationship_id) = names.attributes.get(relationship) else {
                 // No `attribute_names` row means no instance of the
                 // Relationship was ever written, so no entity can be reached
                 // through it.
                 return Ok(unsatisfiable());
             };
             let hop = LinkedHop::at_depth(depth + 1);
-            let inner_condition = compile_along_path(pred, inner, &hop.inner_target(), names, depth + 1)?;
-            Ok(hop.probe(relationship_id, guard_types, target, inner_condition))
+            let inner_condition = compile_along_path(pred, inner, &hop.inner_rows(), names, depth + 1)?;
+            Ok(hop.probe(relationship_id, guard_types, &names.types, rows, inner_condition))
         }
     }
 }
 
 /// Compile the comparison itself, routing it to the projection or the fallback.
-fn compile_local_predicate(pred: &Predicate, path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Result<Condition, RenderError> {
+fn compile_local_predicate(pred: &Predicate, path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Result<Condition, RenderError> {
     match pred {
-        Predicate::Exists(_) => Ok(compile_exists(path, target, names)),
+        Predicate::Exists(_) => Ok(compile_exists(path, rows, names)),
         Predicate::Equality { membership, rhs, .. } => {
             if is_projection_eligible(path) {
-                match names.get(&path.attr) {
-                    Some(id) => Ok(compile_equality_on_projection(id, *membership, rhs, target)),
+                match names.attributes.get(&path.attr) {
+                    Some(id) => Ok(compile_equality_on_projection(id, *membership, rhs, rows)),
                     None => Ok(unsatisfiable()),
                 }
             } else {
-                Ok(fallback_equality(path, *membership, rhs, target))
+                Ok(fallback_equality(path, *membership, rhs, rows))
             }
         }
         Predicate::Ordering { op, rhs, .. } => {
             if is_projection_eligible(path) {
-                match names.get(&path.attr) {
-                    Some(id) => Ok(compile_ordering_on_projection(id, *op, rhs, target)),
+                match names.attributes.get(&path.attr) {
+                    Some(id) => Ok(compile_ordering_on_projection(id, *op, rhs, rows)),
                     None => Ok(unsatisfiable()),
                 }
             } else {
-                Ok(fallback_ordering(path, *op, rhs, target))
+                Ok(fallback_ordering(path, *op, rhs, rows))
             }
         }
-        Predicate::MatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::Match, target, names)),
-        Predicate::NotMatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::NotMatch, target, names)),
+        Predicate::MatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::Match, rows, names)),
+        Predicate::NotMatchPattern { pattern, .. } => Ok(compile_pattern(path, pattern, PatternPolarity::NotMatch, rows, names)),
     }
 }
 
@@ -145,12 +135,12 @@ fn unsatisfiable() -> Condition {
 /// `payload`: GIN's `jsonb_ops` only serves `?` when the left operand is the
 /// bare indexed column, and `payload->0` is an expression. It is a sequential
 /// scan.
-fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
+fn compile_exists(path: &AttrPath, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     if !is_projection_eligible(path) {
-        return fallback_exists(path, target);
+        return fallback_exists(path, rows);
     }
 
-    let Some(id) = names.get(&path.attr) else {
+    let Some(id) = names.attributes.get(&path.attr) else {
         return unsatisfiable();
     };
 
@@ -159,7 +149,7 @@ fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttri
         .expr(int_literal(1))
         .from_as(CurrentAttributeValues::Table, Cav)
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(target.entity_key_column()));
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
     Condition::all().add(SeaExpr::exists(probe))
 }
 
@@ -174,20 +164,20 @@ fn compile_exists(path: &AttrPath, target: &QFilterTarget, names: &ResolvedAttri
 /// statement's entity key. The attribute-name test is added before the value so
 /// its dictionary key binds ahead of the value's operands, and the correlation
 /// is added last so it binds nothing after them.
-fn exists_on_projection(id: AttributeNameId, value: Condition, target: &QFilterTarget) -> Condition {
+fn exists_on_projection(id: AttributeNameId, value: Condition, rows: &EntityRowRefs) -> Condition {
     let mut probe = Query::select();
     probe
         .expr(int_literal(1))
         .from_as(CurrentAttributeValues::Table, Cav)
         .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::AttributeNameId)).eq(id.get()))
         .cond_where(value)
-        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(target.entity_key_column()));
+        .and_where(SeaExpr::expr(probe_column(CurrentAttributeValues::EntityKey)).eq(rows.entity_key_column()));
     Condition::all().add(SeaExpr::exists(probe))
 }
 
 /// Compile an equality comparison (`==`/`!=`) against the typed columns of
 /// `current_attribute_values`.
-fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget) -> Condition {
+fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs) -> Condition {
     let value = match rhs {
         CompareValue::Scalar(scalar) => Condition::all().add(scalar_condition(scalar, membership.as_cmp_op())),
         CompareValue::Range { min, max } => match membership {
@@ -208,13 +198,13 @@ fn compile_equality_on_projection(id: AttributeNameId, membership: SetMembership
             }
         }
     };
-    exists_on_projection(id, value, target)
+    exists_on_projection(id, value, rows)
 }
 
 /// Compile an ordering comparison (`>`/`>=`/`<`/`<=`) against the typed columns
 /// of `current_attribute_values`.
-fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget) -> Condition {
-    exists_on_projection(id, Condition::all().add(scalar_condition(rhs, op.as_cmp_op())), target)
+fn compile_ordering_on_projection(id: AttributeNameId, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
+    exists_on_projection(id, Condition::all().add(scalar_condition(rhs, op.as_cmp_op())), rows)
 }
 
 /// Compare one scalar against the typed column that holds values of its kind.
@@ -331,16 +321,20 @@ const fn relationship_object_is_comparable(op: CmpOp) -> RelationshipObjects {
 /// made `owner~="urn:Person:.*"` select entities the standard requires it to
 /// reject.
 ///
-/// The `gin_trgm_ops` trigram index `idx_cav_string_trgm` can accelerate POSIX
-/// `~` (since PostgreSQL 9.3) whenever the pattern yields extractable trigrams
-/// — `urn:ngsi-ld:.*` does, an anchored `^A.*` does not. Either way the probe
-/// is narrowed by the `attribute_name_id` prefix of `idx_cav_attr_string`
-/// before any regex is evaluated.
-fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget, names: &ResolvedAttributeNames) -> Condition {
+/// The attribute-aware trigram index `idx_cav_attr_string_trgm` on
+/// `(attribute_name_id int4_ops, value_string gin_trgm_ops)` can accelerate
+/// POSIX `~` (since PostgreSQL 9.3) whenever the pattern yields extractable
+/// trigrams — `urn:ngsi-ld:.*` does, an anchored `^A.*` does not — and it
+/// intersects those trigrams with the attribute key, so a pattern common
+/// across attributes yields candidates only from the one probed. When no
+/// trigram is extractable the probe is still narrowed by the
+/// `attribute_name_id` prefix of `idx_cav_attr_string` before any regex is
+/// evaluated.
+fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs, names: &QueryNames) -> Condition {
     if !is_projection_eligible(path) {
-        return fallback_pattern(path, pattern, polarity, target);
+        return fallback_pattern(path, pattern, polarity, rows);
     }
-    let Some(id) = names.get(&path.attr) else {
+    let Some(id) = names.attributes.get(&path.attr) else {
         return unsatisfiable();
     };
 
@@ -349,20 +343,32 @@ fn compile_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity
         polarity,
         SeaExpr::val(pattern.as_str()),
     ));
-    exists_on_projection(id, value, target)
+    exists_on_projection(id, value, rows)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{dictionary::resolved_names::ResolvedNames, entity_row_refs::DocumentsRef, entity_type_id::EntityTypeId};
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
     use andromeda_ngsi_ld_query::filter::parser;
     use andromeda_postgresql_schema::current::Entities;
     use sea_query::{Alias, PostgresQueryBuilder, Query, Value};
 
     const SPEED: &str = "https://example.com/speed";
 
-    fn names() -> ResolvedAttributeNames {
-        ResolvedAttributeNames::from_pairs([
+    fn names() -> QueryNames {
+        QueryNames {
+            attributes: attribute_names(),
+            types: ResolvedNames::from_pairs([
+                ("https://example.com/Building".parse().expect("valid type name"), EntityTypeId::from(31)),
+                ("https://example.com/Store".parse().expect("valid type name"), EntityTypeId::from(32)),
+            ]),
+        }
+    }
+
+    fn attribute_names() -> ResolvedNames<AttributeName> {
+        ResolvedNames::from_pairs([
             (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(7)),
             ("https://example.com/brandName".parse().expect("valid attribute name"), AttributeNameId::from(8)),
             ("https://example.com/active".parse().expect("valid attribute name"), AttributeNameId::from(9)),
@@ -392,12 +398,12 @@ mod tests {
     /// Render a compiled condition the way a real query would, so the assertions
     /// see the final placeholder numbering.
     fn render(q: &str) -> (String, Vec<Value>) {
-        render_with(q, &names(), &QFilterTarget::entities())
+        render_with(q, &names(), &EntityRowRefs::unaliased())
     }
 
-    fn render_with(q: &str, names: &ResolvedAttributeNames, target: &QFilterTarget) -> (String, Vec<Value>) {
+    fn render_with(q: &str, names: &QueryNames, rows: &EntityRowRefs) -> (String, Vec<Value>) {
         let expr = parser::parse(q).expect("parse q");
-        let condition = compile(&expr, target, names).expect("compile q");
+        let condition = compile(&expr, rows, names).expect("compile q");
         let (sql, values) = Query::select()
             .column(Entities::Id)
             .from(Entities::Table)
@@ -647,7 +653,7 @@ mod tests {
 
     #[test]
     fn unknown_attribute_iri_compiles_to_a_constant_false() {
-        let (sql, _) = render_with(&format!("\"{}\">1", "https://example.com/never-written"), &names(), &QFilterTarget::entities());
+        let (sql, _) = render_with(&format!("\"{}\">1", "https://example.com/never-written"), &names(), &EntityRowRefs::unaliased());
         assert!(sql.contains("FALSE"), "{sql}");
         assert!(!sql.contains("current_attribute_values"), "no probe is emitted when no row can exist: {sql}");
     }
@@ -696,7 +702,7 @@ mod tests {
         let (sql, _) = render_with(
             &format!("{}>50", quoted(SPEED)),
             &names(),
-            &QFilterTarget::correlated((Alias::new("ce"), Alias::new("entity_key")), (Alias::new("ce"), Alias::new("payload"))),
+            &EntityRowRefs::aliased(Alias::new("ce"), Alias::new("cs"), DocumentsRef::ByKeyLookup),
         );
         assert!(sql.contains("\"cav\".\"entity_key\" = \"ce\".\"entity_key\""), "{sql}");
     }
@@ -724,6 +730,7 @@ mod tests {
             "the hop resolves the object through the projection, not the payload: {sql}"
         );
         assert!(sql.contains("\"cav_ln1\".\"entity_key\" = \"entities\".\"entity_key\""), "{sql}");
+        assert!(!sql.contains("entity_search"), "a hop without a type guard reads no search row: {sql}");
         // The inner comparison is correlated against the linked entity's key,
         // which is the row the join on its URI landed on.
         assert!(sql.contains("\"cav\".\"entity_key\" = \"le1\".\"entity_key\""), "{sql}");
@@ -738,7 +745,7 @@ mod tests {
     #[test]
     fn a_hop_guard_tests_the_linked_entitys_types_for_any_of_its_alternatives() {
         // Clause 4.9 lists the guard's types as alternatives, so one membership
-        // test against `entities.types` per type, disjoined.
+        // test against `entities.type_ids` per resolved type, disjoined.
         let (sql, binds) = render(&format!(
             "{}{{{},{}:{}==\"x\"}}",
             quoted(IS_PARKED_IN),
@@ -756,32 +763,46 @@ mod tests {
             concat!(
                 r#"SELECT "id" FROM "entities" WHERE EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav_ln1" "#,
                 r#"JOIN "entities" AS "le1" ON "le1"."id" = "cav_ln1"."value_uri" "#,
+                r#"JOIN "entity_search" AS "ls1" ON "ls1"."entity_key" = "le1"."entity_key" "#,
                 r#"WHERE "cav_ln1"."entity_key" = "entities"."entity_key" "#,
                 r#"AND "cav_ln1"."attribute_name_id" = $1 "#,
-                r#"AND (("le1"."types" @> ARRAY(SELECT $2::TEXT)) OR ("le1"."types" @> ARRAY(SELECT $3::TEXT))) "#,
+                r#"AND (("ls1"."type_ids" @> (ARRAY[31])) OR ("ls1"."type_ids" @> (ARRAY[32]))) "#,
                 r#"AND EXISTS(SELECT 1 FROM "current_attribute_values" AS "cav" "#,
-                r#"WHERE "cav"."attribute_name_id" = $4 AND ("cav"."value_string" = $5 OR "cav"."value_uri" = $6) "#,
+                r#"WHERE "cav"."attribute_name_id" = $2 AND ("cav"."value_string" = $3 OR "cav"."value_uri" = $4) "#,
                 r#"AND "cav"."entity_key" = "le1"."entity_key"))"#,
             )
         );
         assert!(
-            binds
-                .iter()
-                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "https://example.com/Building")),
-            "{binds:?}"
+            !binds.iter().any(|bind| matches!(bind, Value::Int(Some(31 | 32)))),
+            "the guard type keys are inlined for the planner, never bound: {binds:?}"
         );
         assert!(
-            binds
+            !binds
                 .iter()
-                .any(|bind| matches!(bind, Value::String(Some(text)) if text.as_str() == "https://example.com/Store")),
-            "{binds:?}"
+                .any(|bind| matches!(bind, Value::String(Some(text)) if text.contains("example.com/Building"))),
+            "the type IRI itself never reaches the statement: {binds:?}"
         );
+    }
+
+    /// A guard type the dictionary never recorded was never carried by any
+    /// entity, so that alternative is unsatisfiable while the resolved one
+    /// still selects.
+    #[test]
+    fn an_unresolved_guard_type_renders_as_an_unsatisfiable_alternative() {
+        let (sql, _) = render(&format!(
+            "{}{{{},{}:{}==\"x\"}}",
+            quoted(IS_PARKED_IN),
+            quoted("https://example.com/Building"),
+            quoted("https://example.com/Warehouse"),
+            quoted(CATEGORY)
+        ));
+        assert!(sql.contains(r#"(("ls1"."type_ids" @> (ARRAY[31])) OR (FALSE))"#), "{sql}");
     }
 
     #[test]
     fn an_unguarded_hop_emits_no_type_test() {
         let (sql, _) = render(&format!("{}{{{}==\"commercial\"}}", quoted(IS_PARKED_IN), quoted(CATEGORY)));
-        assert!(!sql.contains("\"types\""), "no guard was written: {sql}");
+        assert!(!sql.contains("\"type_ids\""), "no guard was written: {sql}");
     }
 
     #[test]

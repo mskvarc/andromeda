@@ -133,6 +133,12 @@ pub enum ExtensionVersionError {
 }
 
 /// Refuse a tenant whose server or extensions are below what the schema needs.
+///
+/// Only the two versioned extensions are checked here. The contrib extensions
+/// the schema also creates — `pg_trgm`, `ltree`, `btree_gist`, `btree_gin`
+/// (the `int4_ops` half of the attribute-aware trigram index on
+/// `current_attribute_values`) — ship with every supported server, so their
+/// `CREATE EXTENSION IF NOT EXISTS` in migration 0002 is the check.
 pub async fn verify_server_requirements(pool: &PgPool) -> Result<(), SchemaContractError> {
     let (sql, values) = server_requirements_statement().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_one(pool).await?;

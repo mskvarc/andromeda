@@ -4,7 +4,9 @@
 //! client registers and matches under, and `subscription_key`, the internal
 //! surrogate the notification queue references so a delivery survives the
 //! external id being reused. Both entity and context-source subscriptions share
-//! this one table, distinguished by `kind`.
+//! this one table, distinguished by `kind`. The delivery counters a
+//! notification moves on every send live apart in `subscription_delivery_state`
+//! so that a delivery never rewrites the wide subscription row.
 
 use sea_query::Iden;
 
@@ -61,23 +63,38 @@ pub enum Subscriptions {
     JsonldContext,
     /// Whether the subscription is confined to the local broker (`local`)
     LocalOnly,
-    /// How many notifications have been sent (`notification.timesSent`)
-    TimesSent,
-    /// The instant of the last notification attempt
-    LastNotification,
-    /// The instant of the last successful notification
-    LastSuccess,
-    /// The instant of the last failed notification
-    LastFailure,
     /// The instant the subscription was created (clause 4.8 `createdAt`)
     CreatedAt,
     /// The instant the subscription was last modified (clause 4.8 `modifiedAt`)
     ModifiedAt,
 }
 
+/// The `subscription_delivery_state` table - the per-subscription delivery
+/// counters of clause 5.2.15, one row per subscription, moved by every
+/// notification sent.
+///
+/// The row is narrow and carries no index but its primary key, so the claim
+/// and the success/failure marks are heap-only-tuple updates that never touch
+/// the subscription row itself.
+#[derive(Iden, Clone, Copy)]
+pub enum SubscriptionDeliveryState {
+    /// Table name: `subscription_delivery_state`
+    Table,
+    /// Foreign key to `subscriptions`, cascading on deletion; also the primary key
+    SubscriptionKey,
+    /// How many notifications have been sent (`notification.timesSent`)
+    TimesSent,
+    /// The instant of the last notification attempt (`notification.lastNotification`)
+    LastNotification,
+    /// The instant of the last successful notification (`notification.lastSuccess`)
+    LastSuccess,
+    /// The instant of the last failed notification (`notification.lastFailure`)
+    LastFailure,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::subscriptions::Subscriptions;
+    use crate::subscriptions::{SubscriptionDeliveryState, Subscriptions};
     use sea_query::Iden;
 
     #[test]
@@ -91,6 +108,16 @@ mod tests {
         assert_eq!(Subscriptions::TimeInterval.to_string(), "time_interval");
         assert_eq!(Subscriptions::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Subscriptions::LocalOnly.to_string(), "local_only");
-        assert_eq!(Subscriptions::LastNotification.to_string(), "last_notification");
+        assert_eq!(Subscriptions::ModifiedAt.to_string(), "modified_at");
+    }
+
+    #[test]
+    fn subscription_delivery_state_table_and_columns() {
+        assert_eq!(SubscriptionDeliveryState::Table.to_string(), "subscription_delivery_state");
+        assert_eq!(SubscriptionDeliveryState::SubscriptionKey.to_string(), "subscription_key");
+        assert_eq!(SubscriptionDeliveryState::TimesSent.to_string(), "times_sent");
+        assert_eq!(SubscriptionDeliveryState::LastNotification.to_string(), "last_notification");
+        assert_eq!(SubscriptionDeliveryState::LastSuccess.to_string(), "last_success");
+        assert_eq!(SubscriptionDeliveryState::LastFailure.to_string(), "last_failure");
     }
 }

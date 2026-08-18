@@ -80,28 +80,41 @@ pub enum Csr {
 /// The `registration_information` routing projection derived from a
 /// registration's `information`, which distributed-operation discovery
 /// preselects against before reading the payload.
+///
+/// Every axis is `NOT NULL` and carries a sentinel where the row does not
+/// constrain it: `{'*'}` for the type set, `''` for the identifier, `{0}` for
+/// both attribute-key arrays. A registration constraining nothing is one row
+/// carrying every sentinel.
 #[derive(Iden, Clone, Copy)]
 pub enum RegistrationInformation {
     /// The `registration_information` table.
     Table,
     /// Foreign key to the owning `context_source_registrations` row.
     RegistrationId,
-    /// The set of entity-type IRIs the information item constrains, or `NULL`
+    /// The set of entity-type IRIs the information item constrains, or `{'*'}`
     /// when it constrains no type.
     EntityTypes,
-    /// The exact entity identifier the item constrains, or `NULL`.
+    /// The exact entity identifier the item constrains, or `''` when it names
+    /// none.
     EntityId,
     /// The entity identifier pattern the item constrains, or `NULL`.
     EntityIdPattern,
-    /// The interned property-name dictionary keys the item declares, or `NULL`.
+    /// The interned property-name dictionary keys the item declares; `{0}` when
+    /// it declares no name on either axis, `{}` when it declares names on the
+    /// relationship axis only.
     PropertyNameIds,
-    /// The interned relationship-name dictionary keys the item declares, or `NULL`.
+    /// The interned relationship-name dictionary keys the item declares; `{0}`
+    /// when it declares no name on either axis, `{}` when it declares names on
+    /// the property axis only.
     RelationshipNameIds,
+    /// The registration-wide clause 4.20 operation codes, replicated onto every
+    /// row, or `NULL` when the registration declares none.
+    Operations,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::csr::Csr;
+    use crate::csr::{Csr, RegistrationInformation};
     use sea_query::Iden;
 
     #[test]
@@ -118,5 +131,13 @@ mod tests {
         assert_eq!(Csr::ObservationSpace.to_string(), "observation_space");
         assert_eq!(Csr::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Csr::AdditionalProperties.to_string(), "additional_properties");
+    }
+
+    #[test]
+    fn registration_information_column_names() {
+        assert_eq!(RegistrationInformation::Table.to_string(), "registration_information");
+        assert_eq!(RegistrationInformation::EntityTypes.to_string(), "entity_types");
+        assert_eq!(RegistrationInformation::PropertyNameIds.to_string(), "property_name_ids");
+        assert_eq!(RegistrationInformation::Operations.to_string(), "operations");
     }
 }

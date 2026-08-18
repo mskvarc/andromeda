@@ -7,9 +7,9 @@
 //! read the payload directly. This path is unindexed by construction.
 
 use crate::{
+    entity_row_refs::EntityRowRefs,
     jsonb::{attribute_value_jsonpath, lift_comparison},
     operator::{compare, pattern as pattern_predicate},
-    q_predicate::target::QFilterTarget,
 };
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_query::{
@@ -44,16 +44,16 @@ fn whole_text(jsonb: SimpleExpr) -> SimpleExpr {
 /// A sub-path existence check asks whether a nested element is present, which
 /// only the payload can answer. An earlier compiler silently dropped the
 /// sub-path here and tested the top-level attribute instead.
-pub fn fallback_exists(path: &AttrPath, target: &QFilterTarget) -> Condition {
+pub fn fallback_exists(path: &AttrPath, rows: &EntityRowRefs) -> Condition {
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
-    Condition::all().add(jsonb_path_exists(target.payload_column(), &jsonpath))
+    Condition::all().add(jsonb_path_exists(rows.payload_column(), &jsonpath))
 }
 
 /// The `jsonb_path_query_first` extraction reaching one payload member of this
 /// attribute.
-fn payload_extraction(path: &AttrPath, terminal_iri: &str, target: &QFilterTarget) -> SimpleExpr {
+fn payload_extraction(path: &AttrPath, terminal_iri: &str, rows: &EntityRowRefs) -> SimpleExpr {
     let jsonpath = value_extraction_jsonpath(path, terminal_iri);
-    jsonb_path_query_first(target.payload_column(), &jsonpath)
+    jsonb_path_query_first(rows.payload_column(), &jsonpath)
 }
 
 /// Build a comparison between one stored text expression and one operand, both
@@ -81,12 +81,12 @@ fn equality_scalar_comparison(extract_value: SimpleExpr, extract_object: SimpleE
 }
 
 /// Compile an equality predicate (`==`/`!=`) against the payload.
-pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, target: &QFilterTarget) -> Condition {
-    let extract_value = payload_extraction(path, VALUE.as_str(), target);
+pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &CompareValue, rows: &EntityRowRefs) -> Condition {
+    let extract_value = payload_extraction(path, VALUE.as_str(), rows);
 
     match rhs {
         CompareValue::Scalar(scalar) => {
-            let extract_object = payload_extraction(path, OBJECT.as_str(), target);
+            let extract_object = payload_extraction(path, OBJECT.as_str(), rows);
             Condition::all().add(equality_scalar_comparison(extract_value, extract_object, scalar, membership.as_cmp_op()))
         }
         CompareValue::Range { min, max } => {
@@ -114,7 +114,7 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
             // way the single-scalar arm above does — `compile_equality_on_projection`
             // routes every list arm through this same COALESCE via
             // `scalar_condition`, and the fallback has to agree with it.
-            let extract_object = payload_extraction(path, OBJECT.as_str(), target);
+            let extract_object = payload_extraction(path, OBJECT.as_str(), rows);
             let disjunction = values.iter().fold(Condition::any(), |cond, value| {
                 // Each arm reads its own COALESCE of the two extractions.
                 let coalesced = Func::coalesce([whole_text(extract_value.clone()), whole_text(extract_object.clone())]);
@@ -136,8 +136,8 @@ pub fn fallback_equality(path: &AttrPath, membership: SetMembership, rhs: &Compa
 /// other than equality and inequality: a URI names a resource and carries no
 /// order a `<` or `>` could mean. COALESCing `hasObject` in here made
 /// `owner>"a"` select entities the standard requires it to reject.
-pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, target: &QFilterTarget) -> Condition {
-    let extract_value = payload_extraction(path, VALUE.as_str(), target);
+pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, rows: &EntityRowRefs) -> Condition {
+    let extract_value = payload_extraction(path, VALUE.as_str(), rows);
     Condition::all().add(scalar_predicate(whole_text(extract_value), rhs, op.as_cmp_op()))
 }
 
@@ -151,8 +151,8 @@ pub fn fallback_ordering(path: &AttrPath, op: OrderingOp, rhs: &Scalar, target: 
 /// non-match every operator other than equality and inequality, so a
 /// Relationship's object URI is not matched against a pattern however
 /// string-shaped it is.
-pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, target: &QFilterTarget) -> Condition {
-    let payload = target.payload_column();
+pub fn fallback_pattern(path: &AttrPath, pattern: &Pattern, polarity: PatternPolarity, rows: &EntityRowRefs) -> Condition {
+    let payload = rows.payload_column();
     let jsonpath = value_extraction_jsonpath(path, VALUE.as_str());
     let extract = whole_text(jsonb_path_query_first(payload.clone(), &jsonpath)); // clone: the presence test reads the same payload column
     let value = pattern_predicate(cast_compound(extract, PostgresType::Text), polarity, SeaExpr::val(pattern.as_str()));
@@ -175,7 +175,8 @@ mod tests {
     use super::*;
     use crate::{
         attribute_name_id::AttributeNameId,
-        q_predicate::{attribute_names::ResolvedAttributeNames, projection::compile},
+        dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
+        q_predicate::projection::compile,
     };
     use andromeda_ngsi_ld_query::filter::{expression::Expr, parser, path::QueryPath, predicate::Predicate, scalar::Scalar};
     use andromeda_postgresql_schema::current::Entities;
@@ -183,8 +184,15 @@ mod tests {
 
     const SPEED: &str = "https://example.com/speed";
 
-    fn names() -> ResolvedAttributeNames {
-        ResolvedAttributeNames::from_pairs([
+    fn names() -> QueryNames {
+        QueryNames {
+            attributes: attribute_names(),
+            types: ResolvedNames::default(),
+        }
+    }
+
+    fn attribute_names() -> ResolvedNames<AttributeName> {
+        ResolvedNames::from_pairs([
             (SPEED.parse().expect("valid attribute name"), AttributeNameId::from(7)),
             (
                 "https://example.com/temperature".parse().expect("valid attribute name"),
@@ -205,7 +213,7 @@ mod tests {
 
     fn render(q: &str) -> String {
         let expr = parser::parse(q).expect("parse q");
-        render_condition(compile(&expr, &QFilterTarget::entities(), &names()).expect("compile q"))
+        render_condition(compile(&expr, &EntityRowRefs::unaliased(), &names()).expect("compile q"))
     }
 
     #[test]
@@ -297,7 +305,7 @@ mod tests {
             membership: SetMembership::Within,
             rhs: CompareValue::Scalar(Scalar::Str("x".to_string())),
         });
-        let condition = compile(&expr, &QFilterTarget::entities(), &names()).expect("compile");
+        let condition = compile(&expr, &EntityRowRefs::unaliased(), &names()).expect("compile");
         let sql = render_condition(condition);
         assert!(sql.contains("o''brien"), "apostrophe must be doubled inside the SQL literal: {sql}");
     }

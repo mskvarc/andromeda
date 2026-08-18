@@ -24,6 +24,7 @@ mod history;
 pub mod history_mode;
 /// PostgreSQL durable temporal intent queue.
 pub mod intent_store;
+mod name_resolution;
 mod projection;
 
 #[cfg(test)]
@@ -32,13 +33,14 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-number",
-        "andromeda-postgresql-attribute-dictionary",
+        "andromeda-postgresql-name-dictionary",
         "andromeda-postgresql-codes",
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-query",
         "andromeda-postgresql-schema",
         "andromeda-postgresql-seaquery",
         "andromeda-postgresql-temporal-store",
+        "andromeda-telemetry",
         "andromeda-temporal",
     ],
     allow_workspace_dev_dependencies: [

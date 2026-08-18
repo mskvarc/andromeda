@@ -7,13 +7,13 @@
 //!
 //! [`DatasetIdPresence`]: crate::subscription_store::params::DatasetIdPresence
 
+use andromeda_context_commit::subscription_key::SubscriptionKey;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, NotificationParams, SubscriptionStatus},
 };
 use andromeda_ngsi_ld_query::{filter::expression::Expr, scope::query::ScopeQuery};
-use andromeda_subscription::subscription_key::SubscriptionKey;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use serde_json::Value;

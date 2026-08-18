@@ -13,38 +13,29 @@ use andromeda_delivery::{
 };
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService, sys_attrs::inject_sys_attrs};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
     entity_type_name::EntityTypeName,
     rfc3339::whole_seconds,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::{
-    expanded::geo_property::geo_property_instance_geometries,
-    notification::{ChangeOrigin, Notification, NotificationTrigger, NotificationType},
-};
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, Notification, NotificationTrigger, NotificationType};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
-use andromeda_spatial_index::key::SpatialKey;
 use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
     compiled::CompiledSubscription,
     matching::matches_entity_filters,
+    spatial_narrowing::narrow_by_spatial_index,
     store::SubscriptionStore,
     throttle::ceiling_for_throttle,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, future::BoxFuture, stream};
-use iri_rs::IriBuf;
 use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
 use serde_json::Value;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 use tracing::{debug, error};
 use uuid::Uuid;
 
@@ -154,7 +145,19 @@ impl NotificationProcessor {
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
             event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
         );
-        let mut matching = self.cache.find_matching(&event);
+        let outcome = self.cache.find_matching(&event);
+        debug!(
+            entity = %event.entity_id,
+            trigger = %event.trigger_reason,
+            active = outcome.funnel.active,
+            routed = outcome.funnel.routed,
+            watched = outcome.funnel.watched,
+            evaluated = outcome.funnel.evaluated,
+            matched = outcome.funnel.matched,
+            "Subscription candidate funnel"
+        );
+        outcome.funnel.record();
+        let mut matching = outcome.matched;
         if let Some(subscription_id) = subscription_id {
             matching.retain(|subscription| &subscription.id == subscription_id);
         }
@@ -240,7 +243,7 @@ impl NotificationProcessor {
 
         let matching: Vec<Arc<CompiledSubscription>> = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
             if let Some(ref data) = entity_data {
-                let geo_filtered = self.spatial_narrow(matching, data, &event.entity_types);
+                let geo_filtered = narrow_by_spatial_index(&self.cache, matching, data, &event.entity_types);
                 geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
             } else {
                 matching
@@ -392,83 +395,6 @@ impl NotificationProcessor {
                 outcome
             })
     }
-
-    /// Narrow `matching` to subscriptions whose pre-compiled `geoQ` actually
-    /// has the entity in scope, by consulting the spatial subscription index.
-    ///
-    /// Subscriptions without a `compiled_geo_q` are kept verbatim. The
-    /// downstream `matches_entity_filters` call still re-checks the exact
-    /// predicate, so the narrowing only has to avoid dropping a subscription
-    /// that would have matched.
-    ///
-    /// That is why the entity is probed with every instance of the target
-    /// GeoProperty rather than with its default one: clause 4.10 counts one
-    /// instance meeting the restriction as enough, so a subscription reached
-    /// only by a `datasetId`-tagged instance must survive the narrowing.
-    fn spatial_narrow(&self, matching: Vec<Arc<CompiledSubscription>>, entity_data: &Value, entity_types: &[EntityTypeName]) -> Vec<Arc<CompiledSubscription>> {
-        let spatial = self.cache.spatial();
-        let tenant = self.cache.tenant().clone();
-
-        // One read of each distinct geoproperty, cached across the
-        // subscriptions that target it. A property the entity does not carry is
-        // cached as an empty instance list too, so a miss is not re-read either.
-        let mut geometries: HashMap<AttributeName, Vec<Geometry>> = HashMap::new();
-        let mut survivors: HashSet<Uri> = HashSet::new();
-        let mut non_geo: Vec<Arc<CompiledSubscription>> = Vec::new();
-
-        for sub in matching {
-            let Some(ref geo_q) = sub.compiled_geo_q else {
-                non_geo.push(sub);
-                continue;
-            };
-
-            let geoproperty = &geo_q.geoproperty;
-            if !geometries.contains_key(geoproperty) {
-                let instances: Vec<Geometry> = geo_property_instance_geometries(entity_data, geoproperty.as_str()).collect();
-                // clone: the cache owns its key, which the subscription keeps
-                geometries.insert(geoproperty.clone(), instances);
-            }
-            // The entity carries no instance of this geoproperty, so no
-            // subscription filtering on it can match (clause 4.10).
-            let instances = geometries.get(geoproperty).map_or(&[][..], Vec::as_slice);
-            if instances.is_empty() {
-                continue;
-            }
-
-            let mut matched_any = false;
-            for entity_geometry in instances {
-                for type_name in entity_types {
-                    let Ok(type_iri) = IriBuf::new(type_name.clone()) else {
-                        continue;
-                    };
-                    let key = SpatialKey::new(tenant.clone(), type_iri, geoproperty.clone());
-                    let candidates = spatial.candidates(&key, entity_geometry);
-                    if candidates.iter().any(|candidate| candidate == &sub.id) {
-                        matched_any = true;
-                        break;
-                    }
-                }
-                // An untyped or boolean-typed geo subscription is indexed under
-                // the wildcard partition, which no concrete-type key reaches;
-                // query it too, or such a subscription is never evaluated and
-                // silently dropped (clause 4.10 still applies to it).
-                if !matched_any {
-                    let key = SpatialKey::any_type(tenant.clone(), geoproperty.clone());
-                    if spatial.candidates(&key, entity_geometry).iter().any(|candidate| candidate == &sub.id) {
-                        matched_any = true;
-                    }
-                }
-                if matched_any {
-                    break;
-                }
-            }
-            if matched_any && survivors.insert(sub.id.clone()) {
-                non_geo.push(sub);
-            }
-        }
-
-        non_geo
-    }
 }
 
 impl NotificationDeliveryTransport for NotificationProcessor {
@@ -530,12 +456,13 @@ fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
 mod tests {
     use super::*;
     use crate::processor::payload::filtering::filter_entity_attributes;
+    use andromeda_context_commit::subscription_key::SubscriptionKey;
     use andromeda_ngsi_ld_model::{
         notification::ChangeOrigin,
         subscription::{EntitySelector, SubscriptionStatus},
     };
     use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
-    use andromeda_subscription::{compilation::compile_geo_q, matching::matches_subscription, subscription_key::SubscriptionKey};
+    use andromeda_subscription::{compilation::compile_geo_q, matching::matches_subscription};
     use chrono::DateTime;
     use std::num::NonZeroU32;
     use url::Url;

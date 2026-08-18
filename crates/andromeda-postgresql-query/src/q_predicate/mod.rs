@@ -15,8 +15,9 @@
 //! `entity_key` from the heap, and semi-joins back to the driving table.
 //!
 //! Every probe correlates on `entity_key`, the surrogate the projection is keyed
-//! on, so a statement that reaches entities through an alias hands over that
-//! alias's `entity_key` column rather than the Entity URI.
+//! on, so a statement that reaches entities through an alias hands over the
+//! [`EntityRowRefs`](crate::entity_row_refs::EntityRowRefs) naming that alias
+//! rather than the Entity URI.
 //!
 //! # Eligibility
 //!
@@ -69,5 +70,4 @@
 pub mod attribute_names;
 pub mod fallback;
 pub mod projection;
-pub mod target;
 pub mod traversal;

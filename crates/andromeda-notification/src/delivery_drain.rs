@@ -1,7 +1,9 @@
 //! One bounded pass over the notification delivery queue.
 
 use crate::{
+    delivery_attempt_ceiling::DeliveryAttemptCeiling,
     delivery_backoff::backoff_seconds,
+    delivery_concurrency::DeliveryConcurrency,
     delivery_config::DeliveryConfig,
     delivery_entry::DeliveryEntry,
     delivery_error_bound::DeliveryErrorBound,
@@ -11,8 +13,9 @@ use crate::{
     worker_instance_id::WorkerInstanceId,
 };
 use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_telemetry::queue::{QueueName, QueueOutcome, record_queue_outcome};
 use chrono::{DateTime, Duration, Utc};
-use futures::future::BoxFuture;
+use futures::{StreamExt, future::BoxFuture, stream};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -80,8 +83,9 @@ pub struct NotificationDeliveryDrain {
     worker_id: WorkerInstanceId,
     lease_term: LeaseTerm,
     error_bound: DeliveryErrorBound,
+    concurrency: DeliveryConcurrency,
     batch_size: i32,
-    max_attempts: i32,
+    attempt_ceiling: DeliveryAttemptCeiling,
     base_backoff_secs: i64,
 }
 
@@ -101,24 +105,33 @@ impl NotificationDeliveryDrain {
         let error_bound = config
             .error_bound()
             .map_err(|error| NotificationError::invariant(format!("notification delivery error bound is unusable: {error}")))?;
+        let concurrency = config
+            .delivery_concurrency()
+            .map_err(|error| NotificationError::invariant(format!("notification delivery concurrency is unusable: {error}")))?;
+        let attempt_ceiling = config
+            .attempt_ceiling()
+            .map_err(|error| NotificationError::invariant(format!("notification delivery attempt ceiling is unusable: {error}")))?;
         Ok(NotificationDeliveryDrain {
             store,
             transport,
             worker_id,
             lease_term,
             error_bound,
+            concurrency,
             batch_size: config.batch_size.max(1),
-            max_attempts: config.max_attempts.max(1),
+            attempt_ceiling,
             base_backoff_secs,
         })
     }
 
     /// Execute one leased delivery pass using an explicit retry clock.
+    ///
+    /// Claimed deliveries are sent with up to the configured concurrency in
+    /// flight at once. Every delivery is driven to its acknowledgement even
+    /// when another one fails, so no lease this worker holds is abandoned
+    /// mid-flight; the first persistence failure is then surfaced.
     pub async fn execute(&self, now: DateTime<Utc>) -> Result<DeliveryDrainOutcome, NotificationError> {
-        let entries = self
-            .store
-            .claim_pending(&self.worker_id, self.lease_term, self.batch_size, self.max_attempts)
-            .await?;
+        let entries = self.store.claim_pending(&self.worker_id, self.lease_term, self.batch_size).await?;
         let claimed = entries.len();
         let mut lease_lost = 0_usize;
 
@@ -129,9 +142,16 @@ impl NotificationDeliveryDrain {
             "Claimed notification deliveries"
         );
 
-        for entry in entries {
-            self.trace_entry(&entry);
-            match self.advance(&entry, now).await? {
+        let acknowledgements: Vec<Result<LeaseAcknowledgement, NotificationError>> = stream::iter(entries)
+            .map(|entry| async move {
+                self.trace_entry(&entry);
+                self.advance(&entry, now).await
+            })
+            .buffer_unordered(self.concurrency.get())
+            .collect()
+            .await;
+        for acknowledgement in acknowledgements {
+            match acknowledgement? {
                 LeaseAcknowledgement::Applied => (),
                 LeaseAcknowledgement::Lost => lease_lost += 1,
             }
@@ -148,22 +168,40 @@ impl NotificationDeliveryDrain {
     }
 
     /// Deliver one claimed entry and acknowledge whatever the transport reported.
+    ///
+    /// The attempt ceiling is applied here: a retryable failure on the attempt
+    /// that reaches the ceiling is acknowledged as exhausted, exactly like a
+    /// terminal failure, so the store never has to know the ceiling to keep an
+    /// exhausted delivery out of the claimable set.
     async fn advance(&self, entry: &DeliveryEntry, now: DateTime<Utc>) -> Result<LeaseAcknowledgement, NotificationError> {
-        match self.transport.deliver(entry).await? {
-            DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => {
-                classify_acknowledgement(self.store.mark_delivered(entry.id, &self.worker_id).await)
-            }
-            DeliveryDisposition::RetryableFailure { detail } => {
-                let backoff = backoff_seconds(self.base_backoff_secs, entry.attempt_count, self.max_attempts);
+        let (acknowledgement, outcome) = match self.transport.deliver(entry).await? {
+            DeliveryDisposition::Delivered | DeliveryDisposition::Obsolete => (
+                classify_acknowledgement(self.store.mark_delivered(entry.id, &self.worker_id).await)?,
+                QueueOutcome::Completed,
+            ),
+            DeliveryDisposition::RetryableFailure { detail } if !self.attempt_ceiling.is_final_attempt(entry.attempt_count) => {
+                let backoff = backoff_seconds(self.base_backoff_secs, entry.attempt_count, self.attempt_ceiling.attempts());
                 let next_attempt = now + Duration::seconds(backoff);
                 let detail = self.error_bound.truncate(&detail);
-                classify_acknowledgement(self.store.mark_failed(entry.id, &self.worker_id, &detail, next_attempt).await)
+                (
+                    classify_acknowledgement(self.store.mark_failed(entry.id, &self.worker_id, &detail, next_attempt).await)?,
+                    QueueOutcome::Retried,
+                )
             }
-            DeliveryDisposition::TerminalFailure { detail } => {
+            DeliveryDisposition::RetryableFailure { detail } | DeliveryDisposition::TerminalFailure { detail } => {
                 let detail = self.error_bound.truncate(&detail);
-                classify_acknowledgement(self.store.mark_terminal(entry.id, &self.worker_id, &detail).await)
+                (
+                    classify_acknowledgement(self.store.mark_terminal(entry.id, &self.worker_id, &detail).await)?,
+                    QueueOutcome::Exhausted,
+                )
             }
-        }
+        };
+        let outcome = match acknowledgement {
+            LeaseAcknowledgement::Applied => outcome,
+            LeaseAcknowledgement::Lost => QueueOutcome::LeaseLost,
+        };
+        record_queue_outcome(QueueName::NotificationDeliveries, outcome, 1);
+        Ok(acknowledgement)
     }
 
     /// Record what a claimed delivery carries before it is attempted.
@@ -189,10 +227,9 @@ impl NotificationDeliveryDrain {
         self.store.delete_delivered_before(cutoff).await
     }
 
-    /// Purge dead-lettered deliveries whose event predates an explicit
-    /// retention cutoff.
+    /// Purge deliveries dead-lettered before an explicit retention cutoff.
     pub async fn purge_exhausted(&self, cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
-        self.store.delete_exhausted_before(cutoff, self.max_attempts).await
+        self.store.delete_exhausted_before(cutoff).await
     }
 
     /// Purge events with no referencing delivery, created before an explicit
@@ -219,11 +256,19 @@ mod tests {
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
-    use futures::{executor::block_on, future::BoxFuture};
+    use futures::{
+        executor::block_on,
+        future::{BoxFuture, poll_fn},
+    };
     use std::{
         collections::VecDeque,
         fmt::Display,
-        sync::{Arc, Mutex},
+        sync::{
+            Arc,
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::Poll,
     };
 
     /// Whether the recorded store still honours the leases it handed out.
@@ -246,8 +291,12 @@ mod tests {
 
     impl RecordingStore {
         fn with_entry(entry: DeliveryEntry) -> RecordingStore {
+            RecordingStore::with_entries([entry])
+        }
+
+        fn with_entries(entries: impl IntoIterator<Item = DeliveryEntry>) -> RecordingStore {
             RecordingStore {
-                entries: Mutex::new(VecDeque::from([entry])),
+                entries: Mutex::new(entries.into_iter().collect()),
                 ..RecordingStore::default()
             }
         }
@@ -274,19 +323,13 @@ mod tests {
 
     #[async_trait]
     impl DeliveryStore for RecordingStore {
-        async fn claim_pending(
-            &self,
-            _worker_id: &WorkerInstanceId,
-            lease: LeaseTerm,
-            _batch_size: i32,
-            _max_attempts: i32,
-        ) -> Result<Vec<DeliveryEntry>, NotificationError> {
+        async fn claim_pending(&self, _worker_id: &WorkerInstanceId, lease: LeaseTerm, _batch_size: i32) -> Result<Vec<DeliveryEntry>, NotificationError> {
             self.claimed_with
                 .lock()
                 .map_err(|error| NotificationError::persistence(error.to_string()))?
                 .push(lease);
             let mut entries = self.entries.lock().map_err(|error| NotificationError::persistence(error.to_string()))?;
-            Ok(entries.pop_front().into_iter().collect())
+            Ok(entries.drain(..).collect())
         }
 
         async fn mark_delivered(&self, id: DeliveryId, worker_id: &WorkerInstanceId) -> Result<(), DeliveryLeaseError> {
@@ -317,7 +360,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn delete_exhausted_before(&self, _cutoff: DateTime<Utc>, _max_attempts: i32) -> Result<u64, NotificationError> {
+        async fn delete_exhausted_before(&self, _cutoff: DateTime<Utc>) -> Result<u64, NotificationError> {
             Ok(0)
         }
 
@@ -335,6 +378,36 @@ mod tests {
         }
     }
 
+    /// A transport that yields once mid-delivery and records how many
+    /// deliveries were in flight at the same time.
+    #[derive(Default)]
+    struct InFlightTransport {
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
+    }
+
+    impl NotificationDeliveryTransport for InFlightTransport {
+        fn deliver<'a>(&'a self, _entry: &'a DeliveryEntry) -> BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
+            Box::pin(async move {
+                let now_in_flight = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(now_in_flight, Ordering::SeqCst);
+                let mut yielded = false;
+                poll_fn(|context| {
+                    if yielded {
+                        Poll::Ready(())
+                    } else {
+                        yielded = true;
+                        context.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                })
+                .await;
+                self.in_flight.fetch_sub(1, Ordering::SeqCst);
+                Ok(DeliveryDisposition::Delivered)
+            })
+        }
+    }
+
     fn config() -> DeliveryConfig {
         DeliveryConfig {
             enabled: true,
@@ -342,6 +415,7 @@ mod tests {
             base_backoff_secs: 5,
             poll_interval_secs: 1,
             batch_size: 1,
+            concurrency: 4,
             lease_secs: 30,
             error_max_chars: 8,
             cleanup_after_secs: 86_400,
@@ -372,6 +446,36 @@ mod tests {
 
     fn drain(store: Arc<RecordingStore>, disposition: DeliveryDisposition) -> Result<NotificationDeliveryDrain, NotificationError> {
         NotificationDeliveryDrain::new(store, Arc::new(FixedTransport(disposition)), &config())
+    }
+
+    #[test]
+    fn a_pass_sends_claimed_deliveries_concurrently_up_to_the_configured_bound() -> Result<(), NotificationError> {
+        block_on(async {
+            let entries = (1..=10_i64)
+                .map(|id| {
+                    entry().map(|template| DeliveryEntry {
+                        id: DeliveryId::from(id),
+                        ..template
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let store = Arc::new(RecordingStore::with_entries(entries));
+            let transport = Arc::new(InFlightTransport::default());
+            let config = DeliveryConfig { batch_size: 10, ..config() };
+            let outcome = NotificationDeliveryDrain::new(store.clone(), transport.clone(), &config)?
+                .execute(Utc::now())
+                .await?;
+            pretty_assertions::assert_eq!(outcome.claimed, 10);
+            let peak = transport.peak.load(Ordering::SeqCst);
+            assert!(peak > 1, "deliveries were sent one at a time, peak {peak}");
+            assert!(peak <= 4, "more deliveries in flight than configured, peak {peak}");
+            let delivered = store
+                .delivered
+                .lock()
+                .map_err(|error| NotificationError::invariant(format!("delivered result lock was poisoned: {error}")))?;
+            pretty_assertions::assert_eq!(delivered.len(), 10);
+            Ok(())
+        })
     }
 
     #[test]
@@ -423,6 +527,68 @@ mod tests {
                 .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
             pretty_assertions::assert_eq!(terminal.len(), 1);
             pretty_assertions::assert_eq!(terminal.first().map(|(id, _)| *id), Some(DeliveryId::from(1)));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn a_retryable_failure_on_the_final_permitted_attempt_is_acknowledged_as_exhausted() -> Result<(), NotificationError> {
+        block_on(async {
+            let mut final_attempt = entry()?;
+            final_attempt.attempt_count = 4;
+            let store = Arc::new(RecordingStore::with_entry(final_attempt));
+            drain(
+                store.clone(),
+                DeliveryDisposition::RetryableFailure {
+                    detail: "transient".to_owned(),
+                },
+            )?
+            .execute(Utc::now())
+            .await?;
+            let failed_count = store
+                .failed
+                .lock()
+                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?
+                .len();
+            pretty_assertions::assert_eq!(failed_count, 0, "the final attempt must not be rescheduled");
+            let terminal = store
+                .terminal
+                .lock()
+                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?;
+            pretty_assertions::assert_eq!(
+                terminal.first().map(|(id, detail)| (*id, detail.as_str())),
+                Some((DeliveryId::from(1), "transien"))
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn a_retryable_failure_below_the_ceiling_is_rescheduled_not_exhausted() -> Result<(), NotificationError> {
+        block_on(async {
+            let mut penultimate = entry()?;
+            penultimate.attempt_count = 3;
+            let store = Arc::new(RecordingStore::with_entry(penultimate));
+            drain(
+                store.clone(),
+                DeliveryDisposition::RetryableFailure {
+                    detail: "transient".to_owned(),
+                },
+            )?
+            .execute(Utc::now())
+            .await?;
+            let terminal_count = store
+                .terminal
+                .lock()
+                .map_err(|error| NotificationError::invariant(format!("terminal result lock was poisoned: {error}")))?
+                .len();
+            pretty_assertions::assert_eq!(terminal_count, 0);
+            let failed_count = store
+                .failed
+                .lock()
+                .map_err(|error| NotificationError::invariant(format!("retry result lock was poisoned: {error}")))?
+                .len();
+            pretty_assertions::assert_eq!(failed_count, 1);
             Ok(())
         })
     }

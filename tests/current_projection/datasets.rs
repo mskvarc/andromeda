@@ -80,8 +80,8 @@ async fn current_projection_refuses_a_second_default_row_for_one_attribute() {
     // same grain, which a plain unique constraint would not.
     let failure = sqlx::query(
         "INSERT INTO current_attribute_values \
-         (entity_key, modified_at, attribute_name_id, attribute_kind, value_kind, value_number) \
-         VALUES ($1, now(), $2, 1, 1, 9)",
+         (entity_key, attribute_name_id, attribute_kind, value_kind, value_number) \
+         VALUES ($1, $2, 1, 1, 9)",
     )
     .bind(key)
     .bind(name_id)

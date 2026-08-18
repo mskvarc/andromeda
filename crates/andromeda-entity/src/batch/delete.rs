@@ -7,7 +7,7 @@
 //! transaction as the delete, which means they must exist before it runs, so it
 //! reads them first.
 
-use crate::{EntityService, error::EntityError, expanded_member::extract_attribute_keys, side_effect::BatchSideEffectMode};
+use crate::{EntityService, error::EntityError, side_effect::BatchSideEffectMode};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
@@ -20,7 +20,7 @@ use andromeda_context_commit::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    expanded::entity_member::extract_types,
+    expanded::entity_member::{extract_attribute_names, extract_types},
     notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
 };
 use chrono::Utc;
@@ -110,7 +110,7 @@ impl EntityService {
 /// every attribute the entity took with it.
 fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<ChangeEvent> {
     let entity_types = extract_types(payload);
-    let attr_keys = extract_attribute_keys(payload);
+    let attr_keys = extract_attribute_names(payload);
 
     let mut events = Vec::with_capacity(2);
     if !attr_keys.is_empty() {

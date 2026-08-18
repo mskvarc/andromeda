@@ -22,6 +22,8 @@ pub mod committer;
 pub mod deleted_entity;
 /// Entity-row mutations and their semantic payload.
 pub mod entity_mutation;
+/// The current-state row an atomic write stores for one entity.
+pub mod entity_record;
 /// Failures reported by the atomic commit boundary.
 pub mod error;
 /// Temporal-history consequences carried by a write.
@@ -32,6 +34,8 @@ pub mod lease_acknowledgement;
 pub mod precondition;
 /// The identity of one durable side-effect job.
 pub mod side_effect_job_id;
+/// The narrow key a stored Subscription is referenced by.
+pub mod subscription_key;
 /// Subscriptions a committing write matched.
 pub mod subscription_match;
 /// The process-wide clock broker-minted version-7 identities come from.

@@ -12,7 +12,7 @@ max_request_body_bytes = 67108864
 [database]
 url = "postgres://postgres:postgres@localhost:5432/postgres"
 max_connections = 64
-preload_attribute_names = true
+preload_name_dictionaries = true
 context_hit_flush_secs = 5
 
 [jsonld]
@@ -27,6 +27,12 @@ preload_contexts = {}
 [temporal]
 default_last_n = 19
 expiration_check_interval_secs = 30
+intent_retry_max_secs = 300
+intent_stuck_after_attempts = 10
+# Override the schema defaults (7-day chunks, columnstore after 30 days);
+# columnstore_after_days must be at least chunk_interval_days.
+# chunk_interval_days = 7
+# columnstore_after_days = 30
 
 [tenancy]
 enabled = true
@@ -48,6 +54,8 @@ batch_large_threshold = 512
 batch_prepare_blocking_threshold = 128
 # batch_async_side_effect_threshold = 512
 expiry_batch_size = 1000
+pending_side_effects_dead_letter_after_secs = 604800
+pending_side_effects_cleanup_interval_secs = 300
 
 [federation]
 forward_concurrency = 16
@@ -64,6 +72,7 @@ max_attempts = 5
 base_backoff_secs = 5
 poll_interval_secs = 1
 batch_size = 50
+concurrency = 20
 lease_secs = 30
 error_max_chars = 1024
 cleanup_after_secs = 86400
@@ -84,6 +93,8 @@ rebuild_interval_secs = 1800
 
 [observability]
 log_level = "info"
+# Metrics exposure: "disabled" or "prometheus" (serves GET /metrics in the text exposition format).
+metrics = "disabled"
 
 # NGSI-LD Data Integrity (ETSI GS CIM 019 v1.2.1) verification.
 #

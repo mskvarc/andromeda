@@ -69,8 +69,6 @@ fn typed_value_columns(value: &ProjectedAttributeValue) -> TypedValueColumns<'_>
 pub struct ProjectionBinds<'a> {
     /// Surrogate key of the entity each row belongs to.
     pub entity_keys: Vec<i64>,
-    /// Instant each row's entity mutation took effect.
-    pub modified_ats: Vec<DateTime<Utc>>,
     /// Dictionary key of each row's attribute IRI.
     pub attribute_name_ids: Vec<i32>,
     /// Attribute family each row was written as.
@@ -107,7 +105,6 @@ impl<'a> ProjectionBinds<'a> {
     pub fn from_rows(rows: &'a [ProjectedAttributeRow]) -> Result<ProjectionBinds<'a>, ContextStoreError> {
         let mut binds = ProjectionBinds {
             entity_keys: Vec::with_capacity(rows.len()),
-            modified_ats: Vec::with_capacity(rows.len()),
             attribute_name_ids: Vec::with_capacity(rows.len()),
             attribute_kinds: Vec::with_capacity(rows.len()),
             value_kinds: Vec::with_capacity(rows.len()),
@@ -124,7 +121,6 @@ impl<'a> ProjectionBinds<'a> {
         for row in rows {
             let value = typed_value_columns(&row.value);
             binds.entity_keys.push(EntityKey::get(row.key.entity_key));
-            binds.modified_ats.push(row.modified_at);
             binds.attribute_name_ids.push(AttributeNameId::get(row.key.attribute_name_id));
             binds.attribute_kinds.push(AttributeKind::code(row.attribute_kind));
             binds.value_kinds.push(ValueKind::code(row.value.kind()));
@@ -162,7 +158,6 @@ mod tests {
                 attribute_name_id: 7_i32.into(),
                 dataset_id: None,
             },
-            modified_at: Utc.timestamp_opt(1_700_000_000, 0).single().expect("a representable instant"),
             attribute_kind: AttributeKind::Property,
             value,
             unit_code_id: None,

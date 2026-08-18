@@ -28,6 +28,8 @@ pub enum PendingSideEffects {
     Table,
     /// Job surrogate identity, minted by the enqueue
     Id,
+    /// Instant the job was enqueued, the dead-letter retention clock
+    CreatedAt,
     /// Identity of the write that enqueued the job, the deduplication key
     WriteId,
     /// Instant the enqueueing write stamped, reused when the job resumes
@@ -109,6 +111,7 @@ mod tests {
     fn pending_side_effects_table_and_columns() {
         assert_eq!(PendingSideEffects::Table.to_string(), "pending_side_effects");
         assert_eq!(PendingSideEffects::Id.to_string(), "id");
+        assert_eq!(PendingSideEffects::CreatedAt.to_string(), "created_at");
         assert_eq!(PendingSideEffects::WriteId.to_string(), "write_id");
         assert_eq!(PendingSideEffects::RecordedAt.to_string(), "recorded_at");
         assert_eq!(PendingSideEffects::ConsequenceBase.to_string(), "consequence_base");

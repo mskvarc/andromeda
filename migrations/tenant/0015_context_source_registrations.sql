@@ -31,39 +31,47 @@
 --                            reconPeriod, etc.)
 --   * context_source_info:   additional key-value metadata about the source
 --
--- CSR lookups during forwarding filter by status='ok' (healthy registrations
--- only -- failed ones are excluded until they recover). A partial btree
--- restricted to `status = 'ok'` keeps the hot-path index small and omits the
--- bloat from failed registrations.
+-- Physical shape:
+--   * `id` is an identifier, compared for equality and prefix only, so it is
+--     `COLLATE "C"`: byte-wise comparison keeps the btree free of any locale.
+--   * The JSONB documents and the free-text columns are `COMPRESSION lz4`; a
+--     registration is written rarely and read on every distributed operation,
+--     and lz4 decompresses far faster than pglz for the same width.
+--   * The only index beside the primary key and the three spatial ones is a
+--     partial btree on `expires_at`, which serves the expiry sweep. Forwarding
+--     filters healthy registrations by `status = 'ok'`, but registrations are
+--     catalogue-scale and the status test is a residual on rows discovery has
+--     already narrowed through the routing projection (0016), so a status
+--     index has no scan to speed up.
 -- ============================================================================
 
 CREATE TABLE context_source_registrations (
     -- CSR URI, e.g. "urn:ngsi-ld:ContextSourceRegistration:csr001"
-    id TEXT NOT NULL PRIMARY KEY,
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL PRIMARY KEY,
 
     -- Always "ContextSourceRegistration" per spec
     type TEXT NOT NULL DEFAULT 'ContextSourceRegistration',
 
     -- Optional human-readable name
-    registration_name TEXT,
+    registration_name TEXT COMPRESSION lz4,
 
     -- Optional description
-    description TEXT,
+    description TEXT COMPRESSION lz4,
 
     -- What the Context Source provides -- array of RegistrationInfo:
     -- [{entities: [{type, id, idPattern}], propertyNames: [...], ...}]
-    information JSONB NOT NULL,
+    information JSONB COMPRESSION lz4 NOT NULL,
 
     -- Multi-tenancy: the tenant identifier for requests to this Context Source.
     -- NULL means the default tenant.
-    tenant TEXT,
+    tenant TEXT COMPRESSION lz4,
 
     -- Temporal range the source can provide for observedAt-based queries.
     -- Example: {"startAt": "2020-01-01T00:00:00Z", "endAt": "2025-01-01T00:00:00Z"}
-    observation_interval JSONB,
+    observation_interval JSONB COMPRESSION lz4,
 
     -- Temporal range for createdAt/modifiedAt-based queries
-    management_interval JSONB,
+    management_interval JSONB COMPRESSION lz4,
 
     -- Geographic area covered by this Context Source (WGS 84)
     location geometry,
@@ -78,41 +86,41 @@ CREATE TABLE context_source_registrations (
     expires_at TIMESTAMPTZ,
 
     -- Base URI of the Context Source's NGSI-LD API
-    endpoint TEXT NOT NULL,
+    endpoint TEXT COMPRESSION lz4 NOT NULL,
 
     -- Preferred Accept content type for requests to this source
-    accept TEXT,
+    accept TEXT COMPRESSION lz4,
 
     -- Distributed operation mode (clause 4.3.6)
     mode csr_mode NOT NULL DEFAULT 'inclusive',
 
     -- Subset of API operations the source supports (clause 4.20).
     -- NULL means the default "federationOps" set.
-    operations TEXT[],
+    operations TEXT[] COMPRESSION lz4,
 
     -- NGSI-LD Scopes this source has entities for
-    scope TEXT[],
+    scope TEXT[] COMPRESSION lz4,
 
     -- ISO 8601 duration hint for how often the source updates
-    refresh_rate TEXT,
+    refresh_rate TEXT COMPRESSION lz4,
 
     -- Additional registration management info (cacheDuration, etc.)
-    management JSONB,
+    management JSONB COMPRESSION lz4,
 
     -- Arbitrary key-value metadata about the Context Source
-    context_source_info JSONB,
+    context_source_info JSONB COMPRESSION lz4,
 
     -- Non-standard CSR properties (for response passthrough and q filtering)
-    additional_properties JSONB,
+    additional_properties JSONB COMPRESSION lz4,
 
     -- The @context URI associated with this registration
-    jsonld_context TEXT,
+    jsonld_context TEXT COMPRESSION lz4,
 
     -- Health status
     status csr_status NOT NULL DEFAULT 'ok',
 
     -- Optional human-readable alias for the context source
-    context_source_alias TEXT,
+    context_source_alias TEXT COMPRESSION lz4,
 
     -- Forwarding statistics
     times_sent INTEGER NOT NULL DEFAULT 0,
@@ -157,7 +165,6 @@ CREATE INDEX idx_csr_observation_space ON context_source_registrations USING GIS
 CREATE INDEX idx_csr_operation_space ON context_source_registrations USING GIST (operation_space)
     WHERE operation_space IS NOT NULL;
 
--- Forwarding filters by status='ok' (healthy registrations only).
-CREATE INDEX idx_csr_status_active
-    ON context_source_registrations (status)
-    WHERE status = 'ok';
+-- The expiry sweep reads only registrations that carry an expiry.
+CREATE INDEX idx_csr_expires_at ON context_source_registrations (expires_at)
+    WHERE expires_at IS NOT NULL;

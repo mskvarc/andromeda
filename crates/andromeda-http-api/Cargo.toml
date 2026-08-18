@@ -20,6 +20,7 @@ andromeda-http-snapshot.workspace = true
 andromeda-http-source-identity.workspace = true
 andromeda-http-stack.workspace = true
 andromeda-http-subscription.workspace = true
+andromeda-http-telemetry.workspace = true
 andromeda-http-temporal.workspace = true
 andromeda-http-tenancy.workspace = true
 axum = "0.8.9"
@@ -30,8 +31,10 @@ typed-builder = "0.23.2"
 andromeda-architecture-checks.workspace = true
 andromeda-health.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
 futures = "0.3.34"
+pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 tower = { version = "0.5.3", features = ["util"] }

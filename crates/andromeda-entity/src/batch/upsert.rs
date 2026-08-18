@@ -1,11 +1,11 @@
 //! Batch upsert (clause 5.6.8), in both of its modes.
 //!
-//! Replace mode overwrites `entities.payload` wholesale, so any attribute the
+//! Replace mode overwrites `entity_documents.payload` wholesale, so any attribute the
 //! replacement omits is deleted and needs a tombstone. That diff is only
 //! meaningful against the payload the entity actually had when the write
 //! landed, so each replacement states the `modifiedAt` its diff assumed and is
 //! recomputed against a fresh read if a concurrent writer got in first. The
-//! diff is taken against `entities.payload` rather than the temporal catalogue
+//! diff is taken against `entity_documents.payload` rather than the temporal catalogue
 //! on purpose: catalogue rows outlive the attributes they describe, because a
 //! deletion writes a tombstone rather than dropping the row, so diffing against
 //! them would re-tombstone already-deleted attributes on every upsert.
@@ -17,13 +17,15 @@ use crate::{
     EntityService,
     batch::{BatchResult, chunk::ChunkWrite},
     error::EntityError,
-    expanded_member::extract_attribute_keys,
     side_effect::BatchSideEffectMode,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
+use andromeda_ngsi_ld_model::{
+    entity::Entity,
+    expanded::{entity_member::extract_attribute_names, mutation::entity::merge_entity},
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::{
@@ -116,7 +118,7 @@ impl EntityService {
                 let Some(payload) = payloads.get(&id) else {
                     continue;
                 };
-                let changed = extract_attribute_keys(payload);
+                let changed = extract_attribute_names(payload);
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
                 let write = match snapshots.get(&id) {

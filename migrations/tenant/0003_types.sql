@@ -1,5 +1,5 @@
 -- ============================================================================
--- 002: Custom Enum Types
+-- 0003: Custom Enum Types
 -- ============================================================================
 -- PostgreSQL enum types used throughout the schema. Defined before table
 -- migrations so columns can reference them directly.

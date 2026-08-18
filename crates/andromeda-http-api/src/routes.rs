@@ -9,6 +9,7 @@ use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
 use andromeda_http_source_identity::routes::SourceIdentityRoutes;
 use andromeda_http_subscription::routes::SubscriptionRoutes;
+use andromeda_http_telemetry::routes::TelemetryRoutes;
 use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::TenancyRoutes;
 use typed_builder::TypedBuilder;
@@ -45,4 +46,7 @@ pub struct ApiRoutes {
     pub(crate) health: HealthRoutes,
     /// Active-component report route.
     pub(crate) component_report: ComponentReportRoutes,
+    /// Metrics scrape route, mounted only when metrics exposure is enabled.
+    #[builder(default = Default::default())]
+    pub(crate) telemetry: Option<TelemetryRoutes>,
 }

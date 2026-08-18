@@ -1,6 +1,6 @@
 //! Decoding GeoProperty values out of an expanded payload (ETSI GS CIM 009 clause 4.7).
 
-use crate::expanded::{dataset_id::instance_has_dataset_id, node::expanded_object_ref};
+use crate::expanded::{attribute_expiry::instance_expires_at, dataset_id::instance_has_dataset_id, node::expanded_object_ref};
 use andromeda_ngsi_ld_geometry::{
     form::{GeometryForm, PolygonRings},
     geojson::GeometryError,
@@ -9,6 +9,7 @@ use andromeda_ngsi_ld_geometry::{
     position::{Position, PositionError},
 };
 use andromeda_ngsi_ld_vocabulary::{expanded::properties, prefix};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -23,6 +24,27 @@ const GEOMETRY_COLLECTION_TOKEN: &str = "GeometryCollection";
 /// Extract the entity's `location` GeoProperty decoded into a [`Geometry`].
 pub fn extract_location_geometry(expanded: &Value) -> Option<Geometry> {
     extract_geo_property_geometry(expanded, properties::LOCATION.as_str())
+}
+
+/// The instant after which every `location` instance of the entity has
+/// expired, or `None` when at least one instance never expires (clause 4.22).
+///
+/// A geo query against the default GeoProperty must not match an entity whose
+/// every `location` instance is past its `expiresAt`, and it reads the answer
+/// from a stored column rather than the payload. The column carries the latest
+/// instance expiry, so "some instance still stands" is `column IS NULL OR
+/// column > now()`: NULL when any instance carries no expiry, otherwise the
+/// maximum. An entity without a `location` yields `None` as well; the geometry
+/// column being NULL already excludes it.
+pub fn extract_location_expiry(expanded: &Value) -> Option<DateTime<Utc>> {
+    let instances = geo_property_instances(expanded, properties::LOCATION.as_str())?;
+    instances
+        .iter()
+        .map(instance_expires_at)
+        .try_fold(None, |latest: Option<DateTime<Utc>>, expires_at| {
+            let expires_at = expires_at?;
+            Some(Some(latest.map_or(expires_at, |latest| latest.max(expires_at))))
+        })?
 }
 
 /// Extract the entity's `observationSpace` GeoProperty decoded into a [`Geometry`].
@@ -288,11 +310,13 @@ mod tests {
     use crate::expanded::geo_property::{
         expanded_geo_node_to_geometry,
         extract_geo_property_geometry,
+        extract_location_expiry,
         extract_location_geometry,
         geo_property_instance_geometries,
         validate_expanded_geo_node,
     };
     use andromeda_ngsi_ld_geometry::{dimension::GeometryDimension, geojson::GeometryError, geometry::Geometry, position::PositionError};
+    use chrono::{DateTime, Utc};
     use serde_json::json;
 
     const LOCATION: &str = "https://uri.etsi.org/ngsi-ld/location";
@@ -311,6 +335,44 @@ mod tests {
     /// produce an equal geometry.
     fn geometry_from_compact(compact: &serde_json::Value) -> Geometry {
         Geometry::from_geojson_value(compact).expect("compact geojson decodes")
+    }
+
+    /// One `location` instance carrying `expires_at`, when given.
+    fn location_instance(expires_at: Option<&str>) -> serde_json::Value {
+        let mut instance = json!({ "https://uri.etsi.org/ngsi-ld/hasValue": [{ "@value": {"type": "Point", "coordinates": [1.0, 2.0]} }] });
+        if let Some(raw) = expires_at {
+            instance["https://uri.etsi.org/ngsi-ld/expiresAt"] = json!([{"@value": raw}]);
+        }
+        instance
+    }
+
+    fn instant(raw: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(raw).expect("instant parses").with_timezone(&Utc)
+    }
+
+    #[test]
+    fn an_entity_without_a_location_has_no_location_expiry() {
+        assert_eq!(extract_location_expiry(&json!([{"@id": "urn:ngsi-ld:Building:001"}])), None);
+    }
+
+    #[test]
+    fn a_location_instance_without_an_expiry_keeps_the_location_alive_indefinitely() {
+        let entity = json!([{"@id": "urn:x", LOCATION: [location_instance(None)]}]);
+        assert_eq!(extract_location_expiry(&entity), None);
+        let mixed = json!([{"@id": "urn:x", LOCATION: [location_instance(Some("2030-01-01T00:00:00Z")), location_instance(None)]}]);
+        assert_eq!(extract_location_expiry(&mixed), None);
+    }
+
+    #[test]
+    fn the_latest_expiry_of_the_location_instances_is_recorded() {
+        let entity = json!([{"@id": "urn:x", LOCATION: [location_instance(Some("2030-01-01T00:00:00Z")), location_instance(Some("2031-01-01T00:00:00Z"))]}]);
+        assert_eq!(extract_location_expiry(&entity), Some(instant("2031-01-01T00:00:00Z")));
+    }
+
+    #[test]
+    fn an_unparsable_location_expiry_counts_as_no_expiry() {
+        let entity = json!([{"@id": "urn:x", LOCATION: [location_instance(Some("garbage")), location_instance(Some("2031-01-01T00:00:00Z"))]}]);
+        assert_eq!(extract_location_expiry(&entity), None);
     }
 
     #[test]

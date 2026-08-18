@@ -10,7 +10,8 @@ use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
-    entity_mutation::{EntityMutation, EntityRecord},
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
     history_record::HistoryRecord,
     precondition::{AfterAttempt, Precondition, after_attempt},
     write_outcome::WriteOutcome,
@@ -77,26 +78,21 @@ impl ChunkWrite {
         let PreparedEntity {
             id,
             expanded,
-            types,
-            scopes,
+            projection,
             changed_attributes,
-            location,
-            observation_space,
-            operation_space,
             expires_at,
+            min_attribute_expires_at,
         } = prepared;
         let payload = Arc::new(expanded);
+        let types = projection.types.clone(); // clone: the change event carries the names after the record has taken them
         ChunkWrite {
             id,
-            entity: EntityMutation::Insert(EntityRecord {
-                payload: Arc::clone(&payload), // clone: Arc ref-count bump; the same payload is the observation
-                types: types.clone(),          // clone: the change event carries the names after the record has taken them
-                scopes,
-                location,
-                observation_space,
-                operation_space,
+            entity: EntityMutation::Insert(EntityRecord::from_parts(
+                Arc::clone(&payload), // clone: Arc ref-count bump; the same payload is the observation
+                projection,
                 expires_at,
-            }),
+                min_attribute_expires_at,
+            )),
             observed: payload,
             changed_attributes,
             types,
@@ -111,7 +107,7 @@ impl ChunkWrite {
         let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
         ChunkWrite {
             id,
-            types: record.types.clone(), // clone: the change event carries the names the record holds
+            types: record.projection.types.clone(), // clone: the change event carries the names the record holds
             entity: EntityMutation::Insert(record),
             observed: payload,
             changed_attributes,
@@ -137,7 +133,7 @@ impl ChunkWrite {
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,
-            types: record.types.clone(), // clone: the change event carries the names the record holds
+            types: record.projection.types.clone(), // clone: the change event carries the names the record holds
             entity: EntityMutation::Update(record),
             observed,
             changed_attributes,
@@ -282,10 +278,7 @@ impl EntityService {
 #[cfg(test)]
 mod tests {
     use super::{error_of, trigger_of};
-    use andromeda_context_commit::{
-        entity_mutation::{EntityMutation, EntityRecord},
-        write_outcome::WriteOutcome,
-    };
+    use andromeda_context_commit::{entity_mutation::EntityMutation, entity_record::EntityRecord, write_outcome::WriteOutcome};
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use serde_json::json;
     use std::sync::Arc;

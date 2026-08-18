@@ -11,6 +11,8 @@ pub mod error;
 /// Bounded delivery of deferred temporal append intents.
 pub mod intent_drain;
 mod intent_preparation;
+/// How a rejected temporal append intent is rescheduled and when it is stuck.
+pub mod intent_retry_policy;
 /// Clause 4.5.23 join over the temporal evolution of Linked Entities.
 pub mod linked;
 pub mod outcome;
@@ -22,6 +24,8 @@ mod read;
 pub mod remote_linked;
 pub mod scope_observation;
 pub mod service;
+/// The physical storage policy an operator sets for temporal history.
+pub mod storage_policy;
 mod unit_code_admission;
 mod write;
 
@@ -42,6 +46,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
+        "andromeda-telemetry",
     ],
     allow_workspace_dev_dependencies: ["andromeda-ngsi-ld-geometry"],
     allow_production_dependencies: ["confique"],

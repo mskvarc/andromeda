@@ -19,6 +19,7 @@ andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-representation.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-spatial-index.workspace = true
+andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -28,6 +29,7 @@ futures = "0.3.34"
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 langtag = { version = "1.1.0", features = ["serde"] }
 mediatype = "0.23.0"
+parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 strum = { version = "0.28.0", features = ["derive"] }
@@ -40,3 +42,4 @@ uuid = { version = "1.24.1", features = ["fast-rng", "serde", "v4"] }
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
+proptest = "1.11.0"

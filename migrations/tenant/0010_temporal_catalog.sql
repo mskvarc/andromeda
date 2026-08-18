@@ -1,5 +1,5 @@
 -- ============================================================================
--- 0045: Temporal catalogue -- temporal entities and attribute streams
+-- 0010: Temporal catalogue -- temporal entities and attribute streams
 -- ============================================================================
 -- The temporal side of the broker gets its own catalogue, independent of
 -- current state. `temporal_entities` names the Entity a Temporal Evolution
@@ -13,37 +13,50 @@
 -- current state would delete history the specification requires to survive.
 -- The entity URI is carried here independently, in `temporal_entities.id`.
 --
--- `INCLUDE (id)` on the grain constraint makes stream resolution index-only:
--- the write path resolves (entity, attribute, datasetId) to a stream UUID on
--- every append, which is the hottest catalogue read there is. The constraint's
--- leading `temporal_entity_key` also covers the foreign key's cascade check,
--- so no separate index is created for it.
+-- `INCLUDE (stream_key)` on the grain constraint makes stream resolution
+-- index-only: the write path resolves (entity, attribute, datasetId) to a
+-- stream key on every append, which is the hottest catalogue read there is.
+-- The constraint's leading `temporal_entity_key` also covers the foreign key's
+-- cascade check, so no separate index is created for it.
 --
--- Stream identifiers are application-generated UUIDv7 from this point on. The
--- column is a plain UUID with no default because the broker mints the value:
--- a database default would hand back an identifier the writer has to read back
--- before it can reference it.
+-- `stream_key` is a database-generated BIGINT identity, not a UUID. The key
+-- repeats on every `attribute_history` row and leads every stream-led history
+-- index, so its width is paid once per row and once per index entry: eight
+-- bytes instead of sixteen halves those entries, and keys minted close together
+-- sort close together on the physical page instead of scattering across it.
+-- The key is never rendered to a client, so nothing outside the database has
+-- to be able to name a stream before it exists; the write path inserts the
+-- grain and reads the key back in the same transaction. `CACHE 32` lets a
+-- write that creates several streams take its keys from one sequence fetch.
+--
+-- `type_ids` is an `INTEGER[]` of `entity_type_names` keys (migration 0007),
+-- the same interning `entities.type_ids` uses: a temporal query's type
+-- selection (clause 4.17) is a containment test on the keys, served by the
+-- GIN index below, and the IRIs are read back through the dictionary when a
+-- Temporal Evolution is rendered. The keys carry no foreign key -- an array
+-- element cannot be one -- and are minted in the transaction that writes them.
 --
 -- Column order is alignment order: fixed-width not-null columns first,
--- descending in width, then the varlena columns.
+-- descending in width, then the varlena columns, LZ4 on each varlena column
+-- that is not an identifier looked up by equality.
 -- ============================================================================
 
 CREATE TABLE temporal_entities (
     entity_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL,
     modified_at TIMESTAMPTZ NOT NULL,
-    id TEXT COLLATE "C" NOT NULL UNIQUE,
-    types TEXT[] NOT NULL,
-    CONSTRAINT chk_temporal_entities_types_present CHECK (cardinality(types) > 0)
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
+    type_ids INTEGER[] NOT NULL,
+    CONSTRAINT chk_temporal_entities_types_present CHECK (cardinality(type_ids) > 0)
 );
 
-CREATE INDEX idx_temporal_entities_types ON temporal_entities USING GIN (types);
+CREATE INDEX idx_temporal_entities_type_ids ON temporal_entities USING GIN (type_ids);
 
 CREATE TABLE temporal_attribute_streams (
-    id UUID PRIMARY KEY,
+    stream_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32) PRIMARY KEY,
     temporal_entity_key BIGINT NOT NULL REFERENCES temporal_entities(entity_key) ON DELETE CASCADE,
     attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
-    dataset_id TEXT COLLATE "C",
+    dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     CONSTRAINT uq_temporal_attribute_streams_grain
-        UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_id, dataset_id) INCLUDE (id)
+        UNIQUE NULLS NOT DISTINCT (temporal_entity_key, attribute_name_id, dataset_id) INCLUDE (stream_key)
 );

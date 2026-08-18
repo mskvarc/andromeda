@@ -1,7 +1,8 @@
 -- Every mutable tenant table, truncated between test cases.
 --
--- Four tables are deliberately absent. `attribute_names` is a dictionary whose
--- keys are cached in-process, so truncating it would strand every cached key.
+-- Five tables are deliberately absent. `attribute_names` and
+-- `entity_type_names` are dictionaries whose keys are cached in-process, so
+-- truncating either would strand every cached key.
 -- `schema_metadata` carries the schema contract the broker stamps once after
 -- migrating and verifies on every later connection to the tenant: removing the
 -- singleton makes the tenant read as never-stamped, and every connection after
@@ -30,11 +31,14 @@ TRUNCATE
     snapshots,
     registration_information,
     context_source_registrations,
+    subscription_delivery_state,
     subscriptions,
     attribute_history_instance_claims,
     attribute_history,
     temporal_attribute_streams,
     temporal_entities,
+    entity_search,
+    entity_documents,
     entities,
     jsonld_contexts
 RESTART IDENTITY CASCADE

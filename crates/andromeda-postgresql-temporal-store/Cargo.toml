@@ -17,13 +17,14 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
-andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-encoding.workspace = true
+andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-query.workspace = true
+andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
 andromeda-unit-catalog.workspace = true
 async-trait = "0.1.92"
@@ -34,6 +35,7 @@ sea-query = { version = "1.0.2", features = ["backend-postgres", "postgres-array
 sea-query-sqlx = { version = "0.9.1", features = ["postgres-array", "runtime-tokio", "sqlx-postgres", "with-bigdecimal", "with-chrono", "with-json", "with-uuid"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 sqlx = { version = "0.9.0", features = ["bigdecimal", "runtime-tokio", "postgres", "json", "chrono", "uuid"] }
+strum = { version = "0.28.0", features = ["derive"] }
 thiserror = "2.0.20"
 uuid = { version = "1.24.1", features = ["v4"] }
 

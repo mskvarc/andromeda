@@ -2,6 +2,7 @@
 
 use crate::{
     delivery_attempt_ceiling::{DeliveryAttemptCeiling, DeliveryAttemptCeilingError},
+    delivery_concurrency::{DeliveryConcurrency, DeliveryConcurrencyError},
     delivery_error_bound::{DeliveryErrorBound, DeliveryErrorBoundError},
     delivery_lease::{LeaseTerm, LeaseTermError},
 };
@@ -42,6 +43,9 @@ pub enum DeliveryConfigError {
     /// The stored-diagnostic bound was outside the accepted range.
     #[error("notification_delivery.error_max_chars is invalid: {0}")]
     ErrorBound(#[from] DeliveryErrorBoundError),
+    /// The in-flight delivery bound was outside the accepted range.
+    #[error("notification_delivery.concurrency is invalid: {0}")]
+    Concurrency(#[from] DeliveryConcurrencyError),
 }
 
 /// Retry, polling, retention and diagnostic policy for notification delivery.
@@ -50,11 +54,12 @@ pub struct DeliveryConfig {
     /// Enable recording notification events and deliveries during entity mutations.
     #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_ENABLED", default = false)]
     pub enabled: bool,
-    /// Maximum retry attempts before dead-lettering.
+    /// Maximum delivery attempts before dead-lettering.
     ///
-    /// The delivery schema constrains the exhausted state and the claim's
-    /// partial index with this number, so it may not exceed
-    /// [`DeliveryAttemptCeiling::SCHEMA_MAXIMUM_ATTEMPTS`].
+    /// The worker owns this ceiling: the attempt that reaches it is
+    /// acknowledged as exhausted and the delivery leaves the claimable set for
+    /// good. The queue schema does not repeat the number, so it may be changed
+    /// without a migration; the only bound is that it is at least one.
     #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_MAX_ATTEMPTS", default = 5)]
     pub max_attempts: i32,
     /// Base exponential retry backoff.
@@ -66,6 +71,12 @@ pub struct DeliveryConfig {
     /// Deliveries claimed per poll.
     #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_BATCH_SIZE", default = 50)]
     pub batch_size: i32,
+    /// Claimed deliveries sent concurrently within one pass.
+    ///
+    /// Bounded by [`DeliveryConcurrency::MAXIMUM`]; a pass never keeps more
+    /// than this many transport calls in flight at once.
+    #[config(env = "ANDROMEDA_NOTIFICATION_DELIVERY_CONCURRENCY", default = 20)]
+    pub concurrency: u32,
     /// How long a claimed delivery stays leased to its delivery worker.
     ///
     /// A claim that outlives its delivery attempt is what keeps a second worker
@@ -132,9 +143,18 @@ impl DeliveryConfig {
             Err(error) => return Err(DeliveryConfigError::LeaseTerm(error)),
         }
         match self.error_bound() {
-            Ok(_) => Ok(()),
-            Err(error) => Err(DeliveryConfigError::ErrorBound(error)),
+            Ok(_) => (),
+            Err(error) => return Err(DeliveryConfigError::ErrorBound(error)),
         }
+        match self.delivery_concurrency() {
+            Ok(_) => Ok(()),
+            Err(error) => Err(DeliveryConfigError::Concurrency(error)),
+        }
+    }
+
+    /// The configured in-flight delivery bound.
+    pub const fn delivery_concurrency(&self) -> Result<DeliveryConcurrency, DeliveryConcurrencyError> {
+        DeliveryConcurrency::from_count(self.concurrency)
     }
 
     /// The configured attempt ceiling.
@@ -157,6 +177,7 @@ impl DeliveryConfig {
 mod tests {
     use crate::{
         delivery_attempt_ceiling::DeliveryAttemptCeilingError,
+        delivery_concurrency::DeliveryConcurrencyError,
         delivery_config::{DeliveryConfig, DeliveryConfigError},
         delivery_error_bound::DeliveryErrorBoundError,
         delivery_lease::LeaseTermError,
@@ -169,6 +190,7 @@ mod tests {
             base_backoff_secs: 5,
             poll_interval_secs: 1,
             batch_size: 50,
+            concurrency: 20,
             lease_secs: 30,
             error_max_chars: 1_024,
             cleanup_after_secs: 86_400,
@@ -190,21 +212,13 @@ mod tests {
         );
     }
 
-    /// The delivery table's exhausted-state check names the literal 5, so a
-    /// configuration above it makes every claim of an exhausted delivery abort.
     #[test]
-    fn an_attempt_ceiling_above_the_schema_maximum_is_rejected() {
+    fn an_attempt_ceiling_above_five_is_accepted() {
         let config = DeliveryConfig {
-            max_attempts: 6,
+            max_attempts: 12,
             ..valid_config()
         };
-        assert_eq!(
-            config.validate(),
-            Err(DeliveryConfigError::AttemptCeiling(DeliveryAttemptCeilingError::AboveSchemaMaximum {
-                attempts: 6,
-                maximum: 5,
-            }))
-        );
+        assert_eq!(config.validate(), Ok(()));
     }
 
     #[test]
@@ -238,6 +252,15 @@ mod tests {
                 maximum: 2_048,
             }))
         );
+    }
+
+    #[test]
+    fn zero_delivery_concurrency_is_rejected() {
+        let config = DeliveryConfig {
+            concurrency: 0,
+            ..valid_config()
+        };
+        assert_eq!(config.validate(), Err(DeliveryConfigError::Concurrency(DeliveryConcurrencyError::Zero)));
     }
 
     #[test]

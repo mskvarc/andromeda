@@ -49,6 +49,12 @@ pub enum EntityConfigError {
     /// Pending side-effect backoff was configured as zero.
     #[error("entity.pending_side_effects_base_backoff_secs must be at least 1")]
     ZeroPendingSideEffectsBaseBackoff,
+    /// Dead-lettered side-effect retention was configured as zero.
+    #[error("entity.pending_side_effects_dead_letter_after_secs must be at least 1")]
+    ZeroPendingSideEffectsDeadLetterRetention,
+    /// Dead-lettered side-effect reap cadence was configured as zero.
+    #[error("entity.pending_side_effects_cleanup_interval_secs must be at least 1")]
+    ZeroPendingSideEffectsCleanupInterval,
 }
 
 /// Entity batching, expiry, and durable side-effect configuration.
@@ -93,6 +99,15 @@ pub struct EntityConfig {
     /// Base retry backoff for side-effect jobs.
     #[config(env = "ANDROMEDA_ENTITY_PENDING_SIDE_EFFECTS_BASE_BACKOFF_SECS", default = 2)]
     pub pending_side_effects_base_backoff_secs: u64,
+    /// Age after which a dead-lettered side-effect job is removed.
+    ///
+    /// A dead job is evidence of a batch whose deferred side effects never
+    /// landed, so it is kept for a week by default before the reap removes it.
+    #[config(env = "ANDROMEDA_ENTITY_PENDING_SIDE_EFFECTS_DEAD_LETTER_AFTER_SECS", default = 604800)]
+    pub pending_side_effects_dead_letter_after_secs: u64,
+    /// Cadence of the dead-lettered side-effect reap.
+    #[config(env = "ANDROMEDA_ENTITY_PENDING_SIDE_EFFECTS_CLEANUP_INTERVAL_SECS", default = 300)]
+    pub pending_side_effects_cleanup_interval_secs: u64,
 }
 
 impl EntityConfig {
@@ -137,6 +152,12 @@ impl EntityConfig {
         if self.pending_side_effects_base_backoff_secs == 0 {
             return Err(EntityConfigError::ZeroPendingSideEffectsBaseBackoff);
         }
+        if self.pending_side_effects_dead_letter_after_secs == 0 {
+            return Err(EntityConfigError::ZeroPendingSideEffectsDeadLetterRetention);
+        }
+        if self.pending_side_effects_cleanup_interval_secs == 0 {
+            return Err(EntityConfigError::ZeroPendingSideEffectsCleanupInterval);
+        }
         if u32::try_from(self.expiry_batch_size).is_err() {
             return Err(EntityConfigError::ExpiryBatchSizeOutOfRange);
         }
@@ -164,6 +185,8 @@ mod tests {
             pending_side_effects_batch_size: 32,
             pending_side_effects_max_attempts: 5,
             pending_side_effects_base_backoff_secs: 2,
+            pending_side_effects_dead_letter_after_secs: 604_800,
+            pending_side_effects_cleanup_interval_secs: 300,
         }
     }
 
@@ -191,5 +214,22 @@ mod tests {
         let mut config = valid_config();
         config.expiry_batch_size = 0;
         assert_eq!(config.validate(), Err(EntityConfigError::ZeroExpiryBatchSize));
+    }
+
+    #[test]
+    fn zero_dead_letter_retention_and_cadence_are_rejected() {
+        let mut config = valid_config();
+        config.pending_side_effects_dead_letter_after_secs = 0;
+        assert_eq!(config.validate(), Err(EntityConfigError::ZeroPendingSideEffectsDeadLetterRetention));
+        let mut config = valid_config();
+        config.pending_side_effects_cleanup_interval_secs = 0;
+        assert_eq!(config.validate(), Err(EntityConfigError::ZeroPendingSideEffectsCleanupInterval));
+    }
+
+    #[test]
+    fn dead_letter_defaults_keep_evidence_for_a_week_and_reap_every_five_minutes() {
+        let config = EntityConfig::builder().load().expect("entity defaults");
+        assert_eq!(config.pending_side_effects_dead_letter_after_secs, 604_800);
+        assert_eq!(config.pending_side_effects_cleanup_interval_secs, 300);
     }
 }

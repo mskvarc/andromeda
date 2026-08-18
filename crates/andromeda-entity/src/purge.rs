@@ -7,11 +7,7 @@
 //! recomputed against a fresh read if a concurrent writer got in first.
 
 use crate::{EntityService, error::EntityError, expanded_member::attr_name_of};
-use andromeda_context_commit::{
-    atomic_write::AtomicWrite,
-    entity_mutation::{EntityMutation, EntityRecord},
-    history_record::HistoryRecord,
-};
+use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{

@@ -161,7 +161,16 @@ async fn build_tenant_state(
     task_supervisor: TaskSupervisor,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
     let signals = TenantSignals::new(config.spatial.change_channel_capacity);
-    let storage = initialize_storage(&config.database, &config.tenancy, &config.jsonld, &config.postgresql_write, db_url, &tenant).await?;
+    let storage = initialize_storage(
+        &config.database,
+        &config.tenancy,
+        &config.jsonld,
+        &config.postgresql_write,
+        &config.temporal,
+        db_url,
+        &tenant,
+    )
+    .await?;
     let pool = storage.pool;
     let engine = storage.engine;
     let context_hit_flush = storage.context_hit_flush;
@@ -210,7 +219,13 @@ async fn build_tenant_state(
         BulkWriteMode::Unnest => EntityInsertMode::Unnest,
         BulkWriteMode::CopyStaging => EntityInsertMode::CopyStaging,
     };
-    let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(&pool, history_mode, entity_insert_mode, storage.attribute_names));
+    let writes: Arc<dyn ContextCommitter> = Arc::new(PostgresAtomicCommitter::new(
+        &pool,
+        history_mode,
+        entity_insert_mode,
+        storage.attribute_names,
+        storage.entity_type_names,
+    ));
 
     let transports = construct_transports()?;
     let ConstructedServices { state, snapshot_preparation } = construct_services(

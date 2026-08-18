@@ -51,11 +51,11 @@ const ORIGIN: &str = "TIMESTAMPTZ '2026-01-01 00:00:00Z'";
 
 /// The observations one axis window selects across one stream, named by the
 /// hour each observation sits at on the seeded grid.
-async fn narrow_selection(pool: &PgPool, stream: uuid::Uuid, axis: &Axis, from: &str, to: &str) -> Vec<i32> {
+async fn narrow_selection(pool: &PgPool, stream: i64, axis: &Axis, from: &str, to: &str) -> Vec<i32> {
     sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT (EXTRACT(EPOCH FROM (ah.observed_at - {ORIGIN})) / 3600)::int AS hour \
          FROM attribute_history AS ah \
-         WHERE ah.stream_id = $1 AND ah.{} >= {from} AND ah.{} < {to} \
+         WHERE ah.stream_key = $1 AND ah.{} >= {from} AND ah.{} < {to} \
          ORDER BY hour",
         axis.column, axis.column
     )))
@@ -110,7 +110,7 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
     for axis in AXES {
         let selected: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM attribute_history AS ah \
-             JOIN temporal_attribute_streams AS s ON s.id = ah.stream_id \
+             JOIN temporal_attribute_streams AS s ON s.stream_key = ah.stream_key \
              WHERE s.temporal_entity_key = $1 AND ah.{} IS NOT NULL",
             axis.column
         )))
@@ -121,7 +121,7 @@ async fn every_axis_window_stays_exact_over_a_broad_selection() {
 
         let column_rows: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM attribute_history AS ah \
-             JOIN temporal_attribute_streams AS s ON s.id = ah.stream_id \
+             JOIN temporal_attribute_streams AS s ON s.stream_key = ah.stream_key \
              WHERE s.temporal_entity_key = $1 AND ah.{} IS NOT NULL",
             axis.column
         )))
@@ -152,7 +152,7 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
 
     let statement = format!(
         "SELECT ah.value_number FROM attribute_history AS ah \
-         WHERE ah.stream_id = '{}'::uuid \
+         WHERE ah.stream_key = {} \
            AND ah.observed_at >= {ORIGIN} + INTERVAL '1 hour' \
            AND ah.observed_at < {ORIGIN} + INTERVAL '11 hours'",
         corpus.narrow_stream()
@@ -166,27 +166,89 @@ async fn a_narrow_observed_window_reaches_the_stream_led_observed_index() {
     scope.finish().await.expect("cleanup failed");
 }
 
-/// Migration 0011 states that no created, modified or deleted index was
-/// accepted, because none was measured to earn one. This records that decision
-/// as an assertion rather than as prose: the day one is added, this test says
-/// so, and the matrix row is re-measured instead of quietly gaining coverage.
+/// Migration 0011 gives every semantic axis exactly one BRIN block summary and
+/// no B-tree of its own: `createdAt`, `modifiedAt` and `deletedAt` are selectable
+/// timeproperties (clause 5.2.21) that neither the partition column nor any
+/// stream-led index answers, and a per-row B-tree on each would cost what the
+/// stream-led ones already cost again. This records that decision as an
+/// assertion: the day an axis gains a B-tree or loses its summary, this test
+/// says so and the matrix row is re-measured.
 #[tokio::test]
-async fn no_axis_beside_the_default_carries_an_index_of_its_own() {
+async fn every_semantic_axis_carries_exactly_one_brin_summary_and_no_btree() {
     let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
     let pool = scope.database_pool();
 
-    let indexed_axes: Vec<String> = sqlx::query_scalar(
-        "SELECT indexdef FROM pg_indexes \
-         WHERE schemaname = 'public' AND tablename = 'attribute_history' \
-           AND (indexdef LIKE '%created_at%' OR indexdef LIKE '%modified_at%' OR indexdef LIKE '%deleted_at%')",
-    )
-    .fetch_all(pool)
-    .await
-    .expect("the index catalogue must be readable");
+    let definitions: Vec<String> = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename = 'attribute_history'")
+        .fetch_all(pool)
+        .await
+        .expect("the index catalogue must be readable");
 
+    for axis in AXES {
+        let summaries: Vec<&String> = definitions
+            .iter()
+            .filter(|definition| definition.contains(&format!("USING brin ({} ", axis.column)))
+            .collect();
+        assert_eq!(
+            summaries.len(),
+            1,
+            "{} must carry exactly one BRIN summary of its own: {definitions:?}",
+            axis.timeproperty
+        );
+        assert!(
+            summaries[0].contains("timestamptz_minmax_multi_ops"),
+            "the {} summary must be multi-range so a late outlier stays in its own range: {}",
+            axis.timeproperty,
+            summaries[0]
+        );
+        let led_btrees: Vec<&String> = definitions
+            .iter()
+            .filter(|definition| definition.contains(&format!("USING btree ({}", axis.column)))
+            .collect();
+        assert!(
+            led_btrees.is_empty(),
+            "{} must lead no B-tree of its own; the stream-led B-trees are the only ones: {led_btrees:?}",
+            axis.timeproperty
+        );
+    }
+
+    scope.finish().await.expect("cleanup failed");
+}
+
+/// A `modifiedAt` window that names no stream has the block summary as its only
+/// access path, and the summary must be usable for that predicate shape. The
+/// seeded corpus is far too small for the planner to prefer any index over a
+/// chunk scan on its own -- BRIN's default range spans more pages than the
+/// corpus occupies -- so the sequential scan is priced out for this one
+/// statement; whether the summary wins on cost at production volume is what
+/// the benchmark measured, and this test promises only that the operator class
+/// answers the window.
+#[tokio::test]
+async fn a_broad_modified_window_can_be_answered_from_the_modified_at_summary() {
+    let scope = TestEnvironment::from_suite("query-access-paths").await.expect("isolated test environment");
+    let pool = scope.database_pool();
+    seed(pool, scope.id_prefix()).await;
+
+    let mut transaction = pool.begin().await.expect("the plan transaction must open");
+    sqlx::query("SET LOCAL enable_seqscan = off")
+        .execute(&mut *transaction)
+        .await
+        .expect("the planner setting must apply");
+    // The window names no stream on purpose: a stream-led join would hand the
+    // planner the stream B-tree and the summary would never be consulted.
+    let statement = format!(
+        "SELECT COUNT(*) FROM attribute_history AS ah \
+         WHERE ah.modified_at >= {ORIGIN} + INTERVAL '1 day' \
+           AND ah.modified_at < {ORIGIN} + INTERVAL '1 day 6 hours'"
+    );
+    let lines: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("EXPLAIN (ANALYZE, BUFFERS) {statement}")))
+        .fetch_all(&mut *transaction)
+        .await
+        .expect("the plan must be readable");
+    let plan = lines.join("\n");
+    transaction.rollback().await.expect("the plan transaction must roll back");
     assert!(
-        indexed_axes.is_empty(),
-        "an axis beside observedAt gained an index; re-measure the semantic-time row before keeping it: {indexed_axes:?}"
+        plan.contains("idx_attribute_history_modified_at_brin"),
+        "a broad modified window must be answerable from the modified_at summary: {plan}"
     );
 
     scope.finish().await.expect("cleanup failed");

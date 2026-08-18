@@ -12,13 +12,14 @@ workspace = true
 andromeda-context-commit.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-number.workspace = true
-andromeda-postgresql-attribute-dictionary.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-context-store.workspace = true
+andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
+andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
 async-trait = "0.1.92"
 chrono = { version = "0.4.45", features = ["serde"] }

@@ -4,7 +4,7 @@
 //! Clause 4.5.7 makes `instanceId` unique to one attribute instance, not to
 //! one dataset stream of it, which is the same scope instance PATCH and
 //! DELETE already search (`temporal_attribute_streams` joined on
-//! `temporal_entity_key` and `attribute_name_id`, not on `stream_id` alone).
+//! `temporal_entity_key` and `attribute_name_id`, not on `stream_key` alone).
 //! `attribute_history` cannot carry that uniqueness itself: it is a
 //! TimescaleDB hypertable partitioned on `recorded_at`, and a unique index
 //! there must include the partitioning column, which would not even help --

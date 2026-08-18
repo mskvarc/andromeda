@@ -15,10 +15,10 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
-pub mod attribute_dictionary;
 pub mod csr;
 pub mod current;
 pub mod jsonld;
+pub mod name_dictionary;
 pub mod notification;
 pub mod queue;
 pub mod snapshot;

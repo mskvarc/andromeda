@@ -5,6 +5,7 @@
 //! are pure functions with no I/O — the caller is responsible for loading and
 //! persisting the entity.
 
+pub mod attribute_expiry;
 pub mod dataset_id;
 pub mod entity_member;
 pub mod geo_property;

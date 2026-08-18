@@ -1,5 +1,5 @@
 -- ============================================================================
--- 001: PostgreSQL Extensions
+-- 0002: PostgreSQL Extensions
 -- ============================================================================
 -- Required extensions for spatial, temporal, hierarchical, and diagnostic
 -- functionality.
@@ -19,6 +19,10 @@
 --   * btree_gist         -- enables GIST indexes on scalar types (e.g. SMALLINT)
 --                           alongside geometry columns, used for composite
 --                           (attribute_name_id, value_geo) indexes
+--   * btree_gin          -- enables GIN entries on scalar types, used for the
+--                           attribute-aware trigram index
+--                           (attribute_name_id, value_string) on the current
+--                           attribute-value projection
 --   * pg_stat_statements -- query performance monitoring; requires
 --                           shared_preload_libraries configuration, graceful
 --                           fallback if unavailable
@@ -29,6 +33,7 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 CREATE EXTENSION IF NOT EXISTS ltree;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS btree_gin;
 
 DO $$
 BEGIN
