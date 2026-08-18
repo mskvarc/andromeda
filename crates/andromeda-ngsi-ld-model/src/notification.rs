@@ -72,6 +72,7 @@ pub fn effective_notification_triggers(requested: Option<&[NotificationTrigger]>
     effective
 }
 
+/// Append a trigger only when the list does not already carry it.
 fn push_unique(triggers: &mut Vec<NotificationTrigger>, trigger: NotificationTrigger) {
     if !triggers.contains(&trigger) {
         triggers.push(trigger);

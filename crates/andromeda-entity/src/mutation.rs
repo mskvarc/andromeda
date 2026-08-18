@@ -34,7 +34,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
 use chrono::Utc;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{slice, sync::Arc};
 
 /// What one clause 5.6.17 merge produced, beyond the write itself.
 ///
@@ -208,7 +208,7 @@ impl EntityService {
                 &entity_uri,
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
-                std::slice::from_ref(&change.key.attr),
+                slice::from_ref(&change.key.attr),
                 change.key.dataset_id.as_ref(),
                 Some(&match_snapshot),
                 Some(&entity_snapshot),

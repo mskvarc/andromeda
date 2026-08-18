@@ -56,9 +56,7 @@ impl TemporalRecorder {
             return Ok(());
         }
         persist_write_record(tx, record).await?;
-        for intent in intents {
-            PostgresTemporalHistorySink::append_entries(&self.repo, tx, intent).await?;
-        }
+        PostgresTemporalHistorySink::append_entries_batch(&self.repo, tx, intents).await?;
         Ok(())
     }
 }

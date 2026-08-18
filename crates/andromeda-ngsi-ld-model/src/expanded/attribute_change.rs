@@ -79,6 +79,7 @@ pub fn classify_attribute_changes(previous: &Value, current: &Value) -> Vec<Attr
     changes
 }
 
+/// Index one expanded entity's attribute instances by their dataset-partitioned key.
 fn attribute_instances(expanded: &Value) -> HashMap<AttributeInstanceKey, &Value> {
     let mut instances_by_key = HashMap::new();
     let Some(entity) = expanded_object_ref(expanded) else {
@@ -110,14 +111,16 @@ fn attribute_instances(expanded: &Value) -> HashMap<AttributeInstanceKey, &Value
     instances_by_key
 }
 
+/// Order two changes by attribute name, then by `datasetId`, for a stable result.
 fn compare_changes(left: &AttributeChange, right: &AttributeChange) -> Ordering {
     left.key
         .attr
         .as_str()
         .cmp(right.key.attr.as_str())
-        .then_with(|| dataset_str(&left.key).cmp(&dataset_str(&right.key)))
+        .then_with(|| dataset_str(&left.key).cmp(dataset_str(&right.key)))
 }
 
+/// The `datasetId` of one instance key as text, empty for the default instance.
 fn dataset_str(key: &AttributeInstanceKey) -> &str {
     key.dataset_id.as_ref().map_or("", |dataset_id| dataset_id.as_str())
 }

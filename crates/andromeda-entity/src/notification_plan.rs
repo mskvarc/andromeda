@@ -43,7 +43,7 @@ impl NotificationGroup {
 
     /// Construct an entity lifecycle group, carrying all attribute names for
     /// `watchedAttributes` gating.
-    pub(crate) fn entity(trigger: NotificationTrigger, attributes: Vec<AttributeName>) -> NotificationGroup {
+    pub(crate) const fn entity(trigger: NotificationTrigger, attributes: Vec<AttributeName>) -> NotificationGroup {
         NotificationGroup {
             trigger,
             attributes,

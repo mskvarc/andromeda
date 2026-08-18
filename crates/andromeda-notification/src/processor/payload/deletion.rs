@@ -179,6 +179,7 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
     use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
     use serde_json::json;
+    use std::slice;
 
     #[test]
     fn a_dataset_specific_event_materializes_only_that_deleted_instance() {
@@ -197,7 +198,7 @@ mod tests {
         });
         let mut current = json!({"@id": "urn:ngsi-ld:Vehicle:1"});
 
-        inject_deleted_attributes(&mut current, &[attribute.clone()], Some(&dataset), Some(&previous), None);
+        inject_deleted_attributes(&mut current, slice::from_ref(&attribute), Some(&dataset), Some(&previous), None);
 
         let instances = current[attribute.as_str()].as_array().expect("deleted attribute instances");
         assert_eq!(instances.len(), 1);

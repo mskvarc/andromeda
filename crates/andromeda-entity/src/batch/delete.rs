@@ -29,7 +29,7 @@ use andromeda_ngsi_ld_model::{
 };
 use chrono::Utc;
 use serde_json::Value;
-use std::sync::Arc;
+use std::{slice, sync::Arc};
 
 /// One chunk's successfully deleted identifiers and its per-entity failures.
 pub(super) type DeleteChunkOutcome = (Vec<Uri>, Vec<(Uri, EntityError)>);
@@ -55,7 +55,7 @@ impl EntityService {
                 id,
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
-                std::slice::from_ref(&change.key.attr),
+                slice::from_ref(&change.key.attr),
                 change.key.dataset_id.as_ref(),
                 Some(&match_snapshot),
                 Some(payload),

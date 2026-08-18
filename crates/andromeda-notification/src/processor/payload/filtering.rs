@@ -90,10 +90,10 @@ pub(super) async fn inject_previous_values(
             }
         }
 
-        if let Some(prev_val) = prev_obj.get(&key) {
-            if let Some(curr_attr) = curr_obj.get_mut(&key) {
-                inject_previous_for_dataset(curr_attr, prev_val, changed_dataset_id, exact_attribute_instance);
-            }
+        if let Some(prev_val) = prev_obj.get(&key)
+            && let Some(curr_attr) = curr_obj.get_mut(&key)
+        {
+            inject_previous_for_dataset(curr_attr, prev_val, changed_dataset_id, exact_attribute_instance);
         }
     }
 }
@@ -118,7 +118,7 @@ fn inject_previous_for_dataset(current: &mut Value, previous: &Value, changed_da
         Value::Array(current_instances) => {
             let previous_instances: Vec<&Value> = match previous {
                 Value::Array(instances) => instances.iter().collect(),
-                other => vec![other],
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => vec![previous],
             };
             for current_instance in current_instances {
                 let current_dataset_id = compact_dataset_id(current_instance);

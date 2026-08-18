@@ -7,7 +7,13 @@
 //! recomputed against a fresh read if a concurrent writer got in first.
 
 use crate::{EntityService, error::EntityError, notification_plan::attribute_change_groups};
-use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
+use andromeda_context_commit::{
+    atomic_write::AtomicWrite,
+    change_event::ChangeEvent,
+    entity_mutation::EntityMutation,
+    entity_record::EntityRecord,
+    history_record::HistoryRecord,
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances};
@@ -81,7 +87,7 @@ struct PurgedEntity {
     /// The entity as it stands once the purged attributes are gone.
     merged: Arc<Value>,
     /// In-process events matching the durable records committed with the write.
-    events: Vec<andromeda_context_commit::change_event::ChangeEvent>,
+    events: Vec<ChangeEvent>,
 }
 
 /// The write that purges `previous` of the attributes `mode` selects, together

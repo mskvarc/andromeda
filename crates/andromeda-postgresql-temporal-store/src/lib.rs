@@ -69,14 +69,18 @@ pub(crate) mod stored_decimal;
 pub mod stored_instance_columns;
 /// Reading and pruning the temporal catalogue.
 pub mod temporal_catalog_read;
-/// Establishing the temporal catalogue rows one write's history hangs off.
+/// Coordinating one chunk's temporal-entity and temporal-stream catalogue writes.
 pub mod temporal_catalog_write;
+/// Establishing the `temporal_entities` half of the catalogue for a chunk.
+pub mod temporal_entity_catalog_write;
 /// Temporal Evolution deletion and the orphan audit that checks it.
 pub mod temporal_entity_deletion;
 /// Running one compiled temporal statement against the tenant pool.
 pub(crate) mod temporal_query_execution;
 /// The grain one temporal attribute stream is keyed by.
 pub mod temporal_stream;
+/// Establishing the `temporal_attribute_streams` half of the catalogue for a chunk.
+pub mod temporal_stream_catalog_write;
 /// Auditing stored unit-code identities against the unit-code catalog.
 pub mod unit_code_audit;
 /// Moving the NGSI-LD `unitCode` member between stored metadata and its column.
