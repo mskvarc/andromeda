@@ -5,19 +5,17 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
-    expanded_member::{attr_name_of, unwrap_expanded_ref},
+    expanded_member::unwrap_expanded_ref,
     geo_property_geometry::validate_geo_property_geometries,
+    notification_plan::attribute_change_groups,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, mutation::attribute::replace_attr},
-    notification::NotificationTrigger,
-};
+use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::attribute::replace_attr};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
-use std::{slice::from_ref, sync::Arc};
+use std::sync::Arc;
 
 impl EntityService {
     /// Replace one attribute of an entity wholesale (clause 5.6.19).
@@ -50,54 +48,23 @@ impl EntityService {
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
-        let expanded_attr_name = attr_name_of(attr_iri.as_str())?;
-
-        let MutatedEntity {
-            merged,
-            types: entity_types,
-            previous: previous_attributes,
-            trigger,
-        } = self
+        let MutatedEntity { events } = self
             .commit_computed_write(&entity_uri, |previous| {
-                let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-
                 let mut existing = previous.clone(); // clone: the replacement mutates its own copy of the stored payload
                 replace_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
 
-                // The durable match mirrors the single Live `emit_attr_change`
-                // below: `AttributeUpdated` for the one attribute this call
-                // replaced, with the same before-snapshot.
-                let subscription_matches = self.build_subscription_matches(
-                    &entity_uri,
-                    &types,
-                    NotificationTrigger::AttributeUpdated,
-                    from_ref(&expanded_attr_name),
-                    Some(&merged),
-                    previous_attributes.as_ref(),
-                );
+                let groups = attribute_change_groups(previous, &merged);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                let write = payload_write(
-                    &entity_uri,
-                    &merged,
-                    vec![HistoryRecord::Observations(Arc::clone(&expanded))],
-                    subscription_matches,
-                ); // clone: Arc ref-count bump
-                Ok((
-                    write,
-                    MutatedEntity {
-                        merged,
-                        types,
-                        previous: previous_attributes,
-                        trigger: NotificationTrigger::AttributeUpdated,
-                    },
-                ))
+                let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches); // clone: Arc ref-count bump
+                Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;
 
-        self.emit_attr_change(entity_uri, entity_types, trigger, vec![expanded_attr_name], previous_attributes, Some(merged));
+        events.into_iter().for_each(|event| self.emit_change(event));
 
         Ok(())
     }

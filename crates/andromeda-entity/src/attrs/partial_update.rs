@@ -5,22 +5,20 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
-    expanded_member::{attr_name_of, unwrap_expanded_ref},
+    expanded_member::unwrap_expanded_ref,
     geo_property_geometry::validate_geo_property_geometries,
+    notification_plan::attribute_change_groups,
 };
-use andromeda_context_commit::history_record::{HistoryRecord, tombstone};
+use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::{
-        entity_member::{extract_attribute_names, extract_types},
-        instance_key::attribute_instance_family,
-        mutation::attribute::partial_update_attr,
-    },
-    notification::NotificationTrigger,
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_model::expanded::{
+    entity_member::extract_types,
+    mutation::attribute::partial_update_attr,
+    removed_instance::removed_attribute_instances,
 };
 use serde_json::Value;
-use std::{collections::HashSet, slice::from_ref, sync::Arc};
+use std::sync::Arc;
 
 impl EntityService {
     /// Apply a partial update to one attribute instance (clause 5.6.4).
@@ -40,76 +38,32 @@ impl EntityService {
 
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
-        let expanded_attr_name = attr_name_of(attr_iri.as_str())?;
-
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
-        let MutatedEntity {
-            merged,
-            types: entity_types,
-            previous: previous_attributes,
-            trigger,
-        } = self
+        let MutatedEntity { events } = self
             .commit_computed_write(&entity_uri, |previous| {
-                let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-                let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
-
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 partial_update_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
-                // A null sentinel in the fragment deletes the attribute rather
-                // than updating it, which the diff is the only way to tell.
-                let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
-                let was_deleted = attrs_before.contains(attr_iri.as_str()) && !attrs_after.contains(attr_iri.as_str());
-
-                let (history, trigger) = if was_deleted {
-                    // The family comes from the payload the deletion superseded,
-                    // so the tombstone renders the null member that family
-                    // prescribes (clauses 4.5.7 and 4.5.8); clause 4.5.2 makes an
-                    // instance that declared none a Property.
-                    let attribute_type = attribute_instance_family(previous, &expanded_attr_name, dataset_id).unwrap_or(AttributeType::Property);
-                    (
-                        vec![tombstone(&expanded_attr_name, dataset_id, attribute_type)],
-                        NotificationTrigger::AttributeDeleted,
-                    )
-                } else {
-                    (
-                        vec![HistoryRecord::Observations(Arc::clone(&expanded))], // clone: Arc ref-count bump
-                        NotificationTrigger::AttributeUpdated,
-                    )
-                };
-
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
+                let groups = attribute_change_groups(previous, &merged);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let removed = removed_attribute_instances(previous, &merged);
+                let history = if removed.is_empty() {
+                    vec![HistoryRecord::Observations(Arc::clone(&expanded))]
+                } else {
+                    removed.into_iter().map(HistoryRecord::Tombstone).collect()
+                };
 
-                // The durable match mirrors the single Live `emit_attr_change`
-                // below: the same trigger the diff picked, the one attribute this
-                // update touched, and the same before-snapshot.
-                let subscription_matches = self.build_subscription_matches(
-                    &entity_uri,
-                    &types,
-                    trigger,
-                    from_ref(&expanded_attr_name),
-                    Some(&merged),
-                    previous_attributes.as_ref(),
-                );
-
-                let write = payload_write(&entity_uri, &merged, history, subscription_matches);
-                Ok((
-                    write,
-                    MutatedEntity {
-                        merged,
-                        types,
-                        previous: previous_attributes,
-                        trigger,
-                    },
-                ))
+                let write = payload_write(&entity_uri, &merged, history, plan.matches);
+                Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;
 
-        self.emit_attr_change(entity_uri, entity_types, trigger, vec![expanded_attr_name], previous_attributes, Some(merged));
+        events.into_iter().for_each(|event| self.emit_change(event));
 
         Ok(())
     }

@@ -29,6 +29,9 @@ pub struct SubscriptionMatch {
     /// Attributes changed by the mutation.
     #[builder(default = Default::default())]
     pub changed_attrs: Vec<AttributeName>,
+    /// Dataset discriminator of the changed Attribute instance.
+    #[builder(default = Default::default())]
+    pub changed_dataset_id: Option<Uri>,
 }
 
 #[cfg(test)]

@@ -185,32 +185,36 @@ impl NotificationProcessor {
                 },
             }
         } else if matches!(event.trigger_reason, NotificationTrigger::AttributeDeleted) {
-            match self.entity_reader.get(&event.entity_id).await {
-                Ok(Some(data)) => Some(data),
-                _ => {
-                    if let Some(ref snapshot) = event.entity_snapshot {
-                        let mut bare = payload::context::strip_to_structural_keys(
-                            &match snapshot.as_ref() {
-                                Value::Array(values) => match values.first() {
-                                    Some(value) => value.clone(),
-                                    None => snapshot.as_ref().clone(),
+            if let Some(payload) = event.current_payload.as_deref().or(event.entity_snapshot.as_deref()) {
+                Some(payload.clone())
+            } else {
+                match self.entity_reader.get(&event.entity_id).await {
+                    Ok(Some(data)) => Some(data),
+                    _ => {
+                        if let Some(ref snapshot) = event.entity_snapshot {
+                            let mut bare = payload::context::strip_to_structural_keys(
+                                &match snapshot.as_ref() {
+                                    Value::Array(values) => match values.first() {
+                                        Some(value) => value.clone(),
+                                        None => snapshot.as_ref().clone(),
+                                    },
+                                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
                                 },
-                                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
-                            },
-                            SysAttrsInclusion::Strip,
-                        );
-                        if let Some(obj) = bare.as_object_mut() {
-                            obj.insert(
-                                expanded_properties::DELETED_AT.as_str().to_string(),
-                                serde_json::json!([{
-                                    "@type": expanded_classes::DATE_TIME.as_str(),
-                                    "@value": whole_seconds(event.occurred_at)
-                                }]),
+                                SysAttrsInclusion::Strip,
                             );
+                            if let Some(obj) = bare.as_object_mut() {
+                                obj.insert(
+                                    expanded_properties::DELETED_AT.as_str().to_string(),
+                                    serde_json::json!([{
+                                        "@type": expanded_classes::DATE_TIME.as_str(),
+                                        "@value": whole_seconds(event.occurred_at)
+                                    }]),
+                                );
+                            }
+                            Some(serde_json::json!([bare]))
+                        } else {
+                            None
                         }
-                        Some(serde_json::json!([bare]))
-                    } else {
-                        None
                     }
                 }
             }
@@ -241,13 +245,14 @@ impl NotificationProcessor {
             }]))
         };
 
-        let matching: Vec<Arc<CompiledSubscription>> = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
-            if let Some(ref data) = entity_data {
-                let geo_filtered = narrow_by_spatial_index(&self.cache, matching, data, &event.entity_types);
-                geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
-            } else {
-                matching
-            }
+        let filter_data = if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
+            event.previous_attributes.as_ref().or(event.entity_snapshot.as_ref()).map(AsRef::as_ref)
+        } else {
+            entity_data.as_ref()
+        };
+        let matching: Vec<Arc<CompiledSubscription>> = if let Some(data) = filter_data {
+            let geo_filtered = narrow_by_spatial_index(&self.cache, matching, data, &event.entity_types);
+            geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
         } else {
             matching
         };
@@ -315,6 +320,7 @@ impl NotificationProcessor {
                                 sub: &compiled_sub,
                                 trigger_reason: &event.trigger_reason,
                                 changed_attributes: &event.changed_attributes,
+                                changed_dataset_id: event.changed_dataset_id.as_ref(),
                                 occurred_at: event.occurred_at,
                                 entity_query: &self.entity_query,
                                 compaction_cache: Some(compaction_cache),
@@ -412,6 +418,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
                 .trigger_reason(stored.trigger)
                 .changed_attributes(stored.changed_attributes.clone()) // clone: the change event owns its attribute names through delivery.
+                .changed_dataset_id(stored.changed_dataset_id.clone()) // clone: the event owns the instance discriminator.
                 .occurred_at(stored.created_at)
                 .entity_snapshot(is_deletion.then(|| snapshot.clone()).flatten()) // clone: deletion evaluation consumes its own snapshot value.
                 .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.

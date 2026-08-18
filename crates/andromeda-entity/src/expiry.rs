@@ -1,21 +1,24 @@
 //! Applying clause 4.22 expiry through the ordinary atomic mutation boundary.
 
-use crate::{EntityService, entity_snapshot::EntitySnapshot, error::EntityError, port::expiry::EntityExpirySource};
+use crate::{EntityService, entity_snapshot::EntitySnapshot, error::EntityError, notification_plan::attribute_change_groups, port::expiry::EntityExpirySource};
+#[cfg(test)]
+use andromeda_context_commit::write_outcome::WriteOutcome;
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
-    change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
     history_record::HistoryRecord,
     precondition::Precondition,
-    write_outcome::WriteOutcome,
 };
+#[cfg(test)]
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::{
-    expanded::{mutation::expiry::remove_expired_attribute_instances, removed_instance::removed_attribute_instances},
-    notification::NotificationTrigger,
+use andromeda_ngsi_ld_model::expanded::{
+    entity_member::extract_types,
+    mutation::expiry::remove_expired_attribute_instances,
+    removed_instance::removed_attribute_instances,
 };
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 use std::{num::NonZeroU32, sync::Arc};
 use thiserror::Error;
 use tracing::warn;
@@ -128,38 +131,44 @@ impl EntityService {
         batch_size: EntityExpiryBatchSize,
     ) -> Result<usize, EntityError> {
         let candidates = source.entities_with_expired_attributes(cutoff, batch_size).await?;
-        let (writes, identifiers): (Vec<_>, Vec<_>) = candidates
-            .into_iter()
-            .filter_map(|(identifier, snapshot)| match purge_write(&identifier, snapshot, cutoff) {
-                Some(write) => Some((write, identifier)),
-                None => {
-                    // The source selects candidates by the earliest instance
-                    // expiry it recorded for the payload; a candidate whose
-                    // payload holds no due instance means that record and the
-                    // payload disagree, which a concurrent write explains once
-                    // but a persistent drift would not.
-                    warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
-                    None
-                }
-            })
-            .unzip();
+        let mut writes = Vec::new();
+        let mut pending = Vec::new();
+        for (identifier, snapshot) in candidates {
+            let Some(purged) = purged_state(snapshot, cutoff) else {
+                warn!(entity = %identifier, "attribute-expiry candidate held no past-due instance");
+                continue;
+            };
+            let types = extract_types(&purged.current);
+            let groups = attribute_change_groups(&purged.previous, &purged.current);
+            let plan = self.plan_notifications(&identifier, &types, &groups, Some(&purged.current), Some(&purged.previous));
+            writes.push(
+                AtomicWrite::builder()
+                    .entity_id(Arc::new(identifier.clone()))
+                    .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&purged.current))))
+                    .history(purged.history)
+                    .subscription_matches(plan.matches)
+                    .precondition(Precondition::UnchangedSince(purged.modified_at))
+                    .build(),
+            );
+            pending.push((identifier, plan.events));
+        }
         if writes.is_empty() {
             return Ok(0);
         }
 
         let outcomes = self.writes.commit(writes).await?;
-        let landed = landed_ids(identifiers, &outcomes);
-        landed.iter().for_each(|identifier| {
-            self.emit_change(ChangeEvent::new(
-                identifier.clone(), // clone: the committed event owns its entity identifier.
-                Vec::new(),
-                NotificationTrigger::EntityUpdated,
-            ));
-        });
-        Ok(landed.len())
+        let mut landed = 0;
+        for ((_, events), outcome) in pending.into_iter().zip(&outcomes) {
+            if outcome.is_updated() {
+                landed += 1;
+                events.into_iter().for_each(|event| self.emit_change(event));
+            }
+        }
+        Ok(landed)
     }
 }
 
+#[cfg(test)]
 fn landed_ids(identifiers: Vec<Uri>, outcomes: &[WriteOutcome]) -> Vec<Uri> {
     identifiers
         .into_iter()
@@ -169,7 +178,14 @@ fn landed_ids(identifiers: Vec<Uri>, outcomes: &[WriteOutcome]) -> Vec<Uri> {
         .collect()
 }
 
-fn purge_write(identifier: &Uri, snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
+struct PurgedState {
+    previous: Value,
+    current: Arc<Value>,
+    modified_at: DateTime<Utc>,
+    history: Vec<HistoryRecord>,
+}
+
+fn purged_state(snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<PurgedState> {
     let EntitySnapshot {
         payload: previous,
         modified_at,
@@ -182,12 +198,23 @@ fn purge_write(identifier: &Uri, snapshot: EntitySnapshot, cutoff: DateTime<Utc>
         .into_iter()
         .map(HistoryRecord::Tombstone)
         .collect();
+    Some(PurgedState {
+        previous,
+        current: Arc::new(purged),
+        modified_at,
+        history,
+    })
+}
+
+#[cfg(test)]
+fn purge_write(identifier: &Uri, snapshot: EntitySnapshot, cutoff: DateTime<Utc>) -> Option<AtomicWrite> {
+    let purged = purged_state(snapshot, cutoff)?;
     Some(
         AtomicWrite::builder()
             .entity_id(Arc::new(identifier.clone())) // clone: the atomic write owns a shared validated identifier.
-            .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::new(purged))))
-            .history(history)
-            .precondition(Precondition::UnchangedSince(modified_at))
+            .entity(EntityMutation::Update(EntityRecord::from_expanded(purged.current)))
+            .history(purged.history)
+            .precondition(Precondition::UnchangedSince(purged.modified_at))
             .build(),
     )
 }

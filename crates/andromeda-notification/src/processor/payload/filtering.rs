@@ -64,6 +64,8 @@ pub(super) async fn inject_previous_values(
     current: &mut Value,
     previous: &Value,
     changed_attributes: &[AttributeName],
+    changed_dataset_id: Option<&Uri>,
+    exact_attribute_instance: bool,
     engine: &JsonLdEngine,
     context: &ContextSpec,
 ) {
@@ -89,16 +91,67 @@ pub(super) async fn inject_previous_values(
         }
 
         if let Some(prev_val) = prev_obj.get(&key) {
-            let curr_attr = curr_obj.get(&key).cloned();
-            let previous_key = previous_key_for_attr(prev_val);
-
-            if let Some(Value::Object(attr_obj)) = curr_attr.as_ref().filter(|&v| v.is_object()) {
-                let mut updated_attr = attr_obj.clone();
-                let prev_value = extract_previous_value(prev_val, previous_key);
-                updated_attr.insert(previous_key.to_string(), prev_value);
-                curr_obj.insert(key, Value::Object(updated_attr));
+            if let Some(curr_attr) = curr_obj.get_mut(&key) {
+                inject_previous_for_dataset(curr_attr, prev_val, changed_dataset_id, exact_attribute_instance);
             }
         }
+    }
+}
+
+fn inject_previous_for_dataset(current: &mut Value, previous: &Value, changed_dataset_id: Option<&Uri>, exact_attribute_instance: bool) {
+    match current {
+        Value::Object(_) => {
+            let target_dataset_id = if exact_attribute_instance {
+                changed_dataset_id.map(Uri::as_str)
+            } else {
+                compact_dataset_id(current)
+            };
+            let previous_instance = match previous {
+                Value::Array(instances) => instances.iter().find(|instance| compact_dataset_id(instance) == target_dataset_id),
+                Value::Object(_) if compact_dataset_id(previous) == target_dataset_id => Some(previous),
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_) => None,
+            };
+            if let Some(previous_instance) = previous_instance {
+                inject_previous_into_instance(current, previous_instance);
+            }
+        }
+        Value::Array(current_instances) => {
+            let previous_instances: Vec<&Value> = match previous {
+                Value::Array(instances) => instances.iter().collect(),
+                other => vec![other],
+            };
+            for current_instance in current_instances {
+                let current_dataset_id = compact_dataset_id(current_instance);
+                if exact_attribute_instance && current_dataset_id != changed_dataset_id.map(Uri::as_str) {
+                    continue;
+                }
+                if let Some(previous_instance) = previous_instances.iter().find(|instance| compact_dataset_id(instance) == current_dataset_id) {
+                    inject_previous_into_instance(current_instance, previous_instance);
+                }
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn inject_previous_into_instance(current: &mut Value, previous: &Value) {
+    let Some(current_object) = current.as_object_mut() else { return };
+    let previous_key = previous_key_for_attr(previous);
+    current_object.insert(previous_key.to_owned(), extract_previous_value(previous, previous_key));
+}
+
+fn compact_dataset_id(instance: &Value) -> Option<&str> {
+    let object = instance.as_object()?;
+    let value = object.get("datasetId").or_else(|| object.get(expanded_properties::DATASET_ID.as_str()))?;
+    match value {
+        Value::String(raw) => Some(raw),
+        Value::Object(object) => object.get("id").or_else(|| object.get("@id")).and_then(Value::as_str),
+        Value::Array(values) => values.first().and_then(|value| match value {
+            Value::String(raw) => Some(raw.as_str()),
+            Value::Object(object) => object.get("id").or_else(|| object.get("@id")).and_then(Value::as_str),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => None,
+        }),
+        Value::Null | Value::Bool(_) | Value::Number(_) => None,
     }
 }
 
@@ -141,4 +194,47 @@ fn extract_previous_value(val: &Value, previous_key: &str) -> Value {
         }
     }
     val.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inject_previous_for_dataset;
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use serde_json::json;
+
+    #[test]
+    fn show_changes_marks_only_the_changed_dataset_instance() {
+        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let mut current = json!([
+            {"type": "Property", "value": 10},
+            {"type": "Property", "value": 20, "datasetId": dataset.as_str()}
+        ]);
+        let previous = json!([
+            {"type": "Property", "value": 1},
+            {"type": "Property", "value": 2, "datasetId": dataset.as_str()}
+        ]);
+
+        inject_previous_for_dataset(&mut current, &previous, Some(&dataset), true);
+
+        assert!(current[0].get("previousValue").is_none());
+        assert_eq!(current[1]["previousValue"], json!(2));
+    }
+
+    #[test]
+    fn an_entity_lifecycle_event_marks_every_dataset_instance() {
+        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let mut current = json!([
+            {"type": "Property", "value": null},
+            {"type": "Property", "value": null, "datasetId": dataset.as_str()}
+        ]);
+        let previous = json!([
+            {"type": "Property", "value": 1},
+            {"type": "Property", "value": 2, "datasetId": dataset.as_str()}
+        ]);
+
+        inject_previous_for_dataset(&mut current, &previous, None, false);
+
+        assert_eq!(current[0]["previousValue"], json!(1));
+        assert_eq!(current[1]["previousValue"], json!(2));
+    }
 }

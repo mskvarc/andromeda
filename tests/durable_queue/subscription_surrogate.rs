@@ -51,6 +51,7 @@ async fn durable_queue_deleting_a_subscription_reclaims_its_deliveries_through_t
             trigger: NotificationTrigger::EntityCreated,
             entity_id: &entity,
             changed_attribute_name_ids: Vec::new(),
+            changed_dataset_id: None,
             entity_snapshot: Some(&snapshot),
             previous_snapshot: None,
             subscription_keys: vec![subscription_key(owner_key)],

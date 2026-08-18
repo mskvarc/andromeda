@@ -34,6 +34,7 @@ pub async fn queue_notification(pool: &PgPool, subscriptions: usize) -> QueuedNo
         trigger: NotificationTrigger::EntityCreated,
         entity_id: &entity,
         changed_attribute_name_ids: Vec::new(),
+        changed_dataset_id: None,
         entity_snapshot: Some(&snapshot),
         previous_snapshot: None,
         subscription_keys: subscription_keys.iter().map(|key| subscription_key(*key)).collect(),

@@ -6,14 +6,13 @@ use crate::{
 };
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use andromeda_ngsi_ld_model::{
-    notification::NotificationTrigger,
+    notification::effective_notification_triggers,
     subscription::{EntitySelector, Subscription},
 };
 use andromeda_ngsi_ld_query::geo::query::GeoQuery;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use std::{collections::HashSet, num::NonZeroU32};
-use strum::IntoEnumIterator;
 use tracing::debug;
 
 /// Compile a stored subscription into a pre-compiled form for fast matching.
@@ -24,11 +23,7 @@ use tracing::debug;
 pub fn compile_subscription(stored: &StoredSubscription) -> CompiledSubscription {
     let sub = &stored.subscription;
     let selectors: Vec<EntitySelector> = sub.selection.entities.clone().unwrap_or_default();
-    let triggers: Vec<NotificationTrigger> = sub
-        .selection
-        .notification_trigger
-        .as_deref()
-        .map_or_else(|| NotificationTrigger::iter().collect(), <[NotificationTrigger]>::to_vec);
+    let triggers = effective_notification_triggers(sub.selection.notification_trigger.as_deref());
     let watched_attrs = sub.selection.watched_attributes.as_ref().cloned().map(HashSet::from_iter);
     CompiledSubscription {
         id: sub.id.clone(), // clone: compiled state outlives the persisted value.

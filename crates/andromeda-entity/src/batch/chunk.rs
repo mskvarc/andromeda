@@ -16,7 +16,7 @@ use crate::{
     EntityService,
     batch::prepare::PreparedEntity,
     error::EntityError,
-    notification_plan::{NotificationGroup, NotificationPlan},
+    notification_plan::{NotificationGroup, NotificationPlan, attribute_change_groups},
     side_effect::BatchSideEffectMode,
 };
 use andromeda_context_commit::{
@@ -99,10 +99,8 @@ impl EntityService {
         } = prepared;
         let payload = Arc::new(expanded);
         let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
-        let groups = [NotificationGroup {
-            trigger: NotificationTrigger::EntityCreated,
-            attributes: changed_attributes,
-        }];
+        let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
+        groups.extend(attribute_change_groups(&Value::Null, &payload));
         let plan = self.plan_notifications(&id, &types, &groups, Some(&payload), None);
         ChunkWrite {
             id,
@@ -124,10 +122,8 @@ impl EntityService {
     pub(super) fn chunk_insert_payload(&self, id: Uri, payload: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
         let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
         let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
-        let groups = [NotificationGroup {
-            trigger: NotificationTrigger::EntityCreated,
-            attributes: changed_attributes,
-        }];
+        let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
+        groups.extend(attribute_change_groups(&Value::Null, &payload));
         let plan = self.plan_notifications(&id, &types, &groups, Some(&payload), None);
         ChunkWrite {
             id,
@@ -142,12 +138,9 @@ impl EntityService {
     /// The write that overwrites an existing entity with `merged`, having
     /// observed `observed`, under the per-op notification `groups`.
     ///
-    /// The build site chooses the groups so the write mirrors its sibling: a
-    /// replacement raises `entityUpdated`, an attribute update raises the
-    /// per-attribute triggers, a merge raises `attributeDeleted` for each
-    /// removed attribute beside `entityUpdated`. `previous_snapshot` is the
-    /// state before the mutation, carried only when a `showChanges` subscriber
-    /// needs the diff.
+    /// The build site supplies one precise group per changed attribute instance.
+    /// `previous_snapshot` is the state before the mutation, used for deletion
+    /// filtering and `showChanges`.
     pub(super) fn chunk_update(
         &self,
         id: Uri,

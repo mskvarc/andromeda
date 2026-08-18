@@ -7,13 +7,13 @@
 
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
+    change_event::ChangeEvent,
     entity_mutation::EntityMutation,
     entity_record::EntityRecord,
     history_record::HistoryRecord,
     subscription_match::SubscriptionMatch,
 };
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::NotificationTrigger;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -40,16 +40,6 @@ pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryR
 
 /// What one single-attribute mutation produced, beyond the write itself.
 pub(super) struct MutatedEntity {
-    /// The entity as it stands after the mutation.
-    pub merged: Arc<Value>,
-    /// The entity's types after the mutation (clause 4.5.1), read off the
-    /// attempt that landed so the notification carries the stored types.
-    pub types: Vec<EntityTypeName>,
-    /// The payload as it stood before, when a `showChanges` subscriber needs it.
-    pub previous: Option<Value>,
-    /// Which change the mutation describes to a subscriber.
-    ///
-    /// Only clause 5.6.4 varies: a null sentinel in the fragment deletes the
-    /// attribute rather than updating it, and the diff is the only way to tell.
-    pub trigger: NotificationTrigger,
+    /// In-process events matching the durable records committed with the write.
+    pub events: Vec<ChangeEvent>,
 }

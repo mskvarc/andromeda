@@ -192,6 +192,7 @@ fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
         .column((event.clone(), NotificationEvents::Trigger))
         .column((event.clone(), NotificationEvents::EntityId))
         .expr_as(changed_attributes, Alias::new("changed_attributes"))
+        .column((event.clone(), NotificationEvents::ChangedDatasetId))
         .column((event.clone(), NotificationEvents::EntitySnapshot))
         .column((event.clone(), NotificationEvents::PreviousSnapshot))
         .column((event.clone(), NotificationEvents::CreatedAt))

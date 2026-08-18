@@ -8,6 +8,7 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     error::EntityError,
     geo_property_geometry::validate_geo_property_geometries,
+    notification_plan::{NotificationGroup, attribute_change_groups},
     sys_attrs::snapshot_with_sys_attrs,
 };
 use andromeda_context_commit::{
@@ -20,10 +21,11 @@ use andromeda_context_commit::{
     write_outcome::single,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
     expanded::{
+        attribute_change::classify_attribute_changes,
         entity_member::{extract_attribute_names, extract_types},
         mutation::entity::merge_entity,
     },
@@ -32,7 +34,7 @@ use andromeda_ngsi_ld_model::{
 use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
 use chrono::Utc;
 use serde_json::Value;
-use std::{collections::HashSet, slice::from_ref, sync::Arc};
+use std::sync::Arc;
 
 /// What one clause 5.6.17 merge produced, beyond the write itself.
 ///
@@ -40,18 +42,8 @@ use std::{collections::HashSet, slice::from_ref, sync::Arc};
 /// concurrent writer supersedes an attempt, and the notification must describe
 /// the change the store accepted rather than one that was computed and lost.
 struct MergedEntity {
-    /// The entity as it stands after the merge.
-    merged: Arc<Value>,
-    /// The entity's types after the merge (clause 4.5.1).
-    types: Vec<EntityTypeName>,
-    /// The attribute names the patch touched.
-    changed_attrs: Vec<AttributeName>,
-    /// The attribute names the merge removed, each of which needs a tombstone
-    /// and an `attributeDeleted` notification.
-    deleted_attrs: Vec<AttributeName>,
-    /// The payload as it stood before the merge, when a `showChanges`
-    /// subscriber needs it (clause 5.2.14).
-    previous_attributes: Option<Value>,
+    /// In-process events matching the durable records committed with the write.
+    events: Vec<ChangeEvent>,
 }
 
 impl EntityService {
@@ -68,14 +60,15 @@ impl EntityService {
         let payload = Arc::new(expanded);
         let types = extract_types(&payload);
         let changed_attrs = extract_attribute_names(&payload);
-        let subscription_matches =
-            self.build_subscription_matches(&entity.id, &types, NotificationTrigger::EntityCreated, &changed_attrs, Some(&payload), None);
+        let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attrs)];
+        groups.extend(attribute_change_groups(&Value::Null, &payload));
+        let plan = self.plan_notifications(&entity.id, &types, &groups, Some(&payload), None);
 
         let write = AtomicWrite::builder()
             .entity_id(Arc::new(id.clone())) // clone: the write owns a shared validated identifier.
             .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump; the payload is also the change event's
             .history(vec![HistoryRecord::Observations(Arc::clone(&payload))]) // clone: Arc ref-count bump
-            .subscription_matches(subscription_matches)
+            .subscription_matches(plan.matches)
             .precondition(Precondition::MustNotExist)
             .build();
 
@@ -86,17 +79,7 @@ impl EntityService {
             return Err(EntityError::already_exists(id));
         }
 
-        self.emit_change(
-            ChangeEvent::builder()
-                .entity_id(entity.id.clone()) // clone: owned Uri for event
-                .entity_types(types)
-                .trigger_reason(NotificationTrigger::EntityCreated)
-                .occurred_at(Utc::now())
-                .origin(ChangeOrigin::Local)
-                .changed_attributes(changed_attrs)
-                .current_payload(Some(payload))
-                .build(),
-        );
+        plan.events.into_iter().for_each(|event| self.emit_change(event));
 
         Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
     }
@@ -115,45 +98,15 @@ impl EntityService {
         validate_attribute_envelopes(&patch_expanded)?;
         validate_geo_property_geometries(&patch_expanded)?;
 
-        let MergedEntity {
-            merged,
-            types,
-            changed_attrs,
-            deleted_attrs,
-            previous_attributes,
-        } = self
+        let MergedEntity { events } = self
             .commit_computed_write(&entity_uri, |previous| {
-                let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
-                let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-
                 let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
                 merge_entity(&mut existing, &patch_expanded)?;
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
-                let changed_attrs = extract_attribute_names(&patch_expanded);
-                let attrs_after: HashSet<AttributeName> = extract_attribute_names(&merged).into_iter().collect();
-                let deleted_attrs: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
-
-                let mut subscription_matches = Vec::new();
-                for deleted_attr in &deleted_attrs {
-                    subscription_matches.extend(self.build_subscription_matches(
-                        &entity_uri,
-                        &types,
-                        NotificationTrigger::AttributeDeleted,
-                        from_ref(deleted_attr),
-                        Some(&merged),
-                        previous_attributes.as_ref(),
-                    ));
-                }
-                subscription_matches.extend(self.build_subscription_matches(
-                    &entity_uri,
-                    &types,
-                    NotificationTrigger::EntityUpdated,
-                    &changed_attrs,
-                    Some(&merged),
-                    previous_attributes.as_ref(),
-                ));
+                let groups = attribute_change_groups(previous, &merged);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let history = mutation_history(&patch_expanded, previous, &merged);
 
@@ -161,41 +114,14 @@ impl EntityService {
                     .entity_id(Arc::new(entity_uri.clone())) // clone: the computed write owns its validated identifier.
                     .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&merged)))) // clone: Arc ref-count bump
                     .history(history)
-                    .subscription_matches(subscription_matches)
+                    .subscription_matches(plan.matches)
                     .build();
 
-                Ok((
-                    write,
-                    MergedEntity {
-                        merged,
-                        types,
-                        changed_attrs,
-                        deleted_attrs,
-                        previous_attributes,
-                    },
-                ))
+                Ok((write, MergedEntity { events: plan.events }))
             })
             .await?;
 
-        for deleted_attr in &deleted_attrs {
-            self.emit_attr_change(
-                entity_uri.clone(), // clone: value needed by subsequent loop iterations and final emit
-                types.clone(),      // clone: value needed by subsequent loop iterations and final emit
-                NotificationTrigger::AttributeDeleted,
-                vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
-                previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
-                Some(Arc::clone(&merged)),   // clone: Arc ref-count bump
-            );
-        }
-
-        self.emit_attr_change(
-            entity_uri,
-            types,
-            NotificationTrigger::EntityUpdated,
-            changed_attrs,
-            previous_attributes,
-            Some(merged),
-        );
+        events.into_iter().for_each(|event| self.emit_change(event));
 
         Ok(())
     }
@@ -222,39 +148,28 @@ impl EntityService {
         validate_geo_property_geometries(&expanded)?;
 
         let payload = Arc::new(expanded);
-        let changed_attrs = extract_attribute_names(&payload);
         let entity_id = Arc::new(entity_uri.clone()); // clone: repeated computed-write attempts share the validated identifier.
 
         // The types the notification carries are the stored ones, read off the
         // payload the replacement actually superseded rather than off an earlier
         // attempt's.
-        let types = self
+        let events = self
             .commit_computed_write(&entity_uri, |previous| {
-                let types = extract_types(previous);
+                let types = extract_types(&payload);
                 let history = mutation_history(&payload, previous, &payload);
-                let subscription_matches =
-                    self.build_subscription_matches(&entity_uri, &types, NotificationTrigger::EntityUpdated, &changed_attrs, Some(&payload), None);
+                let groups = attribute_change_groups(previous, &payload);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&payload), Some(previous));
                 let write = AtomicWrite::builder()
                     .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump; the identifier outlives the attempt
                     .entity(EntityMutation::Update(EntityRecord::from_expanded(Arc::clone(&payload)))) // clone: Arc ref-count bump
                     .history(history)
-                    .subscription_matches(subscription_matches)
+                    .subscription_matches(plan.matches)
                     .build();
-                Ok((write, types))
+                Ok((write, plan.events))
             })
             .await?;
 
-        self.emit_change(
-            ChangeEvent::builder()
-                .entity_id(entity_uri)
-                .entity_types(types)
-                .trigger_reason(NotificationTrigger::EntityUpdated)
-                .occurred_at(Utc::now())
-                .origin(ChangeOrigin::Local)
-                .changed_attributes(changed_attrs)
-                .current_payload(Some(payload))
-                .build(),
-        );
+        events.into_iter().for_each(|event| self.emit_change(event));
         Ok(())
     }
 
@@ -277,6 +192,7 @@ impl EntityService {
         };
 
         let attr_keys = extract_attribute_names(&entity_snapshot);
+        let attribute_changes = classify_attribute_changes(&entity_snapshot, &Value::Null);
 
         // The durable match stores the entity snapshot verbatim, and by delivery
         // time the deleted row is gone, so its clause-4.8 system attributes are
@@ -287,12 +203,13 @@ impl EntityService {
             .map_or_else(|| entity_snapshot.clone(), |sys_attrs| snapshot_with_sys_attrs(&entity_snapshot, sys_attrs));
 
         let mut subscription_matches = Vec::new();
-        if !attr_keys.is_empty() {
-            subscription_matches.extend(self.build_subscription_matches(
+        for change in &attribute_changes {
+            subscription_matches.extend(self.build_subscription_matches_for_instance(
                 &entity_uri,
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
-                &attr_keys,
+                std::slice::from_ref(&change.key.attr),
+                change.key.dataset_id.as_ref(),
                 Some(&match_snapshot),
                 Some(&entity_snapshot),
             ));
@@ -301,7 +218,7 @@ impl EntityService {
             &entity_uri,
             &entity_types,
             NotificationTrigger::EntityDeleted,
-            &[],
+            &attr_keys,
             Some(&match_snapshot),
             Some(&entity_snapshot),
         ));
@@ -321,8 +238,9 @@ impl EntityService {
             return Err(EntityError::not_found(&entity_uri));
         }
 
-        // One event per deleted attribute so `attributeDeleted` subscriptions fire.
-        if !attr_keys.is_empty() {
+        // One event per deleted attribute instance so dataset-scoped
+        // `attributeDeleted` subscriptions receive only the instance removed.
+        for change in attribute_changes {
             self.emit_change(
                 ChangeEvent::builder()
                     .entity_id(entity_uri.clone()) // clone: value also needed by subsequent EntityDeleted emit
@@ -330,7 +248,8 @@ impl EntityService {
                     .trigger_reason(NotificationTrigger::AttributeDeleted)
                     .occurred_at(Utc::now())
                     .origin(ChangeOrigin::Local)
-                    .changed_attributes(attr_keys)
+                    .changed_attributes(vec![change.key.attr])
+                    .changed_dataset_id(change.key.dataset_id)
                     .entity_snapshot(Some(entity_snapshot.clone())) // clone: value also needed by subsequent EntityDeleted emit
                     .previous_attributes(Some(entity_snapshot.clone())) // clone: value also needed by subsequent EntityDeleted emit
                     .sys_attrs_snapshot(sys_attrs_snapshot.clone()) // clone: value also needed by subsequent EntityDeleted emit
@@ -345,6 +264,7 @@ impl EntityService {
                 .trigger_reason(NotificationTrigger::EntityDeleted)
                 .occurred_at(Utc::now())
                 .origin(ChangeOrigin::Local)
+                .changed_attributes(attr_keys)
                 .entity_snapshot(Some(entity_snapshot.clone())) // clone: separate ownership for snapshot and previous fields
                 .previous_attributes(Some(entity_snapshot))
                 .sys_attrs_snapshot(sys_attrs_snapshot)

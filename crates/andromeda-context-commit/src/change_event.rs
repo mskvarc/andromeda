@@ -21,6 +21,10 @@ pub struct ChangeEvent {
     /// Attribute names touched by the mutation.
     #[builder(default = Default::default())]
     pub changed_attributes: Vec<AttributeName>,
+    /// Dataset discriminator of the one changed Attribute instance, or `None`
+    /// for the default instance and for entity-level events.
+    #[builder(default = Default::default())]
+    pub changed_dataset_id: Option<Uri>,
     /// Time at which the mutation occurred.
     pub occurred_at: DateTime<Utc>,
     /// Expanded pre-deletion snapshot for entity-deleted events.

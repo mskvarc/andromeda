@@ -150,7 +150,7 @@ pub struct SubscriptionSelection {
     /// Attribute names to watch for changes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub watched_attributes: Option<Vec<AttributeName>>,
-    /// Conditions that trigger a notification (clause 5.3.3).
+    /// Conditions that trigger a notification (clause 5.2.12).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notification_trigger: Option<Vec<NotificationTrigger>>,
 }

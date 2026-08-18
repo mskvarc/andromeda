@@ -76,6 +76,7 @@ pub(super) fn fix_null_language_maps(entity: &mut Value) {
 pub(super) fn inject_deleted_attributes(
     entity: &mut Value,
     changed_attributes: &[AttributeName],
+    changed_dataset_id: Option<&Uri>,
     previous_attributes: Option<&Value>,
     deleted_at: Option<DateTime<Utc>>,
 ) {
@@ -91,19 +92,18 @@ pub(super) fn inject_deleted_attributes(
     for attr_name in changed_attributes {
         let attr_iri = attr_name.as_str();
         if entity_obj.contains_key(attr_iri) {
-            inject_deleted_instances(entity_obj, attr_iri, prev_obj, deleted_at);
+            inject_deleted_instances(entity_obj, attr_iri, prev_obj, changed_dataset_id, deleted_at);
             continue;
         }
         if let Some(prev_attr) = prev_obj.get(attr_iri) {
-            let first_instance = match prev_attr {
-                Value::Array(arr) => arr.first().cloned(),
-                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => Some(other.clone()),
-            };
-            if let Some(mut instance) = first_instance {
-                nullify_attribute_instance(&mut instance);
-                if let Some(obj) = instance.as_object_mut() {
-                    obj.remove(expanded_properties::DATASET_ID.as_str());
+            let deleted_instance = match prev_attr {
+                Value::Array(arr) => arr.iter().find(|instance| dataset_id_of(instance).as_ref() == changed_dataset_id).cloned(),
+                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => {
+                    (changed_dataset_id.is_none()).then(|| other.clone())
                 }
+            };
+            if let Some(mut instance) = deleted_instance {
+                nullify_attribute_instance(&mut instance);
                 if let Some(ts) = deleted_at {
                     inject_deleted_at_on_instance(&mut instance, ts);
                 }
@@ -117,6 +117,7 @@ pub(super) fn inject_deleted_instances(
     entity_obj: &mut serde_json::Map<String, Value>,
     attr_iri: &str,
     prev_obj: &serde_json::Map<String, Value>,
+    changed_dataset_id: Option<&Uri>,
     deleted_at: Option<DateTime<Utc>>,
 ) {
     let Some(prev_attr) = prev_obj.get(attr_iri) else { return };
@@ -125,33 +126,13 @@ pub(super) fn inject_deleted_instances(
         return;
     };
 
-    let current_dataset_ids: HashSet<Option<Uri>> = cur_arr
-        .iter()
-        .map(|inst| {
-            inst.as_object()
-                .and_then(|o| o.get(expanded_properties::DATASET_ID.as_str()))
-                .and_then(|v| v.as_array())
-                .and_then(|a| a.first())
-                .and_then(|v| v.as_object())
-                .and_then(|o| o.get("@id"))
-                .and_then(|v| v.as_str())
-                .and_then(|raw| raw.parse::<Uri>().ok())
-        })
-        .collect();
+    let current_dataset_ids: HashSet<Option<Uri>> = cur_arr.iter().map(dataset_id_of).collect();
 
     let mut deleted_instances: Vec<Value> = Vec::new();
     for prev_inst in prev_arr {
-        let prev_ds_id = prev_inst
-            .as_object()
-            .and_then(|o| o.get(expanded_properties::DATASET_ID.as_str()))
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.first())
-            .and_then(|v| v.as_object())
-            .and_then(|o| o.get("@id"))
-            .and_then(|v| v.as_str())
-            .and_then(|raw| raw.parse::<Uri>().ok());
+        let prev_ds_id = dataset_id_of(prev_inst);
 
-        if !current_dataset_ids.contains(&prev_ds_id) {
+        if prev_ds_id.as_ref() == changed_dataset_id && !current_dataset_ids.contains(&prev_ds_id) {
             let mut nullified = prev_inst.clone();
             nullify_attribute_instance(&mut nullified);
             if let Some(ts) = deleted_at {
@@ -168,6 +149,18 @@ pub(super) fn inject_deleted_instances(
     }
 }
 
+fn dataset_id_of(instance: &Value) -> Option<Uri> {
+    instance
+        .as_object()
+        .and_then(|object| object.get(expanded_properties::DATASET_ID.as_str()))
+        .and_then(Value::as_array)
+        .and_then(|values| values.first())
+        .and_then(Value::as_object)
+        .and_then(|object| object.get("@id"))
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uri>().ok())
+}
+
 pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<Utc>) {
     if let Some(obj) = instance.as_object_mut() {
         obj.insert(
@@ -177,5 +170,37 @@ pub(super) fn inject_deleted_at_on_instance(instance: &mut Value, ts: DateTime<U
                 "@value": whole_seconds(ts)
             }]),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inject_deleted_attributes;
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+    use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
+    use serde_json::json;
+
+    #[test]
+    fn a_dataset_specific_event_materializes_only_that_deleted_instance() {
+        let attribute = "https://example.com/speed".parse::<AttributeName>().expect("valid attribute name");
+        let dataset = "urn:dataset:named".parse::<Uri>().expect("valid dataset URI");
+        let previous = json!({
+            "@id": "urn:ngsi-ld:Vehicle:1",
+            attribute.as_str(): [
+                {"@type": ["https://uri.etsi.org/ngsi-ld/Property"], expanded_properties::VALUE.as_str(): [{"@value": 1}]},
+                {
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                    expanded_properties::VALUE.as_str(): [{"@value": 2}],
+                    expanded_properties::DATASET_ID.as_str(): [{"@id": dataset.as_str()}]
+                }
+            ]
+        });
+        let mut current = json!({"@id": "urn:ngsi-ld:Vehicle:1"});
+
+        inject_deleted_attributes(&mut current, &[attribute.clone()], Some(&dataset), Some(&previous), None);
+
+        let instances = current[attribute.as_str()].as_array().expect("deleted attribute instances");
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0][expanded_properties::DATASET_ID.as_str()][0]["@id"], json!(dataset.as_str()));
     }
 }

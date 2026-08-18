@@ -47,6 +47,8 @@ pub struct ClaimedDelivery {
     pub entity_id: Uri,
     /// Attributes the change touched.
     pub changed_attributes: Vec<AttributeName>,
+    /// Dataset discriminator of the changed Attribute instance.
+    pub changed_dataset_id: Option<Uri>,
     /// Expanded entity state after the change.
     pub entity_snapshot: Option<Value>,
     /// Expanded entity state before the change, for `showChanges`.
@@ -110,6 +112,17 @@ pub enum ClaimedDeliveryError {
         #[source]
         source: NgsiLdReferenceError,
     },
+    /// The stored dataset discriminator is not a valid URI.
+    #[error("notification delivery {delivery} references invalid changed datasetId `{value}`")]
+    InvalidDatasetId {
+        /// Delivery the unreadable value was read from.
+        delivery: i64,
+        /// Invalid stored value.
+        value: String,
+        /// URI validation failure.
+        #[source]
+        source: UriParseError,
+    },
 }
 
 /// SQL decode shape of one claimed delivery joined to its event.
@@ -142,6 +155,8 @@ pub(crate) struct RawClaimedDeliveryRow {
     /// expanded IRIs a notification is built from, in the order the event
     /// recorded them.
     changed_attributes: Vec<String>,
+    /// Dataset discriminator stored on an attribute-level event.
+    changed_dataset_id: Option<String>,
     /// Entity state after the change, stored as JSONB.
     entity_snapshot: Option<Value>,
     /// Entity state before the change, stored as JSONB.
@@ -180,6 +195,14 @@ impl TryFrom<RawClaimedDeliveryRow> for ClaimedDelivery {
                     .map_err(|source| ClaimedDeliveryError::InvalidAttributeName { delivery, value, source })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let changed_dataset_id = row
+            .changed_dataset_id
+            .map(|value| {
+                value
+                    .parse()
+                    .map_err(|source| ClaimedDeliveryError::InvalidDatasetId { delivery, value, source })
+            })
+            .transpose()?;
         Ok(ClaimedDelivery {
             id: delivery,
             subscription_id,
@@ -191,6 +214,7 @@ impl TryFrom<RawClaimedDeliveryRow> for ClaimedDelivery {
             trigger,
             entity_id,
             changed_attributes,
+            changed_dataset_id,
             entity_snapshot: row.entity_snapshot,
             previous_snapshot: row.previous_snapshot,
             created_at: row.created_at,
@@ -214,6 +238,8 @@ pub struct NewNotificationEvent<'a> {
     pub entity_id: &'a Uri,
     /// Dictionary keys of the attributes the change touched.
     pub changed_attribute_name_ids: Vec<AttributeNameId>,
+    /// Dataset discriminator of the changed Attribute instance.
+    pub changed_dataset_id: Option<&'a Uri>,
     /// Expanded entity state after the change.
     pub entity_snapshot: Option<&'a Value>,
     /// Expanded entity state before the change, for `showChanges`.
@@ -242,6 +268,7 @@ mod tests {
             trigger: 2,
             entity_id: "https://example.org/entities/1".to_owned(),
             changed_attributes: vec!["temperature".to_owned(), "https://example.org/pressure".to_owned()],
+            changed_dataset_id: None,
             entity_snapshot: None,
             previous_snapshot: None,
             created_at: Utc::now(),

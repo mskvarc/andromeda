@@ -123,6 +123,7 @@ fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
                 .trigger(delivery.trigger)
                 .entity_id(delivery.entity_id)
                 .changed_attributes(delivery.changed_attributes)
+                .changed_dataset_id(delivery.changed_dataset_id)
                 .entity_snapshot(delivery.entity_snapshot)
                 .previous_snapshot(delivery.previous_snapshot)
                 .created_at(delivery.created_at)
@@ -160,6 +161,7 @@ mod tests {
             trigger: NotificationTrigger::EntityCreated,
             entity_id: "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI"),
             changed_attributes: Vec::new(),
+            changed_dataset_id: None,
             entity_snapshot: None,
             previous_snapshot: None,
             created_at: Utc::now(),

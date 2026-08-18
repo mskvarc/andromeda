@@ -12,13 +12,10 @@ use crate::{
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::expanded::{
-    entity_member::{extract_attribute_names, extract_types},
-    mutation::entity::update_entity_attrs,
-};
+use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::entity::update_entity_attrs};
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 impl EntityService {
     /// Update the attributes an entity already carries (clause 5.6.2).
@@ -37,25 +34,19 @@ impl EntityService {
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
-        let all_changed = extract_attribute_names(&expanded);
-
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
             .commit_computed_write(&entity_uri, |previous| {
-                let previous_snapshot = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-                let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
-
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 let not_updated = update_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded))?;
 
-                let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
 
                 // The durable matches and the in-process events are planned
                 // together from one partition, so the two channels always agree
                 // on the per-attribute triggers (clause 5.2.12).
-                let groups = attribute_change_groups(&attrs_before, &attrs_after, &all_changed);
-                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), previous_snapshot.as_ref());
+                let groups = attribute_change_groups(previous, &merged);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let history = mutation_history(&expanded, previous, &merged);
                 let write = payload_write(&entity_uri, &merged, history, plan.matches);

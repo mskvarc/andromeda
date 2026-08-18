@@ -4,16 +4,12 @@
 //! fragment is applied with clause 5.6.2 merge semantics rather than by
 //! updating and appending in turn.
 
-use crate::{EntityService, batch::BatchResult, error::EntityError, notification_plan::NotificationGroup, side_effect::BatchSideEffectMode};
+use crate::{EntityService, batch::BatchResult, error::EntityError, notification_plan::attribute_change_groups, side_effect::BatchSideEffectMode};
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    entity::Entity,
-    expanded::{entity_member::extract_attribute_names, mutation::entity::merge_entity},
-    notification::NotificationTrigger,
-};
-use std::{collections::HashSet, sync::Arc};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
+use std::sync::Arc;
 
 impl EntityService {
     pub(super) async fn batch_merge_chunk(&self, entities: &[Entity], context: &ContextSpec, mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
@@ -36,7 +32,6 @@ impl EntityService {
                 errors.push((id, error));
                 continue;
             };
-            let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
             let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
 
             if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded) {
@@ -44,22 +39,7 @@ impl EntityService {
                 continue;
             }
 
-            // Batch merge mirrors the single merge (clause 5.6.17): one
-            // attributeDeleted per removed attribute, then a single entityUpdated
-            // over the patched names.
-            let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
-            let mut groups: Vec<NotificationGroup> = attrs_before
-                .difference(&attrs_after)
-                .map(|deleted| NotificationGroup {
-                    trigger: NotificationTrigger::AttributeDeleted,
-                    attributes: vec![deleted.clone()], // clone: the group owns the removed name
-                })
-                .collect();
-            groups.push(NotificationGroup {
-                trigger: NotificationTrigger::EntityUpdated,
-                attributes: prepared_entity.changed_attributes,
-            });
-            let previous_snapshot = self.change_sink.as_ref().map(|_| previous.clone()); // clone: showChanges before-image, only when a subscriber needs it
+            let groups = attribute_change_groups(previous, &existing);
 
             writes.push(self.chunk_update(
                 id,
@@ -67,7 +47,7 @@ impl EntityService {
                 Arc::new(existing),
                 Arc::new(prepared_entity.expanded),
                 groups,
-                previous_snapshot.as_ref(),
+                Some(previous),
                 Precondition::MustExist,
             ));
         }

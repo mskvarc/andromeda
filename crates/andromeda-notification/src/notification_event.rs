@@ -48,6 +48,9 @@ pub struct NotificationEvent {
     /// Names of the attributes the mutation changed.
     #[builder(default = Default::default())]
     pub changed_attributes: Vec<AttributeName>,
+    /// Dataset discriminator of the changed Attribute instance.
+    #[builder(default = Default::default())]
+    pub changed_dataset_id: Option<Uri>,
     /// Expanded entity snapshot at the time of the mutation.
     #[builder(default = Default::default())]
     pub entity_snapshot: Option<Value>,

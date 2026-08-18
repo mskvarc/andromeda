@@ -22,12 +22,8 @@ pub enum ChangeOrigin {
     Forwarded,
 }
 
-/// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009 clause 5.3.3).
-///
-/// One vocabulary serves both sides of clause 5.3.3: a subscription lists the
-/// triggers it listens for (`Subscription::notification_trigger`), and a
-/// [`ChangeEvent`] carries the one that fired. [`EnumIter`] yields the default
-/// set — every trigger — without a hand-written token copy.
+/// Trigger conditions that cause a notification to be sent (ETSI GS CIM 009
+/// v1.9.1, clause 5.2.12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Display, EnumString, EnumIter, EnumCount)]
 #[serde(rename_all = "camelCase")]
 #[strum(serialize_all = "camelCase")]
@@ -44,6 +40,42 @@ pub enum NotificationTrigger {
     AttributeUpdated,
     /// A watched attribute was deleted from a matching entity.
     AttributeDeleted,
+}
+
+/// Clause-5.2.12 trigger set used when a Subscription omits
+/// `notificationTrigger`.
+pub const DEFAULT_NOTIFICATION_TRIGGERS: [NotificationTrigger; 2] = [NotificationTrigger::AttributeCreated, NotificationTrigger::AttributeUpdated];
+
+/// Compile the Subscription trigger vocabulary into precise change triggers.
+///
+/// Clause 5.2.12 defines `entityUpdated` as equivalent to the combination of
+/// `attributeCreated`, `attributeUpdated`, and `attributeDeleted`. This helper
+/// performs that expansion on the Subscription side; mutation producers remain
+/// responsible for classifying the precise attribute change that occurred.
+pub fn effective_notification_triggers(requested: Option<&[NotificationTrigger]>) -> Vec<NotificationTrigger> {
+    let requested = requested.unwrap_or(&DEFAULT_NOTIFICATION_TRIGGERS);
+    let mut effective = Vec::with_capacity(requested.len().saturating_add(2));
+    for trigger in requested {
+        match trigger {
+            NotificationTrigger::EntityUpdated => {
+                push_unique(&mut effective, NotificationTrigger::AttributeCreated);
+                push_unique(&mut effective, NotificationTrigger::AttributeUpdated);
+                push_unique(&mut effective, NotificationTrigger::AttributeDeleted);
+            }
+            NotificationTrigger::EntityCreated
+            | NotificationTrigger::EntityDeleted
+            | NotificationTrigger::AttributeCreated
+            | NotificationTrigger::AttributeUpdated
+            | NotificationTrigger::AttributeDeleted => push_unique(&mut effective, *trigger),
+        }
+    }
+    effective
+}
+
+fn push_unique(triggers: &mut Vec<NotificationTrigger>, trigger: NotificationTrigger) {
+    if !triggers.contains(&trigger) {
+        triggers.push(trigger);
+    }
 }
 
 /// System attribute timestamps captured before entity deletion.
@@ -151,7 +183,7 @@ pub enum CsourceSubscriptionChange {
 
 #[cfg(test)]
 mod tests {
-    use crate::notification::{CsourceNotification, CsrTriggerReason, Notification};
+    use crate::notification::{CsourceNotification, CsrTriggerReason, Notification, NotificationTrigger, effective_notification_triggers};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -176,6 +208,34 @@ mod tests {
         let rendered = serde_json::to_value(&notification).expect("serialises");
         pretty_assertions::assert_eq!(rendered["type"], json!("Notification"));
         pretty_assertions::assert_eq!(rendered["data"], json!([]));
+    }
+
+    #[test]
+    fn an_absent_trigger_set_uses_only_the_clause_default() {
+        pretty_assertions::assert_eq!(
+            effective_notification_triggers(None),
+            vec![NotificationTrigger::AttributeCreated, NotificationTrigger::AttributeUpdated]
+        );
+    }
+
+    #[test]
+    fn entity_updated_expands_on_the_subscription_side() {
+        pretty_assertions::assert_eq!(
+            effective_notification_triggers(Some(&[NotificationTrigger::EntityUpdated])),
+            vec![
+                NotificationTrigger::AttributeCreated,
+                NotificationTrigger::AttributeUpdated,
+                NotificationTrigger::AttributeDeleted,
+            ]
+        );
+    }
+
+    #[test]
+    fn precise_attribute_triggers_do_not_expand_back_to_entity_updated() {
+        pretty_assertions::assert_eq!(
+            effective_notification_triggers(Some(&[NotificationTrigger::AttributeUpdated])),
+            vec![NotificationTrigger::AttributeUpdated]
+        );
     }
 
     #[test]

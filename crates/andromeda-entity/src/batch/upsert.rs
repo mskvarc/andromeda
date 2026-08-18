@@ -17,7 +17,7 @@ use crate::{
     EntityService,
     batch::{BatchResult, chunk::ChunkWrite},
     error::EntityError,
-    notification_plan::{NotificationGroup, attribute_change_groups},
+    notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
@@ -26,7 +26,6 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{entity_member::extract_attribute_names, mutation::entity::merge_entity},
-    notification::NotificationTrigger,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -172,7 +171,6 @@ impl EntityService {
                 continue;
             };
 
-            let attrs_before: HashSet<AttributeName> = extract_attribute_names(existing).into_iter().collect();
             let mut merged = existing.clone(); // clone: the merge mutates its own copy of the stored payload
             let id = entity.id;
             if let Err(error) = merge_entity(&mut merged, &entity.expanded) {
@@ -182,9 +180,7 @@ impl EntityService {
 
             // Upsert-update mirrors the single attribute update (clause 5.6.9):
             // the per-attribute triggers, partitioned from the before/after diff.
-            let attrs_after: HashSet<AttributeName> = extract_attribute_names(&merged).into_iter().collect();
-            let groups = attribute_change_groups(&attrs_before, &attrs_after, &entity.changed_attributes);
-            let previous_snapshot = self.change_sink.as_ref().map(|_| existing.clone()); // clone: showChanges before-image, only when a subscriber needs it
+            let groups = attribute_change_groups(existing, &merged);
 
             writes.push(self.chunk_update(
                 id,
@@ -192,7 +188,7 @@ impl EntityService {
                 Arc::new(merged),
                 Arc::new(entity.expanded),
                 groups,
-                previous_snapshot.as_ref(),
+                Some(existing),
                 Precondition::MustExist,
             ));
         }
@@ -214,20 +210,17 @@ impl EntityService {
     /// The write that replaces `previous` with `payload`, tombstoning whatever
     /// the replacement drops (NGSI-LD 5.6.8).
     ///
-    /// Mirrors the single replace (clause 5.6.18): one `entityUpdated` over the
-    /// whole payload, with no `showChanges` before-image.
+    /// Mirrors the single replace (clause 5.6.18): one precise event for every
+    /// created, updated, or deleted attribute instance.
     fn replacement_write(
         &self,
         id: Uri,
         payload: &Arc<Value>,
         previous: &Value,
         modified_at: DateTime<Utc>,
-        changed_attributes: Vec<AttributeName>,
+        _changed_attributes: Vec<AttributeName>,
     ) -> ChunkWrite {
-        let groups = vec![NotificationGroup {
-            trigger: NotificationTrigger::EntityUpdated,
-            attributes: changed_attributes,
-        }];
+        let groups = attribute_change_groups(previous, payload);
         // clone: `Arc` ref-count bumps; the same payload is stored and observed.
         self.chunk_update(
             id,
@@ -235,7 +228,7 @@ impl EntityService {
             Arc::clone(payload),
             Arc::clone(payload),
             groups,
-            None,
+            Some(previous),
             Precondition::UnchangedSince(modified_at),
         )
     }

@@ -293,6 +293,7 @@ fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffec
                 .entity_types(pce.entity_types)
                 .trigger_reason(pce.trigger_reason)
                 .changed_attributes(pce.changed_attributes)
+                .changed_dataset_id(pce.changed_dataset_id)
                 .occurred_at(pce.occurred_at)
                 .entity_snapshot(pce.entity_snapshot)
                 .previous_attributes(pce.previous_attributes)

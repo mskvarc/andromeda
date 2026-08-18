@@ -27,6 +27,20 @@ impl EntityService {
         entity_snapshot: Option<&Value>,
         previous_snapshot: Option<&Value>,
     ) -> Vec<SubscriptionMatch> {
+        self.build_subscription_matches_for_instance(entity_id, entity_types, trigger, changed_attrs, None, entity_snapshot, previous_snapshot)
+    }
+
+    /// Build durable matches for one precise attribute-instance change.
+    pub(crate) fn build_subscription_matches_for_instance(
+        &self,
+        entity_id: &Uri,
+        entity_types: &[EntityTypeName],
+        trigger: NotificationTrigger,
+        changed_attrs: &[AttributeName],
+        changed_dataset_id: Option<&Uri>,
+        entity_snapshot: Option<&Value>,
+        previous_snapshot: Option<&Value>,
+    ) -> Vec<SubscriptionMatch> {
         let Some(NotificationWriteConfig { subscription_cache }) = &self.notifications else {
             return Vec::new();
         };
@@ -38,6 +52,7 @@ impl EntityService {
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
             .changed_attributes(changed_attrs.to_vec())
+            .changed_dataset_id(changed_dataset_id.cloned())
             .build();
 
         let outcome = subscription_cache.find_matching(&event);
@@ -53,7 +68,12 @@ impl EntityService {
         );
         outcome.funnel.record();
 
-        let matching: Vec<_> = if let Some(data) = entity_snapshot {
+        let filter_snapshot = if matches!(trigger, NotificationTrigger::AttributeDeleted | NotificationTrigger::EntityDeleted) {
+            previous_snapshot.or(entity_snapshot)
+        } else {
+            entity_snapshot
+        };
+        let matching: Vec<_> = if let Some(data) = filter_snapshot {
             narrow_by_spatial_index(subscription_cache, outcome.matched, data, entity_types)
                 .into_iter()
                 .filter(|sub| matches_entity_filters(sub, data))
@@ -75,6 +95,7 @@ impl EntityService {
                     .entity_snapshot(entity_snapshot.cloned())
                     .previous_snapshot(previous_snapshot.cloned())
                     .changed_attrs(changed_attrs.to_vec())
+                    .changed_dataset_id(changed_dataset_id.cloned())
                     .build()
             })
             .collect()

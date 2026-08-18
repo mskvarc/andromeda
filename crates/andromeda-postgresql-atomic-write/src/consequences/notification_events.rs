@@ -113,6 +113,7 @@ fn same_change(left: &SubscriptionMatch, right: &SubscriptionMatch) -> bool {
         && left.entity_snapshot == right.entity_snapshot
         && left.previous_snapshot == right.previous_snapshot
         && left.changed_attrs == right.changed_attrs
+        && left.changed_dataset_id == right.changed_dataset_id
 }
 
 /// Mint the dictionary key of every attribute the grouped changes name.
@@ -166,6 +167,7 @@ fn event<'a>(
         trigger: group.change.trigger,
         entity_id: &group.change.entity_id,
         changed_attribute_name_ids,
+        changed_dataset_id: group.change.changed_dataset_id.as_ref(),
         entity_snapshot: group.change.entity_snapshot.as_ref(),
         previous_snapshot: group.change.previous_snapshot.as_ref(),
         subscription_keys: group.subscriptions,
@@ -256,6 +258,13 @@ mod tests {
         let mut second = change(2, NotificationTrigger::EntityUpdated);
         second.previous_snapshot = Some(json!({ "id": "urn:ngsi-ld:Vehicle:1" }));
         assert!(!same_change(&change(1, NotificationTrigger::EntityUpdated), &second));
+    }
+
+    #[test]
+    fn changes_differing_only_in_dataset_identity_are_not_folded_together() {
+        let mut second = change(2, NotificationTrigger::AttributeUpdated);
+        second.changed_dataset_id = Some("urn:dataset:named".parse().expect("valid dataset URI"));
+        assert!(!same_change(&change(1, NotificationTrigger::AttributeUpdated), &second));
     }
 
     /// The commit's temporal history entries have already drawn from the

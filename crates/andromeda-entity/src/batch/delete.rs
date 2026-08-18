@@ -21,7 +21,10 @@ use andromeda_context_commit::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    expanded::entity_member::{extract_attribute_names, extract_types},
+    expanded::{
+        attribute_change::classify_attribute_changes,
+        entity_member::{extract_attribute_names, extract_types},
+    },
     notification::{ChangeOrigin, NotificationTrigger, SysAttrsSnapshot},
 };
 use chrono::Utc;
@@ -44,19 +47,28 @@ impl EntityService {
     fn delete_subscription_matches(&self, id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<SubscriptionMatch> {
         let entity_types = extract_types(payload);
         let attr_keys = extract_attribute_names(payload);
+        let attribute_changes = classify_attribute_changes(payload, &Value::Null);
         let match_snapshot = sys_attrs.map_or_else(|| payload.clone(), |sys_attrs| snapshot_with_sys_attrs(payload, sys_attrs));
         let mut matches = Vec::new();
-        if !attr_keys.is_empty() {
-            matches.extend(self.build_subscription_matches(
+        for change in attribute_changes {
+            matches.extend(self.build_subscription_matches_for_instance(
                 id,
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
-                &attr_keys,
+                std::slice::from_ref(&change.key.attr),
+                change.key.dataset_id.as_ref(),
                 Some(&match_snapshot),
                 Some(payload),
             ));
         }
-        matches.extend(self.build_subscription_matches(id, &entity_types, NotificationTrigger::EntityDeleted, &[], Some(&match_snapshot), Some(payload)));
+        matches.extend(self.build_subscription_matches(
+            id,
+            &entity_types,
+            NotificationTrigger::EntityDeleted,
+            &attr_keys,
+            Some(&match_snapshot),
+            Some(payload),
+        ));
         matches
     }
 
@@ -147,9 +159,10 @@ impl EntityService {
 fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<ChangeEvent> {
     let entity_types = extract_types(payload);
     let attr_keys = extract_attribute_names(payload);
+    let attribute_changes = classify_attribute_changes(payload, &Value::Null);
 
-    let mut events = Vec::with_capacity(2);
-    if !attr_keys.is_empty() {
+    let mut events = Vec::with_capacity(attribute_changes.len() + 1);
+    for change in attribute_changes {
         events.push(
             ChangeEvent::builder()
                 .entity_id(id.clone()) // clone: the event owns its identifier
@@ -157,7 +170,8 @@ fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapsho
                 .trigger_reason(NotificationTrigger::AttributeDeleted)
                 .occurred_at(Utc::now())
                 .origin(ChangeOrigin::Local)
-                .changed_attributes(attr_keys)
+                .changed_attributes(vec![change.key.attr])
+                .changed_dataset_id(change.key.dataset_id)
                 .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
                 .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
                 .sys_attrs_snapshot(sys_attrs.cloned())
@@ -171,6 +185,7 @@ fn deletion_events(id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapsho
             .trigger_reason(NotificationTrigger::EntityDeleted)
             .occurred_at(Utc::now())
             .origin(ChangeOrigin::Local)
+            .changed_attributes(attr_keys)
             .entity_snapshot(Some(payload.clone())) // clone: the event owns its snapshot
             .previous_attributes(Some(payload.clone())) // clone: the event owns its previous payload
             .sys_attrs_snapshot(sys_attrs.cloned())

@@ -15,19 +15,16 @@ use crate::{
 };
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::{
-        entity_member::extract_attribute_names,
-        mutation::{
-            entity::{append_entity_attrs, update_entity_attrs},
-            selection::OverwritePolicy,
-        },
+    expanded::mutation::{
+        entity::{append_entity_attrs, update_entity_attrs},
+        selection::OverwritePolicy,
     },
 };
 use serde_json::Value;
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 
 /// Check if any non-@-prefixed attribute keys in `attrs` already exist in `entity`.
 fn has_overlapping_attrs(entity: &Value, attrs: &Value) -> bool {
@@ -72,7 +69,6 @@ impl EntityService {
                 errors.push((id, error));
                 continue;
             };
-            let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
             let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
 
             let attrs = unwrap_expanded_ref(&prepared_entity.expanded);
@@ -101,9 +97,7 @@ impl EntityService {
 
             // Batch update mirrors the single attribute update (clause 5.6.9):
             // the per-attribute triggers, partitioned from the before/after diff.
-            let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
-            let groups = attribute_change_groups(&attrs_before, &attrs_after, &prepared_entity.changed_attributes);
-            let previous_snapshot = self.change_sink.as_ref().map(|_| previous.clone()); // clone: showChanges before-image, only when a subscriber needs it
+            let groups = attribute_change_groups(previous, &existing);
 
             writes.push(self.chunk_update(
                 id,
@@ -111,7 +105,7 @@ impl EntityService {
                 Arc::new(existing),
                 Arc::new(prepared_entity.expanded),
                 groups,
-                previous_snapshot.as_ref(),
+                Some(previous),
                 Precondition::MustExist,
             ));
         }

@@ -59,7 +59,16 @@ async fn batch_create_records_an_entity_created_match_inline() {
         .expect("the batch create lands");
 
     let write = single_recorded_write(&recorded);
-    assert_match(&write, NotificationTrigger::EntityCreated, CATEGORY_IRI);
+    assert_eq!(
+        match_triggers(&write),
+        vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]
+    );
+    assert!(
+        write
+            .subscription_matches
+            .iter()
+            .all(|matched| matched.changed_attrs == vec![attribute_name(CATEGORY_IRI)])
+    );
     assert!(write.side_effects.is_none(), "an inline write defers no job");
 }
 
@@ -74,10 +83,18 @@ async fn batch_create_records_the_match_and_defers_the_event_when_enqueued() {
     let write = single_recorded_write(&recorded);
     // The durable match commits with the entity row even on the asynchronous
     // path; only the in-process event is deferred to the worker.
-    assert_match(&write, NotificationTrigger::EntityCreated, CATEGORY_IRI);
+    assert_eq!(
+        match_triggers(&write),
+        vec![NotificationTrigger::EntityCreated, NotificationTrigger::AttributeCreated]
+    );
     let job = write.side_effects.as_ref().expect("an enqueued write carries a deferred job");
-    assert_eq!(job.change_events.len(), 1, "the created event is deferred to the worker");
+    assert_eq!(
+        job.change_events.len(),
+        2,
+        "the lifecycle and attribute-created events are deferred to the worker"
+    );
     assert_eq!(job.change_events[0].trigger_reason, NotificationTrigger::EntityCreated);
+    assert_eq!(job.change_events[1].trigger_reason, NotificationTrigger::AttributeCreated);
 }
 
 #[tokio::test]
@@ -100,7 +117,7 @@ async fn batch_update_records_an_attribute_updated_match() {
 }
 
 #[tokio::test]
-async fn batch_merge_records_an_entity_updated_match() {
+async fn batch_merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
         .batch_merge(&[building_entity("retail")], &ContextSpec::core_only(), BatchSideEffectMode::Inline)
@@ -108,12 +125,11 @@ async fn batch_merge_records_an_entity_updated_match() {
         .expect("the batch merge lands");
 
     let write = single_recorded_write(&recorded);
-    // A merge that removes nothing mirrors the single merge: one entityUpdated.
-    assert_match(&write, NotificationTrigger::EntityUpdated, CATEGORY_IRI);
+    assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
 }
 
 #[tokio::test]
-async fn batch_upsert_replace_of_an_existing_entity_records_an_entity_updated_match() {
+async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
         .batch_upsert(
@@ -126,7 +142,7 @@ async fn batch_upsert_replace_of_an_existing_entity_records_an_entity_updated_ma
         .expect("the batch upsert lands");
 
     let write = single_recorded_write(&recorded);
-    assert_match(&write, NotificationTrigger::EntityUpdated, CATEGORY_IRI);
+    assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
 }
 
 #[tokio::test]

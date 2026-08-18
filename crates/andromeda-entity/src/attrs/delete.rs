@@ -5,19 +5,17 @@ use crate::{
     attrs::attribute_write::{MutatedEntity, payload_write},
     error::EntityError,
     expanded_member::attr_name_of,
+    notification_plan::attribute_change_groups,
 };
 use andromeda_context_commit::history_record::tombstone;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::{
-        entity_member::extract_types,
-        instance_key::attribute_instance_family,
-        mutation::{attribute::delete_attr, selection::DatasetSelection},
-    },
-    notification::NotificationTrigger,
+use andromeda_ngsi_ld_model::expanded::{
+    entity_member::extract_types,
+    instance_key::attribute_instance_family,
+    mutation::{attribute::delete_attr, selection::DatasetSelection},
 };
-use std::{slice::from_ref, sync::Arc};
+use std::sync::Arc;
 
 impl EntityService {
     /// Delete one attribute, or one of its instances, from an entity
@@ -49,15 +47,8 @@ impl EntityService {
             DatasetSelection::Default => vec![None],
         };
 
-        let MutatedEntity {
-            merged,
-            types: entity_types,
-            previous: previous_attributes,
-            trigger,
-        } = self
+        let MutatedEntity { events } = self
             .commit_computed_write(&entity_uri, |previous| {
-                let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
-
                 let mut existing = previous.clone(); // clone: the deletion mutates its own copy of the stored payload
                 delete_attr(&mut existing, &attr_iri, selection)?;
 
@@ -74,33 +65,15 @@ impl EntityService {
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
+                let groups = attribute_change_groups(previous, &merged);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
 
-                // The durable match mirrors the single Live `emit_attr_change`
-                // below: `AttributeDeleted` for the one attribute this call
-                // removed, with the same before-snapshot.
-                let subscription_matches = self.build_subscription_matches(
-                    &entity_uri,
-                    &types,
-                    NotificationTrigger::AttributeDeleted,
-                    from_ref(&expanded_attr_name),
-                    Some(&merged),
-                    previous_attributes.as_ref(),
-                );
-
-                let write = payload_write(&entity_uri, &merged, history, subscription_matches);
-                Ok((
-                    write,
-                    MutatedEntity {
-                        merged,
-                        types,
-                        previous: previous_attributes,
-                        trigger: NotificationTrigger::AttributeDeleted,
-                    },
-                ))
+                let write = payload_write(&entity_uri, &merged, history, plan.matches);
+                Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;
 
-        self.emit_attr_change(entity_uri, entity_types, trigger, vec![expanded_attr_name], previous_attributes, Some(merged));
+        events.into_iter().for_each(|event| self.emit_change(event));
 
         Ok(())
     }

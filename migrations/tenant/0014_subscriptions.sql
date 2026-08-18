@@ -111,12 +111,13 @@ CREATE TABLE subscriptions (
     -- NULL means "all attributes".
     watched_attributes TEXT[] COMPRESSION lz4,
 
-    -- What changes trigger a notification, as the clause-5.3.3 registry codes
+    -- What changes trigger a notification, as the clause-5.2.12 registry codes
     -- 1..6: entityCreated=1, entityUpdated=2, entityDeleted=3,
-    -- attributeCreated=4, attributeUpdated=5, attributeDeleted=6. NULL means the
-    -- compiled default set. The codes are the same registry the notification
-    -- queue's `trigger` column is numbered from.
-    notification_trigger SMALLINT[] COMPRESSION lz4,
+    -- attributeCreated=4, attributeUpdated=5, attributeDeleted=6. Clause 5.2.12
+    -- defaults an absent member to attributeCreated plus attributeUpdated.
+    -- The codes are the same registry the notification queue's `trigger`
+    -- column is numbered from.
+    notification_trigger SMALLINT[] COMPRESSION lz4 NOT NULL DEFAULT ARRAY[4, 5]::SMALLINT[],
 
     -- NGSI-LD query string (clause 4.9) that entities must satisfy.
     q TEXT,
@@ -147,7 +148,7 @@ CREATE TABLE subscriptions (
     -- surrogate key is the primary key, so `id` carries its own unique index.
     CONSTRAINT uq_subscriptions_id UNIQUE (id),
 
-    -- Every stored trigger is one of the six clause-5.3.3 registry codes;
+    -- Every stored trigger is one of the six clause-5.2.12 registry codes;
     -- mirrors the notification queue's `trigger` bound (0018).
     CONSTRAINT chk_subscriptions_notification_trigger CHECK (notification_trigger <@ ARRAY[1, 2, 3, 4, 5, 6]::SMALLINT[])
 ) WITH (

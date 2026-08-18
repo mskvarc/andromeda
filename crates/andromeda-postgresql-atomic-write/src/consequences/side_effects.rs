@@ -42,6 +42,7 @@ pub(crate) async fn apply(
             entity_types: event.entity_types.clone(), // clone: persistence owns the event type list.
             trigger_reason: event.trigger_reason,
             changed_attributes: event.changed_attributes.clone(), // clone: persistence owns the changed-attribute list.
+            changed_dataset_id: event.changed_dataset_id.clone(), // clone: persistence owns the instance discriminator.
             occurred_at: event.occurred_at,
             entity_snapshot: event.entity_snapshot.as_deref().cloned(),
             previous_attributes: event.previous_attributes.as_deref().cloned(),

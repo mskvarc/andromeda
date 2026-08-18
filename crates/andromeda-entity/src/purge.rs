@@ -6,14 +6,11 @@
 //! outside that write, so the write states the `modifiedAt` it assumed and is
 //! recomputed against a fresh read if a concurrent writer got in first.
 
-use crate::{EntityService, error::EntityError, expanded_member::attr_name_of};
+use crate::{EntityService, error::EntityError, notification_plan::attribute_change_groups};
 use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord, history_record::HistoryRecord};
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances},
-    notification::NotificationTrigger,
-};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances};
 use andromeda_ngsi_ld_query::projection::purge::PurgeMode;
 use iri_rs::IriBuf;
 use serde_json::Value;
@@ -51,9 +48,13 @@ impl EntityService {
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
                 .commit_read_modify_write(entity_id, |previous| {
-                    let Some((write, removed)) = build_purge_write(entity_id, previous, mode, &attr_iris)? else {
+                    let Some((mut write, mut removed)) = build_purge_write(entity_id, previous, mode, &attr_iris)? else {
                         return Ok(None);
                     };
+                    let groups = attribute_change_groups(previous, &removed.merged);
+                    let plan = self.plan_notifications(entity_id, &extract_types(&removed.merged), &groups, Some(&removed.merged), Some(previous));
+                    write.subscription_matches = plan.matches;
+                    removed.events = plan.events;
                     purged = Some(removed);
                     Ok(Some(write))
                 })
@@ -68,19 +69,7 @@ impl EntityService {
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.
-            let PurgedEntity {
-                merged,
-                previous,
-                removed_names,
-            } = purged;
-            self.emit_attr_change(
-                entity_id.clone(), // clone: the notification side effect owns its entity identifier.
-                extract_types(&merged),
-                NotificationTrigger::AttributeDeleted,
-                removed_names,
-                previous,
-                Some(merged),
-            );
+            purged.events.into_iter().for_each(|event| self.emit_change(event));
         }
 
         Ok(modified_count)
@@ -91,11 +80,8 @@ impl EntityService {
 struct PurgedEntity {
     /// The entity as it stands once the purged attributes are gone.
     merged: Arc<Value>,
-    /// The payload as it stood before, when a `showChanges` subscriber needs it.
-    previous: Option<Value>,
-    /// The attributes the purge removed, which the `attributeDeleted`
-    /// notification names.
-    removed_names: Vec<AttributeName>,
+    /// In-process events matching the durable records committed with the write.
+    events: Vec<andromeda_context_commit::change_event::ChangeEvent>,
 }
 
 /// The write that purges `previous` of the attributes `mode` selects, together
@@ -137,11 +123,6 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
         obj.remove(key);
     }
 
-    let mut removed_names = Vec::with_capacity(keys_to_remove.len());
-    for key in &keys_to_remove {
-        removed_names.push(attr_name_of(key)?);
-    }
-
     let removed = removed_attribute_instances(previous, &purged);
     let mut history = Vec::with_capacity(removed.len());
     for instance in removed {
@@ -155,12 +136,5 @@ fn build_purge_write(entity_id: &Uri, previous: &Value, mode: &PurgeMode, attr_i
         .history(history)
         .build();
 
-    Ok(Some((
-        write,
-        PurgedEntity {
-            merged,
-            previous: Some(previous.clone()), // clone: the "before" side a showChanges subscriber diffs against
-            removed_names,
-        },
-    )))
+    Ok(Some((write, PurgedEntity { merged, events: Vec::new() })))
 }

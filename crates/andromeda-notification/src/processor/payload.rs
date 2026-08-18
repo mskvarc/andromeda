@@ -19,7 +19,7 @@ use andromeda_jsonld::{
         processor::JsonLdEngine,
     },
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
@@ -38,6 +38,7 @@ pub(super) struct NotificationBuildParams<'a> {
     pub(super) sub: &'a CompiledSubscription,
     pub(super) trigger_reason: &'a NotificationTrigger,
     pub(super) changed_attributes: &'a [AttributeName],
+    pub(super) changed_dataset_id: Option<&'a Uri>,
     pub(super) occurred_at: DateTime<Utc>,
     pub(super) entity_query: &'a EntityQueryService,
     pub(super) compaction_cache: Option<&'a NotificationCompactionCache>,
@@ -51,6 +52,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
         sub,
         trigger_reason,
         changed_attributes,
+        changed_dataset_id,
         occurred_at,
         entity_query,
         compaction_cache,
@@ -92,7 +94,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
         } else {
             changed_attributes
         };
-        inject_deleted_attributes(&mut entity, effective_changed, previous_attributes, deleted_at);
+        inject_deleted_attributes(&mut entity, effective_changed, changed_dataset_id, previous_attributes, deleted_at);
 
         if sub.notification_sys_attrs == SysAttrsInclusion::Include
             && let Some(obj) = expanded_entity_object_mut(&mut entity)
@@ -191,7 +193,20 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
             .await
         {
             let prev_compacted = normalize_compacted_entity(prev_compacted);
-            inject_previous_values(&mut compacted, &prev_compacted, changed_attributes, engine, &context).await;
+            let exact_attribute_instance = matches!(
+                trigger_reason,
+                NotificationTrigger::AttributeCreated | NotificationTrigger::AttributeUpdated | NotificationTrigger::AttributeDeleted
+            );
+            inject_previous_values(
+                &mut compacted,
+                &prev_compacted,
+                changed_attributes,
+                changed_dataset_id,
+                exact_attribute_instance,
+                engine,
+                &context,
+            )
+            .await;
         }
     }
 

@@ -37,7 +37,7 @@
 --     order.
 --   * `trigger` is a `SMALLINT` from the migration-owned registry the broker
 --     compiles in (`andromeda-postgresql-codes`
---     `NotificationTriggerCode`), not the clause-5.3.3 token as text:
+--     `NotificationTriggerCode`), not the clause-5.2.12 token as text:
 --
 --       1 entityCreated, 2 entityUpdated, 3 entityDeleted,
 --       4 attributeCreated, 5 attributeUpdated, 6 attributeDeleted
@@ -139,6 +139,7 @@ CREATE TABLE notification_events (
     write_id UUID NOT NULL,
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     changed_attribute_name_ids INTEGER[] COMPRESSION lz4 NOT NULL,
+    changed_dataset_id TEXT COMPRESSION lz4 COLLATE "C",
     entity_snapshot JSONB COMPRESSION lz4,
     previous_snapshot JSONB COMPRESSION lz4,
     CONSTRAINT uq_notification_events_write_identity UNIQUE (write_id, event_ordinal),

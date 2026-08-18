@@ -210,13 +210,14 @@ fn unused_store_call(method: &str) -> SubscriptionError {
 /// Build the one stored Building subscription the cache matches against.
 ///
 /// It is stored in expanded form (its selector carries the expanded Building
-/// IRI), omits `notificationTrigger` so it matches every trigger, and is created
-/// in the past so the clause 5.2.12 `createdAt` guard admits the tests' events.
+/// IRI), explicitly requests all six triggers, and is created in the past so
+/// the clause 5.2.12 `createdAt` guard admits the tests' events.
 fn stored_building_subscription() -> Result<StoredSubscription, SubscriptionError> {
     let subscription = serde_json::from_value::<Subscription>(json!({
         "id": SUBSCRIPTION_ID,
         "type": "Subscription",
         "entities": [{"type": BUILDING_TYPE_IRI}],
+        "notificationTrigger": ["entityCreated", "entityUpdated", "entityDeleted", "attributeCreated", "attributeUpdated", "attributeDeleted"],
         "notification": {"endpoint": {"uri": "http://localhost/notify"}},
         "status": "active",
         "createdAt": "2020-01-01T00:00:00Z",

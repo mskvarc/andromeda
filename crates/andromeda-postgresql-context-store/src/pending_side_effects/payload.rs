@@ -58,6 +58,9 @@ pub struct PersistedChangeEvent {
     pub trigger_reason: NotificationTrigger,
     /// Attribute IRIs that changed.
     pub changed_attributes: Vec<AttributeName>,
+    /// Dataset discriminator of the changed Attribute instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_dataset_id: Option<Uri>,
     /// When the change occurred.
     pub occurred_at: DateTime<Utc>,
     /// Entity snapshot after the change, if available.
@@ -118,6 +121,7 @@ mod tests {
                     entity_types: vec!["Building".parse().expect("valid entity type")],
                     trigger_reason,
                     changed_attributes: vec!["temperature".parse().expect("valid attribute name")],
+                    changed_dataset_id: None,
                     occurred_at,
                     entity_snapshot: Some(json!({"id": "https://example.org/entities/1"})),
                     previous_attributes: Some(json!({"temperature": 20})),

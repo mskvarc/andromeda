@@ -83,13 +83,10 @@ use crate::{
 };
 use andromeda_context_commit::{batch_side_effect_job::BatchSideEffectJob, change_event::ChangeEvent, committer::ContextCommitter};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_subscription::cache::SubscriptionCache;
 use async_lock::MutexGuardArc;
-use chrono::Utc;
 use dashmap::DashMap;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Configuration for durable notification-event recording at commit time.
@@ -168,29 +165,6 @@ impl EntityService {
         if let Some(ref sink) = self.change_sink {
             sink.publish(event);
         }
-    }
-
-    fn emit_attr_change(
-        &self,
-        entity_id: Uri,
-        entity_types: Vec<EntityTypeName>,
-        trigger: NotificationTrigger,
-        changed_attributes: Vec<AttributeName>,
-        previous: Option<Value>,
-        current_payload: Option<Arc<Value>>,
-    ) {
-        self.emit_change(
-            ChangeEvent::builder()
-                .entity_id(entity_id)
-                .entity_types(entity_types)
-                .trigger_reason(trigger)
-                .occurred_at(Utc::now())
-                .origin(ChangeOrigin::Local)
-                .changed_attributes(changed_attributes)
-                .previous_attributes(previous)
-                .current_payload(current_payload)
-                .build(),
-        );
     }
 
     fn apply_inline_side_effects(&self, job: BatchSideEffectJob) {

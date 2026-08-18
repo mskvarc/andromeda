@@ -5,6 +5,7 @@ use crate::{
     notification_delivery::{rows::NewNotificationEvent, trigger_code::stored_trigger},
 };
 use andromeda_context_commit::write_record::WriteRecord;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::{
     notification::{NotificationDeliveries, NotificationEvents},
     subscriptions::Subscriptions,
@@ -114,6 +115,7 @@ fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &
         NotificationEvents::Trigger,
         NotificationEvents::EntityId,
         NotificationEvents::ChangedAttributeNameIds,
+        NotificationEvents::ChangedDatasetId,
         NotificationEvents::EntitySnapshot,
         NotificationEvents::PreviousSnapshot,
     ]);
@@ -131,6 +133,7 @@ fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &
                 stored_trigger(event.trigger).code().into(),
                 event.entity_id.as_str().into(),
                 Expr::val(changed_attribute_name_ids),
+                event.changed_dataset_id.map(Uri::as_str).into(),
                 // The snapshot is bound by value because a bound parameter owns
                 // its data; the entity state cannot be borrowed into the wire
                 // buffer.
@@ -239,6 +242,7 @@ mod tests {
             trigger: NotificationTrigger::AttributeUpdated,
             entity_id: entity,
             changed_attribute_name_ids: vec![AttributeNameId::from(7), AttributeNameId::from(9)],
+            changed_dataset_id: None,
             entity_snapshot: Some(snapshot),
             previous_snapshot: None,
             subscription_keys: subscriptions.iter().map(|key| subscription(*key)).collect(),

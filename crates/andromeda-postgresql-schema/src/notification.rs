@@ -27,6 +27,8 @@ pub enum NotificationEvents {
     EntityId,
     /// Dictionary keys of the attributes the change touched
     ChangedAttributeNameIds,
+    /// Dataset discriminator of an attribute-level event
+    ChangedDatasetId,
     /// Entity state after the change
     EntitySnapshot,
     /// Entity state before the change
@@ -77,6 +79,7 @@ mod tests {
         assert_eq!(NotificationEvents::Trigger.to_string(), "trigger");
         assert_eq!(NotificationEvents::EntityId.to_string(), "entity_id");
         assert_eq!(NotificationEvents::ChangedAttributeNameIds.to_string(), "changed_attribute_name_ids");
+        assert_eq!(NotificationEvents::ChangedDatasetId.to_string(), "changed_dataset_id");
         assert_eq!(NotificationEvents::EntitySnapshot.to_string(), "entity_snapshot");
         assert_eq!(NotificationEvents::PreviousSnapshot.to_string(), "previous_snapshot");
     }
