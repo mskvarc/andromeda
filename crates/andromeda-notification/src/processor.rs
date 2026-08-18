@@ -18,7 +18,7 @@ use andromeda_ngsi_ld_lexicon::{
     rfc3339::whole_seconds,
     uri::{NGSI_LD_URN_NID, Uri},
 };
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, Notification, NotificationTrigger, NotificationType};
+use andromeda_ngsi_ld_model::notification::{ChangeOrigin, Notification, NotificationTrigger, NotificationType, SysAttrsSnapshot};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_subscription::{
@@ -31,7 +31,7 @@ use andromeda_subscription::{
     throttle::ceiling_for_throttle,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::{StreamExt, future::BoxFuture, stream};
 use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
 use serde_json::Value;
@@ -403,6 +403,10 @@ impl NotificationDeliveryTransport for NotificationProcessor {
             let stored = &entry.event;
             let is_deletion = matches!(stored.trigger, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted);
             let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
+            // The deleted row is gone, so its system attributes are read back
+            // from the snapshot the delete write embedded them into, restoring
+            // the typed carrier the in-process path would have supplied.
+            let sys_attrs_snapshot = is_deletion.then(|| sys_attrs_from_snapshot(snapshot.as_ref())).flatten();
             let event = ChangeEvent::builder()
                 .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
                 .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
@@ -411,6 +415,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 .occurred_at(stored.created_at)
                 .entity_snapshot(is_deletion.then(|| snapshot.clone()).flatten()) // clone: deletion evaluation consumes its own snapshot value.
                 .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
+                .sys_attrs_snapshot(sys_attrs_snapshot)
                 .origin(ChangeOrigin::Local)
                 .current_payload((!is_deletion).then(|| snapshot.map(Arc::new)).flatten())
                 .build();
@@ -430,6 +435,40 @@ impl NotificationDeliveryTransport for NotificationProcessor {
             }
         })
     }
+}
+
+/// Reconstruct the clause-4.8 system attributes from a persisted deletion
+/// snapshot.
+///
+/// A durable delete notification cannot re-read `createdAt`/`modifiedAt` from
+/// the store — the row is gone — so the delete write embeds them into the
+/// stored `entity_snapshot`. Reading them back here restores the typed
+/// [`SysAttrsSnapshot`] the in-process path carries, so the same injection runs
+/// for both the entity-level and the attribute-level deletion notification.
+/// Returns `None` when the snapshot carries no `createdAt` member (a non-deletion
+/// snapshot, whose sys attributes are re-read from the live entity instead).
+fn sys_attrs_from_snapshot(snapshot: Option<&Value>) -> Option<SysAttrsSnapshot> {
+    let object = match snapshot? {
+        Value::Array(values) => values.first().and_then(Value::as_object),
+        Value::Object(object) => Some(object),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
+    }?;
+    let read = |iri: &str| -> Option<DateTime<Utc>> {
+        object
+            .get(iri)
+            .and_then(Value::as_array)
+            .and_then(|values| values.first())
+            .and_then(|entry| entry.get("@value"))
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc))
+    };
+    let created_at = read(expanded_properties::CREATED_AT.as_str())?;
+    Some(SysAttrsSnapshot {
+        created_at,
+        modified_at: read(expanded_properties::MODIFIED_AT.as_str()).unwrap_or(created_at),
+        expires_at: read(expanded_properties::EXPIRES_AT.as_str()),
+    })
 }
 
 /// Read expanded entity types from a persisted event snapshot.

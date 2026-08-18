@@ -74,6 +74,17 @@ CREATE TABLE snapshots (
 
     -- Per-query result details for temporal queries
     temporal_queries_details JSONB COMPRESSION lz4
+) WITH (
+    -- The control row is updated in place on every status transition and on
+    -- `last_used_at`, so leave half of every page free for heap-only tuple
+    -- updates and vacuum on the update rate rather than the default scale
+    -- factors. The child tables are insert-only and keep the server defaults.
+    fillfactor = 50,
+    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_threshold = 100,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 100,
+    autovacuum_vacuum_cost_delay = 0
 );
 
 -- Efficient periodic cleanup of expired snapshots

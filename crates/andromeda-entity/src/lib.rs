@@ -36,6 +36,11 @@ pub mod id_lock;
 pub mod mutation;
 /// Turning one mutation into the subscriptions it matched.
 pub mod notification_fanout;
+/// Planning both notification channels from one mutation's per-trigger groups.
+pub mod notification_plan;
+/// A recording notification harness shared by the durable-match tests.
+#[cfg(test)]
+mod notification_recording_harness;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
 /// Caller-shaped ports consumed by entity policy.

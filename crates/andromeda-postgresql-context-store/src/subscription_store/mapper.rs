@@ -6,6 +6,7 @@
 
 use crate::{
     error::ContextStoreError,
+    notification_delivery::trigger_code::trigger_of,
     subscription_store::{params::DatasetIdPresence, rows::SubscriptionRow},
 };
 use andromeda_context_commit::subscription_key::SubscriptionKey;
@@ -19,8 +20,10 @@ use andromeda_ngsi_ld_model::subscription::{
     SubscriptionFilters,
     SubscriptionLifecycle,
     SubscriptionSelection,
+    SubscriptionStatus,
 };
 use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
+use andromeda_postgresql_codes::notification_trigger::NotificationTriggerCode;
 use andromeda_subscription::stored_subscription::StoredSubscription;
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
@@ -67,14 +70,15 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
                 .collect()
         })
         .transpose()?;
-    let trigger_labels: Option<Vec<String>> = row.try_get("notification_trigger")?;
-    let notification_trigger = trigger_labels
-        .map(|labels| {
-            labels
+    let trigger_codes: Option<Vec<i16>> = row.try_get("notification_trigger")?;
+    let notification_trigger = trigger_codes
+        .map(|codes| {
+            codes
                 .into_iter()
-                .map(|raw| {
-                    raw.parse()
-                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored notification trigger '{raw}': {error}")))
+                .map(|code| {
+                    NotificationTriggerCode::try_from(code)
+                        .map(trigger_of)
+                        .map_err(|error| ContextStoreError::Internal(format!("Invalid stored notification trigger code {code}: {error}")))
                 })
                 .collect()
         })
@@ -124,7 +128,6 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         scope_q,
         csf,
         dataset_id,
-        is_active: row.try_get("is_active")?,
         notification,
         expires_at: row.try_get("expires_at")?,
         throttling: row.try_get("throttling")?,
@@ -229,7 +232,9 @@ fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStor
         )
         .lifecycle(
             SubscriptionLifecycle::builder()
-                .is_active(Some(row.is_active))
+                // `isActive` is no longer stored: on read it is always
+                // `status == active`, so it is derived rather than kept.
+                .is_active(Some(row.status == SubscriptionStatus::Active))
                 .status(row.status)
                 .expires_at(row.expires_at)
                 .created_at(row.created_at)

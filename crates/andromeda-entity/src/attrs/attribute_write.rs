@@ -12,7 +12,7 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
     subscription_match::SubscriptionMatch,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
 use serde_json::Value;
 use std::sync::Arc;
@@ -36,31 +36,6 @@ pub(super) fn payload_write(id: &Uri, merged: &Arc<Value>, history: Vec<HistoryR
         .history(history)
         .subscription_matches(subscription_matches)
         .build()
-}
-
-/// What one clause 5.6.2 attribute update produced, beyond the write itself.
-///
-/// Every field is read off the attempt that landed. The split into created,
-/// updated and deleted names is a function of the payload the update was applied
-/// to, so an attempt a concurrent writer superseded computed a split that
-/// describes a state no client ever saw.
-pub(super) struct UpdatedAttrs {
-    /// The entity as it stands after the update.
-    pub merged: Arc<Value>,
-    /// The entity's types after the update (clause 4.5.1), read off the attempt
-    /// that landed so the notification carries the stored types.
-    pub types: Vec<EntityTypeName>,
-    /// The payload as it stood before, when a `showChanges` subscriber needs it.
-    pub previous: Option<Value>,
-    /// Attribute names the update added.
-    pub created: Vec<AttributeName>,
-    /// Attribute names the update overwrote.
-    pub updated: Vec<AttributeName>,
-    /// Attribute names the update removed.
-    pub deleted: Vec<AttributeName>,
-    /// Attribute IRIs the entity did not carry, which the handler turns into a
-    /// 207 rather than a 204.
-    pub not_updated: Vec<AttributeName>,
 }
 
 /// What one single-attribute mutation produced, beyond the write itself.

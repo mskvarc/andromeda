@@ -13,8 +13,9 @@
 --   * `time_interval` and `watched_attributes` are mutually exclusive
 --     (application-layer validation)
 --   * `time_interval` and `throttling` are mutually exclusive
---   * `status` lifecycle: active -> paused (via is_active=false) -> expired
---     (when expires_at passes)
+--   * `status` lifecycle: active -> paused -> expired (when expires_at passes).
+--     The pause/resume input is the request `isActive`; it is not stored,
+--     because a stored copy would always equal `status = 'active'`.
 --
 -- JSONB columns are used for nested spec structures that vary in shape:
 --   * entities:     array of EntitySelector {type, id, idPattern}
@@ -24,13 +25,14 @@
 --   * temporal_q:   TemporalQuery (only for CSR subscriptions)
 --
 -- `subscription_key` is the narrow surrogate identity the notification queue
--- carries. A delivery row exists once per matched Subscription per affected
--- Entity, so the queue is the highest-cardinality relation that references a
--- Subscription; repeating the variable-length, locale-collated `id` URI in
--- every one of those tuples is the single largest avoidable cost on the
--- delivery path. The UNIQUE constraint on it is what a foreign key needs to
--- point at, so deleting a Subscription reclaims its queued deliveries through
--- ON DELETE CASCADE with no read-modify-write loop in the broker.
+-- carries, and the primary key of this table. A delivery row exists once per
+-- matched Subscription per affected Entity, so the queue is the
+-- highest-cardinality relation that references a Subscription; repeating the
+-- variable-length, locale-collated `id` URI in every one of those tuples is the
+-- single largest avoidable cost on the delivery path. As the primary key it is
+-- what a foreign key points at, so deleting a Subscription reclaims its queued
+-- deliveries through ON DELETE CASCADE with no read-modify-write loop in the
+-- broker.
 --
 -- The delivery counters of clause 5.2.15 (`timesSent`, `lastNotification`,
 -- `lastSuccess`, `lastFailure`) are not columns of this table. Every
@@ -46,31 +48,59 @@
 --
 -- `id` is byte-collated: it is a URI, compared and matched byte-wise
 -- everywhere the broker uses it, and byte order is what lets a prefix match
--- use the primary key. The variable-length JSONB and array columns are stored
+-- use its unique index. The variable-length JSONB and array columns are stored
 -- with lz4 TOAST compression: they are written once per client update and read
 -- on every cache reload, and lz4 decompresses far faster than pglz for the
 -- same read.
+--
+-- Columns are laid out in descending alignment -- not-null fixed-width first,
+-- then nullable fixed-width, then the varlena columns -- so the fixed-width
+-- prefix of a row packs with no interior padding.
 -- ============================================================================
 
 CREATE TABLE subscriptions (
-    -- Subscription URI, e.g. "urn:ngsi-ld:Subscription:mySubscription"
-    id TEXT COLLATE "C" NOT NULL PRIMARY KEY,
+    -- Narrow surrogate identity referenced by the notification queue, and the
+    -- primary key.
+    subscription_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
-    -- Narrow surrogate identity referenced by the notification queue.
-    subscription_key BIGINT GENERATED ALWAYS AS IDENTITY,
+    -- System-managed temporal properties (clause 4.8).
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     -- Discriminator: "entity" for entity subscriptions, "csource" for CSR
     -- subscriptions. Both types share the same schema; csource subscriptions
     -- leave dataset_id and local_only at their defaults (NULL / FALSE).
     kind subscription_kind NOT NULL,
 
-    -- Always "Subscription" per spec
-    type TEXT NOT NULL DEFAULT 'Subscription',
+    -- Subscription lifecycle state.
+    status subscription_status NOT NULL DEFAULT 'active',
 
-    -- Optional human-readable name
+    -- When true, match only local entities (no distributed federation match).
+    local_only BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Subscription expiry. NULL means perpetual.
+    -- When NOW() > expires_at, status transitions to "expired".
+    expires_at TIMESTAMPTZ,
+
+    -- Periodic notification interval (seconds).
+    -- Mutually exclusive with watched_attributes and throttling.
+    time_interval DOUBLE PRECISION,
+
+    -- Minimum seconds between consecutive notifications.
+    throttling DOUBLE PRECISION,
+
+    -- Subscription URI, e.g. "urn:ngsi-ld:Subscription:mySubscription".
+    id TEXT COLLATE "C" NOT NULL,
+
+    -- Notification configuration (required by spec):
+    -- {format, endpoint: {uri, accept, receiverInfo, notifierInfo},
+    --  attributes, sysAttrs, showChanges, ...}
+    notification JSONB COMPRESSION lz4 NOT NULL,
+
+    -- Optional human-readable name.
     subscription_name TEXT,
 
-    -- Optional description
+    -- Optional description.
     description TEXT,
 
     -- EntitySelector[] -- which entities to watch.
@@ -81,67 +111,52 @@ CREATE TABLE subscriptions (
     -- NULL means "all attributes".
     watched_attributes TEXT[] COMPRESSION lz4,
 
-    -- What changes trigger a notification:
-    -- "entityCreated", "entityUpdated", "entityDeleted",
-    -- "attributeCreated", "attributeUpdated", "attributeDeleted".
-    -- Default (application-layer): ["attributeCreated", "attributeUpdated"]
-    notification_trigger TEXT[] COMPRESSION lz4,
+    -- What changes trigger a notification, as the clause-5.3.3 registry codes
+    -- 1..6: entityCreated=1, entityUpdated=2, entityDeleted=3,
+    -- attributeCreated=4, attributeUpdated=5, attributeDeleted=6. NULL means the
+    -- compiled default set. The codes are the same registry the notification
+    -- queue's `trigger` column is numbered from.
+    notification_trigger SMALLINT[] COMPRESSION lz4,
 
-    -- Periodic notification interval (seconds).
-    -- Mutually exclusive with watched_attributes and throttling.
-    time_interval DOUBLE PRECISION,
-
-    -- NGSI-LD query string (clause 4.9) that entities must satisfy
+    -- NGSI-LD query string (clause 4.9) that entities must satisfy.
     q TEXT,
 
-    -- Geo-spatial filter: {georel, geometry, coordinates, geoproperty}
+    -- Geo-spatial filter: {georel, geometry, coordinates, geoproperty}.
     geo_q JSONB COMPRESSION lz4,
 
-    -- Scope query string (clause 4.19)
+    -- Scope query string (clause 4.19).
     scope_q TEXT,
 
-    -- Context source filter query string
+    -- Context source filter query string.
     csf TEXT,
 
-    -- When true, match only local entities (no distributed federation match)
-    local_only BOOLEAN NOT NULL DEFAULT FALSE,
-
-    -- Dataset IDs to filter notifications by
+    -- Dataset IDs to filter notifications by.
     dataset_id TEXT[] COMPRESSION lz4,
 
-    -- Whether the subscription is currently active (maps to status)
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-
-    -- Notification configuration (required by spec):
-    -- {format, endpoint: {uri, accept, receiverInfo, notifierInfo},
-    --  attributes, sysAttrs, showChanges, ...}
-    notification JSONB COMPRESSION lz4 NOT NULL,
-
-    -- Subscription expiry. NULL means perpetual.
-    -- When NOW() > expires_at, status transitions to "expired".
-    expires_at TIMESTAMPTZ,
-
-    -- Minimum seconds between consecutive notifications
-    throttling DOUBLE PRECISION,
-
-    -- Subscription lifecycle state
-    status subscription_status NOT NULL DEFAULT 'active',
-
-    -- Temporal query -- only used for CSR subscriptions
+    -- Temporal query -- only used for CSR subscriptions.
     temporal_q JSONB COMPRESSION lz4,
 
-    -- Preferred language for notifications
+    -- Preferred language for notifications.
     lang TEXT,
 
     -- The @context URI used when creating the subscription, needed for
-    -- compacting notification payloads
+    -- compacting notification payloads.
     jsonld_context TEXT,
 
-    -- System-managed temporal properties
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- `id` is the external identity a client registers and matches under; the
+    -- surrogate key is the primary key, so `id` carries its own unique index.
+    CONSTRAINT uq_subscriptions_id UNIQUE (id),
 
-    CONSTRAINT uq_subscriptions_subscription_key UNIQUE (subscription_key)
+    -- Every stored trigger is one of the six clause-5.3.3 registry codes;
+    -- mirrors the notification queue's `trigger` bound (0018).
+    CONSTRAINT chk_subscriptions_notification_trigger CHECK (notification_trigger <@ ARRAY[1, 2, 3, 4, 5, 6]::SMALLINT[])
+) WITH (
+    fillfactor = 50,
+    autovacuum_vacuum_scale_factor = 0.005,
+    autovacuum_vacuum_threshold = 100,
+    autovacuum_analyze_scale_factor = 0.02,
+    autovacuum_analyze_threshold = 100,
+    autovacuum_vacuum_cost_delay = 0
 );
 
 -- Lookup active subscriptions for notification matching (partitioned by kind)

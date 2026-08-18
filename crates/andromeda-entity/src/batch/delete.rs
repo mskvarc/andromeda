@@ -7,7 +7,7 @@
 //! transaction as the delete, which means they must exist before it runs, so it
 //! reads them first.
 
-use crate::{EntityService, error::EntityError, side_effect::BatchSideEffectMode};
+use crate::{EntityService, error::EntityError, side_effect::BatchSideEffectMode, sys_attrs::snapshot_with_sys_attrs};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
@@ -16,6 +16,7 @@ use andromeda_context_commit::{
     entity_mutation::EntityMutation,
     history_record::deletion_history,
     precondition::Precondition,
+    subscription_match::SubscriptionMatch,
     write_outcome::WriteOutcome,
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -31,32 +32,67 @@ use std::sync::Arc;
 pub(super) type DeleteChunkOutcome = (Vec<Uri>, Vec<(Uri, EntityError)>);
 
 impl EntityService {
+    /// The durable notification records one deletion owes, mirroring the single
+    /// delete (clause 5.6.6): one `attributeDeleted` naming every attribute the
+    /// entity took with it, then one `entityDeleted`. Both carry the pre-delete
+    /// snapshot as their entity and previous image.
+    ///
+    /// The entity snapshot the durable match stores has the clause-4.8 system
+    /// attributes embedded when they are known, because the deleted row is gone
+    /// by delivery time and the durable path cannot re-read `createdAt`/
+    /// `modifiedAt` the way a non-deletion notification does.
+    fn delete_subscription_matches(&self, id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<SubscriptionMatch> {
+        let entity_types = extract_types(payload);
+        let attr_keys = extract_attribute_names(payload);
+        let match_snapshot = sys_attrs.map_or_else(|| payload.clone(), |sys_attrs| snapshot_with_sys_attrs(payload, sys_attrs));
+        let mut matches = Vec::new();
+        if !attr_keys.is_empty() {
+            matches.extend(self.build_subscription_matches(
+                id,
+                &entity_types,
+                NotificationTrigger::AttributeDeleted,
+                &attr_keys,
+                Some(&match_snapshot),
+                Some(payload),
+            ));
+        }
+        matches.extend(self.build_subscription_matches(id, &entity_types, NotificationTrigger::EntityDeleted, &[], Some(&match_snapshot), Some(payload)));
+        matches
+    }
+
     pub(super) async fn batch_delete_chunk(&self, chunk: &[Uri], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, EntityError> {
         let _id_guards = self.acquire_id_locks(chunk).await;
 
-        // Both paths need the payloads up front: clause 5.6.6 records one
-        // tombstone per instance the entity still held, and those instances are
-        // unreadable once the row is gone. Only the asynchronous path
-        // additionally needs the system attributes its persisted notifications
-        // carry.
+        // Both paths need the payloads and the system attributes up front:
+        // clause 5.6.6 records one tombstone per instance the entity still held,
+        // and both the durable matches (on every path) and the asynchronous
+        // path's persisted notifications carry the system attributes — all
+        // unreadable once the row is gone.
         let payloads = self.reader.get_batch(chunk).await?;
-        let sys_attrs = match mode {
-            BatchSideEffectMode::Inline => None,
-            BatchSideEffectMode::Enqueue => Some(self.reader.get_sys_attrs_batch(chunk).await?),
-        };
+        let sys_attrs = self.reader.get_sys_attrs_batch(chunk).await?;
 
         let mut writes = Vec::with_capacity(chunk.len());
         for id in chunk {
             let payload = payloads.get(id);
-            let side_effects = sys_attrs.as_ref().zip(payload).map(|(sys_attrs, payload)| BatchSideEffectJob {
-                temporal_entities: Vec::new(),
-                change_events: deletion_events(id, payload, sys_attrs.get(id)),
-            });
+            // The durable matches commit with the delete on both paths — the
+            // only notification channel a `Prefer: respond-async` batch delete
+            // has, since its deferred job carries the in-process events only.
+            let matches = payload
+                .map(|payload| self.delete_subscription_matches(id, payload, sys_attrs.get(id)))
+                .unwrap_or_default();
+            let side_effects = match mode {
+                BatchSideEffectMode::Inline => None,
+                BatchSideEffectMode::Enqueue => payload.map(|payload| BatchSideEffectJob {
+                    temporal_entities: Vec::new(),
+                    change_events: deletion_events(id, payload, sys_attrs.get(id)),
+                }),
+            };
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(Arc::new(id.clone())) // clone: each write owns a shared validated identifier.
                     .entity(EntityMutation::Delete)
                     .history(payload.map(deletion_history).unwrap_or_default())
+                    .subscription_matches(matches)
                     .side_effects(side_effects)
                     .precondition(Precondition::MustExist)
                     .build(),

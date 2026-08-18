@@ -53,7 +53,6 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
     select
         .column((Subscriptions::Table, Subscriptions::Id))
         .column((Subscriptions::Table, Subscriptions::SubscriptionKey))
-        .column((Subscriptions::Table, Subscriptions::Type))
         .column((Subscriptions::Table, Subscriptions::SubscriptionName))
         .column((Subscriptions::Table, Subscriptions::Description))
         .column((Subscriptions::Table, Subscriptions::Entities))
@@ -64,7 +63,6 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
         .column((Subscriptions::Table, Subscriptions::GeoQ))
         .column((Subscriptions::Table, Subscriptions::ScopeQ))
         .column((Subscriptions::Table, Subscriptions::Csf))
-        .column((Subscriptions::Table, Subscriptions::IsActive))
         .column((Subscriptions::Table, Subscriptions::Notification))
         .column((Subscriptions::Table, Subscriptions::ExpiresAt))
         .column((Subscriptions::Table, Subscriptions::Throttling))
@@ -229,7 +227,6 @@ macro_rules! impl_subscription_store {
                 let statement = Query::update()
                     .table(Subscriptions::Table)
                     .value(Subscriptions::Status, cast(text_literal("expired"), PostgresType::SubscriptionStatus))
-                    .value(Subscriptions::IsActive, Expr::val(false))
                     .value(Subscriptions::ModifiedAt, Expr::val(cutoff))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::Status)).ne(text_literal("expired")))
                     .and_where(Expr::col((Subscriptions::Table, Subscriptions::ExpiresAt)).is_not_null())

@@ -4,8 +4,21 @@
 //! reporting clauses 5.6.7 to 5.6.10 require one rule rather than five: the
 //! coordinator answers positionally, so an entity's outcome is read straight
 //! off the write that was submitted for it.
+//!
+//! Each write also carries a [`NotificationPlan`] its build site computed to
+//! mirror the corresponding single-entity mutation's triggers (clause 5.2.12).
+//! The durable matches in it commit in the same transaction as the entity row,
+//! on both the inline and the asynchronous path; the in-process events are
+//! emitted after the commit inline, or replayed from the durable job
+//! asynchronously.
 
-use crate::{EntityService, batch::prepare::PreparedEntity, error::EntityError, side_effect::BatchSideEffectMode};
+use crate::{
+    EntityService,
+    batch::prepare::PreparedEntity,
+    error::EntityError,
+    notification_plan::{NotificationGroup, NotificationPlan},
+    side_effect::BatchSideEffectMode,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     batch_side_effect_job::BatchSideEffectJob,
@@ -17,12 +30,11 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
     write_retry::WRITE_ATTEMPTS,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
-    expanded::removed_instance::removed_attribute_instances,
-    notification::{ChangeOrigin, NotificationTrigger},
+    expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances},
+    notification::NotificationTrigger,
 };
-use chrono::Utc;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -36,14 +48,13 @@ pub(super) struct ChunkWrite {
     /// The payload whose attributes were observed. For a partial update this
     /// is the request fragment, not the entity the fragment produced.
     pub observed: Arc<Value>,
-    /// Attribute names this request changed.
-    pub changed_attributes: Vec<AttributeName>,
-    /// The entity's types, as they will stand after the write.
-    pub types: Vec<EntityTypeName>,
     /// What the write assumes about the entity it was computed from.
     pub precondition: Precondition,
     /// Tombstones the write implies beyond its observations.
     pub tombstones: Vec<HistoryRecord>,
+    /// Both notification channels this write owes, planned to mirror its
+    /// single-entity sibling's triggers.
+    pub plan: NotificationPlan,
 }
 
 /// What one chunk reports back to its batch.
@@ -72,9 +83,12 @@ impl ChunkOutcome {
     }
 }
 
-impl ChunkWrite {
+impl EntityService {
     /// The write that stores a freshly prepared payload as a new entity.
-    pub(super) fn insert(prepared: PreparedEntity, precondition: Precondition) -> ChunkWrite {
+    ///
+    /// Mirrors the single create (clause 5.6.1): one `entityCreated` over the
+    /// whole payload.
+    pub(super) fn chunk_insert(&self, prepared: PreparedEntity, precondition: Precondition) -> ChunkWrite {
         let PreparedEntity {
             id,
             expanded,
@@ -84,7 +98,12 @@ impl ChunkWrite {
             min_attribute_expires_at,
         } = prepared;
         let payload = Arc::new(expanded);
-        let types = projection.types.clone(); // clone: the change event carries the names after the record has taken them
+        let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
+        let groups = [NotificationGroup {
+            trigger: NotificationTrigger::EntityCreated,
+            attributes: changed_attributes,
+        }];
+        let plan = self.plan_notifications(&id, &types, &groups, Some(&payload), None);
         ChunkWrite {
             id,
             entity: EntityMutation::Insert(EntityRecord::from_parts(
@@ -94,61 +113,66 @@ impl ChunkWrite {
                 min_attribute_expires_at,
             )),
             observed: payload,
-            changed_attributes,
-            types,
             precondition,
             tombstones: Vec::new(),
+            plan,
         }
     }
 
     /// The write that stores `payload` as a new entity, deriving its columns
     /// from the payload rather than from a preparation pass.
-    pub(super) fn insert_payload(id: Uri, payload: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
+    pub(super) fn chunk_insert_payload(&self, id: Uri, payload: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
         let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
+        let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
+        let groups = [NotificationGroup {
+            trigger: NotificationTrigger::EntityCreated,
+            attributes: changed_attributes,
+        }];
+        let plan = self.plan_notifications(&id, &types, &groups, Some(&payload), None);
         ChunkWrite {
             id,
-            types: record.projection.types.clone(), // clone: the change event carries the names the record holds
             entity: EntityMutation::Insert(record),
             observed: payload,
-            changed_attributes,
             precondition,
             tombstones: Vec::new(),
+            plan,
         }
     }
 
     /// The write that overwrites an existing entity with `merged`, having
-    /// observed `observed`.
-    pub(super) fn update(
+    /// observed `observed`, under the per-op notification `groups`.
+    ///
+    /// The build site chooses the groups so the write mirrors its sibling: a
+    /// replacement raises `entityUpdated`, an attribute update raises the
+    /// per-attribute triggers, a merge raises `attributeDeleted` for each
+    /// removed attribute beside `entityUpdated`. `previous_snapshot` is the
+    /// state before the mutation, carried only when a `showChanges` subscriber
+    /// needs the diff.
+    pub(super) fn chunk_update(
+        &self,
         id: Uri,
         previous: &Value,
         merged: Arc<Value>,
         observed: Arc<Value>,
-        changed_attributes: Vec<AttributeName>,
+        groups: Vec<NotificationGroup>,
+        previous_snapshot: Option<&Value>,
         precondition: Precondition,
     ) -> ChunkWrite {
         let tombstones = removed_attribute_instances(previous, &merged)
             .into_iter()
             .map(HistoryRecord::Tombstone)
             .collect();
+        let types = extract_types(&merged);
+        let plan = self.plan_notifications(&id, &types, &groups, Some(&merged), previous_snapshot);
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,
-            types: record.projection.types.clone(), // clone: the change event carries the names the record holds
             entity: EntityMutation::Update(record),
             observed,
-            changed_attributes,
             precondition,
             tombstones,
+            plan,
         }
-    }
-}
-
-/// The change a mutation describes to a subscriber.
-const fn trigger_of(entity: &EntityMutation) -> NotificationTrigger {
-    match entity {
-        EntityMutation::Insert(_) => NotificationTrigger::EntityCreated,
-        EntityMutation::Update(_) | EntityMutation::None => NotificationTrigger::EntityUpdated,
-        EntityMutation::Delete => NotificationTrigger::EntityDeleted,
     }
 }
 
@@ -166,19 +190,6 @@ fn error_of(id: &Uri, outcome: &WriteOutcome) -> Option<EntityError> {
     }
 }
 
-/// The change event this entity raises.
-fn change_event(id: &Uri, types: Vec<EntityTypeName>, changed: Vec<AttributeName>, payload: Arc<Value>, trigger: NotificationTrigger) -> ChangeEvent {
-    ChangeEvent::builder()
-        .entity_id(id.clone()) // clone: the event owns its identifier
-        .entity_types(types)
-        .trigger_reason(trigger)
-        .occurred_at(Utc::now())
-        .origin(ChangeOrigin::Local)
-        .changed_attributes(changed)
-        .current_payload(Some(payload))
-        .build()
-}
-
 impl EntityService {
     /// Submit one chunk's writes and settle what each entity did.
     ///
@@ -186,40 +197,41 @@ impl EntityService {
     /// entity rows and the change events are emitted once it commits. In
     /// `Enqueue` mode both are persisted alongside the entity rows and a worker
     /// replays them, which is what makes `Prefer: respond-async` crash-consistent
-    /// rather than merely faster.
+    /// rather than merely faster. The durable subscription matches commit with
+    /// the entity row in either mode, never deferred to the worker.
     pub(super) async fn commit_chunk(&self, entries: Vec<ChunkWrite>, mode: BatchSideEffectMode) -> Result<ChunkOutcome, EntityError> {
         if entries.is_empty() {
             return Ok(ChunkOutcome::default());
         }
 
         let mut writes = Vec::with_capacity(entries.len());
-        let mut settled: Vec<(Uri, bool, Option<ChangeEvent>)> = Vec::with_capacity(entries.len());
+        let mut settled: Vec<(Uri, bool, Vec<ChangeEvent>)> = Vec::with_capacity(entries.len());
 
         for entry in entries {
             let ChunkWrite {
                 id,
                 entity,
                 observed,
-                changed_attributes,
-                types,
                 precondition,
                 tombstones,
+                plan,
             } = entry;
+            let NotificationPlan { matches, events } = plan;
             let creates = entity.is_insert();
-            let event = Some(change_event(&id, types, changed_attributes, Arc::clone(&observed), trigger_of(&entity))); // clone: Arc ref-count bump
             let entity_id = Arc::new(id.clone()); // clone: the write and deferred side effect share this identifier.
 
             let builder = AtomicWrite::builder()
                 .entity_id(Arc::clone(&entity_id)) // clone: Arc ref-count bump
                 .entity(entity)
+                .subscription_matches(matches)
                 .precondition(precondition);
 
-            let (write, inline_event) = match mode {
+            let (write, inline_events) = match mode {
                 BatchSideEffectMode::Inline => {
                     let mut history = Vec::with_capacity(tombstones.len() + 1);
                     history.push(HistoryRecord::Observations(observed));
                     history.extend(tombstones);
-                    (builder.history(history).build(), event)
+                    (builder.history(history).build(), events)
                 }
                 BatchSideEffectMode::Enqueue => {
                     // Tombstones stay inline in both modes: they describe what
@@ -228,14 +240,14 @@ impl EntityService {
                     // value the entity no longer has.
                     let job = BatchSideEffectJob {
                         temporal_entities: vec![(entity_id, observed)],
-                        change_events: event.into_iter().collect(),
+                        change_events: events,
                     };
-                    (builder.history(tombstones).side_effects(Some(job)).build(), None)
+                    (builder.history(tombstones).side_effects(Some(job)).build(), Vec::new())
                 }
             };
 
             writes.push(write);
-            settled.push((id, creates, inline_event));
+            settled.push((id, creates, inline_events));
         }
 
         let outcomes = self.writes.commit(writes).await?;
@@ -248,8 +260,8 @@ impl EntityService {
         }
 
         let mut chunk = ChunkOutcome::default();
-        let mut events = Vec::with_capacity(settled.len());
-        for ((id, creates, event), outcome) in settled.into_iter().zip(&outcomes) {
+        let mut emit_events = Vec::new();
+        for ((id, creates, events), outcome) in settled.into_iter().zip(&outcomes) {
             if let Some(error) = error_of(&id, outcome) {
                 match after_attempt(outcome) {
                     AfterAttempt::Reread => chunk.retryable.push((id, error)),
@@ -264,10 +276,10 @@ impl EntityService {
                 chunk.created.push(id.clone()); // clone: upsert reports a created identifier in both result lists
             }
             chunk.success.push(id);
-            events.extend(event);
+            emit_events.extend(events);
         }
 
-        for event in events {
+        for event in emit_events {
             self.emit_change(event);
         }
 
@@ -277,22 +289,8 @@ impl EntityService {
 
 #[cfg(test)]
 mod tests {
-    use super::{error_of, trigger_of};
-    use andromeda_context_commit::{entity_mutation::EntityMutation, entity_record::EntityRecord, write_outcome::WriteOutcome};
-    use andromeda_ngsi_ld_model::notification::NotificationTrigger;
-    use serde_json::json;
-    use std::sync::Arc;
-
-    fn record() -> EntityRecord {
-        EntityRecord::from_expanded(Arc::new(json!([{"@id": "urn:ngsi-ld:A"}])))
-    }
-
-    #[test]
-    fn each_mutation_describes_one_trigger() {
-        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Insert(record())), NotificationTrigger::EntityCreated);
-        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Update(record())), NotificationTrigger::EntityUpdated);
-        pretty_assertions::assert_eq!(trigger_of(&EntityMutation::Delete), NotificationTrigger::EntityDeleted);
-    }
+    use super::error_of;
+    use andromeda_context_commit::write_outcome::WriteOutcome;
 
     #[test]
     fn a_conflicting_insert_reports_409_and_a_missing_update_reports_404() {

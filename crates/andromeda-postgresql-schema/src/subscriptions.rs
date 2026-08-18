@@ -21,8 +21,6 @@ pub enum Subscriptions {
     SubscriptionKey,
     /// Which subscription family a row is: `entity` or `csource`
     Kind,
-    /// The NGSI-LD resource type token, always `Subscription`
-    Type,
     /// The `subscriptionName` member (clause 5.2.12)
     SubscriptionName,
     /// The `description` member
@@ -45,8 +43,6 @@ pub enum Subscriptions {
     Csf,
     /// The `datasetId` selectors an entity subscription narrows to
     DatasetId,
-    /// Whether the subscription is active
-    IsActive,
     /// The `notification` parameters, as JSONB
     Notification,
     /// The `expiresAt` instant

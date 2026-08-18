@@ -5,12 +5,26 @@
 //! before rendering.
 
 use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
+use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
 use andromeda_ngsi_ld_vocabulary::{
     expanded::{classes as expanded_classes, properties as expanded_properties},
     prefix,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
+
+/// A copy of an expanded entity with its clause-4.8 system attributes embedded.
+///
+/// A deletion's durable notification stores exactly this payload: once the row
+/// is gone the delivery worker cannot re-read `createdAt`/`modifiedAt` from the
+/// store the way a non-deletion notification does, so they are captured into the
+/// snapshot at delete time. `deletedAt` is not embedded here — the delivery path
+/// derives it from the event instant.
+pub fn snapshot_with_sys_attrs(entity: &Value, sys_attrs: &SysAttrsSnapshot) -> Value {
+    let mut enriched = entity.clone(); // clone: the durable match owns a sys-attr-enriched copy of the pre-deletion payload
+    inject_sys_attrs(&mut enriched, sys_attrs.created_at, sys_attrs.modified_at, sys_attrs.expires_at);
+    enriched
+}
 
 /// Return a mutable reference to the top-level JSON object of an expanded entity.
 pub fn expanded_entity_object_mut(entity: &mut Value) -> Option<&mut Map<String, Value>> {

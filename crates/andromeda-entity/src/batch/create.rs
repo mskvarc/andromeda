@@ -1,11 +1,6 @@
 //! Batch entity creation (clause 5.6.7).
 
-use crate::{
-    EntityService,
-    batch::{BatchResult, chunk::ChunkWrite},
-    error::EntityError,
-    side_effect::BatchSideEffectMode,
-};
+use crate::{EntityService, batch::BatchResult, error::EntityError, side_effect::BatchSideEffectMode};
 use andromeda_context_commit::precondition::Precondition;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -49,7 +44,7 @@ impl EntityService {
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             if seen.insert(entity.id.clone()) {
-                writes.push(ChunkWrite::insert(entity, Precondition::MustNotExist));
+                writes.push(self.chunk_insert(entity, Precondition::MustNotExist));
             } else {
                 errors.push((entity.id.clone(), EntityError::already_exists(&entity.id))); // clone: error result owns the entity ID
             }

@@ -77,7 +77,7 @@ use andromeda_postgresql_schema::{
 use andromeda_postgresql_seaquery::{
     cast::cast,
     literal::int_literal,
-    pg_array::{array_append, array_of_subquery, text_array},
+    pg_array::{any, array_append, array_of_subquery, text_array},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
 };
@@ -186,12 +186,14 @@ pub fn attribute_name_candidate(attribute_names: &[IriBuf]) -> SimpleExpr {
     // Each overlap resolves the dictionary independently, so the keys
     // subquery is rebuilt — and its names rebound — per operand.
     let requested_keys = || {
-        let names: Vec<String> = attribute_names.iter().map(|name| name.as_str().to_string()).collect();
+        let names: Vec<&str> = attribute_names.iter().map(|name| name.as_str()).collect();
         let mut dictionary = Query::select();
         dictionary
             .expr(SeaExpr::col((Alias::new("an"), AttributeNames::Id)))
             .from_as(AttributeNames::Table, Alias::new("an"))
-            .and_where(SeaExpr::col((Alias::new("an"), AttributeNames::Name)).is_in(names));
+            // One bound `text[]` rather than a placeholder per name, so a large
+            // requested-attribute set cannot exhaust the parameter ceiling.
+            .and_where(SeaExpr::col((Alias::new("an"), AttributeNames::Name)).eq(any(text_array(&names))));
         array_append(cast(array_of_subquery(dictionary), PostgresType::IntegerArray), SeaExpr::val(ANY_ATTRIBUTE_KEY))
     };
     any_row(
@@ -290,7 +292,10 @@ mod tests {
     fn the_attribute_dimension_resolves_names_through_the_dictionary_and_appends_the_sentinel() {
         let sql = render(attribute_name_candidate(&[iri("https://example.com/speed"), iri("https://example.com/temp")]));
         assert!(sql.contains("\"attribute_names\""), "{sql}");
-        assert!(sql.contains("\"an\".\"name\" IN ("), "{sql}");
+        assert!(
+            sql.contains("\"an\".\"name\" = ANY("),
+            "the requested names bind as one array, not a placeholder per name: {sql}"
+        );
         assert!(sql.contains("'https://example.com/speed'"), "{sql}");
         assert!(sql.contains("'https://example.com/temp'"), "{sql}");
         assert!(sql.contains("\"ri\".\"property_name_ids\" && array_append(ARRAY((SELECT"), "{sql}");

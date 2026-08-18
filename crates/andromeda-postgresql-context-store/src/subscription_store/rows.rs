@@ -50,8 +50,6 @@ pub struct SubscriptionRow {
     pub csf: Option<Expr>,
     /// Dataset IDs (entity subscriptions only; `None` when absent).
     pub dataset_id: Option<Vec<Uri>>,
-    /// Whether the subscription is active.
-    pub is_active: bool,
     /// Notification endpoint configuration JSON.
     pub notification: NotificationParams,
     /// Expiry timestamp.

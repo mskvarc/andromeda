@@ -3,24 +3,22 @@
 use crate::{
     EntityService,
     attribute_envelope::validate_attribute_envelopes,
-    attrs::attribute_write::{UpdatedAttrs, payload_write},
+    attrs::attribute_write::payload_write,
     error::EntityError,
     expanded_member::unwrap_expanded_ref,
     geo_property_geometry::validate_geo_property_geometries,
+    notification_plan::attribute_change_groups,
 };
-use andromeda_context_commit::history_record::mutation_history;
+use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_model::{
-    expanded::{
-        entity_member::{extract_attribute_names, extract_types},
-        mutation::entity::update_entity_attrs,
-    },
-    notification::NotificationTrigger,
+use andromeda_ngsi_ld_model::expanded::{
+    entity_member::{extract_attribute_names, extract_types},
+    mutation::entity::update_entity_attrs,
 };
 use andromeda_ngsi_ld_representation::normalization::normalize_entity_attributes;
 use serde_json::Value;
-use std::{collections::HashSet, slice::from_ref, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 impl EntityService {
     /// Update the attributes an entity already carries (clause 5.6.2).
@@ -41,115 +39,32 @@ impl EntityService {
         validate_geo_property_geometries(&expanded)?;
         let all_changed = extract_attribute_names(&expanded);
 
-        let UpdatedAttrs {
-            merged,
-            types: entity_types,
-            previous: previous_attributes,
-            created: created_attrs,
-            updated: updated_attrs,
-            deleted: deleted_attrs,
-            not_updated,
-        } = self
+        let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
             .commit_computed_write(&entity_uri, |previous| {
-                let previous_attributes = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
+                let previous_snapshot = self.change_sink.as_ref().map(|_| previous.clone()); // clone: snapshot before mutation for showChanges diff
                 let attrs_before: HashSet<AttributeName> = extract_attribute_names(previous).into_iter().collect();
 
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 let not_updated = update_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded))?;
 
                 let attrs_after: HashSet<AttributeName> = extract_attribute_names(&existing).into_iter().collect();
-                let deleted: Vec<AttributeName> = attrs_before.difference(&attrs_after).cloned().collect(); // clone: owned names from set difference
-
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
-                // clone: owned names from filtered references
-                let created: Vec<AttributeName> = all_changed.iter().filter(|name| !attrs_before.contains(name.as_str())).cloned().collect();
-                let updated: Vec<AttributeName> = all_changed.iter().filter(|name| attrs_before.contains(name.as_str())).cloned().collect();
 
-                // The durable matches mirror the three Live emits below exactly:
-                // one `AttributeDeleted` per removed instance, then a single
-                // `AttributeCreated` and `AttributeUpdated` when their groups are
-                // non-empty. Each group carries only its own attribute names.
-                let mut subscription_matches = Vec::new();
-                for deleted_attr in &deleted {
-                    subscription_matches.extend(self.build_subscription_matches(
-                        &entity_uri,
-                        &types,
-                        NotificationTrigger::AttributeDeleted,
-                        from_ref(deleted_attr),
-                        Some(&merged),
-                        previous_attributes.as_ref(),
-                    ));
-                }
-                if !created.is_empty() {
-                    subscription_matches.extend(self.build_subscription_matches(
-                        &entity_uri,
-                        &types,
-                        NotificationTrigger::AttributeCreated,
-                        &created,
-                        Some(&merged),
-                        previous_attributes.as_ref(),
-                    ));
-                }
-                if !updated.is_empty() {
-                    subscription_matches.extend(self.build_subscription_matches(
-                        &entity_uri,
-                        &types,
-                        NotificationTrigger::AttributeUpdated,
-                        &updated,
-                        Some(&merged),
-                        previous_attributes.as_ref(),
-                    ));
-                }
+                // The durable matches and the in-process events are planned
+                // together from one partition, so the two channels always agree
+                // on the per-attribute triggers (clause 5.2.12).
+                let groups = attribute_change_groups(&attrs_before, &attrs_after, &all_changed);
+                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), previous_snapshot.as_ref());
 
                 let history = mutation_history(&expanded, previous, &merged);
-                let write = payload_write(&entity_uri, &merged, history, subscription_matches);
-                Ok((
-                    write,
-                    UpdatedAttrs {
-                        merged,
-                        types,
-                        previous: previous_attributes,
-                        created,
-                        updated,
-                        deleted,
-                        not_updated,
-                    },
-                ))
+                let write = payload_write(&entity_uri, &merged, history, plan.matches);
+                Ok((write, (plan.events, not_updated)))
             })
             .await?;
 
-        for deleted_attr in &deleted_attrs {
-            self.emit_attr_change(
-                entity_uri.clone(),   // clone: value needed by subsequent loop iterations and final emit
-                entity_types.clone(), // clone: value needed by subsequent loop iterations and final emit
-                NotificationTrigger::AttributeDeleted,
-                vec![deleted_attr.clone()],  // clone: owned copy from borrowed iterator
-                previous_attributes.clone(), // clone: value needed by subsequent loop iterations and final emit
-                Some(Arc::clone(&merged)),   // clone: Arc ref-count bump
-            );
-        }
-
-        if !created_attrs.is_empty() {
-            self.emit_attr_change(
-                entity_uri.clone(),   // clone: value also needed by subsequent AttributeUpdated emit
-                entity_types.clone(), // clone: value also needed by subsequent AttributeUpdated emit
-                NotificationTrigger::AttributeCreated,
-                created_attrs,
-                previous_attributes.clone(), // clone: value also needed by subsequent AttributeUpdated emit
-                Some(Arc::clone(&merged)),   // clone: Arc ref-count bump
-            );
-        }
-
-        if !updated_attrs.is_empty() {
-            self.emit_attr_change(
-                entity_uri,
-                entity_types,
-                NotificationTrigger::AttributeUpdated,
-                updated_attrs,
-                previous_attributes,
-                Some(merged),
-            );
+        for event in events {
+            self.emit_change(event);
         }
 
         Ok(not_updated)

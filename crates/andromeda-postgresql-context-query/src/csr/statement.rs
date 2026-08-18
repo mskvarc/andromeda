@@ -15,6 +15,7 @@ use andromeda_postgresql_seaquery::{
     cast::{cast, cast_compound},
     jsonb::{jsonb_array_elements, jsonb_array_elements_text},
     literal::{int_literal, text_literal},
+    pg_array::{any, text_array},
     pg_operator::PgBinaryOperator,
     pg_type::PostgresType,
     postgis::geometry_as_geojson,
@@ -110,7 +111,9 @@ fn build_csr_conditions(query: &CompiledCsrQuery) -> Result<Condition, RenderErr
     // ID filter
     if !query.ids.is_empty() {
         let ids: Vec<&str> = query.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(SeaExpr::col(Csr::Id).is_in(ids));
+        // One bound `text[]` rather than a placeholder per id, so a large id set
+        // cannot exhaust PostgreSQL's 65535 parameter ceiling.
+        condition = condition.add(SeaExpr::col(Csr::Id).eq(any(text_array(&ids))));
     }
 
     // ID pattern filter: match against information[].entities[].idPattern. The
@@ -334,7 +337,11 @@ mod tests {
         let mut q = empty_query();
         q.ids = ids(&["urn:a", "urn:b"]);
         let built = build(&q);
-        assert!(built.sql.contains("\"id\" IN"));
+        assert!(
+            built.sql.contains("\"id\" = ANY("),
+            "an id set binds as one array, not a placeholder per id: {}",
+            built.sql
+        );
     }
 
     #[test]

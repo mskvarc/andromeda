@@ -35,6 +35,7 @@ use andromeda_postgresql_seaquery::{
     jsonb::jsonb_path_query_first,
     literal::false_literal,
     operator::{array_contains_key, regex_match},
+    pg_array::{any, text_array},
 };
 use sea_query::{Alias, Asterisk, Condition, Expr as SeaExpr, ExprTrait, Func, Order, Query, SelectStatement, SimpleExpr};
 
@@ -208,7 +209,11 @@ fn selector_condition(rows: &EntityRowRefs, selector: &EntitySelector, types: &R
     let mut condition = Condition::all();
     if !selector.ids.is_empty() {
         let ids: Vec<&str> = selector.ids.iter().map(AsRef::as_ref).collect();
-        condition = condition.add(rows.identity_column(Entities::Id).is_in(ids));
+        // A warm spatial prefilter can push tens of thousands of candidate ids
+        // here; `IN ($1, … $N)` would bind one parameter per id and blow past
+        // PostgreSQL's 65535 parameter ceiling. A single bound `text[]` with
+        // `= ANY($1)` keeps it to one parameter regardless of set size.
+        condition = condition.add(rows.identity_column(Entities::Id).eq(any(text_array(&ids))));
     }
     if let Some(pattern) = &selector.id_pattern {
         condition = condition.add(regex_match(rows.identity_column(Entities::Id), SeaExpr::val(pattern.as_str())));
@@ -463,7 +468,43 @@ mod tests {
         let mut q = empty_query();
         q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b"])).build()];
         let built = build(&q, &known_types());
-        assert!(built.sql.contains("\"id\" IN"));
+        assert!(
+            built.sql.contains("\"id\" = ANY("),
+            "an id set binds as one array, not a placeholder per id: {}",
+            built.sql
+        );
+        assert!(
+            built.bind_values.iter().any(|b| matches!(b, Value::Array(_, _))),
+            "the id set is one bound text[] value: {:?}",
+            built.bind_values
+        );
+    }
+
+    /// A warm spatial prefilter feeds its candidate id set into the selector,
+    /// and at scale that set can exceed PostgreSQL's 65535 parameter ceiling.
+    /// The id membership must therefore bind as a single `text[]` (`= ANY($n)`)
+    /// beside the single EWKB reference geometry, never one placeholder per id.
+    #[test]
+    fn a_near_query_with_a_candidate_id_set_binds_one_array_beside_the_geometry() {
+        let mut q = empty_query();
+        q.selection.selectors = vec![EntitySelector::builder().ids(ids(&["urn:a", "urn:b", "urn:c"])).build()];
+        q.selection.geo = Some(GeoQuery {
+            georel: GeoRel::Near {
+                max_distance: Some(1000.0),
+                min_distance: None,
+            },
+            geometry: point(serde_json::json!([13.4, 52.5])),
+            geoproperty: LOCATION.as_str().parse().expect("valid attribute name"),
+        });
+        let built = build(&q, &known_types());
+        assert!(built.sql.contains("\"id\" = ANY("), "id membership is a single array test: {}", built.sql);
+        assert!(built.sql.contains("ST_GeomFromEWKB"), "the near predicate is present: {}", built.sql);
+        assert_eq!(
+            built.bind_values.iter().filter(|b| matches!(b, Value::Array(_, _))).count(),
+            1,
+            "the candidate id set is exactly one bound array parameter: {:?}",
+            built.bind_values
+        );
     }
 
     #[test]
@@ -568,9 +609,9 @@ mod tests {
         // bound as parameters, so the union shows in the structure, not the text.
         assert!(built.sql.contains(") OR ("), "the two selectors must be ORed as groups: {}", built.sql);
         assert_eq!(
-            built.sql.matches("\"id\" IN").count(),
+            built.sql.matches("\"id\" = ANY(").count(),
             2,
-            "each selector keeps its own id filter: {}",
+            "each selector keeps its own single-array id filter: {}",
             built.sql
         );
         assert_eq!(

@@ -12,6 +12,9 @@ mod chunk;
 mod create;
 /// Batch entity deletion.
 mod delete;
+/// Durable-match recording tests for the batch operations.
+#[cfg(test)]
+mod durable_match_recording;
 /// How much of a batch runs where.
 pub mod execution;
 /// Batch merge-patch.

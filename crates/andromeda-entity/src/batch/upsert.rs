@@ -17,6 +17,7 @@ use crate::{
     EntityService,
     batch::{BatchResult, chunk::ChunkWrite},
     error::EntityError,
+    notification_plan::{NotificationGroup, attribute_change_groups},
     side_effect::BatchSideEffectMode,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
@@ -25,6 +26,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     expanded::{entity_member::extract_attribute_names, mutation::entity::merge_entity},
+    notification::NotificationTrigger,
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -81,9 +83,9 @@ impl EntityService {
             let write = match snapshots.get(&entity.id) {
                 Some(snapshot) => {
                     let payload = Arc::new(entity.expanded);
-                    replacement_write(entity.id, &payload, &snapshot.payload, snapshot.modified_at, entity.changed_attributes)
+                    self.replacement_write(entity.id, &payload, &snapshot.payload, snapshot.modified_at, entity.changed_attributes)
                 }
-                None => ChunkWrite::insert(entity, Precondition::MustNotExist),
+                None => self.chunk_insert(entity, Precondition::MustNotExist),
             };
             // clone: an `Arc` handle kept for a possible retry, which must not
             // re-expand the request payload.
@@ -122,8 +124,8 @@ impl EntityService {
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
                 let write = match snapshots.get(&id) {
-                    Some(snapshot) => replacement_write(id, payload, &snapshot.payload, snapshot.modified_at, changed),
-                    None => ChunkWrite::insert_payload(id, Arc::clone(payload), changed, Precondition::MustNotExist),
+                    Some(snapshot) => self.replacement_write(id, payload, &snapshot.payload, snapshot.modified_at, changed),
+                    None => self.chunk_insert_payload(id, Arc::clone(payload), changed, Precondition::MustNotExist),
                 };
                 retry_writes.push(write);
             }
@@ -166,10 +168,11 @@ impl EntityService {
                 // created by someone else, and this request has nothing to add
                 // to it. Reported as neither a success nor a failure, which is
                 // what this path has always done.
-                writes.push(ChunkWrite::insert(entity, Precondition::None));
+                writes.push(self.chunk_insert(entity, Precondition::None));
                 continue;
             };
 
+            let attrs_before: HashSet<AttributeName> = extract_attribute_names(existing).into_iter().collect();
             let mut merged = existing.clone(); // clone: the merge mutates its own copy of the stored payload
             let id = entity.id;
             if let Err(error) = merge_entity(&mut merged, &entity.expanded) {
@@ -177,12 +180,19 @@ impl EntityService {
                 continue;
             }
 
-            writes.push(ChunkWrite::update(
+            // Upsert-update mirrors the single attribute update (clause 5.6.9):
+            // the per-attribute triggers, partitioned from the before/after diff.
+            let attrs_after: HashSet<AttributeName> = extract_attribute_names(&merged).into_iter().collect();
+            let groups = attribute_change_groups(&attrs_before, &attrs_after, &entity.changed_attributes);
+            let previous_snapshot = self.change_sink.as_ref().map(|_| existing.clone()); // clone: showChanges before-image, only when a subscriber needs it
+
+            writes.push(self.chunk_update(
                 id,
                 existing,
                 Arc::new(merged),
                 Arc::new(entity.expanded),
-                entity.changed_attributes,
+                groups,
+                previous_snapshot.as_ref(),
                 Precondition::MustExist,
             ));
         }
@@ -200,16 +210,33 @@ impl EntityService {
     }
 }
 
-/// The write that replaces `previous` with `payload`, tombstoning whatever the
-/// replacement drops (NGSI-LD 5.6.8).
-fn replacement_write(id: Uri, payload: &Arc<Value>, previous: &Value, modified_at: DateTime<Utc>, changed_attributes: Vec<AttributeName>) -> ChunkWrite {
-    // clone: `Arc` ref-count bumps; the same payload is stored and observed.
-    ChunkWrite::update(
-        id,
-        previous,
-        Arc::clone(payload),
-        Arc::clone(payload),
-        changed_attributes,
-        Precondition::UnchangedSince(modified_at),
-    )
+impl EntityService {
+    /// The write that replaces `previous` with `payload`, tombstoning whatever
+    /// the replacement drops (NGSI-LD 5.6.8).
+    ///
+    /// Mirrors the single replace (clause 5.6.18): one `entityUpdated` over the
+    /// whole payload, with no `showChanges` before-image.
+    fn replacement_write(
+        &self,
+        id: Uri,
+        payload: &Arc<Value>,
+        previous: &Value,
+        modified_at: DateTime<Utc>,
+        changed_attributes: Vec<AttributeName>,
+    ) -> ChunkWrite {
+        let groups = vec![NotificationGroup {
+            trigger: NotificationTrigger::EntityUpdated,
+            attributes: changed_attributes,
+        }];
+        // clone: `Arc` ref-count bumps; the same payload is stored and observed.
+        self.chunk_update(
+            id,
+            previous,
+            Arc::clone(payload),
+            Arc::clone(payload),
+            groups,
+            None,
+            Precondition::UnchangedSince(modified_at),
+        )
+    }
 }

@@ -3,7 +3,13 @@
 //!
 //! Attribute-level mutations live in `attrs.rs`; batch forms live in `batch/`.
 
-use crate::{EntityService, attribute_envelope::validate_attribute_envelopes, error::EntityError, geo_property_geometry::validate_geo_property_geometries};
+use crate::{
+    EntityService,
+    attribute_envelope::validate_attribute_envelopes,
+    error::EntityError,
+    geo_property_geometry::validate_geo_property_geometries,
+    sys_attrs::snapshot_with_sys_attrs,
+};
 use andromeda_context_commit::{
     atomic_write::AtomicWrite,
     change_event::ChangeEvent,
@@ -272,6 +278,14 @@ impl EntityService {
 
         let attr_keys = extract_attribute_names(&entity_snapshot);
 
+        // The durable match stores the entity snapshot verbatim, and by delivery
+        // time the deleted row is gone, so its clause-4.8 system attributes are
+        // captured into the snapshot now rather than re-read then (the durable
+        // path re-derives only `deletedAt`, from the event instant).
+        let match_snapshot = sys_attrs_snapshot
+            .as_ref()
+            .map_or_else(|| entity_snapshot.clone(), |sys_attrs| snapshot_with_sys_attrs(&entity_snapshot, sys_attrs));
+
         let mut subscription_matches = Vec::new();
         if !attr_keys.is_empty() {
             subscription_matches.extend(self.build_subscription_matches(
@@ -279,7 +293,7 @@ impl EntityService {
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
                 &attr_keys,
-                Some(&entity_snapshot),
+                Some(&match_snapshot),
                 Some(&entity_snapshot),
             ));
         }
@@ -288,7 +302,7 @@ impl EntityService {
             &entity_types,
             NotificationTrigger::EntityDeleted,
             &[],
-            Some(&entity_snapshot),
+            Some(&match_snapshot),
             Some(&entity_snapshot),
         ));
 
