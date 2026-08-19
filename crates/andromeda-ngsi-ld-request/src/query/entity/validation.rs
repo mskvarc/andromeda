@@ -45,6 +45,11 @@ impl EntityQueryParameters {
         if (self.pick.is_some() || self.omit.is_some()) && self.attrs.is_some() {
             return Err(ParameterError::PickOmitWithAttrs);
         }
+        // Clause 6.3.10 Table 6.3.10-1: `limit=0` is only meaningful when the
+        // request also asks for a count of the matching entities.
+        if self.limit == Some(0) && self.count != Some(true) {
+            return Err(ParameterError::LimitZeroWithoutCount);
+        }
         validate_projection_join_depth(self.pick.as_deref(), self.omit.as_deref(), self.join, self.join_level)?;
         // Clause 5.7.2.4: a `q` hop walks into a Linked Entity, and how far the
         // broker may walk is what the join parameters state.

@@ -48,7 +48,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::Duration,
@@ -66,6 +66,9 @@ pub(crate) const BUILDING_TYPE_IRI: &str = "https://uri.etsi.org/ngsi-ld/default
 pub(crate) const CATEGORY_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/category";
 /// The expanded IRI the appended `name` term resolves to.
 pub(crate) const NAME_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/name";
+/// The expanded IRI of the sub-attribute the stored `category` carries, used to
+/// prove a whole-instance overwrite drops an unmentioned sub-attribute.
+pub(crate) const ACCURACY_IRI: &str = "https://uri.etsi.org/ngsi-ld/default-context/accuracy";
 
 /// A committer that lands every write as an update and keeps the writes it saw.
 struct RecordingCommitter {
@@ -293,7 +296,11 @@ pub(crate) fn building_snapshot() -> Value {
         "@type": [BUILDING_TYPE_IRI],
         CATEGORY_IRI: [{
             "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
-            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "office"}]
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "office"}],
+            ACCURACY_IRI: [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "high"}]
+            }]
         }]
     })
 }
@@ -371,4 +378,25 @@ pub(crate) fn assert_single_match(write: &AtomicWrite, trigger: NotificationTrig
     assert_eq!(matched.trigger, trigger);
     assert_eq!(matched.changed_attrs, vec![attribute_name(changed)]);
     assert!(matched.entity_snapshot.is_some(), "the durable match carries the post-mutation entity snapshot");
+}
+
+/// Assert the write is owed exactly the given `(trigger, changed attribute)`
+/// matches, as an order-independent set: a whole-entity mutation records one
+/// match per changed instance and their order is not spec-significant. Each
+/// match must name exactly one changed attribute and carry the post-mutation
+/// snapshot against the fixture subscription.
+pub(crate) fn assert_matches(write: &AtomicWrite, expected: &[(NotificationTrigger, &str)]) {
+    let actual: HashSet<(NotificationTrigger, AttributeName)> = write
+        .subscription_matches
+        .iter()
+        .map(|matched| {
+            assert_eq!(matched.subscription_key, subscription_key());
+            assert_eq!(matched.entity_id.as_str(), ENTITY_ID);
+            assert!(matched.entity_snapshot.is_some(), "the durable match carries the post-mutation entity snapshot");
+            assert_eq!(matched.changed_attrs.len(), 1, "each whole-entity match names exactly one changed attribute");
+            (matched.trigger, matched.changed_attrs[0].clone()) // clone: the set owns each changed attribute name
+        })
+        .collect();
+    let expected: HashSet<(NotificationTrigger, AttributeName)> = expected.iter().map(|(trigger, changed)| (*trigger, attribute_name(changed))).collect();
+    assert_eq!(actual, expected);
 }

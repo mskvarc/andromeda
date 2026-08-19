@@ -6,7 +6,7 @@ use crate::{
     validation::validate_entity_map_has_filter,
 };
 use andromeda_http_extraction::{
-    accept::AcceptFormat,
+    accept::AcceptFormatNoGeo,
     context::ContextUrl,
     entity_query::EntityQuery,
     json_body::classify_json_body,
@@ -31,7 +31,7 @@ use axum::{
 pub async fn get(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     TypedPath(entity_map_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
@@ -82,7 +82,7 @@ pub async fn delete(
 pub async fn create_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
@@ -121,7 +121,7 @@ pub async fn create_from_query(
 pub async fn create_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     body: Result<Json<Query>, JsonRejection>,
 ) -> Result<Response, ProblemResponse> {
@@ -162,7 +162,7 @@ pub async fn create_from_query_post(
 pub async fn create_temporal_from_query(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
@@ -199,7 +199,7 @@ pub async fn create_temporal_from_query(
 pub async fn create_temporal_from_query_post(
     tenant_state::ExistingTenantState(state): EntityMapTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     body: Result<Json<Query>, JsonRejection>,
 ) -> Result<Response, ProblemResponse> {

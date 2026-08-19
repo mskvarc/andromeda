@@ -17,6 +17,7 @@ use andromeda_ngsi_ld_model::expanded::{
     mutation::attribute::partial_update_attr,
     removed_instance::removed_attribute_instances,
 };
+use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -38,6 +39,13 @@ impl EntityService {
 
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri = self.engine.expand_term(attr_name.as_str(), &prepared_context).await?;
+
+        // Clause 5.6.4.4: `scope` is not an attribute and cannot be a partial
+        // update target, exactly as Replace Attribute rejects it.
+        if attr_iri.as_str() == expanded_properties::SCOPE.as_str() {
+            return Err(EntityError::validation("Scope is not a partially updatable attribute"));
+        }
+
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
@@ -66,5 +74,35 @@ impl EntityService {
         events.into_iter().for_each(|event| self.emit_change(event));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        error::EntityError,
+        notification_recording_harness::{entity_uri, recording_service},
+    };
+    use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn partial_update_attr_rejects_the_scope_target() {
+        // ETSI GS CIM 009 v1.9.1 clause 5.6.4.4: `scope` is not a partial-update
+        // target and must be refused as BadRequestData, as Replace Attribute is.
+        let (service, _recorded) = recording_service().await;
+        let scope: AttributeName = "scope".parse().expect("scope is a valid attribute name");
+        let error = service
+            .partial_update_attr(
+                &entity_uri(),
+                &scope,
+                None,
+                json!({"type": "Property", "value": "/Madrid"}),
+                &ContextSpec::core_only(),
+            )
+            .await
+            .expect_err("scope cannot be partially updated");
+        assert!(matches!(error, EntityError::Validation { .. }), "{error}");
     }
 }

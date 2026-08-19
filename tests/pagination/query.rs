@@ -307,14 +307,20 @@ async fn pagination_registrations_last_link_points_to_correct_offset() {
 
 #[tokio::test]
 #[serial(global)]
-async fn pagination_registrations_no_media_type_on_pagination_links() {
+async fn pagination_registrations_link_type_reflects_the_request_media_type() {
+    // Clause 6.3.10: a pagination link carries a mandatory `type` equal to the
+    // negotiated response media type, so an `application/ld+json` request gets it
+    // back on the link rather than no `type` at all.
     let (scope, client) = make_scope().await;
-    create_registrations(&client, 5, "no-mt").await;
+    create_registrations(&client, 5, "reflect-mt").await;
 
     let (status, headers, _) = query_registrations(&client, "type=Building&limit=1&offset=0", "application/ld+json").await;
     assert_eq!(status, StatusCode::OK);
     let pagination = find_pagination_link_header(&headers).expect("pagination Link header present");
-    assert!(!pagination.contains("type=\""), "no media type param on registration pagination: {pagination}");
+    assert!(
+        pagination.contains("type=\"application/ld+json\""),
+        "registration pagination reflects the request media type: {pagination}"
+    );
     scope.reset_and_finish().await.expect("post-test reset failed");
 }
 

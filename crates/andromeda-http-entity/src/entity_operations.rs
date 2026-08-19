@@ -16,7 +16,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardQueryRequest},
 };
 use andromeda_http_extraction::{
-    accept::AcceptFormat,
+    accept::{AcceptFormat, AcceptFormatNoGeo},
     context::ContextUrl,
     entity_batch::{BatchBody, parse_batch_entities},
     jsonld::JsonLd,
@@ -26,7 +26,7 @@ use andromeda_http_extraction::{
     snapshot::SnapshotHeader,
     via::IncomingVia,
 };
-use andromeda_http_headers::{preference::RespondMode, preference_applied::PreferenceApplied};
+use andromeda_http_headers::{media_type::ResponseMediaType, preference::RespondMode, preference_applied::PreferenceApplied};
 use andromeda_http_response::{
     batch::NgsiLdBatchResponse,
     batch_projection::batch_operation_result,

@@ -1,7 +1,7 @@
 //! HTTP handling for the upsert entity operation.
 
 use crate::entity_operations::{
-    AcceptFormat,
+    AcceptFormatNoGeo,
     BatchBody,
     BatchOperationResult,
     ContextUrl,
@@ -20,6 +20,7 @@ use crate::entity_operations::{
     PreferHeader,
     ProblemResponse,
     Response,
+    ResponseMediaType,
     ResponsePayload,
     StatusCode,
     UpsertMode,
@@ -39,7 +40,7 @@ use andromeda_http_extraction::tenant_state;
 pub(crate) async fn batch_upsert(
     tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpsertParams>,
@@ -124,8 +125,10 @@ pub(crate) async fn batch_upsert(
             ))
         }
     } else {
+        // Clause 6.3.6: the 207 Multi-Status body is always application/json,
+        // regardless of the negotiated Accept, so it carries no JSON-LD @context.
         let value = serde_json::to_value(&result).with_entity_instance(&uri)?;
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+        let rendered = start_rendering(ResponseMediaType::Json, &context, PreferHeader::default().rendering_preferences())
             .with_payload(ResponsePayload::Batch(value))
             .render()
             .with_entity_instance(&uri)?;

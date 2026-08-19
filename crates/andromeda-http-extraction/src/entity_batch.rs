@@ -195,6 +195,13 @@ pub fn parse_batch_entities(
     let mut parse_errors = Vec::new();
 
     for mut item in items {
+        // Clause 5.6.7 to 5.6.10: a null array item is malformed batch content,
+        // reported as BadRequestData for the whole request rather than the
+        // InvalidRequest a missing id raises.
+        if item.is_null() {
+            return Err(public_error(NgsiLdErrorType::BadRequestData, "Batch array items must not be null", uri));
+        }
+
         let entity_id = item
             .as_object()
             .and_then(|o| o.get("id"))
@@ -253,6 +260,7 @@ pub fn parse_batch_entities(
 mod tests {
     use crate::{context::ContextUrl, entity_batch::parse_batch_entities};
     use andromeda_jsonld::context_spec::ContextSpec;
+    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
     use axum::{
         body::Bytes,
         http::{HeaderMap, HeaderValue, Uri, header::CONTENT_TYPE},
@@ -287,6 +295,17 @@ mod tests {
         );
         pretty_assertions::assert_eq!(errors.len(), 1);
         pretty_assertions::assert_eq!(errors[0].entity_id.as_str(), "urn:ngsi-ld:Vehicle:2");
+    }
+
+    #[test]
+    fn a_null_batch_array_item_is_bad_request_data() {
+        // ETSI GS CIM 009 v1.9.1 clauses 5.6.7 to 5.6.10: a null array item is
+        // malformed batch content and fails the whole request as BadRequestData,
+        // not the InvalidRequest a missing id raises.
+        let body = Bytes::from(serde_json::to_vec(&serde_json::json!([{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle"}, null])).expect("serialises"));
+        let uri = Uri::from_static("/ngsi-ld/v1/entityOperations/create");
+        let error = parse_batch_entities(&body, &json_headers(), &ContextUrl(ContextSpec::none()), &uri).expect_err("a null item fails the request");
+        pretty_assertions::assert_eq!(error.problem().error_type(), NgsiLdErrorType::BadRequestData);
     }
 
     #[test]

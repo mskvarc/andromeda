@@ -4,7 +4,7 @@ use crate::{
     error::{SourceIdentityError, classify},
     state::SourceIdentityState,
 };
-use andromeda_http_extraction::{accept::AcceptFormat, context::ContextUrl, prefer::PreferHeader};
+use andromeda_http_extraction::{accept::AcceptFormatNoGeo, context::ContextUrl, prefer::PreferHeader};
 use andromeda_http_response::{problem_response::ProblemResponse, render::start_rendering, single::NgsiLdResponse};
 use andromeda_ngsi_ld_render::response::ResponsePayload;
 use axum::{
@@ -16,7 +16,7 @@ use axum::{
 pub async fn get(
     State(state): State<SourceIdentityState>,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
 ) -> Result<Response, ProblemResponse> {
     let value = serde_json::to_value(state.identity())

@@ -41,6 +41,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::DropKeepExclusive
         | ParameterError::PickOmitExclusive
         | ParameterError::PickOmitWithAttrs
+        | ParameterError::LimitZeroWithoutCount
         | ParameterError::ProjectionLinkedTermsWithoutJoin
         | ParameterError::ProjectionDepthExceedsJoinLevel { .. }
         | ParameterError::FilterTraversalWithoutJoin

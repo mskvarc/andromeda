@@ -8,6 +8,7 @@ use crate::{
     expanded_member::unwrap_expanded_ref,
     geo_property_geometry::validate_geo_property_geometries,
     notification_plan::attribute_change_groups,
+    null_content::reject_null_content,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -43,6 +44,7 @@ impl EntityService {
         normalize_entity_attributes(&mut fragment);
         let expanded = Arc::new(self.engine.expand(fragment, context).await?);
         validate_attribute_envelopes(&expanded)?;
+        reject_null_content(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
         let (merged, not_appended, events) = self

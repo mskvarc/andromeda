@@ -1,7 +1,8 @@
 //! Merging expanded JSON-LD fragments into a stored payload.
 
-use crate::expanded::dataset_id::get_instance_dataset_id;
+use crate::expanded::{dataset_id::get_instance_dataset_id, null_sentinel::member_is_null_sentinel};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_vocabulary::expanded::properties;
 use serde_json::{Map, Value};
 
 /// Merge `patch` into `base` following NGSI-LD expanded form conventions.
@@ -45,8 +46,36 @@ pub fn merge_json(base: &mut Value, patch: &Value) {
     }
 }
 
-/// Deep-merge attribute instances into an entity object, matching by datasetId.
-pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value]) {
+/// How deeply a matched attribute instance is patched (clause 5.6).
+///
+/// The two whole-entity write operations that patch attribute instances by
+/// `datasetId` need different depth semantics on a match, and the spec is
+/// explicit about both:
+///
+/// - [`ReplaceInstance`](InstancePatchDepth::ReplaceInstance): Update Attributes
+///   (clause 5.6.2, EXAMPLE 2 of clause 5.5.8) replaces the whole matched
+///   instance, so a sub-attribute the patch omits — a `unitCode`, an
+///   `observedAt` — is dropped.
+/// - [`DeepMerge`](InstancePatchDepth::DeepMerge): Merge Entity (clause 5.6.17,
+///   behaviour in clause 5.5.12) merges to arbitrary depth, descending into a
+///   Property value object and a language map, so a member the patch omits
+///   survives and a nested `urn:ngsi-ld:null` deletes just its key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstancePatchDepth {
+    /// Replace the whole matched instance with the patch instance.
+    ReplaceInstance,
+    /// Recursively merge the patch instance into the matched instance.
+    DeepMerge,
+}
+
+/// Patch attribute instances into an entity object, matching by `datasetId`.
+///
+/// An instance whose `datasetId` matches an existing one is patched under the
+/// requested [`InstancePatchDepth`]; an instance with no match is appended. A
+/// changed attribute `@type` always replaces the whole instance regardless of
+/// depth, because the members of one attribute family have no meaning under
+/// another (clause 5.2).
+pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value], depth: InstancePatchDepth) {
     let existing = entity_obj.get_mut(key);
     let Some(existing) = existing else {
         entity_obj.insert(key.to_string(), Value::Array(patch_instances.to_vec()));
@@ -63,34 +92,126 @@ pub fn deep_merge_attribute(entity_obj: &mut Map<String, Value>, key: &str, patc
         let matched = existing_arr.iter_mut().find(|inst| get_instance_dataset_id(inst) == patch_ds_id);
 
         if let Some(existing_inst) = matched {
-            // A changed attribute type replaces the whole instance: the members
-            // of one family have no meaning under another (clause 5.2).
-            let type_changed = {
-                let existing_type = existing_inst.get("@type");
-                let patch_type = patch_inst.get("@type");
-                match (existing_type, patch_type) {
-                    (Some(et), Some(pt)) => et != pt,
-                    (Some(_), None) | (None, Some(_)) | (None, None) => false,
-                }
-            };
-
-            if type_changed {
+            if instance_type_changed(existing_inst, patch_inst) {
                 // clone: the patch is borrowed and the stored instance takes ownership.
                 *existing_inst = patch_inst.clone();
-            } else if let (Some(base_obj), Some(patch_obj)) = (existing_inst.as_object_mut(), patch_inst.as_object()) {
-                for (k, v) in patch_obj {
-                    if k.starts_with('@') {
-                        continue;
-                    }
-                    // clone: both the key and the value are borrowed from the patch and stored owned.
-                    base_obj.insert(k.clone(), v.clone());
-                }
+                continue;
+            }
+            match depth {
+                // clone: the patch is borrowed and the stored instance takes ownership.
+                InstancePatchDepth::ReplaceInstance => *existing_inst = patch_inst.clone(),
+                InstancePatchDepth::DeepMerge => merge_node(existing_inst, patch_inst),
             }
         } else {
             // clone: the patch is borrowed and the instance array takes ownership.
             existing_arr.push(patch_inst.clone());
         }
     }
+}
+
+/// Whether the patch instance carries a different attribute `@type` than the
+/// existing one.
+fn instance_type_changed(existing_inst: &Value, patch_inst: &Value) -> bool {
+    match (existing_inst.get("@type"), patch_inst.get("@type")) {
+        (Some(existing_type), Some(patch_type)) => existing_type != patch_type,
+        (Some(_), None) | (None, Some(_)) | (None, None) => false,
+    }
+}
+
+/// Recursively merge the expanded node `patch` into `base` (clause 5.5.12).
+///
+/// A leaf node (one carrying `@value` or `@id`) is replaced wholesale. Two
+/// structured nodes are merged member-by-member: a language map merges per
+/// language tag, a member carrying the `urn:ngsi-ld:null` sentinel deletes its
+/// key, and every other member recurses so a Property value object is merged to
+/// arbitrary depth.
+fn merge_node(base: &mut Value, patch: &Value) {
+    // Only two non-leaf structured nodes deep-merge; a leaf value or any shape
+    // mismatch is atomic and the patch replaces the base wholesale.
+    let mergeable = matches!((base.as_object(), patch.as_object()), (Some(base_obj), Some(patch_obj)) if !is_leaf_node(base_obj) && !is_leaf_node(patch_obj));
+    if !mergeable {
+        // clone: the patch replaces the base.
+        *base = patch.clone();
+        return;
+    }
+
+    let (Some(base_obj), Some(patch_obj)) = (base.as_object_mut(), patch.as_object()) else {
+        return;
+    };
+    for (key, patch_member) in patch_obj {
+        if key == properties::LANGUAGE_MAP.as_str() {
+            merge_language_map(base_obj, key, patch_member);
+            continue;
+        }
+        if key.starts_with('@') {
+            // clone: JSON-LD keywords (`@type`) are copied across verbatim.
+            base_obj.insert(key.clone(), patch_member.clone());
+            continue;
+        }
+        if member_is_null(patch_member) {
+            base_obj.remove(key);
+            continue;
+        }
+        match base_obj.get_mut(key) {
+            Some(existing_member) => merge_member(existing_member, patch_member),
+            // clone: a member absent from the base is taken from the patch.
+            None => {
+                base_obj.insert(key.clone(), patch_member.clone());
+            }
+        }
+    }
+}
+
+/// Merge two array-wrapped expanded members. A single-node array on both sides
+/// recurses into the node; any other shape (a multi-instance member, a shape
+/// mismatch) is replaced wholesale.
+fn merge_member(base: &mut Value, patch: &Value) {
+    match (base.as_array_mut(), patch.as_array()) {
+        (Some(base_arr), Some(patch_arr)) if base_arr.len() == 1 && patch_arr.len() == 1 => {
+            merge_node(&mut base_arr[0], &patch_arr[0]);
+        }
+        // clone: nothing to recurse into, so the patch member replaces the base.
+        (Some(_), Some(_)) | (Some(_), None) | (None, Some(_)) | (None, None) => *base = patch.clone(),
+    }
+}
+
+/// Merge a language map member by language tag (clause 4.5.6). An entry whose
+/// value is the `urn:ngsi-ld:null` sentinel deletes that tag; every other entry
+/// replaces the entry with the same tag or is added.
+fn merge_language_map(base_obj: &mut Map<String, Value>, key: &str, patch_member: &Value) {
+    let Some(patch_entries) = patch_member.as_array() else {
+        // clone: a non-array language map cannot be merged per tag, so it replaces.
+        base_obj.insert(key.to_owned(), patch_member.clone());
+        return;
+    };
+    let Some(Value::Array(base_entries)) = base_obj.get_mut(key) else {
+        // clone: the base carries no language map to merge into, so the patch is taken.
+        base_obj.insert(key.to_owned(), patch_member.clone());
+        return;
+    };
+    for patch_entry in patch_entries {
+        let language = patch_entry.get("@language");
+        if member_is_null_sentinel(patch_entry) {
+            base_entries.retain(|entry| entry.get("@language") != language);
+            continue;
+        }
+        match base_entries.iter_mut().find(|entry| entry.get("@language") == language) {
+            // clone: the patch entry replaces the base entry carrying the same tag.
+            Some(existing) => *existing = patch_entry.clone(),
+            // clone: a tag absent from the base is taken from the patch.
+            None => base_entries.push(patch_entry.clone()),
+        }
+    }
+}
+
+/// Whether an expanded node is a leaf carrying an atomic value.
+fn is_leaf_node(node: &Map<String, Value>) -> bool {
+    node.contains_key("@value") || node.contains_key("@id")
+}
+
+/// Whether an array-wrapped member is the `urn:ngsi-ld:null` deletion sentinel.
+fn member_is_null(member: &Value) -> bool {
+    member.as_array().and_then(|entries| entries.first()).is_some_and(member_is_null_sentinel)
 }
 
 /// Remove instances matching a dataset ID (or the default instance if `None`)
@@ -124,7 +245,7 @@ pub(crate) fn remove_instances_by_dataset(entity_obj: &mut Map<String, Value>, k
 
 #[cfg(test)]
 mod tests {
-    use crate::expanded::merge::{deep_merge_attribute, merge_json, remove_instances_by_dataset};
+    use crate::expanded::merge::{InstancePatchDepth, deep_merge_attribute, merge_json, remove_instances_by_dataset};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use serde_json::{Map, Value, json};
 
@@ -189,7 +310,7 @@ mod tests {
     #[test]
     fn deep_merging_an_absent_attribute_inserts_the_patch_instances() {
         let mut object = Map::new();
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)]);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)], InstancePatchDepth::DeepMerge);
         pretty_assertions::assert_eq!(object["https://example.com/speed"], json!([instance(10, None)]));
     }
 
@@ -197,7 +318,7 @@ mod tests {
     fn deep_merging_over_a_non_array_member_replaces_it() {
         let mut object = Map::new();
         object.insert("https://example.com/speed".to_string(), json!("not an instance array"));
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)]);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(10, None)], InstancePatchDepth::DeepMerge);
         pretty_assertions::assert_eq!(object["https://example.com/speed"], json!([instance(10, None)]));
     }
 
@@ -206,7 +327,7 @@ mod tests {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
         let mut patch = instance(20, Some("urn:ngsi-ld:Dataset:A"));
         patch["https://uri.etsi.org/ngsi-ld/unitCode"] = json!([{"@value": "KMH"}]);
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch]);
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
 
         let instances = object["https://example.com/speed"].as_array().expect("instances");
         pretty_assertions::assert_eq!(instances.len(), 1);
@@ -223,7 +344,7 @@ mod tests {
 
         let mut patch = json!({"https://uri.etsi.org/ngsi-ld/hasObject": [{"@id": "urn:ngsi-ld:Vehicle:2"}]});
         patch["@type"] = json!(["https://uri.etsi.org/ngsi-ld/Relationship"]);
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch.clone()]); // clone: the patch is compared below
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch.clone()], InstancePatchDepth::DeepMerge); // clone: the patch is compared below
 
         pretty_assertions::assert_eq!(object["https://example.com/speed"], json!([patch]));
     }
@@ -231,8 +352,93 @@ mod tests {
     #[test]
     fn deep_merging_an_unmatched_dataset_id_appends_a_new_instance() {
         let mut object = entity_with(vec![instance(10, Some("urn:ngsi-ld:Dataset:A"))]);
-        deep_merge_attribute(&mut object, "https://example.com/speed", &[instance(20, Some("urn:ngsi-ld:Dataset:B"))]);
+        deep_merge_attribute(
+            &mut object,
+            "https://example.com/speed",
+            &[instance(20, Some("urn:ngsi-ld:Dataset:B"))],
+            InstancePatchDepth::DeepMerge,
+        );
         pretty_assertions::assert_eq!(object["https://example.com/speed"].as_array().expect("instances").len(), 2);
+    }
+
+    #[test]
+    fn deep_merge_recurses_into_a_property_value_object() {
+        // ETSI GS CIM 009 v1.9.1 clause 5.5.12 EXAMPLE 2: a Merge Entity that
+        // touches one member of a Property value object keeps the untouched
+        // members and deletes a member set to the `urn:ngsi-ld:null` sentinel.
+        let mut object = entity_with(vec![json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/street": [{"@value": "old"}],
+                "https://example.com/city": [{"@value": "town"}],
+                "https://example.com/country": [{"@value": "land"}]
+            }]
+        })]);
+        let patch = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                "https://example.com/street": [{"@value": "new"}],
+                "https://example.com/country": [{"@value": "urn:ngsi-ld:null"}]
+            }]
+        });
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+
+        let value = &object["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0];
+        pretty_assertions::assert_eq!(value["https://example.com/street"], json!([{"@value": "new"}]));
+        pretty_assertions::assert_eq!(value["https://example.com/city"], json!([{"@value": "town"}]));
+        assert!(value.get("https://example.com/country").is_none(), "the null-sentinel member is deleted");
+    }
+
+    #[test]
+    fn deep_merge_of_a_language_tag_keeps_the_other_tags() {
+        // A LanguageProperty merge naming one tag replaces that tag and leaves
+        // the rest of the language map standing (clause 4.5.6).
+        let mut object = entity_with(vec![json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [
+                {"@language": "en", "@value": "hi"},
+                {"@language": "de", "@value": "hallo"}
+            ]
+        })]);
+        let patch = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/LanguageProperty"],
+            "https://uri.etsi.org/ngsi-ld/hasLanguageMap": [{"@language": "de", "@value": "guten tag"}]
+        });
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::DeepMerge);
+
+        let map = object["https://example.com/speed"][0]["https://uri.etsi.org/ngsi-ld/hasLanguageMap"]
+            .as_array()
+            .expect("language map")
+            .clone();
+        assert!(map.contains(&json!({"@language": "en", "@value": "hi"})), "the untouched tag is kept: {map:?}");
+        assert!(
+            map.contains(&json!({"@language": "de", "@value": "guten tag"})),
+            "the named tag is replaced: {map:?}"
+        );
+        pretty_assertions::assert_eq!(map.len(), 2);
+    }
+
+    #[test]
+    fn replace_instance_drops_a_subattribute_the_patch_omits() {
+        // Update Attributes (clause 5.6.2) replaces the whole matched instance,
+        // so a `unitCode` the patch does not carry is dropped.
+        let mut object = entity_with(vec![json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 25}],
+            "https://uri.etsi.org/ngsi-ld/unitCode": [{"@value": "CEL"}]
+        })]);
+        let patch = json!({
+            "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+            "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": 100}]
+        });
+        deep_merge_attribute(&mut object, "https://example.com/speed", &[patch], InstancePatchDepth::ReplaceInstance);
+
+        let instance = &object["https://example.com/speed"][0];
+        pretty_assertions::assert_eq!(instance["https://uri.etsi.org/ngsi-ld/hasValue"], json!([{"@value": 100}]));
+        assert!(
+            instance.get("https://uri.etsi.org/ngsi-ld/unitCode").is_none(),
+            "the omitted sub-attribute is dropped"
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use andromeda_http_extraction::{
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
-    pagination::{PaginationMediaType, PaginationStyle, append_pagination_links},
+    pagination::{PageExtent, PaginationStyle, append_pagination_links},
     problem_response::ProblemResponse,
     render::start_rendering,
     single::NgsiLdResponse,
@@ -102,9 +102,9 @@ pub(crate) async fn query(
         &uri,
         limit,
         offset,
-        pagination_total,
+        PageExtent::Total(pagination_total),
         PaginationStyle::OffsetFull,
-        PaginationMediaType::None,
+        accept.media_type(),
     );
     Ok(response)
 }

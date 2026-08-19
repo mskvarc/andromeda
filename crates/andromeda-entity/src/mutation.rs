@@ -9,6 +9,7 @@ use crate::{
     error::EntityError,
     geo_property_geometry::validate_geo_property_geometries,
     notification_plan::{NotificationGroup, attribute_change_groups},
+    null_content::reject_null_content,
     sys_attrs::snapshot_with_sys_attrs,
 };
 use andromeda_context_commit::{
@@ -55,6 +56,7 @@ impl EntityService {
         normalize_entity_attributes(&mut entity_json);
         let expanded = self.engine.expand(entity_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
+        reject_null_content(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
         let payload = Arc::new(expanded);
@@ -145,6 +147,8 @@ impl EntityService {
         normalize_entity_attributes(&mut patch_json);
         let expanded = self.engine.expand(patch_json, context).await?;
         validate_attribute_envelopes(&expanded)?;
+        // Clause 5.6.18.4: Replace Entity does not support null values.
+        reject_null_content(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
 
         let payload = Arc::new(expanded);

@@ -3,7 +3,7 @@
 
 use crate::expanded::{
     dataset_id::get_instance_dataset_id,
-    merge::{deep_merge_attribute, remove_instances_by_dataset},
+    merge::{InstancePatchDepth, deep_merge_attribute, remove_instances_by_dataset},
     mutation::{error::ExpandedEntityError, selection::OverwritePolicy},
     node::{expanded_object_mut, expanded_object_ref},
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
@@ -56,7 +56,7 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEnt
             continue;
         }
 
-        apply_instance_patch(entity_obj, key, patch_instances);
+        apply_instance_patch(entity_obj, key, patch_instances, InstancePatchDepth::DeepMerge);
     }
 
     Ok(())
@@ -71,9 +71,9 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEnt
 /// Applying them one at a time is what keeps an update that shares the array
 /// with a sentinel from being dropped, and stops a datasetId-less sentinel from
 /// skipping the instances that follow it.
-fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value]) {
+fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_instances: &[Value], depth: InstancePatchDepth) {
     if !patch_instances.iter().any(instance_is_null_sentinel) {
-        deep_merge_attribute(entity_obj, key, patch_instances);
+        deep_merge_attribute(entity_obj, key, patch_instances, depth);
         return;
     }
 
@@ -82,7 +82,7 @@ fn apply_instance_patch(entity_obj: &mut Map<String, Value>, key: &str, patch_in
             let dataset_id = get_instance_dataset_id(patch_instance);
             remove_instances_by_dataset(entity_obj, key, dataset_id.as_ref());
         } else {
-            deep_merge_attribute(entity_obj, key, from_ref(patch_instance));
+            deep_merge_attribute(entity_obj, key, from_ref(patch_instance), depth);
         }
     }
 }
@@ -178,7 +178,9 @@ pub fn append_entity_attrs(entity: &mut Value, attrs: &Value, overwrite: Overwri
                 not_appended.push(key.parse::<AttributeName>().map_err(|_| ExpandedEntityError::InvalidAttributeName)?);
             }
         } else {
-            deep_merge_attribute(entity_obj, key, patch_instances);
+            // Append with overwrite replaces the matched instance (clause 5.6.3),
+            // the same whole-instance semantics as Update Attributes.
+            deep_merge_attribute(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance);
         }
     }
 
@@ -248,7 +250,7 @@ pub fn update_entity_attrs(entity: &mut Value, attrs: &Value) -> Result<Vec<Attr
             }
         };
 
-        apply_instance_patch(entity_obj, key, patch_instances);
+        apply_instance_patch(entity_obj, key, patch_instances, InstancePatchDepth::ReplaceInstance);
     }
 
     Ok(not_updated)
@@ -383,6 +385,58 @@ mod tests {
         merge_entity(&mut entity, &patch).expect("merge succeeds");
 
         assert!(entity[0].get("https://example.com/speed").is_none(), "the attribute is gone");
+    }
+
+    #[test]
+    fn update_attributes_replaces_the_whole_instance_dropping_unmentioned_subattrs() {
+        // ETSI GS CIM 009 v1.9.1 clause 5.5.8 EXAMPLE 2: Update Attributes
+        // overwrites the whole matched instance, so a `unitCode` the patch omits
+        // is removed rather than carried forward.
+        let mut existing = property_instance(json!(25), None);
+        existing["https://uri.etsi.org/ngsi-ld/unitCode"] = json!([{"@value": "CEL"}]);
+        let mut entity = entity_with_speed(vec![existing]);
+        let patch = json!({"https://example.com/speed": [property_instance(json!(100), None)]});
+
+        let not_updated = update_entity_attrs(&mut entity, &patch).expect("update succeeds");
+
+        assert!(not_updated.is_empty());
+        let instances = speed_instances(&entity);
+        pretty_assertions::assert_eq!(instances.len(), 1);
+        pretty_assertions::assert_eq!(instances[0]["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!(100));
+        assert!(
+            instances[0].get("https://uri.etsi.org/ngsi-ld/unitCode").is_none(),
+            "the omitted sub-attribute is dropped"
+        );
+    }
+
+    #[test]
+    fn merge_recurses_into_a_value_object() {
+        // ETSI GS CIM 009 v1.9.1 clause 5.5.12: Merge Entity descends into a
+        // Property value object, so touching `street` leaves `city` standing.
+        let mut entity = json!([{
+            "@id": "urn:ngsi-ld:Building:1",
+            "https://example.com/address": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "https://example.com/street": [{"@value": "old"}],
+                    "https://example.com/city": [{"@value": "town"}]
+                }]
+            }]
+        }]);
+        let patch = json!([{
+            "https://example.com/address": [{
+                "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                "https://uri.etsi.org/ngsi-ld/hasValue": [{
+                    "https://example.com/street": [{"@value": "new"}]
+                }]
+            }]
+        }]);
+
+        merge_entity(&mut entity, &patch).expect("merge succeeds");
+
+        let value = &entity[0]["https://example.com/address"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0];
+        pretty_assertions::assert_eq!(value["https://example.com/street"], json!([{"@value": "new"}]));
+        pretty_assertions::assert_eq!(value["https://example.com/city"], json!([{"@value": "town"}]));
     }
 
     #[test]

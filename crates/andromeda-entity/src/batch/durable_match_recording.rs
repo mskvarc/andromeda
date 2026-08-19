@@ -10,7 +10,16 @@
 
 use crate::{
     batch::UpsertPolicy,
-    notification_recording_harness::{CATEGORY_IRI, ENTITY_ID, attribute_name, entity_uri, recording_service, single_recorded_write, subscription_key},
+    notification_recording_harness::{
+        ACCURACY_IRI,
+        CATEGORY_IRI,
+        ENTITY_ID,
+        attribute_name,
+        entity_uri,
+        recording_service,
+        single_recorded_write,
+        subscription_key,
+    },
     side_effect::BatchSideEffectMode,
 };
 use andromeda_context_commit::atomic_write::AtomicWrite;
@@ -160,6 +169,32 @@ async fn batch_upsert_update_of_an_existing_entity_records_an_attribute_updated_
 
     let write = single_recorded_write(&recorded);
     assert_match(&write, NotificationTrigger::AttributeUpdated, CATEGORY_IRI);
+}
+
+#[tokio::test]
+async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute() {
+    // Clause 5.6.8.4: upsert update mode applies Update Attributes semantics, so
+    // it overwrites the whole `category` instance and drops the stored `accuracy`
+    // sub-attribute the request omits, matching the single Update Attributes path.
+    let (service, recorded) = recording_service().await;
+    service
+        .batch_upsert(
+            &[building_entity("retail")],
+            &ContextSpec::core_only(),
+            UpsertPolicy::Update,
+            BatchSideEffectMode::Inline,
+        )
+        .await
+        .expect("the batch upsert lands");
+
+    let write = single_recorded_write(&recorded);
+    let payload = &write.entity.record().expect("an upsert update carries an entity record").payload;
+    let category = &payload[CATEGORY_IRI][0];
+    assert_eq!(category["https://uri.etsi.org/ngsi-ld/hasValue"][0]["@value"], json!("retail"));
+    assert!(
+        category.get(ACCURACY_IRI).is_none(),
+        "the whole-instance overwrite drops the unmentioned sub-attribute"
+    );
 }
 
 #[tokio::test]

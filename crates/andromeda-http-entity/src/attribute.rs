@@ -7,7 +7,7 @@ use crate::{
 use andromeda_entity::discovery::AttributeCollectionRepresentation;
 use andromeda_federation::discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results};
 use andromeda_http_extraction::{
-    accept::AcceptFormat,
+    accept::AcceptFormatNoGeo,
     context::ContextUrl,
     prefer::PreferHeader,
     query::ValidatedQuery,
@@ -32,7 +32,7 @@ use serde_json::json;
 pub async fn query(
     tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     SnapshotHeader(snapshot_id): SnapshotHeader,
@@ -90,7 +90,7 @@ pub async fn query(
 pub async fn get(
     tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     SnapshotHeader(snapshot_id): SnapshotHeader,

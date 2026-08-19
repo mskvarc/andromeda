@@ -40,6 +40,8 @@ use crate::entity::{
     with_linked_resolution_warnings,
 };
 use andromeda_http_extraction::tenant_state;
+use andromeda_http_response::pagination::{PageExtent, PaginationStyle, append_pagination_links};
+use andromeda_ngsi_ld_request::query::SharedQueryParams;
 use std::iter::empty;
 
 pub(crate) async fn query(
@@ -299,6 +301,19 @@ pub(crate) async fn query(
             None
         };
 
+        // Clause 6.3.10 / 4.12: pagination Link headers over the local page. A
+        // query that asked for a count knows its total and drives `next` from it;
+        // one that did not carries no total (the broker does not count on every
+        // query) and signals a following page by the page coming back full.
+        let page_limit = i64::from(query.effective_limit());
+        let page_offset = i64::from(query.effective_offset());
+        let page_extent = match total_count {
+            Some(count) => PageExtent::Total(count),
+            None => PageExtent::PageFullness {
+                returned: entities.len() as i64,
+            },
+        };
+
         let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
 
         if let (Some(join), Some(resolved)) = (join, resolved) {
@@ -346,7 +361,17 @@ pub(crate) async fn query(
             if let Some(ref map_uri) = entity_map_uri {
                 response = response.with_entity_map_uri(map_uri.clone());
             }
-            return Ok(response.into_response());
+            let mut response = response.into_response();
+            append_pagination_links(
+                &mut response,
+                &uri,
+                page_limit,
+                page_offset,
+                page_extent,
+                PaginationStyle::OffsetPrevNext,
+                accept.media_type(),
+            );
+            return Ok(response);
         }
 
         let rendered = render_flat_join(entities.iter(), empty(), language_filter.as_ref(), opts.render_mode, projection).with_entity_instance(&uri)?;
@@ -362,7 +387,17 @@ pub(crate) async fn query(
         if let Some(ref map_uri) = entity_map_uri {
             response = response.with_entity_map_uri(map_uri.clone());
         }
-        Ok(response.into_response())
+        let mut response = response.into_response();
+        append_pagination_links(
+            &mut response,
+            &uri,
+            page_limit,
+            page_offset,
+            page_extent,
+            PaginationStyle::OffsetPrevNext,
+            accept.media_type(),
+        );
+        Ok(response)
     })
     .await
 }

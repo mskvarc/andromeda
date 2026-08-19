@@ -17,6 +17,7 @@ use crate::{
     EntityService,
     batch::{BatchResult, chunk::ChunkWrite},
     error::EntityError,
+    expanded_member::unwrap_expanded_ref,
     notification_plan::attribute_change_groups,
     side_effect::BatchSideEffectMode,
 };
@@ -25,7 +26,7 @@ use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
-    expanded::{entity_member::extract_attribute_names, mutation::entity::merge_entity},
+    expanded::{entity_member::extract_attribute_names, mutation::entity::update_entity_attrs},
 };
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -171,9 +172,11 @@ impl EntityService {
                 continue;
             };
 
-            let mut merged = existing.clone(); // clone: the merge mutates its own copy of the stored payload
+            let mut merged = existing.clone(); // clone: the update mutates its own copy of the stored payload
             let id = entity.id;
-            if let Err(error) = merge_entity(&mut merged, &entity.expanded) {
+            // Upsert update mode applies Update Attributes semantics (clause
+            // 5.6.8.4), the same whole-instance overwrite as a single update.
+            if let Err(error) = update_entity_attrs(&mut merged, unwrap_expanded_ref(&entity.expanded)) {
                 errors.push((id, error.into()));
                 continue;
             }

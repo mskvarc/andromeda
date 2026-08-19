@@ -363,6 +363,20 @@ mod tests {
         }
     }
 
+    /// Clause 6.3.10 Table 6.3.10-1: `limit=0` is only valid alongside `count`.
+    #[test]
+    fn validate_rejects_limit_zero_without_count() {
+        let err = params_from_query("type=Vehicle&limit=0").validate().expect_err("limit=0 needs count");
+        assert!(matches!(err, ParameterError::LimitZeroWithoutCount), "got {err:?}");
+    }
+
+    /// Clause 6.3.10 Table 6.3.10-1: `limit=0` with `count` asks for a count of
+    /// the matching entities and no entity data, which is valid.
+    #[test]
+    fn validate_accepts_limit_zero_with_count() {
+        assert!(params_from_query("type=Vehicle&limit=0&count=true").validate().is_ok());
+    }
+
     /// Clause 5.7.2.4: a query whose `pick` nests into a Linked Entity without
     /// asking for a join names members the response cannot carry.
     #[test]

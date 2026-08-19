@@ -1,7 +1,7 @@
 //! HTTP handling for the update entity operation.
 
 use crate::entity_operations::{
-    AcceptFormat,
+    AcceptFormatNoGeo,
     BatchBody,
     BatchOperationResult,
     ContextUrl,
@@ -22,6 +22,7 @@ use crate::entity_operations::{
     ProblemResponse,
     RequestOverwritePolicy,
     Response,
+    ResponseMediaType,
     ResponsePayload,
     StatusCode,
     UpdateParams,
@@ -39,7 +40,7 @@ use andromeda_http_extraction::tenant_state;
 pub(crate) async fn batch_update(
     tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    _accept: AcceptFormatNoGeo,
     context: ContextUrl,
     prefer: PreferHeader,
     ValidatedQuery(params): ValidatedQuery<UpdateParams>,
@@ -109,8 +110,10 @@ pub(crate) async fn batch_update(
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
+        // Clause 6.3.6: the 207 Multi-Status body is always application/json,
+        // regardless of the negotiated Accept, so it carries no JSON-LD @context.
         let value = serde_json::to_value(&result).with_entity_instance(&uri)?;
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+        let rendered = start_rendering(ResponseMediaType::Json, &context, PreferHeader::default().rendering_preferences())
             .with_payload(ResponsePayload::Batch(value))
             .render()
             .with_entity_instance(&uri)?;

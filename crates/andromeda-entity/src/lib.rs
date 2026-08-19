@@ -34,6 +34,9 @@ pub mod geo_property_geometry;
 pub mod id_lock;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
+/// Durable-match recording tests for the whole-entity merge and replace paths.
+#[cfg(test)]
+mod mutation_durable_match_recording;
 /// Turning one mutation into the subscriptions it matched.
 pub mod notification_fanout;
 /// Planning both notification channels from one mutation's per-trigger groups.
@@ -41,6 +44,8 @@ pub mod notification_plan;
 /// A recording notification harness shared by the durable-match tests.
 #[cfg(test)]
 mod notification_recording_harness;
+/// Rejecting the `urn:ngsi-ld:null` sentinel on non-fragment writes (clause 5.5.4).
+pub mod null_content;
 /// Store-applied or policy-applied pagination state.
 pub mod pagination_outcome;
 /// Caller-shaped ports consumed by entity policy.

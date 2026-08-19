@@ -17,6 +17,7 @@ mod attributes;
 mod entity_type_details;
 mod entity_type_info;
 mod entity_types;
+mod geo_json_accept;
 
 use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail as error};
 use andromeda_test_harness::{configuration::RUNTIME_BROKER_BASE as BASE_URL, serialized_environment::SerializedEnvironment};

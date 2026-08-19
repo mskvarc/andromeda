@@ -59,6 +59,10 @@ pub enum ParameterError {
     /// projection selectors. They are alternative ways to shape a response.
     #[error("pick/omit and attrs are mutually exclusive")]
     PickOmitWithAttrs,
+    /// `limit=0` appeared without the `count` option, which clause 6.3.10 Table
+    /// 6.3.10-1 permits only when a count is requested.
+    #[error("limit=0 is only allowed together with the count option (clause 6.3.10)")]
+    LimitZeroWithoutCount,
     /// A `pick`/`omit` term nested a clause 4.21 sub-projection while the
     /// request asked for no join to retrieve the entity it describes.
     #[error("pick/omit select Linked Entity members but the request asks for no join to retrieve them (clause 5.7.2.4)")]

@@ -1,10 +1,11 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, reason = "integration test setup uses explicit assertions")]
 use andromeda_test_fixtures::context::CORE_CONTEXT;
+use andromeda_test_harness::configuration::RUNTIME_BROKER_BASE;
 use reqwest::{Method, StatusCode};
 use serial_test::serial;
 
 use crate::helpers::*;
-use serde_json::{Number, json};
+use serde_json::{Number, Value, json};
 use std::str::FromStr;
 
 #[tokio::test]
@@ -30,6 +31,46 @@ async fn batch_create_minimal_entities_returns_201() {
     pretty_assertions::assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get_entity(&c, &id2, "", false).await;
     pretty_assertions::assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+#[serial]
+async fn batch_create_partial_failure_forces_json_content_type() {
+    // ETSI GS CIM 009 v1.9.1 clause 6.3.6: a 207 Multi-Status body is always
+    // application/json, even when the request negotiated application/ld+json, so
+    // it carries no JSON-LD @context.
+    let _serialized_environment = clean_database().await;
+    let c = client();
+
+    let existing = unique_id("urn:ngsi-ld:Building:207ct_a");
+    let fresh = unique_id("urn:ngsi-ld:Building:207ct_b");
+
+    // Pre-create one entity so the batch conflicts on it and lands a 207.
+    let (status, _) = batch_create(&c, &json!([building_minimal(&existing)])).await;
+    pretty_assertions::assert_eq!(status, StatusCode::CREATED);
+
+    let response = c
+        .post(format!("{RUNTIME_BROKER_BASE}/entityOperations/create"))
+        .header("Content-Type", "application/ld+json")
+        .header("Accept", "application/ld+json")
+        .body(json!([building_minimal(&existing), building_minimal(&fresh)]).to_string())
+        .send()
+        .await
+        .expect("batch create send failed");
+
+    pretty_assertions::assert_eq!(response.status(), StatusCode::MULTI_STATUS);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        content_type.starts_with("application/json"),
+        "the 207 body must be application/json: {content_type}"
+    );
+    let body: Value = response.json().await.expect("207 body must be valid JSON");
+    assert!(body.get("@context").is_none(), "the 207 json body carries no @context: {body}");
 }
 
 #[tokio::test]

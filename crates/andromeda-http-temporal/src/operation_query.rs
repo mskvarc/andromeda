@@ -8,7 +8,7 @@ use andromeda_federation::{
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_http_extraction::{
-    accept::AcceptFormat,
+    accept::AcceptFormatNoGeo,
     context::ContextUrl,
     jsonld::JsonLd,
     prefer::PreferHeader,
@@ -36,7 +36,7 @@ use axum::{
 pub async fn query(
     tenant_state::ExistingTenantState(state): TemporalTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormat,
+    accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     SnapshotHeader(snapshot_id): SnapshotHeader,
