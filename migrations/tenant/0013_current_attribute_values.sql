@@ -87,10 +87,15 @@
 --     attribute that happens to share its trigrams. It declares
 --     `fastupdate = off`: the projection is written inside the Entity
 --     transaction, and an unbounded GIN pending list turns into
---     unpredictable flush latency on the request path. The alternative
---     (`fastupdate = on`) is an A/B in the database-performance decision
---     records; the setting is flipped here in place only if the measured
---     insert tail latency is acceptable with the pending list on.
+--     unpredictable flush latency on the request path. The `fastupdate = on`
+--     alternative was measured against this (database-performance decision
+--     records, Wave 2) and rejected: it cut the CAV upsert mean 27 % but the
+--     pass wall only 1 %, grew the index 12 %, and cost every read of the index
+--     19 % on the probe while the pending list was non-empty (unbounded in
+--     general, since the flush is tied to autovacuum and
+--     `gin_pending_list_limit`). `fastupdate = off` is the final decision;
+--     rollback is one `ALTER INDEX ... SET (fastupdate = on)` for a
+--     write-dominated tenant that ever needs it.
 --   * no trigram on `value_uri` -- a second trigram index would be written
 --     on every Relationship write to serve a disjunct nothing drives from.
 --   * one composite GiST on `(attribute_name_id, value_geo)` for clause 4.10

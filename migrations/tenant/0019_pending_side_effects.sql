@@ -62,9 +62,12 @@
 -- `idx_pse_claim_candidates` on `next_attempt_at`; leased rows are filtered
 -- after the index. The single-key `GREATEST(next_attempt_at,
 -- COALESCE(locked_until, '-infinity'))` expression the notification queue
--- indexes is deliberately not adopted here yet: it would put `locked_until`
--- into the index and cost the claim its heap-only update, and the filter depth
--- has not been measured to justify that trade.
+-- indexes is measured and not adopted here: the claim's filter depth was
+-- measured at 0.69 rows removed per row returned (database-performance
+-- decision records, Wave 3), far under the threshold of 3 that would justify
+-- folding `locked_until` into the index. Keeping it out is what lets the claim
+-- update -- which writes `locked_until` and `locked_by`, no indexed column --
+-- stay heap-only, so the `next_attempt_at`-led partial index is kept as is.
 -- ============================================================================
 
 CREATE TABLE pending_side_effects (

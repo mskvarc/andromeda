@@ -1225,6 +1225,7 @@ dependencies = [
  "andromeda-postgresql-schema",
  "andromeda-postgresql-seaquery",
  "async-trait",
+ "chrono",
  "dashmap",
  "sea-query",
  "sea-query-sqlx",

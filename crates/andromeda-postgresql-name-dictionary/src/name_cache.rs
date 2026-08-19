@@ -17,12 +17,14 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::reference::NgsiLdReferenceError;
 use andromeda_postgresql_query::dictionary::{interned_name::InternedName, resolved_names::ResolvedNames};
+use andromeda_postgresql_schema::tenancy::SchemaMetadata;
 use andromeda_postgresql_seaquery::{
     introspection::transaction_has_not_written,
     pg_array::{any, text_array},
     pg_type::PostgresType,
     unnest::{UnnestColumn, unnest_call},
 };
+use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use sea_query::{
     Alias,
@@ -40,13 +42,20 @@ use sea_query::{
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{
     AssertSqlSafe,
+    Executor,
     PgConnection,
+    Postgres,
     Row,
     postgres::{PgPool, PgRow},
 };
 use std::{
     collections::{HashMap, HashSet},
     fmt::Debug,
+    sync::{
+        LazyLock,
+        atomic::{AtomicI64, AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 /// Whether what a read resolved may be published to the process-wide cache.
@@ -86,6 +95,60 @@ pub struct NameCache<N: DictionaryRelation> {
     keys: DashMap<N, N::Key>,
     /// Bound on how far this tenant's dictionary may grow.
     growth_limit: DictionaryNameLimit,
+    /// The tenant schema stamp (`schema_metadata.applied_at`, microseconds) this
+    /// cache was warmed against, or [`UNKNOWN_EPOCH`] before it has been
+    /// established. A fresh migration re-stamps it, so it advances whenever the
+    /// schema was dropped and recreated -- whether by dropping the database or
+    /// the schema -- which is exactly when every cached key goes stale. See
+    /// [`NameCache::revalidate_epoch`].
+    schema_epoch: AtomicI64,
+    /// Milliseconds since [`EPOCH`] at the last schema-stamp probe, throttling
+    /// the staleness check to at most once per [`EPOCH_CHECK_INTERVAL`].
+    epoch_checked_at: AtomicU64,
+}
+
+/// The instant the epoch throttle measures elapsed time from. A process-wide
+/// monotonic origin lets the last-checked stamp be a relaxed atomic store
+/// rather than a lock.
+static EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
+
+/// Milliseconds elapsed since [`EPOCH`].
+fn now_millis() -> u64 {
+    EPOCH.elapsed().as_millis() as u64
+}
+
+/// The sentinel for a schema epoch not yet read. `schema_metadata.applied_at`
+/// is a wall-clock instant that only ever advances, so this floor cannot
+/// collide with an observed stamp.
+const UNKNOWN_EPOCH: i64 = i64::MIN;
+
+/// How long a resolution trusts the established schema epoch before it re-reads
+/// the tenant schema stamp to detect an out-of-band drop and recreate. The
+/// window bounds how long a stale cache can serve keys of a previous schema
+/// generation; the broker itself performs no drop, so only operator surgery can
+/// open it, and five seconds keeps the steady-state catalogue cost negligible.
+const EPOCH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The tenant schema stamp: `SELECT applied_at FROM schema_metadata WHERE
+/// singleton`, the instant the broker last stamped this schema's contract.
+fn schema_epoch_query() -> SelectStatement {
+    Query::select()
+        .column(SchemaMetadata::AppliedAt)
+        .from(SchemaMetadata::Table)
+        .and_where(Expr::col(SchemaMetadata::Singleton).eq(true))
+        .to_owned()
+}
+
+/// Read the tenant schema stamp on the given executor, as microseconds since
+/// the Unix epoch, or `None` while the schema is migrated but not yet stamped.
+///
+/// Taken as an executor rather than always the pool so a minting resolution can
+/// probe on the connection its transaction already holds, never reaching into
+/// the pool for a second connection mid-commit.
+async fn read_schema_epoch<'e, E: Executor<'e, Database = Postgres>>(executor: E) -> Result<Option<i64>, NameLookupError> {
+    let (sql, values) = schema_epoch_query().build_sqlx(PostgresQueryBuilder);
+    let stamped: Option<DateTime<Utc>> = sqlx::query_scalar_with(AssertSqlSafe(sql), values).fetch_optional(executor).await?;
+    Ok(stamped.map(|applied_at| applied_at.timestamp_micros()))
 }
 
 impl<N: DictionaryRelation> NameCache<N> {
@@ -96,6 +159,11 @@ impl<N: DictionaryRelation> NameCache<N> {
             pool: pool.clone(), // clone: Arc ref-count bump
             keys: DashMap::new(),
             growth_limit: DictionaryNameLimit::DEFAULT,
+            schema_epoch: AtomicI64::new(UNKNOWN_EPOCH),
+            // Seeded to now, not zero: a cache is inside its check interval the
+            // moment it is built, so its first resolutions serve cached hits
+            // without a catalogue probe until the interval first elapses.
+            epoch_checked_at: AtomicU64::new(now_millis()),
         }
     }
 
@@ -156,6 +224,64 @@ impl<N: DictionaryRelation> NameCache<N> {
             CachePublication::Withhold => {}
         }
     }
+
+    /// Establish the schema epoch by reading the tenant database oid once, at
+    /// warm-up.
+    ///
+    /// Called after construction so that a later drop-and-recreate is a change
+    /// from a known baseline rather than the first value ever observed: a cache
+    /// that only learned its stamp lazily could adopt the recreated schema's
+    /// stamp as its baseline while still holding the previous generation's keys.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NameLookupError::Statement`] when the stamp read fails.
+    pub async fn establish_epoch(&self) -> Result<(), NameLookupError> {
+        if let Some(epoch) = read_schema_epoch(&self.pool).await? {
+            self.schema_epoch.store(epoch, Ordering::Relaxed);
+        }
+        self.epoch_checked_at.store(now_millis(), Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Re-read the tenant database oid when the throttle interval has elapsed,
+    /// discarding every cached key if it changed.
+    ///
+    /// A tenant database dropped and recreated under the same name comes back
+    /// with fresh `IDENTITY` sequences, so every name->key mapping this cache
+    /// published against the previous generation now points at a dictionary row
+    /// that does not exist -- a write that trusts one raises
+    /// `temporal_attribute_streams_attribute_name_id_fkey`. The broker performs
+    /// no such drop itself and nothing evicts a runtime whose registry row still
+    /// stands, so only operator surgery opens this window; the check closes it
+    /// by clearing the cache the moment the schema stamp it was warmed against
+    /// changes.
+    ///
+    /// The check is throttled so a steady-state resolution that touches nothing
+    /// but cached hits still pays at most one catalogue read per
+    /// [`EPOCH_CHECK_INTERVAL`], and it runs on the caller's executor so a
+    /// minting resolution never reaches into the pool for a second connection
+    /// while its transaction holds one.
+    async fn revalidate_epoch<'e, E: Executor<'e, Database = Postgres>>(&self, executor: E) -> Result<(), NameLookupError> {
+        let now = now_millis();
+        let last = self.epoch_checked_at.load(Ordering::Relaxed);
+        if now.saturating_sub(last) < EPOCH_CHECK_INTERVAL.as_millis() as u64 {
+            return Ok(());
+        }
+        // Stamp the check before issuing the probe so concurrent resolutions
+        // inside the same interval do not each pay for it.
+        self.epoch_checked_at.store(now, Ordering::Relaxed);
+        // A schema migrated but not yet stamped answers nothing about staleness;
+        // leave the cache and the baseline as they are until a stamp appears.
+        let Some(observed) = read_schema_epoch(executor).await? else {
+            return Ok(());
+        };
+        let previous = self.schema_epoch.swap(observed, Ordering::Relaxed);
+        if previous != UNKNOWN_EPOCH && previous != observed {
+            self.keys.clear();
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -165,6 +291,8 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
     /// Misses are re-queried on every call rather than remembered, so a name
     /// becomes visible to predicates as soon as it is first written.
     async fn lookup(&self, names: &[N]) -> Result<ResolvedNames<N>, NameLookupError> {
+        // The read path resolves on the pool, so it revalidates there too.
+        self.revalidate_epoch(&self.pool).await?;
         let (mut resolved, missing) = self.probe(names);
         if missing.is_empty() {
             return Ok(ResolvedNames::from_pairs(resolved));
@@ -200,6 +328,9 @@ impl<N: DictionaryRelation> NameLookup<N> for NameCache<N> {
     /// that reuses nothing but names the dictionary already holds, which is
     /// precisely the write a tenant at its bound must keep serving.
     async fn resolve_or_create(&self, connection: &mut PgConnection, names: &[N]) -> Result<HashMap<N, N::Key>, NameLookupError> {
+        // On the caller's own connection, never the pool: a minting resolution
+        // must not hold a second connection while its transaction holds one.
+        self.revalidate_epoch(&mut *connection).await?;
         let (mut resolved, missing) = self.probe(names);
         if missing.is_empty() {
             return Ok(resolved.into_iter().collect());
@@ -587,6 +718,20 @@ mod tests {
                     let configured = DictionaryNameLimit::new(NonZeroU32::new(64).expect("a non-zero test bound"));
                     assert_eq!(cache::<$name>().growth_limit(), DictionaryNameLimit::DEFAULT);
                     assert_eq!(cache::<$name>().with_growth_limit(configured).growth_limit(), configured);
+                }
+
+                /// A freshly warmed cache is inside its check interval, so a
+                /// resolution that finds every name cached issues no catalogue
+                /// probe: the unroutable pool turns any probe into an error, so
+                /// an Ok proves none was issued. This is the invariant the
+                /// staleness check must not break -- a cached hit stays free.
+                #[tokio::test]
+                async fn a_warm_cache_does_not_probe_the_database_within_the_check_interval() {
+                    let cache = cache::<$name>();
+                    assert!(
+                        cache.revalidate_epoch(&cache.pool).await.is_ok(),
+                        "a cache inside its check interval must not probe the database"
+                    );
                 }
             }
         };

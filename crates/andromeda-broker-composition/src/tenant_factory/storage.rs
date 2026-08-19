@@ -90,6 +90,15 @@ pub(super) async fn initialize_storage(
 
     let attribute_names = Arc::new(NameCache::<AttributeName>::new(&pool));
     let entity_type_names = Arc::new(NameCache::<EntityTypeName>::new(&pool));
+    // Establish each dictionary's schema epoch against the freshly migrated
+    // database, so a later out-of-band drop and recreate of this tenant is
+    // detected as a change from a known baseline rather than adopted silently.
+    if let Err(error) = attribute_names.establish_epoch().await {
+        tracing::warn!(%error, event = "attribute_names_epoch_unestablished");
+    }
+    if let Err(error) = entity_type_names.establish_epoch().await {
+        tracing::warn!(%error, event = "entity_type_names_epoch_unestablished");
+    }
     if database_config.preload_name_dictionaries {
         if let Err(error) = attribute_names.preload().await {
             tracing::warn!(%error, event = "attribute_names_preload_failed");

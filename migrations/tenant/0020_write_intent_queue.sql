@@ -56,6 +56,16 @@
 -- not-null fixed-width descending, then nullable fixed-width, then varlena --
 -- with LZ4 on the varlena columns; `entity_id` is `COLLATE "C"` like every
 -- identifier column, since it is only ever matched by equality.
+--
+-- Claim-path note. The claim `UPDATE ... WHERE sequence IN (SELECT ... ORDER BY
+-- sequence LIMIT n FOR UPDATE SKIP LOCKED)` is served by
+-- `idx_temporal_append_intents_claim` on `(available_at, sequence)`. The
+-- single-key `claimable_at` expression index the notification queue adopts is
+-- measured and not adopted here: the claim's filter depth was measured at 0.84
+-- rows removed per row returned (database-performance decision records,
+-- Wave 3), under the threshold of 3 that would justify it, and `(available_at,
+-- sequence)` is kept because `sequence` is the fairness key the claim orders
+-- by -- older work must not be starved behind newer.
 -- ============================================================================
 
 CREATE TABLE temporal_append_intents (

@@ -12,6 +12,7 @@ pub mod readiness;
 pub mod run_isolated;
 pub mod serialized_environment;
 pub mod tenant_environment;
+pub mod tenant_schema_recreate;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
