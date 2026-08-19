@@ -13,7 +13,22 @@ use andromeda_postgresql_seaquery::{
     unnest::{UnnestColumn, apply_with_ordinality, unnest_call},
 };
 use andromeda_telemetry::statement::{StatementName, observe_statement};
-use sea_query::{CaseStatement, Expr, ExprTrait, Iden, Keyword, OnConflict, Order, PostgresQueryBuilder, Query, SimpleExpr};
+use sea_query::{
+    CaseStatement,
+    CommonTableExpression,
+    Condition,
+    Expr,
+    ExprTrait,
+    Iden,
+    Keyword,
+    LockType,
+    OnConflict,
+    Order,
+    PostgresQueryBuilder,
+    Query,
+    SimpleExpr,
+    WithClause,
+};
 use sqlx::{Postgres, Transaction};
 
 /// The statement name the projection upsert is observed under.
@@ -32,6 +47,36 @@ struct Staging;
 #[derive(Iden, Clone, Copy)]
 #[iden = "ordinality"]
 struct Ordinality;
+
+/// The deduplicated and geometry-validated batch rows.
+#[derive(Iden, Clone, Copy)]
+#[iden = "input"]
+struct Input;
+
+/// Input rows whose projection grain already exists, together with its TID.
+#[derive(Iden, Clone, Copy)]
+#[iden = "matched"]
+struct Matched;
+
+/// Existing projection rows changed by the batch.
+#[derive(Iden, Clone, Copy)]
+#[iden = "updated"]
+struct Updated;
+
+/// The source row's position in the caller's batch.
+#[derive(Iden, Clone, Copy)]
+#[iden = "input_id"]
+struct InputId;
+
+/// The physical identifier of a matched projection row.
+#[derive(Iden, Clone, Copy)]
+#[iden = "target_tid"]
+struct TargetTid;
+
+/// PostgreSQL's physical tuple-identifier system column.
+#[derive(Iden, Clone, Copy)]
+#[iden = "ctid"]
+struct Ctid;
 
 /// The `excluded` pseudo-relation an `ON CONFLICT DO UPDATE` action reads the
 /// proposed row from.
@@ -58,6 +103,23 @@ const REFRESHED_COLUMNS: [CurrentAttributeValues; 10] = [
     CurrentAttributeValues::ValueUri,
 ];
 
+/// All persisted projection columns, in table order.
+const PROJECTION_COLUMNS: [CurrentAttributeValues; 13] = [
+    CurrentAttributeValues::EntityKey,
+    CurrentAttributeValues::AttributeNameId,
+    CurrentAttributeValues::AttributeKind,
+    CurrentAttributeValues::ValueKind,
+    CurrentAttributeValues::ValueDatetime,
+    CurrentAttributeValues::UnitCodeId,
+    CurrentAttributeValues::ValueBool,
+    CurrentAttributeValues::DatasetId,
+    CurrentAttributeValues::ValueNumber,
+    CurrentAttributeValues::ValueString,
+    CurrentAttributeValues::ValueGeo,
+    CurrentAttributeValues::ValueObject,
+    CurrentAttributeValues::ValueUri,
+];
+
 /// Upsert a batch of attribute instances into the projection.
 ///
 /// Runs in the caller's transaction, which is the transaction that writes the
@@ -71,14 +133,20 @@ const REFRESHED_COLUMNS: [CurrentAttributeValues; 10] = [
 /// it address the same attribute; the later row wins, decided by position
 /// within the batch rather than by any timestamp a client supplied.
 ///
+/// Existing grains take an update-first path: the statement locks each match,
+/// updates it directly by `ctid` when a refreshed column differs, then inserts
+/// only inputs that had no match. `ON CONFLICT` remains on that insert solely
+/// for a concurrent transaction that creates the same missing grain. This
+/// avoids routing the normal update workload through speculative insertion.
+///
 /// A row whose projection is value-identical to what is stored is not written
-/// at all: the conflict action carries a `WHERE ROW(stored) IS DISTINCT FROM
-/// ROW(excluded)` guard over every non-grain column, so a restated reading
-/// leaves no new heap tuple, no index tuples and no WAL beyond the conflict
-/// probe. The equality is each column type's own -- PostGIS geometry `=` is
-/// exact geometry equality, jsonb `=` is structural, and `NUMERIC` `=` ignores
-/// scale (`1.0 = 1.00`), which is acceptable because no reader renders a
-/// projected number, only compares it.
+/// at all. Both the direct update and concurrent-insert fallback compare every
+/// non-grain column with `ROW(stored) IS DISTINCT FROM ROW(proposed)`, so a
+/// restated reading leaves no new heap or value-index tuple. The equality is
+/// each column type's own -- PostGIS geometry `=` is exact geometry equality,
+/// jsonb `=` is structural, and `NUMERIC` `=` ignores scale (`1.0 = 1.00`),
+/// which is acceptable because no reader renders a projected number, only
+/// compares it.
 ///
 /// The thirteen column arrays bind through `sqlx` rather than sea-query because
 /// nine of them carry NULLs (`Vec<Option<T>>`), which `sea-query-sqlx` cannot
@@ -153,9 +221,12 @@ fn staged(column: CurrentAttributeValues) -> SimpleExpr {
 /// value that moves into a different typed column is a difference on two
 /// fields at once. Written over every refreshed column rather than a subset so
 /// the guard and the `SET` list can never disagree about what "identical" means.
-fn stored_row_differs_from_proposed() -> SimpleExpr {
+fn stored_row_differs_from<T>(proposed_source: T) -> SimpleExpr
+where
+    T: Iden + Copy + Send + Sync + 'static,
+{
     let stored = Expr::tuple(REFRESHED_COLUMNS.map(|column| Expr::col((CurrentAttributeValues::Table, column))));
-    let proposed = Expr::tuple(REFRESHED_COLUMNS.map(|column| Expr::col((Excluded, column))));
+    let proposed = Expr::tuple(REFRESHED_COLUMNS.map(|column| Expr::col((proposed_source, column))));
     stored.distinct_from(proposed)
 }
 
@@ -168,12 +239,11 @@ fn stored_row_differs_from_proposed() -> SimpleExpr {
 /// the tie-break: the last position in the batch wins, which is the order the
 /// caller's operations were applied to the entity payload in.
 ///
-/// The conflict target is the natural grain, whose unique index treats two
-/// absent `datasetId` values as the same instance. That is the whole reason a
-/// default instance stays singular under repeated writes rather than
-/// accumulating a row per write. The conflict action is guarded by
-/// [`stored_row_differs_from_proposed`], so a value-identical restatement
-/// touches no row.
+/// `matched` uses NULL-safe equality for `datasetId` because absent dataset IDs
+/// identify the single default attribute instance. It locks every existing
+/// grain before `updated` changes differing rows by their physical tuple ID.
+/// The final insert excludes all matched input IDs, including value-identical
+/// rows, and retains the natural-grain conflict action for concurrent inserts.
 ///
 /// The `value_geo` column is wrapped as
 /// `CASE WHEN d.value_geo IS NOT NULL THEN ST_MakeValid(ST_GeomFromEWKB(d.value_geo)) ELSE NULL END`:
@@ -217,6 +287,7 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .expr(geometry)
         .expr(staged(CurrentAttributeValues::ValueObject))
         .expr(staged(CurrentAttributeValues::ValueUri))
+        .expr(Expr::col((Staging, Ordinality)))
         .from_function(call, Staging)
         .order_by((Staging, CurrentAttributeValues::EntityKey), Order::Asc)
         .order_by((Staging, CurrentAttributeValues::AttributeNameId), Order::Asc)
@@ -224,35 +295,83 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .order_by((Staging, Ordinality), Order::Desc);
     let select = select;
 
+    let input = CommonTableExpression::new()
+        .table_name(Input)
+        .columns(PROJECTION_COLUMNS)
+        .column(InputId)
+        .query(select)
+        .materialized(true)
+        .to_owned();
+
+    let mut matched_select = Query::select();
+    matched_select
+        .columns(PROJECTION_COLUMNS.map(|column| (Input, column)))
+        .column((Input, InputId))
+        .expr_as(Expr::col((CurrentAttributeValues::Table, Ctid)), TargetTid)
+        .from(Input)
+        .inner_join(
+            CurrentAttributeValues::Table,
+            Condition::all()
+                .add(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Input, CurrentAttributeValues::EntityKey)))
+                .add(
+                    Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId))
+                        .equals((Input, CurrentAttributeValues::AttributeNameId)),
+                )
+                .add(
+                    SimpleExpr::from(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::DatasetId)))
+                        .not_distinct_from(Expr::col((Input, CurrentAttributeValues::DatasetId))),
+                ),
+        )
+        .lock_with_tables(LockType::Update, [CurrentAttributeValues::Table]);
+    let matched = CommonTableExpression::new()
+        .table_name(Matched)
+        .columns(PROJECTION_COLUMNS)
+        .column(InputId)
+        .column(TargetTid)
+        .query(matched_select)
+        .materialized(true)
+        .to_owned();
+
+    let mut update = Query::update();
+    update
+        .table(CurrentAttributeValues::Table)
+        .values(REFRESHED_COLUMNS.map(|column| (column, Expr::col((Matched, column)))))
+        .from(Matched)
+        .and_where(Expr::col((CurrentAttributeValues::Table, Ctid)).equals((Matched, TargetTid)))
+        .and_where(stored_row_differs_from(Matched))
+        .returning_col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey));
+    let updated = CommonTableExpression::new().table_name(Updated).query(update).to_owned();
+
+    let matched_input = Query::select()
+        .expr(Expr::val(1))
+        .from(Matched)
+        .and_where(Expr::col((Matched, InputId)).equals((Input, InputId)))
+        .to_owned();
+    let mut insert_select = Query::select();
+    insert_select
+        .columns(PROJECTION_COLUMNS.map(|column| (Input, column)))
+        .from(Input)
+        .and_where(Expr::exists(matched_input).not());
+
     let conflict = OnConflict::columns([
         CurrentAttributeValues::EntityKey,
         CurrentAttributeValues::AttributeNameId,
         CurrentAttributeValues::DatasetId,
     ])
     .update_columns(REFRESHED_COLUMNS)
-    .action_and_where(stored_row_differs_from_proposed())
+    .action_and_where(stored_row_differs_from(Excluded))
     .to_owned();
 
     let mut insert = Query::insert();
-    insert.into_table(CurrentAttributeValues::Table).columns([
-        CurrentAttributeValues::EntityKey,
-        CurrentAttributeValues::AttributeNameId,
-        CurrentAttributeValues::AttributeKind,
-        CurrentAttributeValues::ValueKind,
-        CurrentAttributeValues::ValueDatetime,
-        CurrentAttributeValues::UnitCodeId,
-        CurrentAttributeValues::ValueBool,
-        CurrentAttributeValues::DatasetId,
-        CurrentAttributeValues::ValueNumber,
-        CurrentAttributeValues::ValueString,
-        CurrentAttributeValues::ValueGeo,
-        CurrentAttributeValues::ValueObject,
-        CurrentAttributeValues::ValueUri,
-    ]);
+    insert.into_table(CurrentAttributeValues::Table).columns(PROJECTION_COLUMNS);
     // `select_from` fails only on a column/expression arity mismatch, which the
     // fixed thirteen-wide column list and projection above make unreachable.
-    insert.select_from(select).map_err(|error| ContextStoreError::Internal(error.to_string()))?;
-    insert.on_conflict(conflict);
+    insert
+        .select_from(insert_select)
+        .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
+    insert
+        .on_conflict(conflict)
+        .with_cte(WithClause::new().cte(input).cte(matched).cte(updated).to_owned());
 
     let sql = insert.to_string(PostgresQueryBuilder);
     Ok(apply_with_ordinality(sql, &Staging, &columns, &Ordinality))
@@ -324,6 +443,55 @@ mod tests {
     }
 
     #[test]
+    fn existing_grains_are_locked_and_updated_before_missing_grains_are_inserted() {
+        let sql = rendered();
+        let input = sql.find(r#"WITH "input""#).expect("the statement materializes its deduplicated input");
+        let matched = sql.find(r#", "matched""#).expect("the statement materializes existing grains");
+        let updated = sql.find(r#", "updated""#).expect("the statement carries a data-modifying update CTE");
+        let insert = sql
+            .find(r#"INSERT INTO "current_attribute_values""#)
+            .expect("the statement inserts missing grains");
+        assert!(
+            input < matched && matched < updated && updated < insert,
+            "the update-first stages are out of order: {sql}"
+        );
+        assert!(
+            sql.contains(r#"FOR UPDATE OF "current_attribute_values""#),
+            "existing grains must be locked before routing: {sql}"
+        );
+        assert!(
+            sql.contains(r#"UPDATE "current_attribute_values" SET "attribute_kind" = "matched"."attribute_kind""#),
+            "existing grains must take the direct update path: {sql}"
+        );
+        assert!(
+            sql.contains(r#""current_attribute_values"."ctid" = "matched"."target_tid""#),
+            "the direct update must address exactly the tuple locked by matched: {sql}"
+        );
+    }
+
+    #[test]
+    fn default_dataset_instances_match_with_null_safe_equality() {
+        let sql = rendered();
+        assert!(
+            sql.contains(r#""current_attribute_values"."dataset_id" IS NOT DISTINCT FROM "input"."dataset_id""#),
+            "an absent datasetId identifies the one default instance: {sql}"
+        );
+    }
+
+    #[test]
+    fn only_inputs_without_a_locked_match_reach_the_insert() {
+        let sql = rendered();
+        assert!(
+            sql.contains(r#"FROM "input" WHERE NOT EXISTS(SELECT 1 FROM "matched" WHERE "matched"."input_id" = "input"."input_id")"#),
+            "matched changes and matched no-ops must both bypass insertion: {sql}"
+        );
+        assert!(
+            sql.contains(r#"ON CONFLICT ("entity_key", "attribute_name_id", "dataset_id") DO UPDATE SET"#),
+            "a concurrent creator of an unmatched grain still requires an atomic fallback: {sql}"
+        );
+    }
+
+    #[test]
     fn a_number_reaches_the_arbitrary_precision_column_rather_than_a_double() {
         let sql = rendered();
         assert!(sql.contains(r#"$9::numeric[]"#), "{sql}");
@@ -371,7 +539,11 @@ mod tests {
         ] {
             assert!(
                 sql.contains(&format!(r#""{column}" = "excluded"."{column}""#)),
-                "a superseded row must not keep its old {column}: {sql}"
+                "the concurrent-insert fallback must not keep its old {column}: {sql}"
+            );
+            assert!(
+                sql.contains(&format!(r#""{column}" = "matched"."{column}""#)),
+                "the direct update must not keep its old {column}: {sql}"
             );
         }
     }
@@ -379,6 +551,13 @@ mod tests {
     #[test]
     fn the_upsert_touches_no_row_whose_projection_is_value_identical() {
         let sql = rendered();
+        let update_start = sql.find(r#"UPDATE "current_attribute_values""#).expect("the statement has a direct update");
+        let insert_start = sql.find(r#"INSERT INTO "current_attribute_values""#).expect("the statement has a final insert");
+        let update = &sql[update_start..insert_start];
+        assert!(
+            update.contains(r#") IS DISTINCT FROM ("matched"."attribute_kind", "#),
+            "the direct update must suppress identical rows: {update}"
+        );
         let (_, action) = sql.split_once("DO UPDATE SET").expect("the statement carries a conflict action");
         let (_, guard) = action.split_once(" WHERE ").expect("the conflict action is guarded");
         assert!(guard.starts_with("(\"current_attribute_values\".\"attribute_kind\", "), "{guard}");

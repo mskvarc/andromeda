@@ -1,6 +1,6 @@
 //! Verification-matrix row "Current projection no-op suppression".
 //!
-//! The projection upsert carries an `IS DISTINCT FROM` guard over every
+//! The projection write carries an `IS DISTINCT FROM` guard over every
 //! non-grain column, so a batch that restates an instance with the value it
 //! already holds must not rewrite the row: no new heap tuple, no index tuples.
 //! The broker's own statement is driven here inside one transaction, and the
@@ -17,7 +17,7 @@ use andromeda_unit_catalog::unit_code_id::UnitCodeId;
 use pretty_assertions::assert_eq;
 use sqlx::{Postgres, Transaction};
 
-/// The rows the relation's conflict action has rewritten in this transaction.
+/// The rows the relation's update path has rewritten in this transaction.
 async fn rows_updated_in_transaction(transaction: &mut Transaction<'_, Postgres>) -> i64 {
     sqlx::query_scalar("SELECT pg_stat_get_xact_tuples_updated('current_attribute_values'::regclass)")
         .fetch_one(&mut **transaction)
@@ -59,8 +59,8 @@ async fn current_projection_restating_an_identical_value_rewrites_no_row() {
         unit_code_id,
     };
 
-    // The first write inserts; the identical restatement conflicts and its
-    // guard must keep the conflict action from touching the row.
+    // The first write inserts; the identical restatement matches and its guard
+    // must keep the direct update from touching the row.
     upsert_projection_in_tx(&mut transaction, &[row("reading-1", None)])
         .await
         .expect("the first projection write must land");
