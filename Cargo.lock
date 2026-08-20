@@ -115,7 +115,9 @@ dependencies = [
  "serial_test",
  "shadow-rs",
  "sqlx",
+ "thiserror 2.0.20",
  "tokio",
+ "url",
  "urlencoding",
  "uuid",
 ]

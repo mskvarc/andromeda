@@ -1,0 +1,98 @@
+# Multi-instance Andromeda topology for distributed-operations conformance testing.
+#
+# Three broker instances share one TimescaleDB/PostGIS Postgres (one database each,
+# created by ./initdb). Each instance has a distinct Context Source identity/alias so
+# loop detection (Via / contextSourceAlias) behaves as in a real federation.
+#
+# Host-facing ports (used by the test client running on the host):
+#   broker-a -> http://127.0.0.1:1061/ngsi-ld/v1/
+#   broker-b -> http://127.0.0.1:1062/ngsi-ld/v1/
+#   broker-c -> http://127.0.0.1:1063/ngsi-ld/v1/
+#
+# Peer-facing URLs (used INSIDE Context Source Registration `endpoint`, because one
+# broker calls another over the compose network, NOT via localhost):
+#   broker-a -> http://broker-a:1056
+#   broker-b -> http://broker-b:1056
+#   broker-c -> http://broker-c:1056
+#
+# Bring up:  docker compose -f docker/distributed/docker-compose.distributed.yaml up --build
+name: andromeda-distributed
+
+x-broker-base: &broker-base
+  build:
+    context: ../..
+    dockerfile: docker/andromeda/Dockerfile
+  image: andromeda-distributed:latest
+  command: ["run"]
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+  # Lets each broker reach mock Context Sources / notification receivers that the
+  # test process runs on the host (ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal).
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  environment: &broker-env
+    ANDROMEDA_SERVER_HOST: "0.0.0.0"
+    ANDROMEDA_SERVER_PORT: "1056"
+    ANDROMEDA_TENANCY_ENABLED: "true"
+    ANDROMEDA_NOTIFICATION_DELIVERY_ENABLED: "true"
+    ANDROMEDA_OBSERVABILITY_LOG_LEVEL: "info"
+  healthcheck:
+    # 127.0.0.1, not localhost: the broker listens on IPv4 0.0.0.0, but localhost
+    # resolves to IPv6 ::1 first in the image, giving a false "connection refused".
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:1056/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+    start_period: 5s
+
+services:
+  postgres:
+    build:
+      context: ../postgresql
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Host 5442 to avoid colliding with other local Postgres instances on 5432;
+      # brokers reach Postgres over the compose network on 5432 regardless.
+      - "5442:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 40
+
+  broker-a:
+    <<: *broker-base
+    environment:
+      <<: *broker-env
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_a"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "broker-a"
+    ports:
+      - "1061:1056"
+
+  broker-b:
+    <<: *broker-base
+    environment:
+      <<: *broker-env
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_b"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-b"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "broker-b"
+    ports:
+      - "1062:1056"
+
+  broker-c:
+    <<: *broker-base
+    environment:
+      <<: *broker-env
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_c"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-c"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "broker-c"
+    ports:
+      - "1063:1056"

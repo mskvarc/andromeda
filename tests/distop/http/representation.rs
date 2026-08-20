@@ -1,0 +1,337 @@
+//! Representation and format negotiation (clause 6.3.7, 6.3.8, 4.5.16): the
+//! simplified `keyValues` form, the normalized default forwarded to sources, the
+//! GeoJSON `Feature`/`FeatureCollection` forms, the `501` on an unsupported
+//! forwarded representation, and the `203 Preference-Applied` version-amendment
+//! responses (not yet implemented).
+
+use crate::{
+    context_source_adapter::ContextSourceAdapter,
+    entity::{entity, property, vehicle},
+    http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, forwarded_entity_path, retrieval_source},
+    oracle::{assert_status, json_body},
+    topology::DistributedTopology,
+};
+use reqwest::Method;
+use serde_json::json;
+use std::time::Duration;
+
+/// A location GeoProperty node for a `Vehicle`, so GeoJSON rendering has a
+/// geometry to project.
+fn located_vehicle(id: &str) -> serde_json::Value {
+    entity(
+        id,
+        "Vehicle",
+        &[
+            ("speed", property(json!(42))),
+            (
+                "location",
+                json!({ "type": "GeoProperty", "value": { "type": "Point", "coordinates": [13.4, 52.5] } }),
+            ),
+        ],
+    )
+}
+
+/// `options=keyValues` returns the simplified representation, collapsing each
+/// attribute to its value (clause 4.5.16). Confirms REQ-HTTP-1.
+#[tokio::test]
+async fn dist_http_query_format_key_values_returns_simplified_representation() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:kv");
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .post_entity(&vehicle(&entity_id, 42))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local create"),
+        201,
+    );
+
+    let response = topology
+        .front()
+        .client()
+        .query_entities("type=Vehicle&options=keyValues", "application/ld+json", Some(context_link()))
+        .await
+        .expect("keyValues query");
+    assert_status(&response, 200);
+    let entities = json_body(&response);
+    let found = entities
+        .as_array()
+        .unwrap_or_else(|| unreachable!("query returns an array"))
+        .iter()
+        .find(|entity| entity["id"].as_str() == Some(entity_id.as_str()));
+    let found = found.unwrap_or_else(|| unreachable!("the created vehicle is returned"));
+    assert_eq!(found["speed"].as_i64(), Some(42), "keyValues collapses the attribute to its raw value");
+
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A forwarded query defaults to the normalized representation so results remain
+/// mergeable, even when the client asked for `keyValues` (clause 6.3.8).
+/// Confirms REQ-HTTP-2.
+#[tokio::test]
+async fn dist_http_forwarded_query_defaults_to_normalized_representation() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:fwd-normalized");
+    let reg_id = topology.id("registration:fwd-normalized");
+    let mock = ContextSourceAdapter::start().await;
+
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .await
+            .expect("register source"),
+        201,
+    );
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
+
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .query_entities("type=Vehicle&options=keyValues", "application/ld+json", Some(context_link()))
+            .await
+            .expect("forwarded query"),
+        200,
+    );
+    let forwarded = mock.next_request(Duration::from_secs(5)).await;
+    assert!(
+        forwarded.uri.query().is_none_or(|query| !query.contains("keyValues")),
+        "a forwarded query must default to normalized, got {:?}",
+        forwarded.uri.query()
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A single source that cannot serve the requested representation maps to
+/// `501 Not Implemented` (clause 6.3.16). Confirms REQ-HTTP-3.
+#[tokio::test]
+async fn dist_http_forwarded_query_unsupported_representation_returns_501() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:fwd-501");
+    let reg_id = topology.id("registration:fwd-501");
+    let mock = ContextSourceAdapter::start().await;
+
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
+            .await
+            .expect("register source"),
+        201,
+    );
+    mock.set_stub(Method::GET, FORWARDED_ENTITIES_PATH, 501).await;
+
+    let response = topology
+        .front()
+        .client()
+        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .await
+        .expect("forwarded query");
+    assert_status(&response, 501);
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A GeoJSON `Accept` on a query returns a `FeatureCollection` (clause 6.3.7).
+/// Confirms REQ-HTTP-56.
+#[tokio::test]
+async fn dist_http_query_geojson_accept_returns_feature_collection() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:geo-collection");
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .post_entity(&located_vehicle(&entity_id))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local create"),
+        201,
+    );
+
+    let response = topology
+        .front()
+        .client()
+        .query_entities("type=Vehicle", "application/geo+json", Some(context_link()))
+        .await
+        .expect("geojson query");
+    assert_status(&response, 200);
+    assert_eq!(
+        json_body(&response)["type"].as_str(),
+        Some("FeatureCollection"),
+        "a GeoJSON query returns a FeatureCollection"
+    );
+
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A GeoJSON `Accept` on a retrieve returns a `Feature` (clause 6.3.7).
+/// Confirms REQ-HTTP-67.
+#[tokio::test]
+async fn dist_http_retrieve_geojson_accept_returns_feature() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:geo-feature");
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .post_entity(&located_vehicle(&entity_id))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local create"),
+        201,
+    );
+
+    let response = topology
+        .front()
+        .client()
+        .get_entity(&entity_id, "", "application/geo+json", Some(context_link()))
+        .await
+        .expect("geojson retrieve");
+    assert_status(&response, 200);
+    assert_eq!(json_body(&response)["type"].as_str(), Some("Feature"), "a GeoJSON retrieve returns a Feature");
+
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A version-amended query returns `203` with `Preference-Applied`. Version
+/// amendment is not yet implemented. Confirms REQ-HTTP-55.
+#[ignore = "UNKNOWN REQ-HTTP-55: 203 Preference-Applied version amendment pending"]
+#[tokio::test]
+async fn dist_http_query_version_amended_returns_203_preference_applied() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:amend-query");
+    let reg_id = topology.id("registration:amend-query");
+    let mock = ContextSourceAdapter::start().await;
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .await
+            .expect("register source"),
+        201,
+    );
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
+
+    let response = topology
+        .front()
+        .client()
+        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .await
+        .expect("amended query");
+    assert_status(&response, 203);
+    assert!(
+        response.headers.get("preference-applied").is_some(),
+        "a version-amended response carries Preference-Applied"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A version-amended retrieve returns `203` with `Preference-Applied`. Version
+/// amendment is not yet implemented. Confirms REQ-HTTP-66.
+#[ignore = "UNKNOWN REQ-HTTP-66: 203 Preference-Applied version amendment pending"]
+#[tokio::test]
+async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:amend-retrieve");
+    let reg_id = topology.id("registration:amend-retrieve");
+    let mock = ContextSourceAdapter::start().await;
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
+            .await
+            .expect("register source"),
+        201,
+    );
+    mock.set_stub_with_body(Method::GET, &forwarded_entity_path(&entity_id), 200, &vehicle(&entity_id, 5))
+        .await;
+
+    let response = topology
+        .front()
+        .client()
+        .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
+        .await
+        .expect("amended retrieve");
+    assert_status(&response, 203);
+    assert!(
+        response.headers.get("preference-applied").is_some(),
+        "a version-amended response carries Preference-Applied"
+    );
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A version-amended entityMaps response returns `203` with `Preference-Applied`.
+/// Version amendment is not yet implemented. Confirms REQ-HTTP-99.
+#[ignore = "UNKNOWN REQ-HTTP-99: 203 Preference-Applied version amendment pending"]
+#[tokio::test]
+async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let response = topology
+        .front()
+        .client()
+        .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
+        .header("accept", "application/ld+json")
+        .header("link", context_link_header())
+        .send()
+        .await
+        .expect("entity-maps request");
+    assert_status(&response, 203);
+    assert!(
+        response.headers.get("preference-applied").is_some(),
+        "a version-amended response carries Preference-Applied"
+    );
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A profile `Link` header selecting an NGSI-LD version is accepted, falling back
+/// across advertised versions. Profile version negotiation is not yet
+/// implemented. Confirms REQ-HTTP-45.
+#[ignore = "UNKNOWN REQ-HTTP-45: profile Link version fallbacks pending"]
+#[tokio::test]
+async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:profile");
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .post_entity(&vehicle(&entity_id, 5))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local create"),
+        201,
+    );
+
+    let response = topology
+        .front()
+        .client()
+        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .header("accept", "application/ld+json")
+        .header("link", context_link_header())
+        .header("link", "<https://uri.etsi.org/ngsi-ld/v1.9>; rel=\"profile\"")
+        .send()
+        .await
+        .expect("profile-link query");
+    assert_status(&response, 200);
+
+    topology.finish().await.expect("topology cleanup");
+}
