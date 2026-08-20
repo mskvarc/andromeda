@@ -76,6 +76,12 @@ impl SchemaContract {
     }
 }
 
+/// Return the tenant schema contract embedded in the running broker binary.
+pub fn current_tenant_schema_contract() -> Result<SchemaContract, SchemaContractError> {
+    let migrator = sqlx::migrate!("../../migrations/tenant");
+    SchemaContract::of(&migrator)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::schema_contract::{contract::SchemaContract, error::SchemaContractError, migrations_digest::MigrationsDigest};

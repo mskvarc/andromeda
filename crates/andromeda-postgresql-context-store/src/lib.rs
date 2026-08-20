@@ -28,6 +28,8 @@ pub mod error;
 pub mod health;
 /// Persistence layer for JSON-LD context documents.
 pub mod jsonld_context;
+/// PostgreSQL maintenance configuration owned beside the database connection settings.
+pub mod maintenance_config;
 /// Persistence layer for the notification delivery queue.
 pub mod notification_delivery;
 /// Durable side-effect queue for opt-in async batch processing.

@@ -222,7 +222,10 @@ mod tests {
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
     use andromeda_notification::delivery_config::DeliveryConfig;
     use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
-    use andromeda_postgresql_context_store::config::{DatabaseConfig, SynchronousCommit};
+    use andromeda_postgresql_context_store::{
+        config::{DatabaseConfig, SynchronousCommit},
+        maintenance_config::MaintenanceConfig,
+    };
     use andromeda_snapshot::config::SnapshotConfig;
     use andromeda_temporal::config::TemporalAppendMode;
     use serial_test::serial;
@@ -260,6 +263,7 @@ mod tests {
                 synchronous_commit: SynchronousCommit::Off,
                 preload_name_dictionaries: true,
                 context_hit_flush_secs: 5,
+                maintenance: MaintenanceConfig::default(),
             },
             jsonld: JsonLdConfig {
                 allow_remote_contexts: true,
@@ -485,6 +489,39 @@ ping_interval_secs = 45
 
     #[test]
     #[serial]
+    fn maintenance_modes_and_profiles_load_from_the_database_section() {
+        for (mode, profile) in [
+            ("disabled", "conservative"),
+            ("disabled", "responsive"),
+            ("observe", "conservative"),
+            ("observe", "responsive"),
+            ("automatic", "conservative"),
+            ("automatic", "responsive"),
+        ] {
+            let path = write_temp_config(&format!("[database.maintenance]\nmode = \"{mode}\"\nprofile = \"{profile}\"\n"));
+            let config = RuntimeConfig::load(&path, ServerOverrides::default()).expect("maintenance config should load");
+            fs::remove_file(path).expect("temp config should be removed");
+            assert_eq!(config.database.maintenance.mode.to_string(), mode);
+            assert_eq!(config.database.maintenance.profile.to_string(), profile);
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn invalid_maintenance_values_are_rejected() {
+        for body in [
+            "[database.maintenance]\nmode = \"enabled\"\n",
+            "[database.maintenance]\nprofile = \"aggressive\"\n",
+        ] {
+            let path = write_temp_config(body);
+            let result = RuntimeConfig::load(&path, ServerOverrides::default());
+            fs::remove_file(path).expect("temp config should be removed");
+            assert!(result.is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    #[serial]
     fn env_overrides_file() {
         let path = write_temp_config(
             r#"
@@ -530,6 +567,9 @@ port = 1600
 
         assert!(!rendered.contains("postgres://secret"));
         assert!(rendered.contains("redacted.invalid"));
+        assert!(rendered.contains("[database.maintenance]"));
+        assert!(rendered.contains("mode = \"disabled\""));
+        assert!(rendered.contains("profile = \"conservative\""));
     }
 
     #[test]

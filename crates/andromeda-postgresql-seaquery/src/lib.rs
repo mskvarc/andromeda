@@ -26,6 +26,7 @@ pub mod introspection;
 pub mod jsonb;
 pub mod literal;
 pub mod ltree;
+pub mod maintenance;
 pub mod operator;
 pub mod pg_array;
 pub mod pg_operator;

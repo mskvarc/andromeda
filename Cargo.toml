@@ -145,6 +145,7 @@ andromeda-postgresql-codes = { path = "crates/andromeda-postgresql-codes" }
 andromeda-postgresql-context-query = { path = "crates/andromeda-postgresql-context-query" }
 andromeda-postgresql-context-store = { path = "crates/andromeda-postgresql-context-store" }
 andromeda-postgresql-encoding = { path = "crates/andromeda-postgresql-encoding" }
+andromeda-postgresql-maintenance = { path = "crates/andromeda-postgresql-maintenance" }
 andromeda-postgresql-name-dictionary = { path = "crates/andromeda-postgresql-name-dictionary" }
 andromeda-postgresql-query = { path = "crates/andromeda-postgresql-query" }
 andromeda-postgresql-schema = { path = "crates/andromeda-postgresql-schema" }

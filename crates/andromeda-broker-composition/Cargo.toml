@@ -42,6 +42,7 @@ andromeda-ngsi-ld-representation.workspace = true
 andromeda-notification.workspace = true
 andromeda-postgresql-atomic-write.workspace = true
 andromeda-postgresql-context-store.workspace = true
+andromeda-postgresql-maintenance.workspace = true
 andromeda-postgresql-name-dictionary.workspace = true
 andromeda-postgresql-temporal-store.workspace = true
 andromeda-registration.workspace = true

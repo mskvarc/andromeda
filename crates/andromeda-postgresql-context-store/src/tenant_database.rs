@@ -6,7 +6,7 @@
 
 use crate::{
     error::ContextStoreError,
-    schema_contract::{contract::SchemaContract, schema_metadata::ensure_schema_contract},
+    schema_contract::{contract::current_tenant_schema_contract, schema_metadata::ensure_schema_contract},
     schema_ddl::{database::create_database, session::set_synchronous_commit},
 };
 use andromeda_ngsi_ld_lexicon::tenant::TenantName;
@@ -166,7 +166,7 @@ pub async fn migrate_tenant_db(pool: &sqlx::PgPool) -> Result<(), ContextStoreEr
     tenant_migrator.set_ignore_missing(true);
     tenant_migrator.run(pool).await?;
 
-    let contract = SchemaContract::of(&tenant_migrator)?;
+    let contract = current_tenant_schema_contract()?;
     ensure_schema_contract(pool, &contract).await?;
     Ok(())
 }

@@ -17,6 +17,14 @@ pub const DB_POOL_IDLE_CONNECTIONS: &str = "andromeda_db_pool_idle_connections";
 pub const QUEUE_OUTCOMES_TOTAL: &str = "andromeda_queue_outcomes_total";
 /// Histogram of subscription candidates surviving each funnel stage per event.
 pub const SUBSCRIPTION_CANDIDATES: &str = "andromeda_subscription_candidates";
+/// Counter of adaptive PostgreSQL maintenance decisions.
+pub const POSTGRESQL_MAINTENANCE_DECISIONS_TOTAL: &str = "andromeda_postgresql_maintenance_decisions_total";
+/// Counter of PostgreSQL maintenance action outcomes.
+pub const POSTGRESQL_MAINTENANCE_ACTIONS_TOTAL: &str = "andromeda_postgresql_maintenance_actions_total";
+/// Histogram of PostgreSQL maintenance action wall-clock seconds.
+pub const POSTGRESQL_MAINTENANCE_ACTION_SECONDS: &str = "andromeda_postgresql_maintenance_action_seconds";
+/// Histogram of bytes physically reclaimed by PostgreSQL maintenance actions.
+pub const POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES: &str = "andromeda_postgresql_maintenance_reclaimed_bytes";
 
 /// The `statement` label naming a database statement.
 pub const LABEL_STATEMENT: &str = "statement";
@@ -28,3 +36,7 @@ pub const LABEL_QUEUE: &str = "queue";
 pub const LABEL_OUTCOME: &str = "outcome";
 /// The `stage` label naming a subscription funnel stage.
 pub const LABEL_STAGE: &str = "stage";
+/// The `decision` label naming a maintenance pass result.
+pub const LABEL_DECISION: &str = "decision";
+/// The `action` label naming a bounded maintenance operation family.
+pub const LABEL_ACTION: &str = "action";

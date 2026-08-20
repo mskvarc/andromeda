@@ -1,0 +1,403 @@
+//! One bounded, fleet-serialized PostgreSQL maintenance controller pass.
+
+use crate::{
+    action,
+    candidate::{IndexTarget, MaintenanceTarget},
+    error::MaintenanceError,
+    inspection::{self, CapabilityStatus, HeapSample, IndexSize, MutationPrivilege},
+    policy::{DeferralReason, PolicyDecision, PolicyProfile, SafetyGates, decide, safety_deferral},
+    state::{self, IndexProbeState, RegisteredTenant},
+};
+use andromeda_postgresql_context_store::{
+    maintenance_config::{MaintenanceConfig, MaintenanceMode},
+    schema_contract::{contract::current_tenant_schema_contract, schema_metadata::verify_schema_contract},
+    tenant_database::{DatabaseUrl, configure_pool_options},
+};
+use andromeda_telemetry::maintenance::{MaintenanceDecision, record_decision};
+use chrono::{DateTime, Utc};
+use sqlx::{PgConnection, PgPool};
+use strum::Display;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
+
+/// Result of one bounded controller pass.
+#[derive(Clone, Copy, Debug, Display, Eq, PartialEq)]
+#[strum(serialize_all = "kebab-case")]
+pub enum PassOutcome {
+    /// Configuration disables registration and execution.
+    Disabled,
+    /// Another broker replica owns the fleet lock.
+    GlobalLockUnavailable,
+    /// No active tenant is registered.
+    NoTenant,
+    /// The selected database could not be reached.
+    TenantUnavailable,
+    /// Normal tenant startup has not migrated the database to this binary's contract.
+    SchemaBehind,
+    /// The selected database lacks an enabled maintenance capability.
+    CapabilityUnavailable,
+    /// Cheap inspection found no target requiring a detailed probe.
+    Idle,
+    /// One physical index probe completed.
+    Probed,
+    /// A target accumulated enough consecutive evidence and was queued.
+    Queued,
+    /// Observe mode reported a mutation it would otherwise execute.
+    WouldAct,
+    /// A safety gate deferred detailed inspection or mutation.
+    Deferred,
+    /// One maintenance or recovery statement succeeded.
+    Acted,
+    /// A maintenance statement failed and remains retryable.
+    ActionFailed,
+    /// Cooperative cancellation stopped the pass and released its connections.
+    Cancelled,
+}
+
+/// Process-scoped adaptive PostgreSQL controller.
+pub struct MaintenanceController {
+    /// Platform registry and durable-state pool.
+    platform_pool: PgPool,
+    /// Base URL from which tenant database URLs are derived.
+    database_url: DatabaseUrl,
+    /// Mode and fixed profile selection.
+    config: MaintenanceConfig,
+    /// Per-connection durability setting retained from broker configuration.
+    synchronous_commit_setting: &'static str,
+}
+
+impl MaintenanceController {
+    /// Construct a controller over the shared platform registry.
+    pub const fn new(
+        platform_pool: PgPool,
+        database_url: DatabaseUrl,
+        config: MaintenanceConfig,
+        synchronous_commit_setting: &'static str,
+    ) -> MaintenanceController {
+        MaintenanceController {
+            platform_pool,
+            database_url,
+            config,
+            synchronous_commit_setting,
+        }
+    }
+
+    /// Execute one fair, fleet-serialized inspection pass.
+    pub async fn run(&self, cancellation: &CancellationToken) -> Result<PassOutcome, MaintenanceError> {
+        let result = self.run_unrecorded(cancellation).await;
+        if let Ok(outcome) = result.as_ref() {
+            record_decision(metric_decision(*outcome));
+        }
+        result
+    }
+
+    /// Execute one pass before bounded-cardinality metric recording.
+    async fn run_unrecorded(&self, cancellation: &CancellationToken) -> Result<PassOutcome, MaintenanceError> {
+        if self.config.mode == MaintenanceMode::Disabled {
+            return Ok(PassOutcome::Disabled);
+        }
+        let mut platform = self.platform_pool.acquire().await?;
+        platform.close_on_drop();
+        if !state::try_global_lock(&mut platform).await? {
+            info!(
+                decision = "deferred",
+                reason = "global-lock-unavailable",
+                "PostgreSQL maintenance pass deferred"
+            );
+            return Ok(PassOutcome::GlobalLockUnavailable);
+        }
+        let result = self.run_locked(&mut platform, cancellation).await;
+        let release = state::release_global_lock(&mut platform).await;
+        match (result, release) {
+            (Ok(outcome), Ok(())) => Ok(outcome),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(error)) | (Err(_), Err(error)) => Err(error),
+        }
+    }
+
+    /// Execute the selected tenant pass while the global session lock is held.
+    async fn run_locked(&self, platform: &mut PgConnection, cancellation: &CancellationToken) -> Result<PassOutcome, MaintenanceError> {
+        if cancellation.is_cancelled() {
+            return Ok(PassOutcome::Cancelled);
+        }
+        let Some(tenant) = state::select_least_recently_inspected(platform).await? else {
+            return Ok(PassOutcome::NoTenant);
+        };
+        state::mark_inspected(platform, &tenant, "started").await?;
+        let tenant_url = self.database_url.with_db_name(&tenant.database);
+        let pool_result = tokio::select! {
+            () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
+            result = configure_pool_options(1, self.synchronous_commit_setting).connect(tenant_url.as_str()) => result,
+        };
+        let tenant_pool = match pool_result {
+            Ok(pool) => pool,
+            Err(error) => {
+                state::mark_tenant_failure(platform, &tenant).await?;
+                warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "tenant-unavailable", "PostgreSQL maintenance pass deferred");
+                return Ok(PassOutcome::TenantUnavailable);
+            }
+        };
+        let contract = current_tenant_schema_contract()?;
+        if let Err(error) = verify_schema_contract(&tenant_pool, &contract).await {
+            state::mark_inspected(platform, &tenant, "schema-behind").await?;
+            warn!(tenant = tenant.log_name(), database = %tenant.database, error = %error, decision = "schema-behind", "PostgreSQL maintenance does not migrate idle tenant schemas");
+            tenant_pool.close().await;
+            return Ok(PassOutcome::SchemaBehind);
+        }
+        let mut connection = tenant_pool.acquire().await?;
+        connection.close_on_drop();
+        inspection::configure_session(&mut connection).await?;
+        let mutation = match self.config.mode {
+            MaintenanceMode::Disabled | MaintenanceMode::Observe => MutationPrivilege::NotRequired,
+            MaintenanceMode::Automatic => MutationPrivilege::Required,
+        };
+        let capability = inspection::validate_capabilities(&mut connection, mutation).await?;
+        if capability != CapabilityStatus::Ready {
+            state::mark_inspected(platform, &tenant, capability_label(capability)).await?;
+            warn!(tenant = tenant.log_name(), database = %tenant.database, capability = ?capability, decision = "capability-unavailable", "PostgreSQL maintenance pass deferred");
+            return Ok(PassOutcome::CapabilityUnavailable);
+        }
+
+        let profile = PolicyProfile::from_profile(self.config.profile);
+        let invalid = inspection::invalid_indexes(&mut connection).await?;
+        let index_sizes = inspection::index_sizes(&mut connection).await?;
+        let heap_samples = inspection::heap_samples(&mut connection, profile).await?;
+        let pending_before_sampling = state::pending_action(platform, &tenant).await?;
+        let probe_states = state::index_probe_states(platform, &tenant).await?;
+        let sampling_outcome = self.record_heap_samples(platform, &tenant, &heap_samples, profile).await?;
+
+        for index in &invalid {
+            if index.recovery_artifact().is_none() {
+                warn!(tenant = tenant.log_name(), database = %tenant.database, target = index.name(), decision = "invalid-index-reported", "Invalid non-maintenance index requires operator investigation");
+            }
+        }
+        if let Some((artifact, kind)) = invalid.iter().find_map(|index| index.recovery_artifact()) {
+            return action::recover_artifact(self.config.mode, platform, &mut connection, &tenant, artifact, kind, profile, cancellation).await;
+        }
+        if let Some(target) = pending_before_sampling {
+            return action::execute_pending(self.config.mode, platform, &mut connection, &tenant, target, profile, cancellation).await;
+        }
+
+        let Some(size) = highest_priority_probe_candidate(&index_sizes, &probe_states, profile, Utc::now()) else {
+            let outcome = sampling_outcome.unwrap_or(PassOutcome::Idle);
+            state::mark_inspected(platform, &tenant, outcome_label(outcome)).await?;
+            return Ok(outcome);
+        };
+        let target = MaintenanceTarget::Index(size.target);
+        let gates = inspection::safety_gates(&mut connection, target).await?;
+        if let Some(reason) = safety_deferral(profile, gates) {
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), decision = "deferred", reason = ?reason, "PostgreSQL maintenance probe deferred");
+            state::mark_inspected(platform, &tenant, "deferred").await?;
+            return Ok(PassOutcome::Deferred);
+        }
+        let measured = tokio::select! {
+            () = cancellation.cancelled() => return Ok(PassOutcome::Cancelled),
+            result = inspection::probe_index(&mut connection, size, profile) => result?,
+        };
+        let target_state = state::load_target_state(platform, &tenant, target).await?;
+        let decision = decide(self.config.mode, profile, target_state, measured, idle_gates(), Utc::now());
+        state::record_decision(platform, &tenant, target, Some(measured), decision).await?;
+        let outcome = match decision {
+            PolicyDecision::Queued => PassOutcome::Queued,
+            PolicyDecision::WouldAct => PassOutcome::WouldAct,
+            PolicyDecision::Act => PassOutcome::WouldAct,
+            PolicyDecision::Deferred(
+                DeferralReason::RelationTooSmall
+                | DeferralReason::ReclaimTooSmall
+                | DeferralReason::BelowThreshold
+                | DeferralReason::ConsecutiveSamples
+                | DeferralReason::Cooldown
+                | DeferralReason::ActiveBackendRatio
+                | DeferralReason::LongTransaction
+                | DeferralReason::ActiveMaintenance
+                | DeferralReason::WaitingRelationLock,
+            ) => sampling_outcome.unwrap_or(PassOutcome::Probed),
+        };
+        info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), relation_bytes = measured.relation_bytes, reclaimable_bytes = measured.reclaimable_bytes, degraded_percent = measured.degraded_percent, decision = ?decision, "PostgreSQL maintenance index probe completed");
+        state::mark_inspected(platform, &tenant, outcome_label(outcome)).await?;
+        Ok(outcome)
+    }
+
+    /// Persist cheap heap evidence without executing newly queued work in this pass.
+    async fn record_heap_samples(
+        &self,
+        platform: &mut PgConnection,
+        tenant: &RegisteredTenant,
+        samples: &[HeapSample],
+        profile: PolicyProfile,
+    ) -> Result<Option<PassOutcome>, MaintenanceError> {
+        let mut outcome = None;
+        for sample in samples {
+            let target = MaintenanceTarget::Heap(sample.target);
+            let target_state = state::load_target_state(platform, tenant, target).await?;
+            let decision = decide(self.config.mode, profile, target_state, sample.degradation, idle_gates(), Utc::now());
+            state::record_decision(platform, tenant, target, Some(sample.degradation), decision).await?;
+            info!(tenant = tenant.log_name(), database = %tenant.database, target = target.state_key(), relation_bytes = sample.degradation.relation_bytes, reclaimable_bytes = sample.degradation.reclaimable_bytes, degraded_percent = sample.degradation.degraded_percent, decision = ?decision, "PostgreSQL maintenance heap sample completed");
+            match decision {
+                PolicyDecision::Queued => outcome = Some(PassOutcome::Queued),
+                PolicyDecision::WouldAct if outcome.is_none() => outcome = Some(PassOutcome::WouldAct),
+                PolicyDecision::Act
+                | PolicyDecision::WouldAct
+                | PolicyDecision::Deferred(
+                    DeferralReason::RelationTooSmall
+                    | DeferralReason::ReclaimTooSmall
+                    | DeferralReason::BelowThreshold
+                    | DeferralReason::ConsecutiveSamples
+                    | DeferralReason::Cooldown
+                    | DeferralReason::ActiveBackendRatio
+                    | DeferralReason::LongTransaction
+                    | DeferralReason::ActiveMaintenance
+                    | DeferralReason::WaitingRelationLock,
+                ) => {}
+            }
+        }
+        Ok(outcome)
+    }
+}
+
+/// Pick the least-recently-probed eligible index, breaking ties by size.
+fn highest_priority_probe_candidate(sizes: &[IndexSize], states: &[IndexProbeState], profile: PolicyProfile, now: DateTime<Utc>) -> Option<IndexSize> {
+    sizes
+        .iter()
+        .copied()
+        .filter(|size| size.bytes >= profile.minimum_relation_bytes && IndexTarget::PROBEABLE.contains(&size.target))
+        .filter(|size| {
+            states
+                .iter()
+                .find(|state| state.target == size.target)
+                .and_then(|state| state.cooldown_until)
+                .is_none_or(|cooldown_until| cooldown_until <= now)
+        })
+        .min_by(|left, right| {
+            let left_sampled = states.iter().find(|state| state.target == left.target).and_then(|state| state.last_sampled_at);
+            let right_sampled = states.iter().find(|state| state.target == right.target).and_then(|state| state.last_sampled_at);
+            left_sampled.cmp(&right_sampled).then_with(|| right.bytes.cmp(&left.bytes))
+        })
+}
+
+/// Safety gates used while merely accumulating cheap evidence.
+const fn idle_gates() -> SafetyGates {
+    SafetyGates {
+        active_backend_percent: 0,
+        oldest_transaction_seconds: 0,
+        active_maintenance: false,
+        waiting_relation_lock: false,
+    }
+}
+
+/// Stable per-database capability outcome label.
+const fn capability_label(status: CapabilityStatus) -> &'static str {
+    match status {
+        CapabilityStatus::Ready => "ready",
+        CapabilityStatus::MissingPgstattuple => "missing-pgstattuple",
+        CapabilityStatus::MissingPgstattupleExecute => "missing-pgstattuple-execute",
+        CapabilityStatus::MissingMaintain => "missing-maintain",
+    }
+}
+
+/// Stable persisted pass outcome label.
+const fn outcome_label(outcome: PassOutcome) -> &'static str {
+    match outcome {
+        PassOutcome::Disabled => "disabled",
+        PassOutcome::GlobalLockUnavailable => "global-lock-unavailable",
+        PassOutcome::NoTenant => "no-tenant",
+        PassOutcome::TenantUnavailable => "tenant-unavailable",
+        PassOutcome::SchemaBehind => "schema-behind",
+        PassOutcome::CapabilityUnavailable => "capability-unavailable",
+        PassOutcome::Idle => "idle",
+        PassOutcome::Probed => "probed",
+        PassOutcome::Queued => "queued",
+        PassOutcome::WouldAct => "would-act",
+        PassOutcome::Deferred => "deferred",
+        PassOutcome::Acted => "acted",
+        PassOutcome::ActionFailed => "action-failed",
+        PassOutcome::Cancelled => "cancelled",
+    }
+}
+
+/// Map a pass result to the telemetry crate's stable label domain.
+const fn metric_decision(outcome: PassOutcome) -> MaintenanceDecision {
+    match outcome {
+        PassOutcome::Disabled => MaintenanceDecision::Disabled,
+        PassOutcome::GlobalLockUnavailable => MaintenanceDecision::GlobalLockUnavailable,
+        PassOutcome::NoTenant => MaintenanceDecision::NoTenant,
+        PassOutcome::TenantUnavailable => MaintenanceDecision::TenantUnavailable,
+        PassOutcome::SchemaBehind => MaintenanceDecision::SchemaBehind,
+        PassOutcome::CapabilityUnavailable => MaintenanceDecision::CapabilityUnavailable,
+        PassOutcome::Idle => MaintenanceDecision::Idle,
+        PassOutcome::Probed => MaintenanceDecision::Probed,
+        PassOutcome::Queued => MaintenanceDecision::Queued,
+        PassOutcome::WouldAct => MaintenanceDecision::WouldAct,
+        PassOutcome::Deferred => MaintenanceDecision::Deferred,
+        PassOutcome::Acted => MaintenanceDecision::Acted,
+        PassOutcome::ActionFailed => MaintenanceDecision::ActionFailed,
+        PassOutcome::Cancelled => MaintenanceDecision::Cancelled,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{candidate::IndexTarget, controller::highest_priority_probe_candidate, inspection::IndexSize, policy::PolicyProfile, state::IndexProbeState};
+    use andromeda_postgresql_context_store::maintenance_config::MaintenanceProfile;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn the_trigram_gin_is_never_selected_for_direct_probe() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let sizes = [
+            IndexSize {
+                target: IndexTarget::IdxCavAttrStringTrgm,
+                bytes: profile.minimum_relation_bytes * 10,
+            },
+            IndexSize {
+                target: IndexTarget::IdxCavAttrString,
+                bytes: profile.minimum_relation_bytes,
+            },
+        ];
+        assert_eq!(
+            highest_priority_probe_candidate(&sizes, &[], profile, Utc::now()).map(|size| size.target),
+            Some(IndexTarget::IdxCavAttrString)
+        );
+    }
+
+    #[test]
+    fn detailed_probes_rotate_and_skip_successful_cooldowns() {
+        let profile = PolicyProfile::from_profile(MaintenanceProfile::Responsive);
+        let now = Utc::now();
+        let sizes = [
+            IndexSize {
+                target: IndexTarget::IdxCavAttrNumber,
+                bytes: profile.minimum_relation_bytes * 2,
+            },
+            IndexSize {
+                target: IndexTarget::IdxCavAttrString,
+                bytes: profile.minimum_relation_bytes,
+            },
+            IndexSize {
+                target: IndexTarget::IdxCavAttrBool,
+                bytes: profile.minimum_relation_bytes,
+            },
+        ];
+        let states = [
+            IndexProbeState {
+                target: IndexTarget::IdxCavAttrNumber,
+                last_sampled_at: None,
+                cooldown_until: Some(now + Duration::hours(1)),
+            },
+            IndexProbeState {
+                target: IndexTarget::IdxCavAttrString,
+                last_sampled_at: Some(now - Duration::minutes(1)),
+                cooldown_until: None,
+            },
+            IndexProbeState {
+                target: IndexTarget::IdxCavAttrBool,
+                last_sampled_at: Some(now - Duration::minutes(2)),
+                cooldown_until: None,
+            },
+        ];
+        assert_eq!(
+            highest_priority_probe_candidate(&sizes, &states, profile, now).map(|size| size.target),
+            Some(IndexTarget::IdxCavAttrBool)
+        );
+    }
+}

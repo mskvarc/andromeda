@@ -1,5 +1,6 @@
 //! PostgreSQL connection and pool configuration.
 
+use crate::maintenance_config::MaintenanceConfig;
 use confique::Config;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString};
@@ -67,6 +68,9 @@ pub struct DatabaseConfig {
     /// Interval between JSON-LD hit-counter flushes.
     #[config(env = "ANDROMEDA_DATABASE_CONTEXT_HIT_FLUSH_SECS", default = 5)]
     pub context_hit_flush_secs: u64,
+    /// Adaptive PostgreSQL inspection and maintenance policy.
+    #[config(nested)]
+    pub maintenance: MaintenanceConfig,
 }
 
 impl DatabaseConfig {
@@ -85,6 +89,7 @@ impl DatabaseConfig {
 #[cfg(test)]
 mod tests {
     use super::{DatabaseConfig, DatabaseConfigError, SynchronousCommit};
+    use crate::maintenance_config::MaintenanceConfig;
     use std::str::FromStr;
 
     #[test]
@@ -112,6 +117,7 @@ mod tests {
             synchronous_commit: SynchronousCommit::Off,
             preload_name_dictionaries: true,
             context_hit_flush_secs: 0,
+            maintenance: MaintenanceConfig::default(),
         };
         assert_eq!(config.validate(), Err(DatabaseConfigError::ZeroContextHitFlushCadence));
     }

@@ -10,6 +10,7 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 pub mod error;
+pub mod maintenance;
 pub mod names;
 pub mod pool;
 pub mod queue;

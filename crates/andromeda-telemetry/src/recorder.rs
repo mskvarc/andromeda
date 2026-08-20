@@ -2,7 +2,7 @@
 
 use crate::{
     error::TelemetryError,
-    names::{DB_STATEMENT_SECONDS, SUBSCRIPTION_CANDIDATES},
+    names::{DB_STATEMENT_SECONDS, POSTGRESQL_MAINTENANCE_ACTION_SECONDS, POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES, SUBSCRIPTION_CANDIDATES},
 };
 use metrics::{Recorder, with_local_recorder};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle, PrometheusRecorder};
@@ -12,6 +12,21 @@ const STATEMENT_SECONDS_BUCKETS: [f64; 14] = [0.0005, 0.001, 0.0025, 0.005, 0.01
 
 /// Histogram bucket bounds for candidate counts.
 const CANDIDATE_BUCKETS: [f64; 10] = [0.0, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0, 500.0, 1000.0];
+
+/// Histogram bucket bounds, in seconds, for maintenance actions.
+const MAINTENANCE_SECONDS_BUCKETS: [f64; 10] = [0.1, 1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1_800.0, 3_600.0];
+
+/// Histogram bucket bounds, in bytes, for physical reclaim.
+const RECLAIMED_BYTES_BUCKETS: [f64; 8] = [
+    1_048_576.0,
+    16_777_216.0,
+    67_108_864.0,
+    268_435_456.0,
+    1_073_741_824.0,
+    4_294_967_296.0,
+    17_179_869_184.0,
+    68_719_476_736.0,
+];
 
 /// The installed metrics recorder and the handle that renders it.
 ///
@@ -68,7 +83,9 @@ impl TelemetryRecorder {
 fn builder() -> Result<PrometheusBuilder, TelemetryError> {
     let builder = PrometheusBuilder::new()
         .set_buckets_for_metric(Matcher::Full(DB_STATEMENT_SECONDS.to_owned()), &STATEMENT_SECONDS_BUCKETS)?
-        .set_buckets_for_metric(Matcher::Full(SUBSCRIPTION_CANDIDATES.to_owned()), &CANDIDATE_BUCKETS)?;
+        .set_buckets_for_metric(Matcher::Full(SUBSCRIPTION_CANDIDATES.to_owned()), &CANDIDATE_BUCKETS)?
+        .set_buckets_for_metric(Matcher::Full(POSTGRESQL_MAINTENANCE_ACTION_SECONDS.to_owned()), &MAINTENANCE_SECONDS_BUCKETS)?
+        .set_buckets_for_metric(Matcher::Full(POSTGRESQL_MAINTENANCE_RECLAIMED_BYTES.to_owned()), &RECLAIMED_BYTES_BUCKETS)?;
     Ok(builder)
 }
 

@@ -57,6 +57,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-context-store",
         "andromeda-postgresql-encoding",
         "andromeda-postgresql-query",
+        "andromeda-postgresql-maintenance",
         "andromeda-postgresql-temporal-query",
         "andromeda-postgresql-temporal-store",
         "andromeda-registration",

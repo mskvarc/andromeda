@@ -4,6 +4,7 @@ use crate::{
     component_report::{ComponentReportError, collect as collect_component_reports},
     config::{observability::MetricsExposure, runtime::RuntimeConfig},
     outcome::ProcessExitOutcome,
+    postgresql_maintenance::{MaintenanceRegistrationError, register_postgresql_maintenance},
     routes::{
         context_registry::BrokerContextRegistryStateResolver,
         entity::BrokerEntityStateResolver,
@@ -88,6 +89,9 @@ enum BrokerStartupError {
     /// The metrics scrape route could not be constructed.
     #[error(transparent)]
     TelemetryHttp(#[from] TelemetryHttpError),
+    /// The process-scoped maintenance task could not be registered.
+    #[error(transparent)]
+    MaintenanceTask(#[from] MaintenanceRegistrationError),
 }
 
 /// Construct the broker, serve HTTP, then close process resources in order.
@@ -157,6 +161,13 @@ async fn construct(config: Arc<RuntimeConfig>, telemetry: Option<Arc<TelemetryRe
         .await?,
     );
     let process_tasks = TaskSupervisor::process(Handle::current());
+    register_postgresql_maintenance(
+        &process_tasks,
+        registry.main_pool().clone(), // clone: the process task and registry share the platform pool
+        database_url.clone(),         // clone: the process task and tenant factory derive independent tenant URLs
+        config.database.maintenance,
+        config.database.synchronous_commit.as_postgres_setting(),
+    )?;
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
         database_url,

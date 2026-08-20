@@ -15,6 +15,10 @@ max_connections = 64
 preload_name_dictionaries = true
 context_hit_flush_secs = 5
 
+[database.maintenance]
+mode = "automatic"
+profile = "conservative"
+
 [jsonld]
 allow_remote_contexts = true
 timeout_seconds = 30
