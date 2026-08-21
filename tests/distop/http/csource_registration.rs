@@ -72,10 +72,11 @@ async fn dist_http_create_csource_registration_duplicate_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An auxiliary registration declaring write operations is semantically
-/// unprocessable, rejected with `422` (clause 6.8.3.1). Confirms REQ-HTTP-80.
+/// An auxiliary registration declaring write operations violates clause
+/// 5.9.2.4, which names the error type BadRequestData, so the HTTP binding
+/// answers `400` (clause 6.8.3.1). Confirms REQ-HTTP-80.
 #[tokio::test]
-async fn dist_http_create_csource_registration_unprocessable_returns_422() {
+async fn dist_http_create_csource_registration_auxiliary_write_operations_returns_400() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:reg-422");
     let entity_id = topology.id("Vehicle:reg-422");
@@ -89,8 +90,8 @@ async fn dist_http_create_csource_registration_unprocessable_returns_422() {
         .client()
         .create_registration(&registration)
         .await
-        .expect("unprocessable registration create");
-    assert_status(&response, 422);
+        .expect("auxiliary registration with write operations");
+    assert_status(&response, 400);
     topology.finish().await.expect("topology cleanup");
 }
 

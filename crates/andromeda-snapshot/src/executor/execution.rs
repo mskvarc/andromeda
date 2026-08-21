@@ -11,7 +11,7 @@ use crate::{
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
     operation::ForwardingOperation,
-    request::{CsrModeFilter, ForwardQueryRequest},
+    request::{CsrModeFilter, ForwardQueryRequest, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -44,12 +44,12 @@ impl SnapshotExecutor {
             .forward_query(ForwardQueryRequest {
                 entity_type_compact: entity_type,
                 entity_ids: entity_ids.as_deref(),
-                context_url: None,
                 context: &context,
                 operation: ForwardingOperation::QueryBatch,
-                incoming_via: None,
+                triggering: TriggeringRequest::default(),
                 csf_expr: None,
                 mode_filter: CsrModeFilter::All,
+                entity_map: None,
             })
             .await;
         let forwarded = match forwarded_result {

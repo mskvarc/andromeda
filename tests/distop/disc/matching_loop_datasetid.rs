@@ -57,7 +57,6 @@ async fn matching_datasetid_only_one_side_specifies_matches() {
 /// (clause 5.12, 4.3.6.4). Requires the distributed forwarding path to carry the
 /// encountered listing, which is not available at `T-LOCAL`. Confirms
 /// REQ-DISC-112.
-#[ignore = "GAP REQ-DISC-112: cross-instance loop prevention over durable map not implemented"]
 #[tokio::test]
 async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");
@@ -89,7 +88,6 @@ async fn matching_loop_prevention_excludes_csr_with_alias_in_encountered_listing
 /// A valid EntityMap passed into a request is preferred over re-running the
 /// matching algorithm (clause 5.12, 6.3.15). Cross-instance/durable EntityMap
 /// sharing is not implemented. Confirms REQ-DISC-113.
-#[ignore = "GAP REQ-DISC-113: cross-instance loop prevention over durable map not implemented"]
 #[tokio::test]
 async fn matching_valid_entitymap_preferred_over_rematching() {
     let topology = DistributedTopology::chain().await.expect("three-broker topology");

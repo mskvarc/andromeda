@@ -26,6 +26,7 @@ impl HttpApi {
             .merge(routes.entity_map.into_router())
             .merge(routes.snapshot.into_router())
             .merge(routes.source_identity.into_router())
+            .merge(routes.notification_receiver.into_router())
             .merge(routes.tenancy.into_router())
             .merge(routes.health.into_router())
             .merge(routes.component_report.into_router());
@@ -64,6 +65,10 @@ mod tests {
         state::{EntityMapRouteServices, EntityMapStateResolver},
     };
     use andromeda_http_health::routes::HealthRoutes;
+    use andromeda_http_notification_receiver::{
+        routes::NotificationReceiverRoutes,
+        state::{NotificationReceiverResolver, ReceiverResolutionError},
+    };
     use andromeda_http_registration::{
         routes::RegistrationRoutes,
         state::{RegistrationRouteServices, RegistrationStateResolver},
@@ -88,6 +93,7 @@ mod tests {
     };
     use andromeda_http_tenancy::routes::TenancyRoutes;
     use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, tenant::TenantName, uri::Uri};
+    use andromeda_subscription_forwarding::service::SubscriptionForwardingService;
     use andromeda_telemetry::recorder::TelemetryRecorder;
     use andromeda_tenancy::{
         administration::{OrphanTenantEvictor, TenantDirectory},
@@ -101,6 +107,7 @@ mod tests {
         http,
         http::{Method, Request, StatusCode},
     };
+    use chrono::Utc;
     use futures::future::BoxFuture;
     use std::{error::Error, sync::Arc};
     use tower::ServiceExt;
@@ -128,6 +135,18 @@ mod tests {
     rejecting_resolver!(RejectSubscription, SubscriptionStateResolver, SubscriptionRouteServices);
     rejecting_resolver!(RejectEntityMap, EntityMapStateResolver, EntityMapRouteServices);
     rejecting_resolver!(RejectSnapshot, SnapshotStateResolver, SnapshotRouteServices);
+
+    struct RejectReceiver;
+
+    impl NotificationReceiverResolver for RejectReceiver {
+        fn resolve<'a>(&'a self, subscription: &'a Uri) -> BoxFuture<'a, Result<Arc<SubscriptionForwardingService>, ReceiverResolutionError>> {
+            Box::pin(async move {
+                Err(ReceiverResolutionError::Unknown {
+                    subscription: subscription.clone(), // clone: the error owns the identifier
+                })
+            })
+        }
+    }
 
     struct TenantAdministration;
 
@@ -164,7 +183,10 @@ mod tests {
             .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
                 "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
                 "test".parse::<ContextSourcePseudonym>()?,
+                Utc::now(),
+                None,
             )))
+            .notification_receiver(NotificationReceiverRoutes::new(Arc::new(RejectReceiver)))
             .tenancy(TenancyRoutes::new(directory, evictor))
             .health(HealthRoutes::new(Health::builder().build()))
             .component_report(ComponentReportRoutes::new(vec![ComponentReport::PostgreSql {
@@ -208,6 +230,7 @@ mod tests {
             (Method::PATCH, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
             (Method::DELETE, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
             (Method::PUT, "/ngsi-ld/v1/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
+            (Method::POST, "/ngsi-ld/v1/notifications"),
             (Method::POST, "/ngsi-ld/v1/entityOperations/create"),
             (Method::POST, "/ngsi-ld/v1/entityOperations/upsert"),
             (Method::POST, "/ngsi-ld/v1/entityOperations/update"),

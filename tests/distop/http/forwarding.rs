@@ -54,6 +54,7 @@ pub fn context_link_header() -> HeaderValue {
 pub fn retrieval_source(reg_id: &str, endpoint: &str, entity_id: &str, mode: &str) -> Value {
     CsrBuilder::new(reg_id, endpoint)
         .mode(mode)
+        .property_names(&["speed"])
         .entity_id(entity_id)
         .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
         .build()
@@ -63,5 +64,10 @@ pub fn retrieval_source(reg_id: &str, endpoint: &str, entity_id: &str, mode: &st
 /// provision operations so a matching write issued to the front broker is
 /// forwarded to `endpoint`.
 pub fn provision_source(reg_id: &str, endpoint: &str, entity_id: &str, mode: &str, operations: &[&str]) -> Value {
-    CsrBuilder::new(reg_id, endpoint).mode(mode).entity_id(entity_id).operations(operations).build()
+    CsrBuilder::new(reg_id, endpoint)
+        .mode(mode)
+        .entity_id(entity_id)
+        .property_names(&["speed"])
+        .operations(operations)
+        .build()
 }

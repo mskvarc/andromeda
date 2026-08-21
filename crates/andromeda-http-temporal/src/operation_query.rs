@@ -4,7 +4,7 @@ use crate::{error::TemporalResultExt, join::apply_temporal_join, state::Temporal
 use andromeda_federation::{
     entity_result::collect_temporal_warnings,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, ForwardTemporalQueryRequest},
+    request::{CsrModeFilter, ForwardTemporalQueryRequest, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_http_extraction::{
@@ -28,7 +28,7 @@ use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::temporal:
 use andromeda_temporal::service::TemporalQueryResult;
 use axum::{
     extract::OriginalUri,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 
@@ -39,6 +39,7 @@ pub async fn query(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     SnapshotHeader(snapshot_id): SnapshotHeader,
     JsonLd {
         value: request,
@@ -88,25 +89,25 @@ pub async fn query(
     let (mut entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let context_url = context.link_contexts().first();
         let entity_type = params.entity_type.as_ref();
         let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
 
         let forwarded = state
             .forwarding
-            .forward_temporal_query(
-                &ForwardTemporalQueryRequest {
-                    entity_type_compact: entity_type,
-                    entity_ids: entity_ids_ref,
-                    query_string: "",
-                    context_url,
-                    context: &context,
-                    operation: ForwardingOperation::QueryTemporalEntity,
-                    incoming_via: incoming_via.as_ref(),
+            .forward_temporal_query(ForwardTemporalQueryRequest {
+                entity_type_compact: entity_type,
+                entity_ids: entity_ids_ref,
+                query_string: "",
+                context: &context,
+                operation: ForwardingOperation::QueryTemporalEntity,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
                 },
-                CsrModeFilter::All,
-            )
+                mode_filter: CsrModeFilter::All,
+                entity_map: None,
+            })
             .await
             .unwrap_or_default();
         let warnings = collect_temporal_warnings(&forwarded);

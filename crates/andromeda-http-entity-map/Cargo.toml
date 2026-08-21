@@ -11,19 +11,25 @@ workspace = true
 [dependencies]
 andromeda-entity.workspace = true
 andromeda-entity-map.workspace = true
+andromeda-federation.workspace = true
 andromeda-http-extraction.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-ngsi-ld-query.workspace = true
 andromeda-ngsi-ld-render.workspace = true
 andromeda-ngsi-ld-request.workspace = true
+andromeda-temporal.workspace = true
 andromeda-tenancy.workspace = true
 axum = "0.8.9"
 chrono = "0.4.45"
 futures = "0.3.34"
+iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true

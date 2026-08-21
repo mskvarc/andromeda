@@ -4,9 +4,10 @@
 //! preventing false positives (e.g. `application/json-patch+json` no longer
 //! matches `application/json`).
 
-use andromeda_http_headers::{link::header::Link, version::NgsiLdVersion};
+use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
 use andromeda_ngsi_ld_render::version::VersionRenderer;
 use axum::{
@@ -228,7 +229,7 @@ where
         // conformance fallbacks (clause 4.3.6.8) to the incoming payload so
         // that features from a newer spec version are adapted before validation.
         if has_version_profile(&link_header_strings) {
-            value = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(value).render().0;
+            value = VersionRenderer::new(SpecVersion::CONFORMANT).with_payload(value).render().0;
         }
 
         // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body

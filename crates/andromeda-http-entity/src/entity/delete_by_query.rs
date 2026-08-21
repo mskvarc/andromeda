@@ -23,13 +23,16 @@ use crate::entity::{
     reject_linked_retrieval,
 };
 use andromeda_entity::side_effect::BatchSideEffectMode;
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
+use axum::http::HeaderMap;
 
 pub(crate) async fn delete_by_query(
     tenant_state::ExistingTenantState(state): EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     EntityQuery(query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     // Clause 5.6.21.4 gives this operation no `join`: it renders nothing and
@@ -38,7 +41,7 @@ pub(crate) async fn delete_by_query(
     // against a traversal that does not exist here.
     reject_linked_retrieval(query.pick.as_deref(), query.omit.as_deref(), query.q.as_ref()).with_entity_instance(&uri)?;
 
-    let is_local = query.local.unwrap_or(false);
+    let is_local = query.is_local();
     let context: ContextSpec = context.into_inner();
 
     // Determine purge mode from drop/keep parameters (S5.6.21)
@@ -72,18 +75,19 @@ pub(crate) async fn delete_by_query(
 
     if !is_local {
         let body = serde_json::to_vec(&entity_ids).with_entity_instance(&uri)?;
-        let context_url = context.link_contexts().first();
         let forwarded = state
             .forwarding
             .forward_batch_provision(ForwardBatchProvisionRequest {
                 entity_type_compact: None,
                 body: &body,
-                context_url,
                 context: &context,
                 operation: ForwardingOperation::DeleteBatch,
                 batch_path: "/entityOperations/delete",
                 query_string: None,
-                incoming_via: incoming_via.as_ref(),
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             })
             .await
             .with_entity_instance(&uri)?;

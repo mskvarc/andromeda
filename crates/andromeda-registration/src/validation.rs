@@ -1,45 +1,124 @@
-//! Registration validation shared by creation and update.
+//! The clause 5.2.9 gate shared by registration creation and update.
+//!
+//! Member shapes are enforced by the types the payload is read into
+//! (`payload.rs`); what remains here are the rules that span members or need
+//! the current time: `expiresAt` in the future (clauses 5.9.2.4 and 5.9.3.4),
+//! the clause 4.3.6.6 restrictions on `contextSourceInfo`, and the mode rules of
+//! `mode_rules.rs` that need nothing beyond the registration itself.
 
-use crate::error::RegistrationError;
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use crate::{error::RegistrationError, mode_rules::validate_structure};
+use andromeda_ngsi_ld_model::{
+    context_source_info::ContextSourceInfo,
+    key_value_pair::KeyValuePair,
+    registration::{CsrOperation, ForwardingMode, RegistrationInfo},
+};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 
-pub(super) fn validate_common_members(payload: &Value) -> Result<(), RegistrationError> {
-    if let Some(type_value) = payload.get("type")
-        && type_value.as_str() != Some("ContextSourceRegistration")
-    {
-        return Err(RegistrationError::csr_validation("type must be 'ContextSourceRegistration'"));
+/// The members of a registration — as created, or as resolved after an update
+/// merge — that the cross-member rules read.
+pub(super) struct RegistrationShape<'a> {
+    /// The forwarding mode.
+    pub(super) mode: ForwardingMode,
+    /// The expanded `information` blocks.
+    pub(super) information: &'a [RegistrationInfo],
+    /// The effective operations.
+    pub(super) operations: &'a [CsrOperation],
+    /// The `contextSourceInfo` pairs.
+    pub(super) context_source_info: Option<&'a [KeyValuePair]>,
+    /// The expiry instant.
+    pub(super) expires_at: Option<DateTime<Utc>>,
+}
+
+/// Apply the clause 5.2.9 cross-member rules and the clause 4.3.6.6
+/// `contextSourceInfo` restrictions.
+pub(super) fn validate_shape(shape: &RegistrationShape<'_>) -> Result<(), RegistrationError> {
+    if shape.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) {
+        return Err(RegistrationError::csr_validation("expiresAt must be in the future"));
     }
-
-    if let Some(raw) = payload.get("expiresAt").and_then(Value::as_str) {
-        let expires_at = DateTime::parse_from_rfc3339(raw).map_err(|_| RegistrationError::csr_validation("expiresAt must be a valid ISO 8601 date-time"))?;
-        if expires_at <= Utc::now() {
-            return Err(RegistrationError::csr_validation("expiresAt must be in the future"));
-        }
+    if let Some(pairs) = shape.context_source_info {
+        ContextSourceInfo::try_from(pairs).map_err(|error| RegistrationError::csr_validation(error.to_string()))?;
     }
-
-    if let Some(raw) = payload.get("mode").and_then(Value::as_str) {
-        raw.parse::<ForwardingMode>()
-            .map_err(|_| RegistrationError::csr_validation("mode must be one of: inclusive, exclusive, redirect, auxiliary"))?;
-    }
-
-    Ok(())
+    validate_structure(shape.mode, shape.information, shape.operations)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::validation::validate_common_members;
+    use crate::validation::{RegistrationShape, validate_shape};
+    use andromeda_ngsi_ld_model::{
+        key_value_pair::KeyValuePair,
+        registration::{CsrOperation, ForwardingMode, RegistrationInfo},
+    };
+    use chrono::{Duration, Utc};
+    use serde_json::json;
 
-    #[test]
-    fn common_validation_rejects_an_unknown_forwarding_mode() {
-        assert!(validate_common_members(&serde_json::json!({"mode": "unknown"})).is_err());
+    fn information() -> Vec<RegistrationInfo> {
+        vec![serde_json::from_value(json!({"entities": [{"type": "https://example.org/Vehicle"}]})).expect("valid information")]
+    }
+
+    fn pair(key: &str, value: &str) -> KeyValuePair {
+        KeyValuePair {
+            key: key.into(),
+            value: value.into(),
+        }
     }
 
     #[test]
-    fn common_validation_accepts_each_specified_forwarding_mode() {
-        for mode in ["inclusive", "exclusive", "redirect", "auxiliary"] {
-            assert!(validate_common_members(&serde_json::json!({"mode": mode})).is_ok());
+    fn an_expiry_in_the_past_is_rejected_and_one_in_the_future_accepted() {
+        let information = information();
+        let past = RegistrationShape {
+            mode: ForwardingMode::Inclusive,
+            information: &information,
+            operations: &[CsrOperation::FederationOps],
+            context_source_info: None,
+            expires_at: Some(Utc::now() - Duration::hours(1)),
+        };
+        assert!(validate_shape(&past).is_err());
+        let future = RegistrationShape {
+            expires_at: Some(Utc::now() + Duration::hours(1)),
+            ..past
+        };
+        assert!(validate_shape(&future).is_ok());
+    }
+
+    #[test]
+    fn a_context_source_info_outside_clause_4_3_6_6_is_rejected() {
+        let information = information();
+        for pairs in [
+            vec![pair("accept", "text/plain")],
+            vec![pair("contentType", "application/xml")],
+            vec![pair("ngsildConformance", "v1")],
+            vec![pair("jsonldContext", "http://exa mple.org/ctx")],
+        ] {
+            let shape = RegistrationShape {
+                mode: ForwardingMode::Inclusive,
+                information: &information,
+                operations: &[CsrOperation::FederationOps],
+                context_source_info: Some(&pairs),
+                expires_at: None,
+            };
+            assert!(validate_shape(&shape).is_err(), "{pairs:?} must be rejected");
         }
+        let valid = [pair("accept", "application/ld+json"), pair("Authorization", "Bearer x")];
+        let shape = RegistrationShape {
+            mode: ForwardingMode::Inclusive,
+            information: &information,
+            operations: &[CsrOperation::FederationOps],
+            context_source_info: Some(&valid),
+            expires_at: None,
+        };
+        assert!(validate_shape(&shape).is_ok());
+    }
+
+    #[test]
+    fn the_mode_structure_rules_are_part_of_the_gate() {
+        let information = information();
+        let shape = RegistrationShape {
+            mode: ForwardingMode::Auxiliary,
+            information: &information,
+            operations: &[CsrOperation::CreateEntity],
+            context_source_info: None,
+            expires_at: None,
+        };
+        assert!(validate_shape(&shape).is_err());
     }
 }

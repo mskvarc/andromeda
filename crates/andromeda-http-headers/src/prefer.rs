@@ -33,8 +33,8 @@
 use crate::{
     geo_json_body::GeoJsonBodyPreference,
     preference::{Preference, RespondMode},
-    version::NgsiLdVersion,
 };
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use http::{HeaderName, HeaderValue};
 use std::iter;
 
@@ -52,15 +52,15 @@ impl Prefer {
             .iter()
             .find_map(|p| match p {
                 Preference::Body(body) => Some(*body),
-                Preference::NgsiLdVersion(_) | Preference::Respond(_) => None,
+                Preference::Version(_) | Preference::Respond(_) => None,
             })
             .unwrap_or_default()
     }
 
     /// Return the requested NGSI-LD version, if present.
-    pub fn requested_version(&self) -> Option<NgsiLdVersion> {
+    pub fn requested_version(&self) -> Option<SpecVersion> {
         self.0.iter().find_map(|p| match p {
-            Preference::NgsiLdVersion(v) => Some(*v),
+            Preference::Version(v) => Some(*v),
             Preference::Body(_) | Preference::Respond(_) => None,
         })
     }
@@ -70,7 +70,7 @@ impl Prefer {
     pub fn respond_mode(&self) -> Option<RespondMode> {
         self.0.iter().find_map(|p| match p {
             Preference::Respond(mode) => Some(*mode),
-            Preference::Body(_) | Preference::NgsiLdVersion(_) => None,
+            Preference::Body(_) | Preference::Version(_) => None,
         })
     }
 }
@@ -131,13 +131,13 @@ mod tests {
     #[test]
     fn decode_ngsild_version_1_0() {
         let prefer = decode_prefer("ngsi-ld=1.0");
-        pretty_assertions::assert_eq!(prefer, Prefer(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_0)]));
+        pretty_assertions::assert_eq!(prefer, Prefer(vec![Preference::Version(SpecVersion::V1_0)]));
     }
 
     #[test]
     fn decode_ngsild_version_1_9() {
         let prefer = decode_prefer("ngsi-ld=1.9");
-        pretty_assertions::assert_eq!(prefer, Prefer(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_9)]));
+        pretty_assertions::assert_eq!(prefer, Prefer(vec![Preference::Version(SpecVersion::V1_9)]));
     }
 
     #[test]
@@ -145,10 +145,7 @@ mod tests {
         let prefer = decode_prefer("body=json, ngsi-ld=1.4");
         pretty_assertions::assert_eq!(
             prefer,
-            Prefer(vec![
-                Preference::Body(GeoJsonBodyPreference::Json),
-                Preference::NgsiLdVersion(NgsiLdVersion::V1_4),
-            ])
+            Prefer(vec![Preference::Body(GeoJsonBodyPreference::Json), Preference::Version(SpecVersion::V1_4),])
         );
     }
 
@@ -174,8 +171,8 @@ mod tests {
     }
 
     #[test]
-    fn decode_ignores_unknown_version() {
-        let prefer = decode_prefer("ngsi-ld=2.5");
+    fn decode_ignores_a_version_outside_the_major_dot_minor_form() {
+        let prefer = decode_prefer("ngsi-ld=latest");
         pretty_assertions::assert_eq!(prefer, Prefer(vec![]));
     }
 
@@ -197,10 +194,7 @@ mod tests {
 
     #[test]
     fn encode_roundtrip_combined() {
-        let original = Prefer(vec![
-            Preference::Body(GeoJsonBodyPreference::Json),
-            Preference::NgsiLdVersion(NgsiLdVersion::V1_4),
-        ]);
+        let original = Prefer(vec![Preference::Body(GeoJsonBodyPreference::Json), Preference::Version(SpecVersion::V1_4)]);
         let mut encoded = Vec::new();
         original.encode(&mut encoded);
         let mut iter = encoded.iter();
@@ -210,7 +204,7 @@ mod tests {
 
     #[test]
     fn geo_json_body_defaults_to_ld_json() {
-        let prefer = Prefer(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_9)]);
+        let prefer = Prefer(vec![Preference::Version(SpecVersion::V1_9)]);
         pretty_assertions::assert_eq!(prefer.geo_json_body(), GeoJsonBodyPreference::LdJson);
     }
 
@@ -222,8 +216,8 @@ mod tests {
 
     #[test]
     fn requested_version_extracts_version() {
-        let prefer = Prefer(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_3)]);
-        pretty_assertions::assert_eq!(prefer.requested_version(), Some(NgsiLdVersion::V1_3));
+        let prefer = Prefer(vec![Preference::Version(SpecVersion::V1_3)]);
+        pretty_assertions::assert_eq!(prefer.requested_version(), Some(SpecVersion::V1_3));
     }
 
     #[test]

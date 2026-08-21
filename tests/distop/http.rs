@@ -15,8 +15,8 @@
 //! forwarded-request rows run on `T-MOCK` (broker A plus an in-process mock
 //! Context Source registered by the test). The loop row runs on `T-LOOP`
 //! (broker A registered back at itself) and the `Via`-append row on `T-CHAIN`.
-//! Concrete designs are in `docs/distributed-tests/http.md`; `GAP` and
-//! `UNKNOWN` rows carry `#[ignore]` naming their `REQ-HTTP` id.
+//! Concrete designs are in `docs/distributed-tests/http.md`; `UNKNOWN` rows
+//! carry `#[ignore]` naming their `REQ-HTTP` id.
 
 mod contextsourceinfo_headers;
 mod csource_registration;

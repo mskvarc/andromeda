@@ -1,27 +1,33 @@
-//! Federated type and attribute discovery queries.
+//! Federated type and attribute discovery queries (clauses 5.7.5 to 5.7.10, 6.3.17).
 
 use crate::{
     FederationService,
+    cache::Cacheability,
+    entity_read::own_loop_warning,
     forwarding_url::build_discovery_url,
     outcome::{ForwardGetOutcome, ForwardedDiscoveryResult},
+    request::ForwardDiscoveryRequest,
 };
-use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, via::Via};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use iri_rs::IriRefBuf;
-use tracing::{debug, warn};
+use futures::{StreamExt, stream};
+use tracing::warn;
 
 impl FederationService {
-    /// Forward a type or attribute discovery query to active registrations.
-    pub async fn forward_discovery_query(
-        &self,
-        path: &str,
-        query_string: &str,
-        context_url: Option<&IriRefBuf>,
-        incoming_via: Option<&Via>,
-    ) -> Vec<ForwardedDiscoveryResult> {
-        if self.is_loop_detected(incoming_via) {
-            debug!("Loop detected in Via header chain, skipping discovery forwarding");
-            return Vec::new();
+    /// Forward a type or attribute discovery query to every active registration
+    /// that advertises the operation.
+    pub async fn forward_discovery_query(&self, request: ForwardDiscoveryRequest<'_>) -> Vec<ForwardedDiscoveryResult> {
+        let ForwardDiscoveryRequest {
+            path,
+            query_string,
+            context,
+            operation,
+            triggering,
+        } = request;
+        if self.is_loop_detected(triggering.via) {
+            return vec![ForwardedDiscoveryResult {
+                body: None,
+                warnings: vec![own_loop_warning()],
+            }];
         }
 
         // Keyset-paginate through all active CSRs; discovery forwarding must
@@ -50,7 +56,7 @@ impl FederationService {
             }
             let page_len = page.len();
             cursor = page.last().map(|registration| registration.id.clone()); // clone: the cursor must outlive the page moved below.
-            csrs.extend(page);
+            csrs.extend(page.into_iter().filter(|registration| operation.matches(registration)));
             if page_len < page_capacity {
                 break;
             }
@@ -60,60 +66,34 @@ impl FederationService {
             return Vec::new();
         }
 
-        let mut results = Vec::new();
-        for csr in csrs {
-            let filtered = match (&csr.access.context_source_alias, incoming_via) {
-                (Some(alias), Some(via)) => via.contains_pseudonym(alias),
-                _ => false,
-            };
-            if filtered {
-                continue;
-            }
-            let url = build_discovery_url(&csr.access.endpoint, path, query_string);
-
-            match self.forward_get(url, context_url, &csr.access, csr.tenant.as_ref(), incoming_via).await {
-                ForwardGetOutcome::Success(body, cs_warnings) => {
-                    results.push(ForwardedDiscoveryResult {
+        stream::iter(csrs)
+            .map(|csr| async move {
+                let url = build_discovery_url(&csr.access.endpoint, path, query_string);
+                // Clause 6.3.17 allows caching for `/entities` only.
+                let outcome = self.forward_get(&csr, url, context, triggering, Cacheability::Uncacheable, None).await;
+                match outcome {
+                    ForwardGetOutcome::Success(body, cs_warnings) => Some(ForwardedDiscoveryResult {
                         body: Some(body),
                         warnings: cs_warnings,
-                    });
-                }
-                ForwardGetOutcome::NotFound => {
+                    }),
                     // 404 is not abnormal per spec clause 6.3.17
+                    ForwardGetOutcome::NotFound => None,
+                    other @ (ForwardGetOutcome::InvalidPayload(_)
+                    | ForwardGetOutcome::ErrorStatus(_)
+                    | ForwardGetOutcome::Transport(_)
+                    | ForwardGetOutcome::LoopDetected) => {
+                        let warning = other.warning(&csr.id)?;
+                        warn!("Discovery forwarding to context source {} failed: {}", csr.id, warning);
+                        Some(ForwardedDiscoveryResult {
+                            body: None,
+                            warnings: vec![warning],
+                        })
+                    }
                 }
-                ForwardGetOutcome::InvalidPayload(msg) => {
-                    warn!("Context source {} returned invalid discovery payload: {}", csr.id, msg);
-                    results.push(ForwardedDiscoveryResult {
-                        body: None,
-                        warnings: vec![NgsiLdWarning::RevalidationFailed(format!(
-                            "Context source {} returned invalid payload: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::ErrorStatus(status) => {
-                    warn!("Context source {} returned HTTP {} for discovery", csr.id, status);
-                    results.push(ForwardedDiscoveryResult {
-                        body: None,
-                        warnings: vec![NgsiLdWarning::MiscellaneousPersistentWarning(format!(
-                            "Context source {} returned HTTP {}",
-                            csr.id, status
-                        ))],
-                    });
-                }
-                ForwardGetOutcome::NetworkError(msg) => {
-                    warn!("Failed to forward discovery to context source {}: {}", csr.id, msg);
-                    results.push(ForwardedDiscoveryResult {
-                        body: None,
-                        warnings: vec![NgsiLdWarning::MiscellaneousWarning(format!(
-                            "Context source {} did not respond: {}",
-                            csr.id, msg
-                        ))],
-                    });
-                }
-            }
-        }
-
-        results
+            })
+            .buffer_unordered(self.csr_concurrency)
+            .filter_map(|entry| async move { entry })
+            .collect()
+            .await
     }
 }

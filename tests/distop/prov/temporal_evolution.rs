@@ -67,6 +67,7 @@ async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
+        .property_names(&["speed"])
         .operations(&["deleteEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);

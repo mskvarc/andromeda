@@ -1,4 +1,8 @@
-//! The replaceable storage capability for short-lived Entity Maps.
+//! The replaceable storage capability for Entity Maps.
+//!
+//! An Entity Map is shared state of a distributed query (clause 5.5.14): a
+//! follow-up page may reach any instance serving the same tenant, so the store
+//! is durable and tenant-scoped rather than a per-process cache.
 
 use crate::error::EntityMapError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -18,9 +22,10 @@ pub enum EntityMapMutation {
     Missing,
 }
 
-/// Stores bounded Entity Maps without prescribing durability or a backend.
+/// Stores Entity Maps, with expiry decided by the store's own clock so every
+/// instance sharing the store agrees on what is live.
 pub trait EntityMapStore: Send + Sync + 'static {
-    /// Store an Entity Map, replacing a map with the same identifier.
+    /// Store an Entity Map with its entries and links, replacing a map with the same identifier.
     fn insert<'a>(&'a self, map: &'a EntityMap) -> EntityMapStoreFuture<'a, ()>;
 
     /// Retrieve a live Entity Map, treating an expired map as absent.
@@ -31,6 +36,9 @@ pub trait EntityMapStore: Send + Sync + 'static {
 
     /// Remove a live Entity Map.
     fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation>;
+
+    /// Remove every Entity Map whose expiry is at or before `cutoff`, returning how many.
+    fn delete_expired<'a>(&'a self, cutoff: DateTime<Utc>) -> EntityMapStoreFuture<'a, u64>;
 }
 
 #[cfg(test)]

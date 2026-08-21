@@ -40,6 +40,7 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 /// is absent: a duplicate `observedAt` is suppressed while a new instance and a new
 /// attribute are added (clause 5.7.3.4). Confirms REQ-CONS-47.
 #[tokio::test]
+#[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons47");

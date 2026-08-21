@@ -7,8 +7,9 @@
 //! `ContextSpec` for presentation, so the body value and the `Link` URLs cannot
 //! come from two different readings of it.
 
-use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
 use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_render::{context::ResponseContext, response::ResponseRenderer};
 
 /// Configure a response renderer from a handler's media type, context and preferences.
@@ -28,7 +29,7 @@ pub struct RenderingPreferences {
     /// Whether a GeoJSON response carries JSON-LD context in the body or a `Link` header.
     pub geo_json_body: GeoJsonBodyPreference,
     /// Requested earlier NGSI-LD representation version, when present.
-    pub requested_version: Option<NgsiLdVersion>,
+    pub requested_version: Option<SpecVersion>,
 }
 
 /// Resolve a context spec into the two spellings a response needs.

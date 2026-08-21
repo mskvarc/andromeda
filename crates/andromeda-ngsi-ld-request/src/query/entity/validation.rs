@@ -6,6 +6,7 @@ use crate::{
     error::ParameterError,
     linked_retrieval_consistency::{validate_filter_join_depth, validate_projection_join_depth},
 };
+use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 
 impl EntityQueryParameters {
     /// Parses the `options` and `format` parameters into structured flags.
@@ -16,6 +17,22 @@ impl EntityQueryParameters {
             sys_attrs: options.sys_attrs,
             count: self.count.unwrap_or(false),
         }
+    }
+
+    /// Whether the query is confined to this broker: `local=true`, or a
+    /// `type=*` selector, which Table 5.2.33-1 defines as implying local scope.
+    pub const fn is_local(&self) -> bool {
+        self.local_flag_set() || self.selects_every_type()
+    }
+
+    /// Whether `local=true` was given.
+    const fn local_flag_set(&self) -> bool {
+        matches!(self.local, Some(true))
+    }
+
+    /// Whether the type selector is the clause 4.17 wildcard.
+    const fn selects_every_type(&self) -> bool {
+        matches!(self.entity_type, Some(TypeExprRaw::Wildcard))
     }
 
     /// Whether any entity filter parameter is present.
@@ -33,6 +50,11 @@ impl EntityQueryParameters {
     /// Validate entity-query semantic constraints.
     pub fn validate(&self) -> Result<(), ParameterError> {
         validate_attrs(self.attrs.as_deref())?;
+        // Table 5.2.33-1: `type=*` implies local scope, which the request may
+        // not then contradict with `local=false`.
+        if self.selects_every_type() && matches!(self.local, Some(false)) {
+            return Err(ParameterError::WildcardTypeWithLocalFalse);
+        }
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);
         }

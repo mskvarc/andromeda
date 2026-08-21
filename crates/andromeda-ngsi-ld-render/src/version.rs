@@ -4,8 +4,7 @@
 //! a 203 Non-Authoritative Information and adapts the payload to remove or
 //! reformat fields that did not exist in the requested version.
 
-use andromeda_http_headers::version::NgsiLdVersion;
-use andromeda_ngsi_ld_lexicon::attribute_type::AttributeType;
+use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::SpecVersion};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -34,14 +33,14 @@ pub enum VersionAdaptation {
 #[derive(Debug)]
 pub struct VersionRenderer {
     /// The spec version the payload is adapted down to.
-    target: NgsiLdVersion,
+    target: SpecVersion,
     /// The payload being adapted.
     payload: Value,
 }
 
 impl VersionRenderer {
     /// Create a renderer targeting the given NGSI-LD version with an empty payload.
-    pub const fn new(target: NgsiLdVersion) -> VersionRenderer {
+    pub const fn new(target: SpecVersion) -> VersionRenderer {
         VersionRenderer { target, payload: Value::Null }
     }
 
@@ -63,7 +62,7 @@ impl VersionRenderer {
     /// than a `Result` no caller could act on.
     pub fn render(self) -> (Value, VersionAdaptation) {
         let VersionRenderer { target, mut payload } = self;
-        if target >= NgsiLdVersion::CONFORMANT {
+        if target >= SpecVersion::CONFORMANT {
             return (payload, VersionAdaptation::None);
         }
 
@@ -81,16 +80,16 @@ impl VersionRenderer {
 }
 
 /// Adapt a single entity object.
-fn adapt_entity(entity: &mut Value, target: NgsiLdVersion) {
+fn adapt_entity(entity: &mut Value, target: SpecVersion) {
     let Some(obj) = entity.as_object_mut() else {
         return;
     };
 
     // Table 4.3.6.8-1: entity-level removals
-    if target < NgsiLdVersion::V1_9 {
+    if target < SpecVersion::V1_9 {
         obj.remove("expiresAt");
     }
-    if target < NgsiLdVersion::V1_4 {
+    if target < SpecVersion::V1_4 {
         obj.remove("scope");
     }
 
@@ -109,12 +108,12 @@ fn adapt_entity(entity: &mut Value, target: NgsiLdVersion) {
 }
 
 /// Adapt an attribute value (which may be a single instance or an array of instances).
-fn adapt_attribute(value: &mut Value, target: NgsiLdVersion) {
+fn adapt_attribute(value: &mut Value, target: SpecVersion) {
     match value {
         Value::Array(instances) => {
             // Note 1-3: target < V1_3 means multi-attribute not supported;
             // find default instance (first without datasetId) BEFORE adapting removes datasetId
-            if target < NgsiLdVersion::V1_3 && instances.len() > 1 {
+            if target < SpecVersion::V1_3 && instances.len() > 1 {
                 let default_idx = instances
                     .iter()
                     .position(|inst| inst.as_object().is_some_and(|o| !o.contains_key("datasetId")))
@@ -134,7 +133,7 @@ fn adapt_attribute(value: &mut Value, target: NgsiLdVersion) {
 }
 
 /// Adapt a single attribute instance based on its type.
-fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
+fn adapt_attribute_instance(instance: &mut Value, target: SpecVersion) {
     let Some(obj) = instance.as_object_mut() else {
         return;
     };
@@ -149,7 +148,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             adapt_relationship_fields(obj, target);
         }
         Some(AttributeType::LanguageProperty) => {
-            if target < NgsiLdVersion::V1_4 {
+            if target < SpecVersion::V1_4 {
                 // Reformat LanguageProperty as Property: move languageMap to value
                 if let Some(lang_map) = obj.remove("languageMap") {
                     obj.insert("value".to_string(), lang_map);
@@ -159,7 +158,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             adapt_property_fields(obj, target);
         }
         Some(AttributeType::VocabProperty) => {
-            if target < NgsiLdVersion::V1_8 {
+            if target < SpecVersion::V1_8 {
                 // Reformat VocabProperty as Property: vocab -> value
                 if let Some(vocab) = obj.remove("vocab") {
                     obj.insert("value".to_string(), vocab);
@@ -169,7 +168,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             adapt_property_fields(obj, target);
         }
         Some(AttributeType::JsonProperty) => {
-            if target < NgsiLdVersion::V1_8 {
+            if target < SpecVersion::V1_8 {
                 // Reformat JsonProperty as Property: json -> value
                 if let Some(json_val) = obj.remove("json") {
                     obj.insert("value".to_string(), json_val);
@@ -179,7 +178,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             adapt_property_fields(obj, target);
         }
         Some(AttributeType::ListProperty) => {
-            if target < NgsiLdVersion::V1_8 {
+            if target < SpecVersion::V1_8 {
                 // Reformat ListProperty as Property: valueList -> value
                 if let Some(list) = obj.remove("valueList") {
                     obj.insert("value".to_string(), list);
@@ -189,7 +188,7 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
             adapt_property_fields(obj, target);
         }
         Some(AttributeType::ListRelationship) => {
-            if target < NgsiLdVersion::V1_8 {
+            if target < SpecVersion::V1_8 {
                 // Reformat ListRelationship as Relationship: objectList -> object (first element)
                 if let Some(Value::Array(list)) = obj.remove("objectList") {
                     let first = list.into_iter().next().unwrap_or(Value::Null);
@@ -205,28 +204,28 @@ fn adapt_attribute_instance(instance: &mut Value, target: NgsiLdVersion) {
 }
 
 /// Remove property-level fields per Table 4.3.6.8-2.
-fn adapt_property_fields(obj: &mut serde_json::Map<String, Value>, target: NgsiLdVersion) {
-    if target < NgsiLdVersion::V1_3 {
+fn adapt_property_fields(obj: &mut serde_json::Map<String, Value>, target: SpecVersion) {
+    if target < SpecVersion::V1_3 {
         obj.remove("datasetId");
         obj.remove("observedAt");
         obj.remove("unitCode");
     }
-    if target < NgsiLdVersion::V1_9 {
+    if target < SpecVersion::V1_9 {
         obj.remove("expiresAt");
         obj.remove("valueType");
     }
 }
 
 /// Remove relationship-level fields per Table 4.3.6.8-3.
-fn adapt_relationship_fields(obj: &mut serde_json::Map<String, Value>, target: NgsiLdVersion) {
-    if target < NgsiLdVersion::V1_3 {
+fn adapt_relationship_fields(obj: &mut serde_json::Map<String, Value>, target: SpecVersion) {
+    if target < SpecVersion::V1_3 {
         obj.remove("datasetId");
         obj.remove("observedAt");
     }
-    if target < NgsiLdVersion::V1_8 {
+    if target < SpecVersion::V1_8 {
         obj.remove("objectType");
     }
-    if target < NgsiLdVersion::V1_9 {
+    if target < SpecVersion::V1_9 {
         obj.remove("expiresAt");
     }
 }
@@ -236,7 +235,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn adapt(target: NgsiLdVersion, value: Value) -> Value {
+    fn adapt(target: SpecVersion, value: Value) -> Value {
         VersionRenderer::new(target).with_payload(value).render().0
     }
 
@@ -246,14 +245,14 @@ mod tests {
         // version or newer, so no adaptation is performed and the response is
         // 200, not 203. This is what the short-circuit must report.
         let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
-        let (_, adaptation) = VersionRenderer::new(NgsiLdVersion::CONFORMANT).with_payload(payload).render();
+        let (_, adaptation) = VersionRenderer::new(SpecVersion::CONFORMANT).with_payload(payload).render();
         pretty_assertions::assert_eq!(adaptation, VersionAdaptation::None);
     }
 
     #[test]
     fn a_target_below_the_conformant_version_reports_adaptation() {
         let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
-        let (_, adaptation) = VersionRenderer::new(NgsiLdVersion::V1_4).with_payload(payload).render();
+        let (_, adaptation) = VersionRenderer::new(SpecVersion::V1_4).with_payload(payload).render();
         pretty_assertions::assert_eq!(adaptation, VersionAdaptation::Applied);
     }
 
@@ -272,7 +271,7 @@ mod tests {
             }
         });
         let original = value.clone();
-        let adapted = adapt(NgsiLdVersion::V1_9, value);
+        let adapted = adapt(SpecVersion::V1_9, value);
         pretty_assertions::assert_eq!(adapted, original);
     }
 
@@ -287,7 +286,7 @@ mod tests {
                 "value": 25.0
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_8, value);
+        let adapted = adapt(SpecVersion::V1_8, value);
         assert!(adapted.get("expiresAt").is_none());
     }
 
@@ -302,7 +301,7 @@ mod tests {
                 "value": 25.0
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_3, value);
+        let adapted = adapt(SpecVersion::V1_3, value);
         assert!(adapted.get("scope").is_none());
     }
 
@@ -319,7 +318,7 @@ mod tests {
                 "unitCode": "CEL"
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_0, value);
+        let adapted = adapt(SpecVersion::V1_0, value);
         let temp = adapted.get("temperature").unwrap();
         assert!(temp.get("datasetId").is_none());
         assert!(temp.get("observedAt").is_none());
@@ -339,7 +338,7 @@ mod tests {
                 "objectType": "Building"
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_0, value);
+        let adapted = adapt(SpecVersion::V1_0, value);
         let rel = adapted.get("refBuilding").unwrap();
         assert!(rel.get("datasetId").is_none());
         assert!(rel.get("observedAt").is_none());
@@ -359,7 +358,7 @@ mod tests {
                 }
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_3, value);
+        let adapted = adapt(SpecVersion::V1_3, value);
         let name = adapted.get("name").unwrap();
         pretty_assertions::assert_eq!(name.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(name.get("languageMap").is_none());
@@ -378,7 +377,7 @@ mod tests {
                 "valueType": "Number"
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let temp = adapted.get("temperature").unwrap();
         assert!(temp.get("expiresAt").is_none());
         assert!(temp.get("valueType").is_none());
@@ -394,7 +393,7 @@ mod tests {
                 "vocab": "commercial"
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let cat = adapted.get("category").unwrap();
         pretty_assertions::assert_eq!(cat.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(cat.get("vocab").is_none());
@@ -411,7 +410,7 @@ mod tests {
                 "objectList": ["urn:ngsi-ld:Room:1", "urn:ngsi-ld:Room:2"]
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let rel = adapted.get("refRooms").unwrap();
         pretty_assertions::assert_eq!(rel.get("type").and_then(|t| t.as_str()), Some("Relationship"));
         assert!(rel.get("objectList").is_none());
@@ -435,7 +434,7 @@ mod tests {
                 }
             ]
         });
-        let adapted = adapt(NgsiLdVersion::V1_0, value);
+        let adapted = adapt(SpecVersion::V1_0, value);
         let temp = adapted.get("temperature").unwrap();
         let arr = temp.as_array().unwrap();
         pretty_assertions::assert_eq!(arr.len(), 1);
@@ -456,7 +455,7 @@ mod tests {
                 "scope": ["/A"]
             }
         ]);
-        let adapted = adapt(NgsiLdVersion::V1_3, value);
+        let adapted = adapt(SpecVersion::V1_3, value);
         let arr = adapted.as_array().unwrap();
         assert!(arr[0].get("expiresAt").is_none());
         assert!(arr[1].get("scope").is_none());
@@ -472,7 +471,7 @@ mod tests {
                 "json": {"key": "value"}
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let config = adapted.get("config").unwrap();
         pretty_assertions::assert_eq!(config.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(config.get("json").is_none());
@@ -489,7 +488,7 @@ mod tests {
                 "valueList": ["a", "b", "c"]
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let tags = adapted.get("tags").unwrap();
         pretty_assertions::assert_eq!(tags.get("type").and_then(|t| t.as_str()), Some("Property"));
         assert!(tags.get("valueList").is_none());
@@ -507,7 +506,7 @@ mod tests {
                 "objectType": "Building"
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let rel = adapted.get("refBuilding").unwrap();
         assert!(rel.get("objectType").is_none());
     }
@@ -523,7 +522,7 @@ mod tests {
                 "expiresAt": "2025-01-01T00:00:00Z"
             }
         });
-        let adapted = adapt(NgsiLdVersion::V1_4, value);
+        let adapted = adapt(SpecVersion::V1_4, value);
         let rel = adapted.get("refBuilding").unwrap();
         assert!(rel.get("expiresAt").is_none());
     }

@@ -65,6 +65,9 @@ pub enum PostgresType {
     /// `csr_mode`, the enum a registration's forwarding mode carries.
     #[iden = "csr_mode"]
     CsrMode,
+    /// `csr_status`, the enum a registration's health status carries.
+    #[iden = "csr_status"]
+    CsrStatus,
     /// `uuid`, the identity type write and lease identifiers carry.
     #[iden = "uuid"]
     Uuid,

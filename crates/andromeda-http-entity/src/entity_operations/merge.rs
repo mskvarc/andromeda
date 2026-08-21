@@ -31,6 +31,7 @@ use crate::entity_operations::{
     public_error,
     start_rendering,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 
 pub(crate) async fn batch_merge(
@@ -55,7 +56,6 @@ pub(crate) async fn batch_merge(
     }
 
     // Distributed forwarding per spec 5.6.20
-    let context_url = context.link_contexts().first();
     let entity_type = entities.first().and_then(|entity| match &entity.type_ {
         EntityTypeValue::Single(name) => Some(name),
         EntityTypeValue::Multiple(names) => names.first(),
@@ -65,12 +65,14 @@ pub(crate) async fn batch_merge(
         .forward_batch_provision(ForwardBatchProvisionRequest {
             entity_type_compact: entity_type,
             body: &body,
-            context_url,
             context: &context,
             operation: ForwardingOperation::MergeBatch,
             batch_path: "/entityOperations/merge",
             query_string: None,
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;

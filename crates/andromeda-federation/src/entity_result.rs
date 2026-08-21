@@ -129,29 +129,22 @@ pub fn collect_temporal_warnings(results: &[ForwardedTemporalEntities]) -> Vec<N
     results.iter().flat_map(|r| r.warnings.iter().cloned()).collect()
 }
 
-/// Collect exclusive attribute names from forwarding results.
-///
-/// Gathers attribute names marked as exclusive across all forwarded write
-/// results. Used by provision handlers to strip exclusive attributes from
-/// local operations per spec 4.3.6.3.
-pub fn collect_forwarded_exclusive_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeName> {
-    results
-        .iter()
-        .filter(|result| !result.is_failure())
-        .flat_map(|r| r.exclusive_attrs.iter())
-        .cloned()
-        .collect()
+/// The attributes every proxied registration in `results` takes out of local
+/// processing, in result order.
+pub fn collect_proxied_attrs(results: &[ForwardedWriteResult]) -> Vec<AttributeName> {
+    // A proxied registration owns its attributes whether or not the forward
+    // succeeded (clause 4.3.6.3), so a failed or refused forward still keeps
+    // them out of local processing.
+    results.iter().flat_map(|result| result.proxied_attrs.iter()).cloned().collect()
 }
 
-/// Strip exclusive attributes from a JSON Value object.
-///
-/// Removes keys matching `exclusive_attrs` from a `Value::Object`. This is a
-/// no-op for non-object values. Used for attribute fragment payloads (append,
-/// update_attrs) that are `Value` rather than `EntityPatch`.
-pub fn strip_exclusive_attrs_from_value(fragment: &mut Value, exclusive_attrs: &[AttributeName]) {
-    if let Some(obj) = fragment.as_object_mut() {
-        for attr in exclusive_attrs {
-            obj.remove(attr.as_str());
+/// Remove the named attributes from a JSON fragment object; a no-op for
+/// non-object values. Used for the attribute fragment payloads (append,
+/// update) that are a `Value` rather than an `EntityPatch`.
+pub fn strip_attributes_from_value(fragment: &mut Value, attributes: &[AttributeName]) {
+    if let Some(object) = fragment.as_object_mut() {
+        for attribute in attributes {
+            object.remove(attribute.as_str());
         }
     }
 }

@@ -120,6 +120,7 @@ andromeda-http-entity-map = { path = "crates/andromeda-http-entity-map" }
 andromeda-http-extraction = { path = "crates/andromeda-http-extraction" }
 andromeda-http-headers = { path = "crates/andromeda-http-headers" }
 andromeda-http-health = { path = "crates/andromeda-http-health" }
+andromeda-http-notification-receiver = { path = "crates/andromeda-http-notification-receiver" }
 andromeda-http-registration = { path = "crates/andromeda-http-registration" }
 andromeda-http-response = { path = "crates/andromeda-http-response" }
 andromeda-http-server = { path = "crates/andromeda-http-server" }
@@ -158,6 +159,7 @@ andromeda-registration = { path = "crates/andromeda-registration" }
 andromeda-snapshot = { path = "crates/andromeda-snapshot" }
 andromeda-spatial-index = { path = "crates/andromeda-spatial-index" }
 andromeda-subscription = { path = "crates/andromeda-subscription" }
+andromeda-subscription-forwarding = { path = "crates/andromeda-subscription-forwarding" }
 andromeda-task-runtime = { path = "crates/andromeda-task-runtime" }
 andromeda-telemetry = { path = "crates/andromeda-telemetry" }
 andromeda-temporal = { path = "crates/andromeda-temporal" }

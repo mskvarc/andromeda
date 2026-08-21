@@ -35,6 +35,7 @@ use crate::entity_operations::{
     public_error,
     start_rendering,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 
 pub(crate) async fn batch_upsert(
@@ -66,7 +67,6 @@ pub(crate) async fn batch_upsert(
 
     // Distributed forwarding: forward to matching context sources
     // Per spec 5.6.8: iterate CSRs, forward matching entities
-    let context_url = context.link_contexts().first();
     let entity_type = entities.first().and_then(|entity| match &entity.type_ {
         EntityTypeValue::Single(name) => Some(name),
         EntityTypeValue::Multiple(names) => names.first(),
@@ -77,12 +77,14 @@ pub(crate) async fn batch_upsert(
         .forward_batch_provision(ForwardBatchProvisionRequest {
             entity_type_compact: entity_type,
             body: &body,
-            context_url,
             context: &context,
             operation: ForwardingOperation::UpsertBatch,
             batch_path: "/entityOperations/upsert",
             query_string: qs.as_deref(),
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;

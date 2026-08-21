@@ -7,12 +7,12 @@ use crate::entity::{
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
-    ForwardingModes,
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
     Json,
     JsonLd,
+    LocalOutcome,
     OriginalUri,
     OverwritePolicy,
     ProblemResponse,
@@ -23,14 +23,13 @@ use crate::entity::{
     Uri,
     ValidatedQuery,
     Value,
-    batch_entity_error,
-    collect_forwarded_exclusive_attrs,
-    first_forwarded_status,
-    has_remote_errors,
-    strip_exclusive_attrs_from_value,
+    collect_proxied_attrs,
+    provision_response,
+    strip_attributes_from_value,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
-use axum::http::Method;
+use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn append_attrs(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -39,6 +38,7 @@ pub(crate) async fn append_attrs(
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<AppendParams>,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -54,7 +54,6 @@ pub(crate) async fn append_attrs(
     };
 
     // Forward to matching context sources
-    let context_url = context.link_contexts().first();
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
     let qs = if no_overwrite { "options=noOverwrite" } else { "" };
 
@@ -66,12 +65,14 @@ pub(crate) async fn append_attrs(
             attribute_name: None,
             method: Method::POST,
             body: Some(&fragment_body),
-            context_url,
             context: &context,
             operation: ForwardingOperation::AppendEntityAttributes,
             path_suffix: Some("/attrs"),
             query_string: if qs.is_empty() { None } else { Some(qs) },
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;
@@ -92,44 +93,15 @@ pub(crate) async fn append_attrs(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    let modes = ForwardingModes::from_results(&forwarded);
-    if modes.has_redirect {
-        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
-        return Ok(status.into_response());
-    }
-
-    // Per spec 4.3.6.3: exclusive attributes shall not be held locally.
-    let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
+    // Clause 5.6.3.4: the attributes proxied registrations cover leave the
+    // fragment; whatever remains is appended here.
+    let proxied = collect_proxied_attrs(&forwarded);
     let mut local_fragment = fragment;
-    if !exclusive_attrs.is_empty() {
-        strip_exclusive_attrs_from_value(&mut local_fragment, &exclusive_attrs);
-    }
-
-    // Apply locally (ignore errors for inclusive -- remote already succeeded)
-    let local_result = service.append_attrs(&id, local_fragment, overwrite, &context).await;
-    let remote_errors = has_remote_errors(&forwarded);
-
-    if let Ok((_, not_appended)) = &local_result
-        && !remote_errors
-        && not_appended.is_empty()
-    {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-
-    // 207 Multi-Status for mixed results
-    let mut errors = Vec::new();
-    if let Err(err) = local_result {
-        errors.push(serde_json::to_value(batch_entity_error(id.clone(), &err, super::super::entity_error::classify_entity_error)).with_entity_instance(&uri)?); // clone: service call and error response both own the ID
-    }
-    for r in &forwarded {
-        if r.is_failure() {
-            let error_body = r
-                .body()
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({ "status": r.status(), "title": "Error from context source" }));
-            errors.push(serde_json::json!({ "entityId": id, "error": error_body }));
-        }
-    }
-    let body = serde_json::json!({ "success": [id], "errors": errors });
-    Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
+    strip_attributes_from_value(&mut local_fragment, &proxied);
+    let local = if local_fragment.as_object().is_some_and(|object| object.is_empty()) {
+        LocalOutcome::NothingRemained
+    } else {
+        LocalOutcome::Processed(service.append_attrs(&id, local_fragment, overwrite, &context).await.map(|_| ()))
+    };
+    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

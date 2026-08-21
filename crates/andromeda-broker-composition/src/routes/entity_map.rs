@@ -26,6 +26,8 @@ impl EntityMapStateResolver for BrokerEntityMapStateResolver {
             Ok(Arc::new(EntityMapRouteServices::new(
                 Arc::clone(&state.entity_maps),
                 Arc::clone(&state.entity_query),
+                Arc::clone(&state.temporal),
+                Arc::clone(&state.forwarding),
             )))
         })
     }

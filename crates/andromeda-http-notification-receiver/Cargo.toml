@@ -1,0 +1,32 @@
+[package]
+name = "andromeda-http-notification-receiver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+andromeda-http-extraction.workspace = true
+andromeda-http-headers.workspace = true
+andromeda-http-response.workspace = true
+andromeda-jsonld.workspace = true
+andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-ngsi-ld-model.workspace = true
+andromeda-ngsi-ld-problem-details.workspace = true
+andromeda-subscription-forwarding.workspace = true
+axum = "0.8.9"
+futures = "0.3.34"
+headers = "0.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+thiserror = "2.0.20"
+tracing = "0.1.44"
+
+[dev-dependencies]
+andromeda-architecture-checks.workspace = true
+pretty_assertions = "1.4.1"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tower = { version = "0.5.3", features = ["util"] }

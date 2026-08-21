@@ -1,8 +1,8 @@
 //! Temporal entity-map create and reuse for Retrieve/Query Temporal
 //! (clauses 5.7.3.4, 5.7.4.4, 5.5.14, 6.3.15): minting, fixing the CSR set on
 //! reuse, recreating on an expired/missing map, and returning the map location.
-//! The linked cross-instance map rows (`REQ-CONS-45/48/61`) are `#[ignore]`d
-//! against `crate::gaps::KNOWN_GAPS`.
+//! The linked cross-instance map rows (`REQ-CONS-45/48/61`) run against the
+//! durable, shared entity-map store.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -177,7 +177,6 @@ async fn distop_retrieve_temporal_return_flag_creates_new_map() {
 
 /// A temporal retrieve reusing a map whose CSR entry links a downstream map forwards
 /// that linked location (clause 5.5.14). Confirms REQ-CONS-45.
-#[ignore = "GAP REQ-CONS-45: cross-instance linked entity-map forwarding not implemented"]
 #[tokio::test]
 async fn distop_retrieve_temporal_map_linked_entry_forwards_linked_location() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -229,7 +228,6 @@ async fn distop_retrieve_temporal_map_linked_entry_forwards_linked_location() {
 
 /// Maps returned by forwarded CSRs update a temporal map's `linkedMaps`
 /// (clause 5.5.14). Confirms REQ-CONS-48.
-#[ignore = "GAP REQ-CONS-48: cross-instance linked entity-map forwarding not implemented"]
 #[tokio::test]
 async fn distop_retrieve_temporal_map_linkedmaps_updated() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -386,7 +384,6 @@ async fn distop_query_temporal_return_flag_creates_new_map() {
 
 /// A temporal query reusing a map whose CSR entry links a downstream map forwards
 /// that linked location (clause 5.5.14). Confirms REQ-CONS-61.
-#[ignore = "GAP REQ-CONS-61: cross-instance linked entity-map forwarding not implemented"]
 #[tokio::test]
 async fn distop_query_temporal_map_linked_entry_forwards_linked_location() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");

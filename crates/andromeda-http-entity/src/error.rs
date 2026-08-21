@@ -48,13 +48,13 @@ impl EntityHttpClassify for FederationError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         match self {
             FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
-            FederationError::Gateway { .. } => {
-                let report = ClassifiedReport::internal(self);
-                ClassifiedReport::public_binding(ProblemClassification::BadGateway, report.detail())
-            }
-            FederationError::Registration(_) | FederationError::Request(_) | FederationError::Representation(_) | FederationError::Internal { .. } => {
-                ClassifiedReport::internal(self)
-            }
+            // Clause 6.3.17: the single-source failures of an unsafe method
+            // carry their own status and the most informative detail available.
+            FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, self.to_string()),
+            FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, self.to_string()),
+            FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, self.to_string()),
+            FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, self.to_string()),
+            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal { .. } => ClassifiedReport::internal(self),
             FederationError::JsonLd(source) => classify_jsonld_error(source),
             FederationError::Query(source) => classify_query_error(source),
         }

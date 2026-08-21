@@ -12,6 +12,7 @@ use andromeda_entity::{
     },
     spatial_reconciliation::reconcile_location,
 };
+use andromeda_entity_map::store::EntityMapStore;
 use andromeda_jsonld::{config::JsonLdConfig, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
@@ -19,6 +20,7 @@ use andromeda_postgresql_context_store::{
     config::DatabaseConfig,
     csource_registration::registration_store::PostgresRegistrationStore,
     entity::repo::EntityRepository,
+    entity_map::repo::EntityMapRepository,
     jsonld_context::repo::JsonLdContextRepository,
     snapshot::repo::SnapshotRepository,
     subscription::repo::SubscriptionRepository,
@@ -46,6 +48,7 @@ pub(super) struct TenantStorage {
     pub(super) temporal_repo: Arc<TemporalRepository>,
     pub(super) entity_ports: EntityStoragePorts,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
+    pub(super) entity_map_store: Arc<dyn EntityMapStore>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
     pub(super) spatial_index: Arc<SpatialEntityIndex>,
@@ -139,6 +142,7 @@ pub(super) async fn initialize_storage(
     };
     // clone: the routing projection interns registered attribute names through the tenant's one dictionary.
     let registration_store = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names))) as Arc<dyn RegistrationStore>;
+    let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
     if let Err(error) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
@@ -157,6 +161,7 @@ pub(super) async fn initialize_storage(
         temporal_repo,
         entity_ports,
         registration_store,
+        entity_map_store,
         snapshot_store,
         subscription_cache,
         spatial_index,

@@ -34,7 +34,9 @@ use crate::entity_operations::{
     start_rendering,
     with_linked_resolution_warnings,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
+use axum::http::HeaderMap;
 use std::iter::empty;
 
 pub(crate) async fn query(
@@ -43,6 +45,7 @@ pub(crate) async fn query(
     accept: AcceptFormat,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
+    headers: HeaderMap,
     SnapshotHeader(snapshot_id): SnapshotHeader,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
@@ -96,14 +99,13 @@ pub(crate) async fn query(
 
     let opts = params.parse_options();
 
-    let is_local = params.local.unwrap_or(false);
+    let is_local = params.is_local();
     let (local_entities, total_count) = service.query(&params, &context).await.with_entity_instance(&uri)?;
 
     // Distributed forwarding: query matching context sources unless local=true
     let (entities, warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let context_url = context.link_contexts().first();
         let entity_type = params.entity_type.as_ref();
         let entity_ids = params.id.clone();
         let entity_ids_ref = entity_ids.as_deref();
@@ -113,12 +115,15 @@ pub(crate) async fn query(
             .forward_query(ForwardQueryRequest {
                 entity_type_compact: entity_type,
                 entity_ids: entity_ids_ref,
-                context_url,
                 context: &context,
                 operation: ForwardingOperation::QueryBatch,
-                incoming_via: incoming_via.as_ref(),
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
                 csf_expr: None, // csf not supported on batch query endpoint
                 mode_filter: CsrModeFilter::All,
+                entity_map: None,
             })
             .await
             .unwrap_or_else(|e| {

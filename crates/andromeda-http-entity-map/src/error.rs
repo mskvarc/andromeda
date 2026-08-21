@@ -2,11 +2,13 @@
 
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
+use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error};
 use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
+use andromeda_temporal::error::TemporalError;
 use axum::http::Uri;
 use std::fmt::Display;
 
@@ -58,6 +60,37 @@ impl EntityMapHttpClassify for ParameterError {
 impl EntityMapHttpClassify for RenderError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         ClassifiedReport::internal(self)
+    }
+}
+
+impl EntityMapHttpClassify for TemporalError {
+    fn classify_for_entity_map_http(&self) -> ClassifiedReport {
+        match self {
+            TemporalError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
+            TemporalError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
+            TemporalError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
+            TemporalError::JsonLd(source) => classify_jsonld_error(source),
+            TemporalError::Query(source) => classify_query_error(source),
+            TemporalError::Request(source) => classify_parameter_error(source),
+            TemporalError::Commit(_) | TemporalError::Persistence { .. } | TemporalError::Rendering { .. } | TemporalError::Internal { .. } => {
+                ClassifiedReport::internal(self)
+            }
+        }
+    }
+}
+
+impl EntityMapHttpClassify for FederationError {
+    fn classify_for_entity_map_http(&self) -> ClassifiedReport {
+        match self {
+            FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
+            FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, self.to_string()),
+            FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, self.to_string()),
+            FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, self.to_string()),
+            FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, self.to_string()),
+            FederationError::JsonLd(source) => classify_jsonld_error(source),
+            FederationError::Query(source) => classify_query_error(source),
+            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal { .. } => ClassifiedReport::internal(self),
+        }
     }
 }
 

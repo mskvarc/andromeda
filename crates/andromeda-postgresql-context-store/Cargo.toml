@@ -13,6 +13,7 @@ andromeda-component-report.workspace = true
 andromeda-context-commit.workspace = true
 andromeda-context-registry.workspace = true
 andromeda-entity.workspace = true
+andromeda-entity-map.workspace = true
 andromeda-health.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true
@@ -30,6 +31,7 @@ andromeda-postgresql-schema.workspace = true
 andromeda-postgresql-seaquery.workspace = true
 andromeda-registration.workspace = true
 andromeda-snapshot.workspace = true
+andromeda-subscription-forwarding.workspace = true
 andromeda-subscription.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
@@ -40,6 +42,8 @@ chrono = { version = "0.4.45", features = ["serde"] }
 confique = "0.4.0"
 derive_more = { version = "2.1.1", features = ["display", "is_variant"] }
 hex = "0.4.3"
+futures = "0.3.34"
+indexmap = { version = "2.14.0", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }
 langtag = { version = "1.1.0", features = ["serde"] }

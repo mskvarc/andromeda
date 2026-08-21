@@ -13,7 +13,9 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-entity",
         "andromeda-entity-map",
+        "andromeda-federation",
         "andromeda-http-extraction",
+        "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
@@ -22,6 +24,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-request",
+        "andromeda-temporal",
         "andromeda-tenancy",
     ],
     allow_workspace_dev_dependencies: [],

@@ -74,6 +74,8 @@ services:
       ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_a"
       ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
       ANDROMEDA_INFO_SOURCE_ALIAS: "broker-a"
+      # Clauses 5.8.1.4 / 5.8.6: the origin peers notify this broker at.
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://broker-a:1056"
     ports:
       - "1061:1056"
 
@@ -84,6 +86,8 @@ services:
       ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_b"
       ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-b"
       ANDROMEDA_INFO_SOURCE_ALIAS: "broker-b"
+      # Clauses 5.8.1.4 / 5.8.6: the origin peers notify this broker at.
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://broker-b:1056"
     ports:
       - "1062:1056"
 
@@ -94,5 +98,7 @@ services:
       ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_c"
       ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-c"
       ANDROMEDA_INFO_SOURCE_ALIAS: "broker-c"
+      # Clauses 5.8.1.4 / 5.8.6: the origin peers notify this broker at.
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://broker-c:1056"
     ports:
       - "1063:1056"

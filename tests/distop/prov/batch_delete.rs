@@ -3,7 +3,7 @@
 //! Each matching registration is forwarded only the ids it owns; a source
 //! advertising the batch delete is forwarded the batch and its results merge
 //! keyed by `registrationId`; otherwise the broker falls back to one delete per
-//! id, and an exclusive source advertising neither yields a per-entity
+//! id, and a redirect source advertising neither yields a per-entity
 //! `409 Conflict`. The local phase removes the matched ids and reports them in
 //! `success`.
 
@@ -135,10 +135,10 @@ async fn batch_delete_fallback_per_entity_delete() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive source advertising neither the batch nor the per-entity delete
+/// A redirect source advertising neither the batch nor the per-entity delete
 /// yields a per-entity `409 Conflict`, with no forwarding. Confirms REQ-PROV-76.
 #[tokio::test]
-async fn batch_delete_exclusive_neither_op_conflict_per_entity() {
+async fn batch_delete_redirect_neither_op_conflict_per_entity() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let client = topology.front().client();
     let mock = ContextSourceAdapter::start().await;
@@ -158,7 +158,7 @@ async fn batch_delete_exclusive_neither_op_conflict_per_entity() {
     }
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .operations(&["retrieveEntity"])
         .build();
@@ -201,7 +201,11 @@ async fn batch_delete_local_phase_removes_ids() {
         assert_status(&seeded, 201);
     }
 
-    let registration = CsrBuilder::new(&reg_id, &mock.url("")).mode("auxiliary").entity_type("Vehicle").build();
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("auxiliary")
+        .entity_type("Vehicle")
+        .operations(&["retrieveEntity", "queryEntity"])
+        .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let response = client.batch_delete(&json!([v1, v2])).await.expect("batch delete");

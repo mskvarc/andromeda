@@ -66,6 +66,8 @@ pub struct SubscriptionRow {
     pub jsonld_context: Option<Url>,
     /// Local-only scope flag.
     pub local_only: bool,
+    /// Whether entities are assumed split across sources (`NULL` defers to the deployment default).
+    pub split_entities: Option<bool>,
     /// Counter for notifications sent.
     pub times_sent: i32,
     /// Timestamp of the most recent notification attempt.

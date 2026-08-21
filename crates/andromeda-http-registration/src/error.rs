@@ -20,6 +20,7 @@ impl RegistrationHttpClassify for RegistrationError {
             RegistrationError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
             RegistrationError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
             RegistrationError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, self.to_string()),
+            RegistrationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
             RegistrationError::JsonLd(source) => classify_jsonld_error(source),
             RegistrationError::Query(source) => classify_query_error(source),
             RegistrationError::Representation(_)
@@ -76,6 +77,7 @@ mod tests {
                 NgsiLdErrorType::ResourceNotFound,
             ),
             (RegistrationError::AlreadyExists { identifier }, NgsiLdErrorType::AlreadyExists),
+            (RegistrationError::Conflict { detail: "overlap".to_string() }, NgsiLdErrorType::Conflict),
             (
                 RegistrationError::Persistence {
                     detail: "database host".to_string(),

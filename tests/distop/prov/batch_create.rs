@@ -5,7 +5,7 @@
 //! owns, entities no source matches are dropped, and a source owning nothing in
 //! the batch is skipped. A source advertising the batch operation is forwarded
 //! the batch and its per-entity results are merged with a `registrationId`;
-//! otherwise the broker falls back to per-entity creates, and an exclusive
+//! otherwise the broker falls back to per-entity creates, and a redirect
 //! source advertising neither yields a per-entity `409 Conflict`. The local
 //! phase populates `success`/`errors` independently of forwarding.
 
@@ -20,7 +20,7 @@ use crate::{
 use axum::http::Method;
 use serde_json::{Value, json};
 
-/// Per-CSR filtering forwards each exclusive source only its owned attribute of
+/// Per-CSR filtering forwards each redirect source only its owned attribute of
 /// the matching entity, dropping the unmatched entity entirely. Confirms
 /// REQ-PROV-47, 48, 49.
 #[tokio::test]
@@ -34,14 +34,14 @@ async fn batch_create_per_csr_filters_input_copy() {
     let reg_location = topology.id("registration:prov-batch-create-filter-location");
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["speed"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let location_csr = CsrBuilder::new(&reg_location, &mock.url("/s2"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["location"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
@@ -80,7 +80,7 @@ async fn batch_create_per_csr_filters_input_copy() {
     assert!(!attr_present(s1_vehicle, "location"), "the speed source does not receive location: {s1_body}");
     assert!(
         !attr_present(s1_vehicle, "brandName"),
-        "the exclusive copy strips the unowned brandName: {s1_body}"
+        "the redirect copy strips the unowned brandName: {s1_body}"
     );
     assert!(entity_with_id(&s1_entities, &d1).is_none(), "the unmatched Device is dropped: {s1_body}");
 
@@ -112,7 +112,7 @@ async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let brand_csr = CsrBuilder::new(&reg_brand, &mock.url("/s2"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["brandName"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
@@ -159,14 +159,14 @@ async fn batch_create_empty_in_skips_csr() {
     let reg_speed = topology.id("registration:prov-batch-create-skip-speed");
 
     let colour_csr = CsrBuilder::new(&reg_colour, &mock.url("/s1"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["colour"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&colour_csr).await.expect("create colour registration"), 201);
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s2"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["speed"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
@@ -269,11 +269,11 @@ async fn batch_create_fallback_per_entity_create() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive source advertising neither the batch nor the per-entity create
+/// A redirect source advertising neither the batch nor the per-entity create
 /// yields a per-entity `409 Conflict` keyed by `registrationId`, with no
 /// forwarding. Confirms REQ-PROV-55.
 #[tokio::test]
-async fn batch_create_exclusive_neither_op_conflict_per_entity() {
+async fn batch_create_redirect_neither_op_conflict_per_entity() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let client = topology.front().client();
     let mock = ContextSourceAdapter::start().await;
@@ -282,7 +282,7 @@ async fn batch_create_exclusive_neither_op_conflict_per_entity() {
     let reg_id = topology.id("registration:prov-batch-create-neither");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
@@ -332,7 +332,7 @@ async fn batch_create_local_phase_populates_success_and_errors() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
         .entity_type("Vehicle")
-        .operations(&["createEntity", "retrieveEntity"])
+        .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 

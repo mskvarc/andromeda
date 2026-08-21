@@ -67,7 +67,9 @@ rejection_cases! {
     reg_registrationinfo_empty_entities_returns_400 => |body| body["information"] = json!([ { "entities": [] } ]);
     reg_registrationinfo_empty_propertynames_returns_400 => |body| body["information"] = json!([ { "propertyNames": [] } ]);
     reg_registrationinfo_empty_relationshipnames_returns_400 => |body| body["information"] = json!([ { "relationshipNames": [] } ]);
-    reg_timeinterval_missing_startat_returns_400 => |body| body["management"] = json!({ "managementInterval": { "endAt": "2030-01-01T00:00:00Z" } });
+    reg_timeinterval_missing_startat_returns_400 => |body| body["managementInterval"] = json!({ "endAt": "2030-01-01T00:00:00Z" });
+    reg_timeinterval_endat_before_startat_returns_400 => |body| body["observationInterval"] = json!({ "startAt": "2030-01-01T00:00:00Z", "endAt": "2020-01-01T00:00:00Z" });
+    reg_management_unknown_member_returns_400 => |body| body["management"] = json!({ "managementInterval": { "startAt": "2020-01-01T00:00:00Z" } });
     reg_management_cacheduration_invalid_returns_400 => |body| body["management"] = json!({ "cacheDuration": "10s" });
     reg_management_cooldown_zero_returns_400 => |body| body["management"] = json!({ "cooldown": 0 });
     reg_management_cooldown_negative_returns_400 => |body| body["management"] = json!({ "cooldown": -5 });

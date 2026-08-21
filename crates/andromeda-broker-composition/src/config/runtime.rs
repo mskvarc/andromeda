@@ -214,7 +214,7 @@ pub fn print_effective_reported(config_file: &Path, format: ConfigurationOutputF
 mod tests {
     use crate::config::observability::{LogLevel, MetricsExposure};
     use andromeda_entity::{config::EntityConfig, spatial_config::SpatialConfig};
-    use andromeda_federation::config::FederationConfig;
+    use andromeda_federation::config::{FederationConfig, SplitEntitiesDefault};
     use andromeda_http_server::config::ServerConfig;
     use andromeda_http_source_identity::config::InfoConfig;
     use andromeda_http_stack::config::{CorsMode, HttpFeatureMode, HttpStackConfig};
@@ -300,6 +300,8 @@ mod tests {
             info: InfoConfig {
                 source_id: "urn:ngsi-ld:ContextSourceIdentity:andromeda".parse::<Uri>().expect("valid source ID"),
                 source_alias: "andromeda".parse::<ContextSourcePseudonym>().expect("valid source alias"),
+                source_extras: None,
+                advertised_url: None,
             },
             entity: EntityConfig {
                 batch_concurrency: None,
@@ -318,7 +320,13 @@ mod tests {
                 pending_side_effects_dead_letter_after_secs: 604_800,
                 pending_side_effects_cleanup_interval_secs: 300,
             },
-            federation: FederationConfig { forward_concurrency: 16 },
+            federation: FederationConfig {
+                forward_concurrency: 16,
+                connect_timeout_ms: 3000,
+                request_timeout_ms: 5000,
+                cache_max_entries: 1024,
+                split_entities_default: SplitEntitiesDefault::Complete,
+            },
             postgresql_write: AtomicWriteConfig {
                 bulk_mode: BulkWriteMode::Unnest,
             },

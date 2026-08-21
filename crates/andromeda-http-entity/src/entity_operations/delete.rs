@@ -29,9 +29,11 @@ use crate::entity_operations::{
     public_error,
     start_rendering,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use axum::http::HeaderMap;
 
 pub(crate) async fn batch_delete(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -40,6 +42,7 @@ pub(crate) async fn batch_delete(
     context: ContextUrl,
     prefer: PreferHeader,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
@@ -62,18 +65,19 @@ pub(crate) async fn batch_delete(
 
     // Distributed forwarding per spec 5.6.10
     let context: ContextSpec = context.into_inner();
-    let context_url = context.link_contexts().first();
     let forwarded = state
         .forwarding
         .forward_batch_provision(ForwardBatchProvisionRequest {
             entity_type_compact: None, // delete doesn't have entity type in payload
             body: &body,
-            context_url,
             context: &context,
             operation: ForwardingOperation::DeleteBatch,
             batch_path: "/entityOperations/delete",
             query_string: None,
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;

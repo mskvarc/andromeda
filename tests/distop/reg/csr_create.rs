@@ -159,7 +159,7 @@ async fn reg_timeinterval_startat_only_open_ended_accepted() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let id = topology.id("registration:startat-only");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
-    body["management"] = json!({ "managementInterval": { "startAt": "2020-01-01T00:00:00Z" } });
+    body["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z" });
     let created = topology.front().client().create_registration(&body).await.expect("create registration");
     assert_status(&created, 201);
     topology.finish().await.expect("topology cleanup");

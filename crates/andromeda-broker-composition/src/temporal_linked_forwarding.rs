@@ -14,7 +14,11 @@
 //! rather than being spliced together from two different ones.
 
 use crate::{linked_resolution_failure_mapping::resolution_failure, linked_traversal_parameters::append_traversal};
-use andromeda_federation::{FederationService, operation::ForwardingOperation, request::CsrModeFilter};
+use andromeda_federation::{
+    FederationService,
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardRetrieveRequest, TriggeringRequest},
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
@@ -105,18 +109,21 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
         let query_string = linked_temporal_retrieval_query(remaining_depth, visited, window);
         let forwarded = self
             .federation
-            .forward_temporal_retrieve(
-                id,
-                &query_string,
-                context.link_contexts().first(),
-                ForwardingOperation::RetrieveTemporalEntity,
+            .forward_temporal_retrieve(ForwardRetrieveRequest {
+                entity_id: id,
+                exclude_registration: None,
+                query_string: &query_string,
+                context,
+                operation: ForwardingOperation::RetrieveTemporalEntity,
                 // A linked retrieval starts at this broker rather than being a
-                // hop of an inbound one, so there is no `Via` chain to extend.
-                None,
+                // hop of an inbound one, so there is no `Via` chain to extend
+                // and no headers to pass through.
+                triggering: TriggeringRequest::default(),
                 // Clause 4.3.6.2: an auxiliary context source only supplements
                 // an entity that already exists, never supplies a missing one.
-                CsrModeFilter::ExcludeAuxiliary,
-            )
+                mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                entity_map: None,
+            })
             .await;
 
         // A Linked Entity that cannot be reached degrades the join instead of

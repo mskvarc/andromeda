@@ -1,0 +1,151 @@
+//! The statements over the `entity_maps` control record: create, read, touch
+//! the expiry, delete, and sweep. Everything here names a map by its URI; the
+//! surrogate `map_key` is issued by the database and resolved in-statement.
+
+use crate::entity_map::persistence_error;
+use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_schema::entity_map::EntityMaps;
+use andromeda_postgresql_seaquery::clock::now;
+use chrono::{DateTime, Utc};
+use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, QueryStatementBuilder, SimpleExpr};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{PgConnection, PgPool, Row};
+
+/// `(SELECT entity_maps.map_key FROM entity_maps WHERE entity_maps.id = <id>)`.
+pub(crate) fn map_key_of(id: SimpleExpr) -> SimpleExpr {
+    let mut lookup = Query::select();
+    lookup
+        .column((EntityMaps::Table, EntityMaps::MapKey))
+        .from(EntityMaps::Table)
+        .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id));
+    SimpleExpr::SubQuery(None, Box::new(lookup.into_sub_query_statement()))
+}
+
+/// The predicate selecting maps that are still live at the database clock.
+fn live() -> SimpleExpr {
+    Expr::col((EntityMaps::Table, EntityMaps::ExpiresAt)).gt(now())
+}
+
+/// Map a rows-affected count to the policy-level outcome.
+const fn mutation_outcome(rows_affected: u64) -> EntityMapMutation {
+    match rows_affected {
+        0 => EntityMapMutation::Missing,
+        1.. => EntityMapMutation::Applied,
+    }
+}
+
+/// Remove any previous map with the same identifier; the children go with it
+/// through the cascading foreign keys.
+pub(crate) async fn delete_map_row(connection: &mut PgConnection, id: &Uri) -> Result<EntityMapMutation, EntityMapError> {
+    let (sql, values) = Query::delete()
+        .from_table(EntityMaps::Table)
+        .and_where(Expr::col(EntityMaps::Id).eq(id.as_str()))
+        .build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(connection)
+        .await
+        .map_err(persistence_error)?;
+    Ok(mutation_outcome(result.rows_affected()))
+}
+
+/// Write the control record.
+pub(crate) async fn insert_map_row(connection: &mut PgConnection, id: &Uri, expires_at: DateTime<Utc>) -> Result<(), EntityMapError> {
+    let mut insert = Query::insert();
+    insert
+        .into_table(EntityMaps::Table)
+        .columns([EntityMaps::Id, EntityMaps::ExpiresAt])
+        .values([Expr::val(id.as_str()), Expr::val(expires_at)])
+        .map_err(persistence_error)?;
+    let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(connection)
+        .await
+        .map_err(persistence_error)?;
+    Ok(())
+}
+
+/// The expiry of a live map, or `None` when the map is absent or expired.
+pub(crate) async fn read_live_expiry(pool: &PgPool, id: &Uri) -> Result<Option<DateTime<Utc>>, EntityMapError> {
+    let (sql, values) = Query::select()
+        .column((EntityMaps::Table, EntityMaps::ExpiresAt))
+        .from(EntityMaps::Table)
+        .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id.as_str()))
+        .and_where(live())
+        .build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_optional(pool)
+        .await
+        .map_err(persistence_error)?;
+    row.map(|row| row.try_get::<DateTime<Utc>, _>("expires_at").map_err(persistence_error))
+        .transpose()
+}
+
+/// Move a live map's expiry.
+pub(crate) async fn update_expiry(pool: &PgPool, id: &Uri, expires_at: DateTime<Utc>) -> Result<EntityMapMutation, EntityMapError> {
+    let (sql, values) = Query::update()
+        .table(EntityMaps::Table)
+        .value(EntityMaps::ExpiresAt, expires_at)
+        .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id.as_str()))
+        .and_where(live())
+        .build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(mutation_outcome(result.rows_affected()))
+}
+
+/// Remove a live map.
+pub(crate) async fn delete_live(pool: &PgPool, id: &Uri) -> Result<EntityMapMutation, EntityMapError> {
+    let (sql, values) = Query::delete()
+        .from_table(EntityMaps::Table)
+        .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id.as_str()))
+        .and_where(live())
+        .build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(mutation_outcome(result.rows_affected()))
+}
+
+/// Remove every map due at or before `cutoff`.
+pub(crate) async fn delete_expired(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, EntityMapError> {
+    let (sql, values) = Query::delete()
+        .from_table(EntityMaps::Table)
+        .and_where(Expr::col((EntityMaps::Table, EntityMaps::ExpiresAt)).lte(cutoff))
+        .build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(result.rows_affected())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::entity_map::lifecycle::{map_key_of, mutation_outcome};
+    use andromeda_entity_map::store::EntityMapMutation;
+    use andromeda_postgresql_seaquery::placeholder::external_placeholder;
+    use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn the_key_lookup_is_a_qualified_scalar_subquery_on_the_unique_identifier() {
+        let sql = Query::select()
+            .expr(Expr::col(Alias::new("entity_id")))
+            .from(Alias::new("entity_map_entries"))
+            .and_where(Expr::col(Alias::new("map_key")).eq(map_key_of(external_placeholder(1))))
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"(SELECT "entity_maps"."map_key" FROM "entity_maps" WHERE "entity_maps"."id" = ($1))"#),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn affected_row_counts_map_to_mutation_outcomes() {
+        assert_eq!(mutation_outcome(0), EntityMapMutation::Missing);
+        assert_eq!(mutation_outcome(1), EntityMapMutation::Applied);
+    }
+}

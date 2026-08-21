@@ -2,11 +2,13 @@
 
 use andromeda_entity::query::EntityQueryService;
 use andromeda_entity_map::service::EntityMapService;
+use andromeda_federation::FederationService;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
     tenant_state::{ExistingTenantState, TenantStateResolver},
 };
 use andromeda_http_response::problem_response::ProblemResponse;
+use andromeda_temporal::service::TemporalService;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
 use axum::http::Uri;
 use futures::future::BoxFuture;
@@ -18,12 +20,28 @@ pub struct EntityMapRouteServices {
     pub entity_maps: Arc<EntityMapService>,
     /// Entity query policy used to materialize map membership.
     pub entity_query: Arc<EntityQueryService>,
+    /// Temporal query policy used to materialize temporal map membership
+    /// (clause 5.14.5).
+    pub temporal: Arc<TemporalService>,
+    /// Forwarding to the context sources that contribute their own maps
+    /// (clause 5.14.4.4).
+    pub forwarding: Arc<FederationService>,
 }
 
 impl EntityMapRouteServices {
     /// Construct focused Entity Map route capabilities.
-    pub const fn new(entity_maps: Arc<EntityMapService>, entity_query: Arc<EntityQueryService>) -> EntityMapRouteServices {
-        EntityMapRouteServices { entity_maps, entity_query }
+    pub const fn new(
+        entity_maps: Arc<EntityMapService>,
+        entity_query: Arc<EntityQueryService>,
+        temporal: Arc<TemporalService>,
+        forwarding: Arc<FederationService>,
+    ) -> EntityMapRouteServices {
+        EntityMapRouteServices {
+            entity_maps,
+            entity_query,
+            temporal,
+            forwarding,
+        }
     }
 }
 

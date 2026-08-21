@@ -23,10 +23,8 @@
 //! * `ngsi-ld=1.9` -- server conforms to NGSI-LD v1.9
 //! * `body=json` -- server applied JSON body preference
 
-use crate::{
-    preference::{Preference, RespondMode},
-    version::NgsiLdVersion,
-};
+use crate::preference::{Preference, RespondMode};
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use http::{HeaderName, HeaderValue};
 use std::iter;
 
@@ -43,7 +41,7 @@ impl PreferenceApplied {
     /// This is the most common usage: the server responds with the version it conforms to
     /// when the client requests version conformance (clause 4.3.6.8).
     pub fn version_conformance() -> PreferenceApplied {
-        PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::CONFORMANT)])
+        PreferenceApplied(vec![Preference::Version(SpecVersion::CONFORMANT)])
     }
 
     /// Create a `Preference-Applied: respond-async` header, signalling the
@@ -97,7 +95,7 @@ mod tests {
     #[test]
     fn decode_ngsild_version() {
         let pa = decode_preference_applied("ngsi-ld=1.9");
-        pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::V1_9)]));
+        pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::Version(SpecVersion::V1_9)]));
     }
 
     #[test]
@@ -122,6 +120,6 @@ mod tests {
     #[test]
     fn version_conformance_contains_conformant() {
         let pa = PreferenceApplied::version_conformance();
-        pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::NgsiLdVersion(NgsiLdVersion::CONFORMANT)]));
+        pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::Version(SpecVersion::CONFORMANT)]));
     }
 }

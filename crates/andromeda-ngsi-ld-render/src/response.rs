@@ -22,8 +22,8 @@ use crate::{
     uri_decoding::decode_percent_encoded_uris,
     version::{VersionAdaptation, VersionRenderer},
 };
-use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, spec_version::SpecVersion};
 use iri_rs::IriRefBuf;
 use serde_json::Value;
 use std::sync::Arc;
@@ -93,7 +93,7 @@ pub struct ResponseRenderer<'a> {
     /// The `Prefer: body=` token, which moves a GeoJSON `@context` to the headers.
     geo_json_body: GeoJsonBodyPreference,
     /// The `Prefer: ngsi-ld=` version to adapt the payload to, if any.
-    requested_version: Option<NgsiLdVersion>,
+    requested_version: Option<SpecVersion>,
     /// The attribute a GeoJSON geometry is taken from.
     geometry_property: Option<&'a AttributeName>,
 }
@@ -146,7 +146,7 @@ impl<'a> ResponseRenderer<'a> {
     }
 
     /// Set the `Prefer: ngsi-ld=` version the payload is adapted to, if any.
-    pub const fn with_requested_version(mut self, requested_version: Option<NgsiLdVersion>) -> Self {
+    pub const fn with_requested_version(mut self, requested_version: Option<SpecVersion>) -> Self {
         self.requested_version = requested_version;
         self
     }
@@ -287,7 +287,8 @@ mod tests {
         response::{ResponsePayload, ResponseRenderer},
         version::VersionAdaptation,
     };
-    use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType, version::NgsiLdVersion};
+    use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, media_type::ResponseMediaType};
+    use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
     use iri_rs::IriRefBuf;
     use serde_json::{Value, json};
 
@@ -430,7 +431,7 @@ mod tests {
         // nothing is adapted and the response stays 200. Setting the flag from
         // the mere presence of a requested version made this a spurious 203.
         let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
-            .with_requested_version(Some(NgsiLdVersion::CONFORMANT))
+            .with_requested_version(Some(SpecVersion::CONFORMANT))
             .with_payload(ResponsePayload::Single(
                 json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"}),
             ))
@@ -455,7 +456,7 @@ mod tests {
     #[test]
     fn render_single_version_adapted_flag() {
         let rendered = ResponseRenderer::new(ResponseMediaType::Json, a_context())
-            .with_requested_version(Some(NgsiLdVersion::V1_4))
+            .with_requested_version(Some(SpecVersion::V1_4))
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
             .expect("render");

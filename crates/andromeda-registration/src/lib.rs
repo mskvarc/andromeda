@@ -2,7 +2,7 @@
 
 #![deny(missing_docs)]
 
-use crate::store::RegistrationStore;
+use crate::{entity_probe::RegisteredEntityProbe, store::RegistrationStore};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use std::sync::Arc;
@@ -10,12 +10,15 @@ use std::sync::Arc;
 mod context_source_properties;
 mod create;
 mod delete;
+/// The entity-store questions proxied-registration admission asks.
+pub mod entity_probe;
 /// Registration policy failures.
 pub mod error;
 pub mod expiry;
 mod geometry;
 mod identifier;
 mod information_expansion;
+mod mode_rules;
 mod payload;
 mod query;
 /// Fully resolved registration update values and merge policy.
@@ -29,6 +32,7 @@ mod validation;
 /// Service for managing NGSI-LD context source registrations.
 pub struct RegistrationService {
     repo: Arc<dyn RegistrationStore>,
+    entity_probe: Arc<dyn RegisteredEntityProbe>,
     engine: JsonLdEngine,
     change_sink: Option<Arc<dyn RegistrationChangeSink>>,
 }
@@ -41,9 +45,20 @@ pub trait RegistrationChangeSink: Send + Sync + 'static {
 
 impl RegistrationService {
     /// Create a context-source registration service backed by the supplied
-    /// store and JSON-LD processor.
-    pub const fn new(repo: Arc<dyn RegistrationStore>, engine: JsonLdEngine, change_sink: Option<Arc<dyn RegistrationChangeSink>>) -> RegistrationService {
-        RegistrationService { repo, engine, change_sink }
+    /// store, the local-entity probe proxied-registration admission consults,
+    /// and JSON-LD processor.
+    pub const fn new(
+        repo: Arc<dyn RegistrationStore>,
+        entity_probe: Arc<dyn RegisteredEntityProbe>,
+        engine: JsonLdEngine,
+        change_sink: Option<Arc<dyn RegistrationChangeSink>>,
+    ) -> RegistrationService {
+        RegistrationService {
+            repo,
+            entity_probe,
+            engine,
+            change_sink,
+        }
     }
 
     fn emit_csr_change(&self, event: CsrChangeEvent) {

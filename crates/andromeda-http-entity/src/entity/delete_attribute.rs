@@ -10,11 +10,10 @@ use crate::entity::{
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
-    ForwardingModes,
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
-    Json,
+    LocalOutcome,
     OriginalUri,
     ProblemResponse,
     Response,
@@ -22,12 +21,12 @@ use crate::entity::{
     TypedPath,
     Uri,
     ValidatedQuery,
-    build_multi_status_body,
-    first_forwarded_status,
-    has_remote_errors,
+    collect_proxied_attrs,
+    provision_response,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
-use axum::http::Method;
+use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn delete_attr(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -36,6 +35,7 @@ pub(crate) async fn delete_attr(
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<DeleteAttrParams>,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context: ContextSpec = context.into_inner();
@@ -53,7 +53,6 @@ pub(crate) async fn delete_attr(
     };
 
     // Forward to matching context sources
-    let context_url = context.link_contexts().first();
     let path_suffix = format!("/attrs/{attr_id}");
 
     // Build query string for forwarding
@@ -74,12 +73,14 @@ pub(crate) async fn delete_attr(
             attribute_name: Some(&attr_id),
             method: Method::DELETE,
             body: None,
-            context_url,
             context: &context,
             operation: ForwardingOperation::DeleteEntityAttribute,
             path_suffix: Some(&path_suffix),
             query_string: qs.as_deref(),
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;
@@ -89,19 +90,12 @@ pub(crate) async fn delete_attr(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let modes = ForwardingModes::from_results(&forwarded);
-    if modes.has_redirect || modes.has_exclusive {
-        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
-        return Ok(status.into_response());
-    }
-
-    // Inclusive: delete locally and combine results
-    let local_result = service.delete_attr(&id, &attr_id, selection, &context).await;
-
-    if local_result.is_ok() && !has_remote_errors(&forwarded) {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-
-    let body = build_multi_status_body(&id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
-    Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
+    // Clause 5.6.5.4: an attribute a proxied registration covers is deleted
+    // at the source, never here; an inclusive one is deleted in both places.
+    let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
+        LocalOutcome::NothingRemained
+    } else {
+        LocalOutcome::Processed(service.delete_attr(&id, &attr_id, selection, &context).await.map(|_| ()))
+    };
+    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

@@ -20,10 +20,14 @@ pub mod csource_subscription;
 pub mod current_attribute_values;
 /// Persistence layer for NGSI-LD entities.
 pub mod entity;
+/// Entity Map persistence (clauses 5.2.39 and 5.5.14).
+pub mod entity_map;
 /// The contract between a domain enum and the PostgreSQL enum it is stored as.
 pub mod enum_labels;
 /// Error types for the context store crate.
 pub mod error;
+/// The platform route from minted subscription identifiers to tenants (clause 5.8.1.4).
+pub mod forwarded_subscription_routes;
 /// What the database pool reports to `/health`.
 pub mod health;
 /// Persistence layer for JSON-LD context documents.
@@ -43,6 +47,8 @@ pub mod snapshot;
 /// Filling the entity spatial index from the store.
 /// Repository for NGSI-LD entity subscriptions.
 pub mod subscription;
+/// Subscription forwarding mappings (clause 5.8.1.4).
+pub mod subscription_forwarding;
 /// Shared subscription persistence layer.
 pub mod subscription_store;
 /// Reaching, creating and migrating a tenant's database.
@@ -57,6 +63,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-context-commit",
         "andromeda-context-registry",
         "andromeda-entity",
+        "andromeda-entity-map",
         "andromeda-health",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-geometry",
@@ -75,6 +82,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-postgresql-seaquery",
         "andromeda-registration",
         "andromeda-snapshot",
+        "andromeda-subscription-forwarding",
         "andromeda-spatial-index",
         "andromeda-subscription",
         "andromeda-telemetry",

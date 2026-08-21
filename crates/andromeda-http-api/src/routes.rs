@@ -5,6 +5,7 @@ use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
 use andromeda_http_health::routes::HealthRoutes;
+use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
 use andromeda_http_source_identity::routes::SourceIdentityRoutes;
@@ -40,6 +41,8 @@ pub struct ApiRoutes {
     pub(crate) snapshot: SnapshotRoutes,
     /// Context-source identity route.
     pub(crate) source_identity: SourceIdentityRoutes,
+    /// The inbound notification route of forwarded subscriptions.
+    pub(crate) notification_receiver: NotificationReceiverRoutes,
     /// Tenant administration routes.
     pub(crate) tenancy: TenancyRoutes,
     /// Aggregate health route.

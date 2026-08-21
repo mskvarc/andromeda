@@ -5,7 +5,7 @@
 //! `BatchOperationResult` is merged back keyed by `registrationId`, while a
 //! source that does not falls back to per-entity Create/Replace/Update. When the
 //! source already holds an entity, the upsert mode selects the follow-up path
-//! (replace or update), and an exclusive registration advertising no viable
+//! (replace or update), and a redirect registration advertising no viable
 //! operation yields a per-entity `409 Conflict`.
 
 use crate::{
@@ -66,13 +66,13 @@ async fn batch_upsert_per_csr_filtering() {
     let reg_location = topology.id("registration:batch-upsert-filter-location");
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
-        .mode("exclusive")
+        .mode("redirect")
         .property_names(&["speed"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let location_csr = CsrBuilder::new(&reg_location, &mock.url("/s2"))
-        .mode("exclusive")
+        .mode("redirect")
         .property_names(&["location"])
         .operations(&["createEntity", "queryBatch", "retrieveEntity"])
         .build();
@@ -365,10 +365,10 @@ async fn batch_upsert_fallback_per_entity_update() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration advertising no viable operation fails every owned
+/// A redirect registration advertising no viable operation fails every owned
 /// entity with a `409 Conflict` keyed by `registrationId`. Confirms REQ-PROV-65.
 #[tokio::test]
-async fn batch_upsert_exclusive_no_viable_op_conflict_per_entity() {
+async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let client = topology.front().client();
     let mock = ContextSourceAdapter::start().await;
@@ -377,7 +377,7 @@ async fn batch_upsert_exclusive_no_viable_op_conflict_per_entity() {
     let reg_id = topology.id("registration:batch-upsert-noviable");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
+        .mode("redirect")
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
         .build();
@@ -424,7 +424,7 @@ async fn batch_upsert_local_phase_per_mode() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
-        .operations(&["createEntity", "retrieveEntity"])
+        .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 

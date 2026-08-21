@@ -526,6 +526,19 @@ mod tests {
     }
 
     #[test]
+    fn a_wildcard_type_implies_local_scope_and_rejects_local_false() {
+        assert!(params_from_query("type=*").is_local());
+        assert!(params_from_query("type=*&local=true").is_local());
+        assert!(!params_from_query("type=Vehicle").is_local());
+        assert!(params_from_query("type=Vehicle&local=true").is_local());
+        assert!(params_from_query("type=*").validate().is_ok());
+        assert!(matches!(
+            params_from_query("type=*&local=false").validate(),
+            Err(ParameterError::WildcardTypeWithLocalFalse)
+        ));
+    }
+
+    #[test]
     fn has_any_filter_local_only_does_not_count() {
         let p = params_from_query("local=true");
         assert!(!p.has_any_filter());

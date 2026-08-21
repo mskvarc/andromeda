@@ -9,6 +9,7 @@ use andromeda_entity::{
     expiry::{EntityExpiryBatchSize, EntityExpiryOutcome, EntityExpirySweep},
     port::expiry::EntityExpirySource,
 };
+use andromeda_entity_map::{error::EntityMapError, expiry::EntityMapExpiry, store::EntityMapStore};
 use andromeda_registration::{RegistrationChangeSink, expiry::RegistrationExpiry, store::RegistrationStore};
 use andromeda_snapshot::{
     error::SnapshotError,
@@ -198,6 +199,49 @@ pub(super) fn register_snapshot_expiry(
         .register_scheduled(task)
         .map(drop)
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+}
+
+/// Register the sweep that removes Entity Maps past their `expiresAt`
+/// (clause 5.2.39); the maps are durable, so a stale one would otherwise stay
+/// referenceable across instances forever.
+pub(super) fn register_entity_map_expiry(
+    supervisor: &TaskSupervisor,
+    store: Arc<dyn EntityMapStore>,
+    expiration_interval: u64,
+) -> Result<(), TenantAssemblyError> {
+    let cadence = Duration::from_secs(expiration_interval);
+    let schedule = PeriodicSchedule::new(cadence, InitialExecution::Immediate, MissedTickPolicy::Skip)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let name = TaskName::try_from("entity-map-expiry").map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
+    let registration = TaskRegistration::new(
+        name,
+        TaskCriticality::Observed,
+        RestartPolicy::transient(u32::MAX, cadence, cadence),
+        ShutdownPolicy::new(cadence),
+    );
+    let expiry = Arc::new(EntityMapExpiry::new(store));
+    let task = ScheduledTask::new(registration, schedule, move |execution| {
+        let expiry = Arc::clone(&expiry); // clone: each execution owns the bounded operation while running.
+        async move {
+            let cutoff = DateTime::<Utc>::from(execution.cutoff());
+            let expired = expiry.execute(cutoff).await.map_err(classify_entity_map_failure)?;
+            tracing::info!(expired, "entity map expiry completed");
+            Ok(())
+        }
+    });
+    supervisor
+        .register_scheduled(task)
+        .map(drop)
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))
+}
+
+fn classify_entity_map_failure(error: EntityMapError) -> TaskFailure {
+    let summary = error.to_string();
+    match error {
+        EntityMapError::Persistence { .. } => TaskFailure::transient(summary),
+        EntityMapError::Invariant { .. } => TaskFailure::invariant_violation(summary),
+        EntityMapError::NotFound { .. } | EntityMapError::EntityNotInMap { .. } => TaskFailure::permanent(summary),
+    }
 }
 
 fn classify_snapshot_failure(error: SnapshotError) -> TaskFailure {

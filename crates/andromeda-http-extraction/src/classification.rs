@@ -58,6 +58,7 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::RequestTypeInvalid(_)
         | ParameterError::EntityQueryTemporalMembers
         | ParameterError::TemporalQueryMissing
+        | ParameterError::WildcardTypeWithLocalFalse
         | ParameterError::TemporalAggregationConflict => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }

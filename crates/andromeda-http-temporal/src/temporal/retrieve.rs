@@ -32,11 +32,13 @@ use crate::{
         start_rendering,
     },
 };
+use andromeda_federation::request::{ForwardRetrieveRequest, TriggeringRequest};
 use andromeda_http_extraction::tenant_state;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
 use andromeda_temporal::error::TemporalError;
+use axum::http::HeaderMap;
 
 pub async fn get(
     tenant_state::ExistingTenantState(state): TenantState,
@@ -44,6 +46,7 @@ pub async fn get(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
+    headers: HeaderMap,
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<TemporalQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
@@ -99,18 +102,22 @@ pub async fn get(
         let result = local_result.with_instance(&uri)?;
         (result.value, result.range, Vec::new(), result.linked_candidates)
     } else {
-        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
             .forwarding
-            .forward_temporal_retrieve(
-                &id,
+            .forward_temporal_retrieve(ForwardRetrieveRequest {
+                entity_id: &id,
+                exclude_registration: None,
                 query_string,
-                context_url,
-                ForwardingOperation::RetrieveTemporalEntity,
-                incoming_via.as_ref(),
-                CsrModeFilter::All,
-            )
+                context: &context,
+                operation: ForwardingOperation::RetrieveTemporalEntity,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
+                mode_filter: CsrModeFilter::All,
+                entity_map: None,
+            })
             .await
             .unwrap_or_default();
         let warnings = collect_temporal_warnings(&forwarded);

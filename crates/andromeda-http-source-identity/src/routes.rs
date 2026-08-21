@@ -32,6 +32,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use chrono::Utc;
     use std::error::Error;
     use tower::ServiceExt;
 
@@ -40,6 +41,8 @@ mod tests {
         let state = SourceIdentityState::new(
             "urn:ngsi-ld:ContextSourceIdentity:test".parse::<Uri>()?,
             "test".parse::<ContextSourcePseudonym>()?,
+            Utc::now(),
+            None,
         );
         let response = SourceIdentityRoutes::new(state)
             .into_router()

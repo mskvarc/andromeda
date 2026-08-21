@@ -138,10 +138,7 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
     let mock = ContextSourceAdapter::start().await;
     let reg_id = topology.id("registration:prov-purge-unsup");
 
-    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
-        .operations(&["retrieveEntity"])
-        .build();
+    let registration = CsrBuilder::new(&reg_id, &mock.url("")).mode("redirect").operations(&["retrieveEntity"]).build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
@@ -189,7 +186,10 @@ async fn purge_local_phase_queries_then_deletes() {
         assert_status(&seeded, 201);
     }
 
-    let registration = CsrBuilder::new(&reg_id, &mock.url("")).mode("auxiliary").build();
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("auxiliary")
+        .operations(&["retrieveEntity", "queryEntity"])
+        .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client

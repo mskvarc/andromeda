@@ -16,9 +16,11 @@ andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-problem-details.workspace = true
 andromeda-ngsi-ld-render.workspace = true
 axum = "0.8.9"
+chrono = { version = "0.4.45", features = ["serde"] }
 confique = "0.4.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
+url = { version = "2.5.8", features = ["serde"] }
 thiserror = "2.0.20"
 
 [dev-dependencies]

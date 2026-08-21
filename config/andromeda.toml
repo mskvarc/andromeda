@@ -49,6 +49,12 @@ janitor_interval_seconds = 30
 [info]
 source_id = "urn:ngsi-ld:ContextSourceIdentity:andromeda"
 source_alias = "andromeda"
+# Raw JSON returned verbatim as `contextSourceExtras` (Table 5.2.40-1); never
+# interpreted as JSON-LD. Environment: ANDROMEDA_INFO_SOURCE_EXTRAS='{"region":"eu"}'
+# source_extras = { region = "eu-west" }
+# The origin other brokers reach this one at. Required for subscription
+# forwarding (clauses 5.8.1.4, 5.8.6): forwarded subscriptions notify back here.
+# advertised_url = "http://broker-a:1056"
 
 [entity]
 # If omitted, defaults to min(database.max_connections, 25)

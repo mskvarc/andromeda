@@ -71,6 +71,7 @@ fn project_subscription(select: &mut SelectStatement, kind: StoredKind) {
         .column((Subscriptions::Table, Subscriptions::Lang))
         .column((Subscriptions::Table, Subscriptions::JsonldContext))
         .column((Subscriptions::Table, Subscriptions::LocalOnly))
+        .column((Subscriptions::Table, Subscriptions::SplitEntities))
         .column((Subscriptions::Table, Subscriptions::CreatedAt))
         .column((Subscriptions::Table, Subscriptions::ModifiedAt));
     if kind.has_dataset_id() {

@@ -1,0 +1,237 @@
+//! `SubscriptionForwardingStore` implementation over the two mapping tables.
+
+use crate::subscription_forwarding::{persistence_error, repo::SubscriptionForwardingRepository};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_postgresql_schema::subscription_forwarding::{ForwardedSubscriptions, SubscriptionCompanions};
+use andromeda_subscription_forwarding::{
+    error::SubscriptionForwardingError,
+    mapping::{ForwardedCopy, SubscriptionForwardingStore},
+};
+use futures::future::BoxFuture;
+use sea_query::{Expr, ExprTrait, OnConflict, PostgresQueryBuilder, Query};
+use sea_query_sqlx::SqlxBinder;
+use sqlx::{Row, postgres::PgRow};
+
+/// Parse an identifier column back into a URI.
+fn uri_column(row: &PgRow, column: &str) -> Result<Uri, SubscriptionForwardingError> {
+    let raw: String = row.try_get(column).map_err(persistence_error)?;
+    raw.parse::<Uri>()
+        .map_err(|error| SubscriptionForwardingError::persistence(format!("invalid {column} '{raw}': {error}")))
+}
+
+impl SubscriptionForwardingStore for SubscriptionForwardingRepository {
+    fn link_companion<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Uri,
+        companion: &'life2 Uri,
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let mut insert = Query::insert();
+            insert
+                .into_table(SubscriptionCompanions::Table)
+                .columns([SubscriptionCompanions::LocalSubscriptionId, SubscriptionCompanions::CompanionSubscriptionId])
+                .values([Expr::val(local.as_str()), Expr::val(companion.as_str())])
+                .map_err(persistence_error)?
+                .on_conflict(
+                    OnConflict::column(SubscriptionCompanions::LocalSubscriptionId)
+                        .update_column(SubscriptionCompanions::CompanionSubscriptionId)
+                        .to_owned(),
+                );
+            let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .execute(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            Ok(())
+        })
+    }
+
+    fn companion_of<'life0, 'life1, 'async_trait>(&'life0 self, local: &'life1 Uri) -> BoxFuture<'async_trait, Result<Option<Uri>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = Query::select()
+                .column(SubscriptionCompanions::CompanionSubscriptionId)
+                .from(SubscriptionCompanions::Table)
+                .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionId).eq(local.as_str()))
+                .build_sqlx(PostgresQueryBuilder);
+            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            row.map(|row| uri_column(&row, "companion_subscription_id")).transpose()
+        })
+    }
+
+    fn local_of_companion<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        companion: &'life1 Uri,
+    ) -> BoxFuture<'async_trait, Result<Option<Uri>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = Query::select()
+                .column(SubscriptionCompanions::LocalSubscriptionId)
+                .from(SubscriptionCompanions::Table)
+                .and_where(Expr::col(SubscriptionCompanions::CompanionSubscriptionId).eq(companion.as_str()))
+                .build_sqlx(PostgresQueryBuilder);
+            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            row.map(|row| uri_column(&row, "local_subscription_id")).transpose()
+        })
+    }
+
+    fn unlink_companion<'life0, 'life1, 'async_trait>(&'life0 self, local: &'life1 Uri) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = Query::delete()
+                .from_table(SubscriptionCompanions::Table)
+                .and_where(Expr::col(SubscriptionCompanions::LocalSubscriptionId).eq(local.as_str()))
+                .build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .execute(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            Ok(())
+        })
+    }
+
+    fn record_forwarded<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Uri,
+        copy: &'life2 ForwardedCopy,
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let mut insert = Query::insert();
+            insert
+                .into_table(ForwardedSubscriptions::Table)
+                .columns([
+                    ForwardedSubscriptions::LocalSubscriptionId,
+                    ForwardedSubscriptions::RegistrationId,
+                    ForwardedSubscriptions::RemoteSubscriptionId,
+                ])
+                .values([
+                    Expr::val(local.as_str()),
+                    Expr::val(copy.registration.as_str()),
+                    Expr::val(copy.remote_subscription.as_str()),
+                ])
+                .map_err(persistence_error)?
+                .on_conflict(
+                    OnConflict::columns([ForwardedSubscriptions::LocalSubscriptionId, ForwardedSubscriptions::RegistrationId])
+                        .update_column(ForwardedSubscriptions::RemoteSubscriptionId)
+                        .to_owned(),
+                );
+            let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .execute(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            Ok(())
+        })
+    }
+
+    fn forwarded_of<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Uri,
+    ) -> BoxFuture<'async_trait, Result<Vec<ForwardedCopy>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = Query::select()
+                .column(ForwardedSubscriptions::RegistrationId)
+                .column(ForwardedSubscriptions::RemoteSubscriptionId)
+                .from(ForwardedSubscriptions::Table)
+                .and_where(Expr::col(ForwardedSubscriptions::LocalSubscriptionId).eq(local.as_str()))
+                .build_sqlx(PostgresQueryBuilder);
+            let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .fetch_all(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            rows.iter()
+                .map(|row| {
+                    Ok(ForwardedCopy {
+                        registration: uri_column(row, "registration_id")?,
+                        remote_subscription: uri_column(row, "remote_subscription_id")?,
+                    })
+                })
+                .collect()
+        })
+    }
+
+    fn local_of_forwarded<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        remote_subscription: &'life1 Uri,
+    ) -> BoxFuture<'async_trait, Result<Option<(Uri, Uri)>, SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = Query::select()
+                .column(ForwardedSubscriptions::LocalSubscriptionId)
+                .column(ForwardedSubscriptions::RegistrationId)
+                .from(ForwardedSubscriptions::Table)
+                .and_where(Expr::col(ForwardedSubscriptions::RemoteSubscriptionId).eq(remote_subscription.as_str()))
+                .build_sqlx(PostgresQueryBuilder);
+            let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            row.map(|row| Ok((uri_column(&row, "local_subscription_id")?, uri_column(&row, "registration_id")?)))
+                .transpose()
+        })
+    }
+
+    fn remove_forwarded<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        local: &'life1 Uri,
+        registration: &'life2 Uri,
+    ) -> BoxFuture<'async_trait, Result<(), SubscriptionForwardingError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait,
+    {
+        Box::pin(async move {
+            let (sql, values) = Query::delete()
+                .from_table(ForwardedSubscriptions::Table)
+                .and_where(Expr::col(ForwardedSubscriptions::LocalSubscriptionId).eq(local.as_str()))
+                .and_where(Expr::col(ForwardedSubscriptions::RegistrationId).eq(registration.as_str()))
+                .build_sqlx(PostgresQueryBuilder);
+            sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+                .execute(self.pool())
+                .await
+                .map_err(persistence_error)?;
+            Ok(())
+        })
+    }
+}

@@ -15,6 +15,7 @@ use crate::{
         tasks::{
             expiry::{
                 register_entity_expiry,
+                register_entity_map_expiry,
                 register_registration_expiry,
                 register_snapshot_expiry,
                 register_snapshot_preparation,
@@ -58,6 +59,7 @@ use andromeda_entity::{
     spatial_config::SpatialConfig,
     spatial_synchronization::SpatialSynchronizer,
 };
+use andromeda_entity_map::store::EntityMapStore;
 use andromeda_federation::FederationService;
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
@@ -145,6 +147,7 @@ pub(super) struct TaskSupervisionInputs<'a> {
     pub(super) entity_spatial_snapshots: Arc<dyn EntitySpatialSnapshotSource>,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
     pub(super) forwarding: Arc<FederationService>,
+    pub(super) entity_map_store: Arc<dyn EntityMapStore>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) snapshot_preparation: Arc<SnapshotPreparation>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
@@ -191,6 +194,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         entity_spatial_snapshots,
         registration_store,
         forwarding,
+        entity_map_store,
         snapshot_store,
         snapshot_preparation,
         subscription_cache,
@@ -332,6 +336,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     register_temporal_retention(&task_supervisor, temporal_repo, temporal_config)?;
     register_snapshot_preparation(&task_supervisor, snapshot_preparation)?;
     register_snapshot_expiry(&task_supervisor, snapshot_store, expiration_interval)?;
+    register_entity_map_expiry(&task_supervisor, entity_map_store, expiration_interval)?;
     register_spatial_synchronization(
         &task_supervisor,
         entity,

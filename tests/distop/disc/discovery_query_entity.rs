@@ -63,6 +63,7 @@ async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
     let without_context = topology
         .front()
         .client()
+        .without_default_context()
         .query_registrations("type=Vehicle", None)
         .await
         .expect("query without context");

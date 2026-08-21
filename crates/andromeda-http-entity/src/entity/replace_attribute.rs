@@ -3,15 +3,14 @@
 use crate::entity::{
     AttributeName,
     ContextUrl,
-    DatasetSelection,
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
-    ForwardingModes,
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
     JsonLd,
+    LocalOutcome,
     OriginalUri,
     ProblemResponse,
     ReplaceAttrParams,
@@ -21,11 +20,13 @@ use crate::entity::{
     Uri,
     ValidatedQuery,
     Value,
-    first_forwarded_status,
+    collect_proxied_attrs,
+    provision_response,
     selected_dataset_uri,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
-use axum::http::Method;
+use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn replace_attr(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -34,6 +35,7 @@ pub(crate) async fn replace_attr(
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
     ValidatedQuery(params): ValidatedQuery<ReplaceAttrParams>,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -42,8 +44,6 @@ pub(crate) async fn replace_attr(
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
     let context = context.merge(body_context);
-
-    let context_url = context.link_contexts().first();
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
     let path_suffix = format!("/attrs/{attr_id}");
     let qs = params.dataset_id.as_ref().map(|dataset_id| format!("datasetId={dataset_id}"));
@@ -56,12 +56,14 @@ pub(crate) async fn replace_attr(
             attribute_name: Some(&attr_id),
             method: Method::PUT,
             body: Some(&fragment_body),
-            context_url,
             context: &context,
             operation: ForwardingOperation::ReplaceEntityAttribute,
             path_suffix: Some(&path_suffix),
             query_string: qs.as_deref(),
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;
@@ -74,20 +76,12 @@ pub(crate) async fn replace_attr(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let modes = ForwardingModes::from_results(&forwarded);
-    if modes.has_redirect || modes.has_exclusive {
-        if modes.has_exclusive
-            && let Err(error) = service.delete_attr(&id, &attr_id, DatasetSelection::All, &context).await
-        {
-            tracing::warn!(error = %error, entity_id = %id, attr_id = %attr_id, "Failed to delete exclusive attribute locally");
-        }
-        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
-        return Ok(status.into_response());
-    }
-
-    if let Err(error) = service.replace_attr(&id, &attr_id, dataset_id, fragment, &context).await {
-        tracing::warn!(error = %error, entity_id = %id, attr_id = %attr_id, "Failed to apply inclusive replace_attr locally");
-    }
-
-    Ok(StatusCode::NO_CONTENT.into_response())
+    // Clause 5.6.19.4: an attribute a proxied registration covers is replaced
+    // at the source, never here; an inclusive one is replaced in both places.
+    let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
+        LocalOutcome::NothingRemained
+    } else {
+        LocalOutcome::Processed(service.replace_attr(&id, &attr_id, dataset_id, fragment, &context).await.map(|_| ()))
+    };
+    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

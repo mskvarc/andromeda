@@ -1,14 +1,15 @@
 use crate::{
     error::{EntityResultExt, internal_error, public_error},
     join::{JoinRequest, ResolvedJoin},
-    provision_forwarding::{ForwardingModes, build_multi_status_body, first_forwarded_status, has_remote_errors},
+    provision_forwarding::{ForwardingModes, LocalOutcome, provision_response},
     request_projection::RequestProjection,
     state::{EntityTenantState, EntityTenantStateOrCreate},
 };
 use andromeda_entity::query::{EntityQueryService, retrieval::RetrievalNarrowing};
 use andromeda_federation::{
-    entity_result::{collect_forwarded_exclusive_attrs, collect_warnings, merge_retrieve_results, strip_exclusive_attrs_from_value},
+    entity_result::{collect_proxied_attrs, collect_warnings, merge_retrieve_results, strip_attributes_from_value},
     operation::ForwardingOperation,
+    outcome::ForwardedEntities,
     request::{CsrModeFilter, ForwardBatchProvisionRequest, ForwardProvisionRequest, ForwardQueryRequest},
 };
 use andromeda_http_extraction::{
@@ -22,7 +23,7 @@ use andromeda_http_extraction::{
     via::IncomingVia,
 };
 use andromeda_http_response::{
-    batch_projection::{batch_entity_error, batch_operation_result},
+    batch_projection::batch_operation_result,
     collection::NgsiLdCollectionResponse,
     linked_resolution_warning::with_linked_resolution_warnings,
     problem_response::ProblemResponse,
@@ -67,6 +68,16 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::Value;
+
+/// Which registration returned which entities, for the `entityMap` member of
+/// a created map (clause 5.2.39). The entry carrying only a loop warning names
+/// no registration and contributes nothing.
+pub(crate) fn remote_sources_of(forwarded: &[ForwardedEntities]) -> impl Iterator<Item = (Uri, Vec<Uri>)> + '_ {
+    forwarded.iter().filter_map(|result| {
+        let registration = result.registration_id.clone()?; // clone: the map owns the registration it attributes entities to
+        Some((registration, result.entities.iter().map(|entity| entity.id.clone()).collect())) // clone: same
+    })
+}
 
 const fn selected_dataset_uri(selector: Option<&DatasetSelector>) -> Option<&Uri> {
     match selector {

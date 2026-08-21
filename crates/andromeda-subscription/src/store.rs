@@ -58,6 +58,9 @@ pub struct SubscriptionFields<'a> {
     pub jsonld_context: Option<&'a Url>,
     /// When true, subscription only matches locally stored entities (clause 5.5.13).
     pub local_only: bool,
+    /// Whether entities are assumed split across sources (clause 5.2.12
+    /// `splitEntities`); `None` defers to the deployment default.
+    pub split_entities: Option<bool>,
 }
 
 /// Fields that may be present in a subscription update request.

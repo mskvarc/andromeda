@@ -51,6 +51,7 @@ pub fn build_csr_query(query: &CompiledCsrQuery) -> Result<CsrQuery, RenderError
         .column(Csr::RegistrationName)
         .column(Csr::Description)
         .column(Csr::Information)
+        .column(Csr::DatasetId)
         .column(Csr::Tenant)
         .column(Csr::ObservationInterval)
         .column(Csr::ManagementInterval)

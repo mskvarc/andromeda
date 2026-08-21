@@ -183,7 +183,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
         .mode("auxiliary")
         .entity_id(&auxiliary_id)
         .property_names(&["speed"])
-        .operations(&["createEntity", "updateEntity"])
+        .operations(&["retrieveEntity", "queryEntity"])
         .build();
     assert_status(
         &topology

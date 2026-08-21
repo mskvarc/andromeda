@@ -10,6 +10,7 @@ use crate::{
         subscription_endpoint_validator::DeliverySubscriptionEndpointValidator,
     },
     linked_entity_forwarding::ForwardedLinkedEntitySource,
+    registered_entity_probe::EntityStoreRegistrationProbe,
     retry_delay::TokioRetryDelay,
     temporal_linked_forwarding::ForwardedTemporalLinkedSource,
     tenant_factory::{error::TenantAssemblyError, tasks::TenantSignals, transport::TenantTransports},
@@ -28,7 +29,7 @@ use andromeda_entity::{
     port::{attribute_history::AttributeDatasetHistory, discovery::EntityDiscoveryStore, query::EntityQueryStore, reader::EntityReader},
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
-use andromeda_entity_map::{memory_store::InMemoryEntityMapStore, service::EntityMapService};
+use andromeda_entity_map::{service::EntityMapService, store::EntityMapStore};
 use andromeda_federation::{FederationService, config::FederationConfig};
 use andromeda_http_source_identity::config::InfoConfig;
 use andromeda_http_subscription::config::NotificationConfig;
@@ -39,9 +40,10 @@ use andromeda_postgresql_context_store::{
     csource_subscription::repo::CsourceSubscriptionRepository,
     jsonld_context::repo::JsonLdContextRepository,
     subscription::repo::SubscriptionRepository,
+    subscription_forwarding::repo::SubscriptionForwardingRepository,
 };
 use andromeda_postgresql_temporal_store::repo::TemporalRepository;
-use andromeda_registration::{RegistrationService, store::RegistrationStore};
+use andromeda_registration::{RegistrationService, entity_probe::RegisteredEntityProbe, store::RegistrationStore};
 use andromeda_snapshot::{
     config::SnapshotConfig,
     executor::SnapshotPreparation,
@@ -54,7 +56,14 @@ use andromeda_subscription::{
     cache::SubscriptionCache,
     csource::CsrSubscriptionVariant,
     entity::EntitySubscriptionVariant,
+    forwarding_hook::SubscriptionForwardingHook,
     lifecycle::{SubscriptionEndpointValidator, SubscriptionService},
+    store::SubscriptionStore,
+};
+use andromeda_subscription_forwarding::{
+    mapping::{ForwardedSubscriptionRouter, SubscriptionForwardingStore},
+    receiver::ReceiverEndpoint,
+    service::SubscriptionForwardingService,
 };
 use andromeda_temporal::{
     config::TemporalConfig,
@@ -91,6 +100,8 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) entity_query_store: &'a Arc<dyn EntityQueryStore>,
     pub(super) entity_discovery_store: &'a Arc<dyn EntityDiscoveryStore>,
     pub(super) registration_store: &'a Arc<dyn RegistrationStore>,
+    pub(super) entity_map_store: &'a Arc<dyn EntityMapStore>,
+    pub(super) subscription_router: &'a Arc<dyn ForwardedSubscriptionRouter>,
     pub(super) snapshot_store: &'a Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: &'a Arc<SubscriptionCache>,
     pub(super) spatial_index: &'a Arc<SpatialEntityIndex>,
@@ -128,6 +139,8 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         entity_query_store,
         entity_discovery_store,
         registration_store,
+        entity_map_store,
+        subscription_router,
         snapshot_store,
         subscription_cache,
         spatial_index,
@@ -170,7 +183,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
             Arc::clone(registration_store),
             engine.clone(),
             info_config.source_alias.clone(), // clone: each forwarding service owns the validated alias.
-            federation_config.forward_concurrency,
+            federation_config,
         )
         .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?,
     );
@@ -210,33 +223,70 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         snapshot_config.preparation_concurrency,
     ));
     let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
+    let csr_subscriptions = Arc::new(SubscriptionService::new(
+        Arc::new(CsourceSubscriptionRepository::new(pool)),
+        engine.clone(),
+        CsrSubscriptionVariant::new(engine.clone()),
+        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))),
+        Arc::clone(&subscription_endpoint_validator),
+    ));
+    let subscription_store = Arc::new(SubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
+    // Clauses 5.8.1.4 and 5.8.6 need a notification endpoint peers can reach;
+    // without an advertised origin the distributed side of subscriptions stays
+    // off, and the broker says so once per tenant.
+    let subscription_forwarding = match info_config.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) {
+        Some(receiver) => Some(Arc::new(
+            SubscriptionForwardingService::builder()
+                .receiver(receiver)
+                .tenant(tenant.clone()) // clone: the forwarding service owns its tenant
+                .subscriptions(Arc::clone(&subscription_store))
+                .csource_subscriptions(Arc::clone(&csr_subscriptions))
+                .mappings(Arc::new(SubscriptionForwardingRepository::new(pool)) as Arc<dyn SubscriptionForwardingStore>)
+                .router(Arc::clone(subscription_router))
+                .federation(Arc::clone(&forwarding))
+                .entity_query(Arc::clone(&entity_query))
+                .transport(Arc::clone(&transports.dispatcher))
+                .engine(engine.clone())
+                .build(),
+        )),
+        None => {
+            tracing::info!(tenant = ?tenant, "subscription forwarding disabled: ANDROMEDA_INFO_ADVERTISED_URL is not set");
+            None
+        }
+    };
+    let mut subscriptions = SubscriptionService::new(
+        subscription_store,
+        engine.clone(),
+        EntitySubscriptionVariant::new(engine.clone(), Arc::clone(&contexts)),
+        Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.subscription.clone()))),
+        Arc::clone(&subscription_endpoint_validator),
+    );
+    if let Some(forwarding_service) = &subscription_forwarding {
+        subscriptions = subscriptions.with_forwarding_hook(Arc::clone(forwarding_service) as Arc<dyn SubscriptionForwardingHook>);
+    }
     let state = AndromedaState {
         entities,
         entity_query,
         entity_discovery: Arc::new(EntityDiscoveryService::new(Arc::clone(entity_discovery_store), engine.clone())),
         temporal,
-        subscriptions: Arc::new(SubscriptionService::new(
-            Arc::new(SubscriptionRepository::new(pool)),
-            engine.clone(),
-            EntitySubscriptionVariant::new(engine.clone(), Arc::clone(&contexts)),
-            Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.subscription.clone()))),
-            Arc::clone(&subscription_endpoint_validator),
-        )),
+        subscriptions: Arc::new(subscriptions),
         contexts,
         csr: Arc::new(RegistrationService::new(
             Arc::clone(registration_store),
+            // Clauses 5.9.2.4 and 5.9.3.4: a proxied registration is refused
+            // when this broker already holds the context data it claims.
+            Arc::new(EntityStoreRegistrationProbe::new(
+                Arc::clone(entity_reader),
+                Arc::clone(entity_query_store),
+                engine.clone(), // clone: the probe compiles registration selectors against its own engine handle.
+            )) as Arc<dyn RegisteredEntityProbe>,
             engine.clone(),
             Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.
         )),
-        csr_subscriptions: Arc::new(SubscriptionService::new(
-            Arc::new(CsourceSubscriptionRepository::new(pool)),
-            engine.clone(),
-            CsrSubscriptionVariant::new(engine.clone()),
-            Some(Arc::new(BroadcastSubscriptionChangeSink::new(signals.csource_subscription.clone()))),
-            subscription_endpoint_validator,
-        )),
+        csr_subscriptions,
         forwarding,
-        entity_maps: Arc::new(EntityMapService::new(Arc::new(InMemoryEntityMapStore::new()))),
+        entity_maps: Arc::new(EntityMapService::new(Arc::clone(entity_map_store))),
+        subscription_forwarding,
         snapshots,
         sse_registry: Arc::clone(&transports.sse_registry),
         sse_channel_buffer_size: notification_config.sse.channel_buffer_size,

@@ -59,6 +59,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
     let expanded = topology
         .front()
         .client()
+        .without_default_context()
         .retrieve_registration(&id, None)
         .await
         .expect("retrieve without context");

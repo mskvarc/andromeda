@@ -58,6 +58,9 @@ pub struct SubscriptionWriteValues {
     pub jsonld_context: Option<Url>,
     /// Whether the subscription applies only to local entities.
     pub local_only: bool,
+    /// Whether entities are assumed split across sources; `None` defers to
+    /// the deployment default (clause 5.2.12 `splitEntities`).
+    pub split_entities: Option<bool>,
 }
 
 impl SubscriptionWriteValues {
@@ -83,6 +86,7 @@ impl SubscriptionWriteValues {
             lang: self.lang.as_ref(),
             jsonld_context: self.jsonld_context.as_ref(),
             local_only: self.local_only,
+            split_entities: self.split_entities,
         }
     }
 }
@@ -140,6 +144,7 @@ pub fn extract_create_fields(payload: &Value, dataset_id_policy: DatasetIdPolicy
         lang: deserialize_member(payload, "lang")?,
         jsonld_context: deserialize_member(payload, "jsonldContext")?,
         local_only: payload.get("localOnly").and_then(Value::as_bool).unwrap_or(false),
+        split_entities: payload.get("splitEntities").and_then(Value::as_bool),
     })
 }
 
@@ -192,6 +197,7 @@ pub fn merge_update_fields(payload: &Value, existing: Subscription, dataset_id_p
         lang: deserialize_member(payload, "lang")?.or(delivery.lang),
         jsonld_context: deserialize_member(payload, "jsonldContext")?.or(delivery.jsonld_context),
         local_only: payload.get("localOnly").and_then(Value::as_bool).or(delivery.local_only).unwrap_or(false),
+        split_entities: payload.get("splitEntities").and_then(Value::as_bool).or(delivery.split_entities),
     })
 }
 

@@ -29,6 +29,7 @@ async fn dist_http_forwarded_jsonld_context_sets_link_and_json_content_type() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
+        .property_names(&["speed"])
         .operations(&["createEntity"])
         .context_source_info("jsonldContext", context_link())
         .build();

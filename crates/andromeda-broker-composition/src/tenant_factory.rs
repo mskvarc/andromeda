@@ -34,6 +34,7 @@ use andromeda_postgresql_atomic_write::{
 use andromeda_postgresql_context_store::{config::DatabaseConfig, tenant_database::DatabaseUrl};
 use andromeda_postgresql_temporal_store::{intent_sink::PostgresTemporalHistorySink, recorder::TemporalRecorder};
 use andromeda_snapshot::config::SnapshotConfig;
+use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_temporal::{
     config::{TemporalAppendMode, TemporalConfig},
@@ -74,6 +75,8 @@ pub struct BrokerTenantFactory {
     default_mqtt_pool: OnceLock<Arc<MqttTransportPool>>,
     /// Process task scope from which every tenant supervisor derives cancellation.
     process_tasks: TaskSupervisor,
+    /// The platform route from minted subscription identifiers to tenants.
+    subscription_router: Arc<dyn ForwardedSubscriptionRouter>,
 }
 
 /// Focused owner configuration retained by tenant construction.
@@ -113,12 +116,18 @@ impl From<&RuntimeConfig> for TenantFactoryConfig {
 
 impl BrokerTenantFactory {
     /// A factory over the broker's configuration.
-    pub(super) fn new(config: &RuntimeConfig, database_url: DatabaseUrl, process_tasks: TaskSupervisor) -> BrokerTenantFactory {
+    pub(super) fn new(
+        config: &RuntimeConfig,
+        database_url: DatabaseUrl,
+        process_tasks: TaskSupervisor,
+        subscription_router: Arc<dyn ForwardedSubscriptionRouter>,
+    ) -> BrokerTenantFactory {
         BrokerTenantFactory {
             config: Arc::new(TenantFactoryConfig::from(config)),
             database_url,
             default_mqtt_pool: OnceLock::new(),
             process_tasks,
+            subscription_router,
         }
     }
 
@@ -135,7 +144,7 @@ impl TenantStateFactory for BrokerTenantFactory {
 
     async fn build(&self, tenant: &TenantRef, database: &TenantDatabaseName) -> Result<(Arc<AndromedaState>, BrokerTenantRuntime), TenancyError> {
         let db_url = self.database_url.with_db_name(database);
-        let (state, runtime) = build_tenant_state(&self.config, &db_url, tenant.clone(), self.process_tasks.tenant()) // clone: the state owns its tenant and the tenant task scope derives from the process scope.
+        let (state, runtime) = build_tenant_state(&self.config, &db_url, tenant.clone(), self.process_tasks.tenant(), &self.subscription_router) // clone: the state owns its tenant and the tenant task scope derives from the process scope.
             .await
             .map_err(|error| TenancyError::RuntimeUnavailable {
                 tenant: tenant.clone(), // clone: the error outlives this borrow
@@ -159,6 +168,7 @@ async fn build_tenant_state(
     db_url: &url::Url,
     tenant: TenantRef,
     task_supervisor: TaskSupervisor,
+    subscription_router: &Arc<dyn ForwardedSubscriptionRouter>,
 ) -> Result<(AndromedaState, BrokerTenantRuntime), TenantAssemblyError> {
     let signals = TenantSignals::new(config.spatial.change_channel_capacity);
     let storage = initialize_storage(
@@ -177,6 +187,7 @@ async fn build_tenant_state(
     let temporal_repo = storage.temporal_repo;
     let entity_ports = storage.entity_ports;
     let registration_store = storage.registration_store;
+    let entity_map_store = storage.entity_map_store;
     let snapshot_store = storage.snapshot_store;
     let subscription_cache = storage.subscription_cache;
     let spatial_index = storage.spatial_index;
@@ -251,6 +262,8 @@ async fn build_tenant_state(
             .entity_query_store(&entity_ports.query)
             .entity_discovery_store(&entity_ports.discovery)
             .registration_store(&registration_store)
+            .entity_map_store(&entity_map_store)
+            .subscription_router(subscription_router)
             .snapshot_store(&snapshot_store)
             .subscription_cache(&subscription_cache)
             .spatial_index(&spatial_index)
@@ -285,6 +298,7 @@ async fn build_tenant_state(
             .entity_spatial_snapshots(entity_ports.spatial_snapshots)
             .registration_store(registration_store)
             .forwarding(forwarding)
+            .entity_map_store(entity_map_store)
             .snapshot_store(snapshot_store)
             .subscription_cache(subscription_cache)
             .writes(writes)

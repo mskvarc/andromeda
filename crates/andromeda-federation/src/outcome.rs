@@ -1,9 +1,35 @@
 //! Typed results of context-source federation attempts.
 
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, registration::ForwardingMode};
 use serde_json::Value;
+
+/// Why no HTTP response was obtained from a context source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportFailure {
+    /// The source did not answer within the registration's timeout, or is
+    /// inside its cooldown window and was not contacted (clause 5.2.34).
+    Timeout {
+        /// Sanitized detail.
+        detail: String,
+    },
+    /// The request could not be delivered: connection refused, DNS failure,
+    /// TLS failure, or a malformed request.
+    Unreachable {
+        /// Sanitized detail.
+        detail: String,
+    },
+}
+
+impl TransportFailure {
+    /// The sanitized detail of the failure.
+    pub fn detail(&self) -> &str {
+        match self {
+            TransportFailure::Timeout { detail } | TransportFailure::Unreachable { detail } => detail,
+        }
+    }
+}
 
 /// Outcome of a GET request to a context source.
 pub(crate) enum ForwardGetOutcome {
@@ -15,12 +41,39 @@ pub(crate) enum ForwardGetOutcome {
     InvalidPayload(String),
     /// Non-success HTTP status other than 404.
     ErrorStatus(u16),
-    /// Transport-level failure.
-    NetworkError(String),
+    /// No HTTP response arrived.
+    Transport(TransportFailure),
+    /// The registration's alias is already in the `Via` chain (clause 4.3.6.4).
+    LoopDetected,
+}
+
+impl ForwardGetOutcome {
+    /// The clause 6.3.17 warning a failed GET contributes, if any: a 404 is not
+    /// abnormal and contributes none.
+    pub(crate) fn warning(&self, registration: &Uri) -> Option<NgsiLdWarning> {
+        match self {
+            ForwardGetOutcome::Success(..) | ForwardGetOutcome::NotFound => None,
+            ForwardGetOutcome::InvalidPayload(detail) => Some(NgsiLdWarning::RevalidationFailed(format!(
+                "Context source {registration} returned invalid payload: {detail}"
+            ))),
+            ForwardGetOutcome::ErrorStatus(status) => Some(NgsiLdWarning::MiscellaneousPersistentWarning(format!(
+                "Context source {registration} returned HTTP {status}"
+            ))),
+            ForwardGetOutcome::Transport(failure) => Some(NgsiLdWarning::MiscellaneousWarning(format!(
+                "Context source {registration} did not respond: {}",
+                failure.detail()
+            ))),
+            ForwardGetOutcome::LoopDetected => Some(NgsiLdWarning::MiscellaneousWarning(format!("registration loop detected for {registration}"))),
+        }
+    }
 }
 
 /// Forwarded current entities from one registration.
 pub struct ForwardedEntities {
+    /// The registration the entities came from; `None` for the entry that
+    /// carries only the clause 6.3.17 loop warning of a request that already
+    /// names this broker in its `Via` chain.
+    pub registration_id: Option<Uri>,
     /// Registration forwarding mode.
     pub mode: ForwardingMode,
     /// Typed entities returned by the context source.
@@ -31,6 +84,10 @@ pub struct ForwardedEntities {
 
 /// Forwarded temporal entities from one registration.
 pub struct ForwardedTemporalEntities {
+    /// The registration the entities came from; `None` for the entry that
+    /// carries only the clause 6.3.17 loop warning of a request that already
+    /// names this broker in its `Via` chain.
+    pub registration_id: Option<Uri>,
     /// Registration forwarding mode.
     pub mode: ForwardingMode,
     /// Temporal entity payloads.
@@ -41,15 +98,19 @@ pub struct ForwardedTemporalEntities {
 
 /// Result of one provision forwarding attempt.
 pub struct ForwardedWriteResult {
+    /// The registration the operation was forwarded to.
+    pub registration_id: Uri,
     /// Registration forwarding mode.
     pub mode: ForwardingMode,
     /// Typed outbound result.
     pub outcome: ForwardedWriteOutcome,
-    /// Attributes covered by an exclusive registration.
-    pub exclusive_attrs: Vec<AttributeName>,
+    /// The attributes a proxied (exclusive or redirect) registration takes out
+    /// of local processing (clause 4.3.6.3); empty for an inclusive one.
+    pub proxied_attrs: Vec<AttributeName>,
 }
 
 /// Result classification for one forwarded write.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForwardedWriteOutcome {
     /// The context source completed the operation.
     Completed {
@@ -66,18 +127,27 @@ pub enum ForwardedWriteOutcome {
         body: Option<Value>,
     },
     /// No HTTP response arrived.
-    TransportFailure {
-        /// Sanitized transport failure detail.
-        detail: String,
-    },
+    Transport(TransportFailure),
+    /// The registration loops back into the request's own `Via` chain, so it
+    /// was not contacted (clauses 4.3.6.4 and 6.3.17).
+    LoopDetected,
+    /// The proxied registration covers the data but does not advertise the
+    /// operation, so it was not contacted; the data it covers is still never
+    /// processed locally (clauses 5.6.1.4 and following: an error of type
+    /// Conflict when the complete operation fails, partial success otherwise).
+    NotAdvertised,
 }
 
 impl ForwardedWriteResult {
-    /// HTTP status represented by this result.
+    /// HTTP status represented by this result, using the clause 6.3.17 codes
+    /// for the failures that produced no response.
     pub const fn status(&self) -> u16 {
         match &self.outcome {
             ForwardedWriteOutcome::Completed { status, .. } | ForwardedWriteOutcome::RemoteHttpFailure { status, .. } => *status,
-            ForwardedWriteOutcome::TransportFailure { .. } => 502,
+            ForwardedWriteOutcome::Transport(TransportFailure::Timeout { .. }) => 504,
+            ForwardedWriteOutcome::Transport(TransportFailure::Unreachable { .. }) => 502,
+            ForwardedWriteOutcome::LoopDetected => 508,
+            ForwardedWriteOutcome::NotAdvertised => 409,
         }
     }
 
@@ -85,7 +155,7 @@ impl ForwardedWriteResult {
     pub const fn body(&self) -> Option<&Value> {
         match &self.outcome {
             ForwardedWriteOutcome::Completed { body, .. } | ForwardedWriteOutcome::RemoteHttpFailure { body, .. } => body.as_ref(),
-            ForwardedWriteOutcome::TransportFailure { .. } => None,
+            ForwardedWriteOutcome::Transport(_) | ForwardedWriteOutcome::LoopDetected | ForwardedWriteOutcome::NotAdvertised => None,
         }
     }
 
@@ -94,10 +164,12 @@ impl ForwardedWriteResult {
         !matches!(self.outcome, ForwardedWriteOutcome::Completed { .. })
     }
 
-    /// Transport failure detail when no HTTP response arrived.
-    pub fn transport_detail(&self) -> Option<&str> {
+    /// The informative detail of a failure that produced no response body.
+    pub fn failure_detail(&self) -> Option<String> {
         match &self.outcome {
-            ForwardedWriteOutcome::TransportFailure { detail } => Some(detail),
+            ForwardedWriteOutcome::Transport(failure) => Some(failure.detail().to_string()),
+            ForwardedWriteOutcome::LoopDetected => Some(format!("registration {} loops back into the request's Via chain", self.registration_id)),
+            ForwardedWriteOutcome::NotAdvertised => Some(format!("registration {} does not advertise the requested operation", self.registration_id)),
             ForwardedWriteOutcome::Completed { .. } | ForwardedWriteOutcome::RemoteHttpFailure { .. } => None,
         }
     }

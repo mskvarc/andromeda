@@ -5,8 +5,8 @@
 
 /// Failures reported by Entity Map policy and storage implementations.
 pub mod error;
-/// The built-in in-process Entity Map store.
-pub mod memory_store;
+/// Bounded expiry of Entity Maps past their `expiresAt`.
+pub mod expiry;
 /// Entity Map lifecycle and intersection semantics.
 pub mod service;
 /// The replaceable Entity Map storage capability.

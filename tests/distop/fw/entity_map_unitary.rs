@@ -282,7 +282,6 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 
 /// Cross-instance reuse of an entity map created on another broker is not yet
 /// durable (clause 5.7.2). Confirms REQ-FW-49, REQ-FW-51.
-#[ignore = "GAP REQ-FW-49/51: cross-instance EntityMap not durable"]
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");

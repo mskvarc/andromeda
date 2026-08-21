@@ -9,16 +9,21 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
-andromeda-jsonld.workspace = true
 andromeda-http-headers.workspace = true
+andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-number.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-ngsi-ld-render.workspace = true
+andromeda-ngsi-ld-vocabulary.workspace = true
 andromeda-registration.workspace = true
+chrono = { version = "0.4.45", features = ["serde"] }
 confique = "0.4.0"
+dashmap = { version = "6.2.1", features = ["inline"] }
 futures = "0.3.34"
 headers = "0.4.1"
+http = "1.5.0"
 indexmap = { version = "2.14.0", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 mediatype = "0.23.0"
@@ -26,9 +31,11 @@ reqwest = { version = "0.13.4", features = ["json"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt"] }
 tracing = "0.1.44"
 url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
 pretty_assertions = "1.4.1"
+tokio = { version = "1.53.1", features = ["macros", "rt"] }

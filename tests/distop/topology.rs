@@ -13,7 +13,8 @@
 //! [`BrokerHandle::peer_url`] exposes the latter, so a test cannot accidentally
 //! register a `localhost` endpoint a peer cannot reach.
 
-use andromeda_test_client::{broker_endpoint::BrokerEndpoint, tenant_name::TenantName, test_client::TestClient};
+use andromeda_test_client::{broker_endpoint::BrokerEndpoint, header::jsonld_link_header, tenant_name::TenantName, test_client::TestClient};
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use andromeda_test_harness::{
     configuration::DatabaseEndpoint,
     database_isolation::connect_pool,
@@ -129,8 +130,12 @@ impl BrokerHandle {
 
     /// Build an additional client for this broker bound to a specific tenant.
     pub fn tenant_client(&self, tenant: TenantName) -> TestClient {
-        // clone: each tenant view owns its endpoint while the broker keeps its default-tenant client.
-        TestClient::new(self.endpoint.clone(), Some(tenant))
+        // clone: each tenant view owns its endpoint and default context while the broker keeps its default-tenant client.
+        let client = TestClient::new(self.endpoint.clone(), Some(tenant));
+        match self.client.default_context() {
+            Some(link) => client.with_default_context(link.clone()),
+            None => client,
+        }
     }
 }
 
@@ -173,7 +178,9 @@ impl DistributedTopology {
             // every local create into a 409). Resetting on construction makes
             // each test start from a clean broker; it requires the suite to run
             // single-threaded, which it already does.
-            reset_owned_tenant(broker.pool()).await.map_err(|error| TopologyError::Database(error.to_string()))?;
+            reset_owned_tenant(broker.pool())
+                .await
+                .map_err(|error| TopologyError::Database(error.to_string()))?;
             brokers.push(broker);
         }
         Ok(DistributedTopology { identifiers, brokers })
@@ -231,7 +238,11 @@ async fn build_broker(role: BrokerRole) -> Result<BrokerHandle, TopologyError> {
     let peer_url = env_or(&format!("ANDROMEDA_DIST_{}_PEER_URL", role.token()), role.default_peer_url());
     let alias = env_or(&format!("ANDROMEDA_DIST_{}_ALIAS", role.token()), role.default_alias());
     let endpoint = BrokerEndpoint::parse(&client_url).map_err(|error| TopologyError::Endpoint(error.to_string()))?;
-    let client = TestClient::new(endpoint.clone(), None);
+    // Every fixture of this suite is expressed in the compound test-suite
+    // context; requests that name no context of their own use it as well, so
+    // the terms a test registers, creates and queries denote the same IRIs.
+    let context_link = jsonld_link_header(COMPOUND_CONTEXT.as_str()).map_err(|error| TopologyError::Endpoint(error.to_string()))?;
+    let client = TestClient::new(endpoint.clone(), None).with_default_context(context_link);
     wait_until_ready(&client, READINESS).await.map_err(|error| TopologyError::Readiness {
         role: format!("{role:?}"),
         detail: error.to_string(),

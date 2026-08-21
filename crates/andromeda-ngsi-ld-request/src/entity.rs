@@ -11,6 +11,7 @@ use crate::{
         deserialize_optional_attribute_names,
         deserialize_optional_dataset_selector,
         deserialize_optional_dataset_selectors,
+        deserialize_optional_iso8601_duration,
         deserialize_optional_projection_terms,
         deserialize_optional_uri_csv,
     },
@@ -20,6 +21,7 @@ use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
+use iso8601_duration::Duration as Iso8601Duration;
 use serde::Deserialize;
 use std::num::NonZeroU32;
 
@@ -98,6 +100,16 @@ pub struct GetEntityParams {
     #[serde(rename = "containedBy")]
     #[serde(default, deserialize_with = "deserialize_optional_uri_csv")]
     pub contained_by: Option<Vec<Uri>>,
+    /// Whether the retrieval returns the location of the EntityMap it used,
+    /// creating one when none is in use (Table 6.5.3.1-1 `entityMap`).
+    #[serde(rename = "entityMap")]
+    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
+    pub entity_map: Option<bool>,
+    /// How long a created entity map lives, as an ISO 8601 duration
+    /// (Table 6.5.3.1-1 `entityMapLifetime`).
+    #[serde(rename = "entityMapLifetime")]
+    #[serde(default, deserialize_with = "deserialize_optional_iso8601_duration")]
+    pub entity_map_lifetime: Option<Iso8601Duration>,
 }
 
 impl GetEntityParams {
@@ -139,6 +151,16 @@ mod tests {
     use super::*;
     use crate::query::entity::parameters::EntityQueryParameters;
 
+    #[test]
+    fn a_retrieve_accepts_the_entity_map_flag_and_lifetime() {
+        let params: GetEntityParams = serde_urlencoded::from_str("entityMap=TRUE&entityMapLifetime=PT5M").expect("parses");
+        pretty_assertions::assert_eq!(params.entity_map, Some(true));
+        assert!(params.entity_map_lifetime.is_some());
+        assert!(serde_urlencoded::from_str::<GetEntityParams>("entityMapLifetime=5m").is_err());
+        let bare: GetEntityParams = serde_urlencoded::from_str("").expect("parses");
+        assert!(bare.entity_map.is_none() && bare.entity_map_lifetime.is_none());
+    }
+
     fn default_params() -> GetEntityParams {
         GetEntityParams {
             attrs: None,
@@ -153,6 +175,8 @@ mod tests {
             join: None,
             join_level: None,
             contained_by: None,
+            entity_map: None,
+            entity_map_lifetime: None,
         }
     }
 

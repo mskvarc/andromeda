@@ -177,6 +177,7 @@ async fn distop_query_temporal_merges_modes_into_s4() {
 /// timeproperty instance is dropped while a new instance and a new attribute are
 /// added (clause 5.7.4.4). Confirms REQ-CONS-64.
 #[tokio::test]
+#[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons64");

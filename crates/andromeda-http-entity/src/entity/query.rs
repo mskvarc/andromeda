@@ -35,13 +35,17 @@ use crate::entity::{
     expand_q_expr,
     matches_geo_query,
     matches_scope_query,
+    remote_sources_of,
     render_flat_join,
     start_rendering,
     with_linked_resolution_warnings,
 };
+use andromeda_entity_map::service::{EntityMapService, ReferencedEntityMap};
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 use andromeda_http_response::pagination::{PageExtent, PaginationStyle, append_pagination_links};
 use andromeda_ngsi_ld_request::query::SharedQueryParams;
+use axum::http::HeaderMap;
 use std::iter::empty;
 
 pub(crate) async fn query(
@@ -50,6 +54,7 @@ pub(crate) async fn query(
     accept: AcceptFormat,
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
+    headers: HeaderMap,
     EntityQuery(mut query): EntityQuery,
 ) -> Result<Response, ProblemResponse> {
     Box::pin(async move {
@@ -103,21 +108,28 @@ pub(crate) async fn query(
             return Ok(response.into_response());
         }
 
-        // §5.5.9.3: If NGSILD-EntityMap header present, scope query to that map's entity IDs
-        if let Some(ref map_id) = entity_map_header {
+        // Clause 5.5.14: a referenced live EntityMap fixes the entities the
+        // query considers and the sources it contacts; an expired or unknown
+        // one yields no inference, so a fresh map is created instead.
+        let mut entity_map_requested = query.entity_map.unwrap_or(false);
+        let referenced_map = match &entity_map_header {
+            Some(map_id) => match state.entity_maps.referenced(map_id.as_inner()).await.with_entity_instance(&uri)? {
+                ReferencedEntityMap::Live(map) => Some(*map),
+                ReferencedEntityMap::Unavailable => {
+                    entity_map_requested = true;
+                    None
+                }
+            },
+            None => None,
+        };
+        if let Some(map) = &referenced_map {
             let scoped_input = query.id.clone();
-            let scoped = state
-                .entity_maps
-                .scope_query_ids(map_id.as_inner(), scoped_input.as_deref())
-                .await
-                .with_entity_instance(&uri)?;
-            query.id = Some(scoped);
+            query.id = Some(EntityMapService::scope_query_ids(map, scoped_input.as_deref()));
         }
 
         let opts = query.parse_options();
-        let is_local = query.local.unwrap_or(false);
-        let entity_map_requested = query.entity_map.unwrap_or(false);
-        let split_entities = query.split_entities.unwrap_or(false) && !is_local;
+        let is_local = query.is_local();
+        let split_entities = state.forwarding.split_entities(query.split_entities) && !is_local;
 
         // splitEntities (spec 5.7.2.4): defer q/geoQ/scopeQ filtering to post-merge
         let deferred = if split_entities {
@@ -133,11 +145,10 @@ pub(crate) async fn query(
         let (local_entities, total_count) = service.query(&query, &context).await.with_entity_instance(&uri)?;
 
         // Distributed forwarding: query matching context sources unless local=true
-        let mut remote_ids: Vec<Uri> = Vec::new();
+        let mut remote_sources: Vec<(Uri, Vec<Uri>)> = Vec::new();
         let (mut entities, warnings) = if is_local {
             (local_entities, Vec::new())
         } else {
-            let context_url = context.link_contexts().first();
             let entity_type = query.entity_type.as_ref();
             let entity_ids = query.id.clone();
             let entity_ids_ref = entity_ids.as_deref();
@@ -156,23 +167,23 @@ pub(crate) async fn query(
                 .forward_query(ForwardQueryRequest {
                     entity_type_compact: entity_type,
                     entity_ids: entity_ids_ref,
-                    context_url,
                     context: &context,
                     operation: ForwardingOperation::QueryEntity,
-                    incoming_via: incoming_via.as_ref(),
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
                     csf_expr: csf_expr.as_ref(),
                     mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                    entity_map: referenced_map.as_ref(),
                 })
                 .await
                 .unwrap_or_default();
             let mut warnings = collect_warnings(&forwarded);
 
-            // Capture remote entity IDs before merge for entityMap (spec 5.7.2.4, 5.5.14)
-            remote_ids = forwarded
-                .iter()
-                .flat_map(|result| result.entities.iter())
-                .map(|entity| entity.id.clone())
-                .collect();
+            // Capture which registration returned which entity before the
+            // merge, for the `entityMap` member (clauses 5.2.39 and 5.5.14).
+            remote_sources.extend(remote_sources_of(&forwarded));
 
             let merged = if forwarded.is_empty() {
                 local_entities
@@ -186,23 +197,21 @@ pub(crate) async fn query(
                 .forward_query(ForwardQueryRequest {
                     entity_type_compact: entity_type,
                     entity_ids: entity_ids_ref,
-                    context_url,
                     context: &context,
                     operation: ForwardingOperation::QueryEntity,
-                    incoming_via: incoming_via.as_ref(),
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
                     csf_expr: csf_expr.as_ref(),
                     mode_filter: CsrModeFilter::AuxiliaryOnly,
+                    entity_map: referenced_map.as_ref(),
                 })
                 .await
                 .unwrap_or_default();
             if !aux_forwarded.is_empty() {
                 warnings.extend(collect_warnings(&aux_forwarded));
-                let aux_remote_ids: Vec<Uri> = aux_forwarded
-                    .iter()
-                    .flat_map(|result| result.entities.iter())
-                    .map(|entity| entity.id.clone())
-                    .collect();
-                remote_ids.extend(aux_remote_ids);
+                remote_sources.extend(remote_sources_of(&aux_forwarded));
                 let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
                 (merged, warnings)
             } else {
@@ -279,26 +288,28 @@ pub(crate) async fn query(
             None => warnings,
         };
 
-        // §5.7.2: If entityMap=true, create an EntityMap and set header
+        // Clause 5.7.2.4 with `entityMap=true`: the map covers every matching
+        // entity, not only the page, with each entity attributed to the sources
+        // that hold it (clause 5.2.39).
         let entity_map_uri = if entity_map_requested {
             let compiled = service.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;
-            let mut all_ids = service.query_ids(&compiled).await.with_entity_instance(&uri)?;
-            // Include forwarded entity IDs in the map (spec 5.7.2.4, 5.5.14)
-            all_ids.extend(remote_ids);
-            // Include linked entity IDs the join resolved (spec 5.5.14, 5.7.2.4)
+            let mut local_ids = service.query_ids(&compiled).await.with_entity_instance(&uri)?;
+            // Linked entities the join resolved belong to the unitary request too (clause 5.5.14).
             if let Some(resolved) = &resolved {
-                all_ids.extend(resolved.linked.keys().cloned());
+                local_ids.extend(resolved.linked.keys().cloned());
             }
-            all_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
-            all_ids.dedup();
+            local_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+            local_ids.dedup();
             let lifetime = query.entity_map_lifetime.as_ref();
-            let map = state.entity_maps.create(all_ids, lifetime).await.with_entity_instance(&uri)?;
+            let mut map = state.entity_maps.local_map(local_ids, lifetime).with_entity_instance(&uri)?;
+            for (registration, ids) in remote_sources {
+                map.add_remote_entities(&registration, ids);
+            }
+            state.entity_maps.store(&map).await.with_entity_instance(&uri)?;
             Some(map.id)
-        } else if entity_map_header.is_some() {
-            // Echo the same map back in the response header
-            entity_map_header.map(|h| h.into_inner())
         } else {
-            None
+            // Echo the referenced live map back in the response header.
+            referenced_map.map(|map| map.id)
         };
 
         // Clause 6.3.10 / 4.12: pagination Link headers over the local page. A

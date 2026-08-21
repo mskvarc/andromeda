@@ -138,6 +138,7 @@ pub fn row_from_pg(row: &PgRow, dataset_id_presence: DatasetIdPresence) -> Resul
         lang,
         jsonld_context,
         local_only: row.try_get("local_only")?,
+        split_entities: row.try_get("split_entities")?,
         times_sent: row.try_get("times_sent")?,
         last_notification: row.try_get("last_notification")?,
         last_success: row.try_get("last_success")?,
@@ -228,6 +229,7 @@ fn row_to_subscription(row: SubscriptionRow) -> Result<Subscription, ContextStor
                 .lang(row.lang)
                 .jsonld_context(row.jsonld_context)
                 .local_only(if row.local_only { Some(true) } else { None })
+                .split_entities(row.split_entities)
                 .build(),
         )
         .lifecycle(

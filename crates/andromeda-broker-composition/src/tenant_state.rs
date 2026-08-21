@@ -6,6 +6,7 @@ use andromeda_federation::FederationService;
 use andromeda_registration::RegistrationService;
 use andromeda_snapshot::service::SnapshotService;
 use andromeda_subscription::{csource::CsrSubscriptionVariant, entity::EntitySubscriptionVariant, lifecycle::SubscriptionService};
+use andromeda_subscription_forwarding::service::SubscriptionForwardingService;
 use andromeda_temporal::service::TemporalService;
 use std::sync::Arc;
 
@@ -21,6 +22,9 @@ pub struct AndromedaState {
     pub csr_subscriptions: Arc<SubscriptionService<CsrSubscriptionVariant>>,
     pub forwarding: Arc<FederationService>,
     pub entity_maps: Arc<EntityMapService>,
+    /// The distributed side of subscriptions; absent when no advertised URL
+    /// makes this broker reachable for the notifications it would receive.
+    pub subscription_forwarding: Option<Arc<SubscriptionForwardingService>>,
     pub snapshots: Arc<SnapshotService>,
     pub sse_registry: Arc<ConnectionRegistry<SseNotificationEvent>>,
     /// Per-connection SSE channel buffer size.

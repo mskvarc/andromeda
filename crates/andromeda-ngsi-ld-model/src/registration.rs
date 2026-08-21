@@ -1,21 +1,24 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
-use crate::{key_value_pair::KeyValuePair, subscription::EntitySelector};
+use crate::{key_value_pair::KeyValuePair, registration_management::RegistrationManagementInfo, subscription::EntitySelector, time_interval::TimeInterval};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
     context_source_pseudonym::ContextSourcePseudonym,
+    non_empty_text::NonEmptyText,
     rfc3339,
     scope::grammar::ScopeBuf,
     tenant::TenantName,
     uri::Uri,
 };
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
+use thiserror::Error;
 use typed_builder::TypedBuilder;
 use url::Url;
 
@@ -153,8 +156,12 @@ pub enum CsrStatus {
 }
 
 /// Information block describing what a context source provides (ETSI GS CIM 009 clause 5.2.10).
+///
+/// Table 5.2.10-1 forbids an empty array on every member and requires at least
+/// one member to be present, so a wire document violating either is rejected at
+/// deserialisation rather than stored as a block that covers nothing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", try_from = "RegistrationInfoWire")]
 pub struct RegistrationInfo {
     /// Entity type/id selectors this registration covers.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -167,6 +174,61 @@ pub struct RegistrationInfo {
     pub relationship_names: Option<Vec<AttributeName>>,
 }
 
+impl RegistrationInfo {
+    /// Every attribute name the block declares, on both the property and the
+    /// relationship axis.
+    pub fn attribute_names(&self) -> impl Iterator<Item = &AttributeName> {
+        self.property_names.iter().chain(self.relationship_names.iter()).flat_map(|names| names.iter())
+    }
+}
+
+/// Why a wire document cannot be a [`RegistrationInfo`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum RegistrationInfoError {
+    /// None of `entities`, `propertyNames` or `relationshipNames` was present.
+    #[error("a RegistrationInfo must carry at least one of entities, propertyNames or relationshipNames")]
+    Empty,
+    /// A member was present as an empty array.
+    #[error("RegistrationInfo member {0} must not be an empty array")]
+    EmptyMember(&'static str),
+}
+
+/// The clause 5.2.10 wire shape before its cardinality restrictions are checked.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistrationInfoWire {
+    /// The `entities` member.
+    entities: Option<Vec<EntitySelector>>,
+    /// The `propertyNames` member.
+    property_names: Option<Vec<AttributeName>>,
+    /// The `relationshipNames` member.
+    relationship_names: Option<Vec<AttributeName>>,
+}
+
+impl TryFrom<RegistrationInfoWire> for RegistrationInfo {
+    type Error = RegistrationInfoError;
+
+    fn try_from(wire: RegistrationInfoWire) -> Result<RegistrationInfo, RegistrationInfoError> {
+        if wire.entities.is_none() && wire.property_names.is_none() && wire.relationship_names.is_none() {
+            return Err(RegistrationInfoError::Empty);
+        }
+        if wire.entities.as_ref().is_some_and(Vec::is_empty) {
+            return Err(RegistrationInfoError::EmptyMember("entities"));
+        }
+        if wire.property_names.as_ref().is_some_and(Vec::is_empty) {
+            return Err(RegistrationInfoError::EmptyMember("propertyNames"));
+        }
+        if wire.relationship_names.as_ref().is_some_and(Vec::is_empty) {
+            return Err(RegistrationInfoError::EmptyMember("relationshipNames"));
+        }
+        Ok(RegistrationInfo {
+            entities: wire.entities,
+            property_names: wire.property_names,
+            relationship_names: wire.relationship_names,
+        })
+    }
+}
+
 /// What a context source covers: the entity and attribute selectors it answers
 /// for, and the space and time its data spans (ETSI GS CIM 009 clauses 5.2.9
 /// and 5.2.10).
@@ -175,6 +237,11 @@ pub struct RegistrationInfo {
 pub struct RegistrationCoverage {
     /// Information blocks describing what this source provides.
     pub information: Vec<RegistrationInfo>,
+    /// The `datasetId`s of the attribute instances the source can provide
+    /// (clause 4.5.5); `@none` names the default instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(default = Default::default())]
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Scope values.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
@@ -194,11 +261,11 @@ pub struct RegistrationCoverage {
     /// Interval the source's observations span (clause 5.2.11).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub observation_interval: Option<Value>,
+    pub observation_interval: Option<TimeInterval>,
     /// Interval the source's management data spans (clause 5.2.11).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub management_interval: Option<Value>,
+    pub management_interval: Option<TimeInterval>,
 }
 
 /// How the broker reaches a context source and which operations it may send
@@ -224,10 +291,10 @@ pub struct ContextSourceAccess {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
     pub refresh_rate: Option<Iso8601Duration>,
-    /// Management metadata (clause 5.2.43).
+    /// Management metadata (clause 5.2.34).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub management: Option<Value>,
+    pub management: Option<RegistrationManagementInfo>,
     /// Context source info.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
@@ -299,18 +366,19 @@ pub struct RegistrationLifecycle {
 pub struct ContextSourceRegistration {
     /// Registration identifier (clause 5.2.9: a URI, not necessarily an NGSI-LD URN).
     pub id: Uri,
-    /// JSON-LD type (always `ContextSourceRegistration`).
-    #[serde(rename = "type", default)]
+    /// JSON-LD type (always `ContextSourceRegistration`; clause 5.2.9 cardinality 1,
+    /// so a document without it is not a registration).
+    #[serde(rename = "type")]
     #[builder(default = Default::default())]
     pub type_: ContextSourceRegistrationType,
     /// Human-readable name.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub registration_name: Option<String>,
+    pub registration_name: Option<NonEmptyText>,
     /// Human-readable description.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
-    pub description: Option<String>,
+    pub description: Option<NonEmptyText>,
     /// Tenant identifier.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[builder(default = Default::default())]
@@ -390,18 +458,19 @@ mod tests {
             "description": "vehicle telemetry source",
             "tenant": "acme",
             "information": [{"entities": [{"type": "Vehicle"}], "propertyNames": ["speed"]}],
+            "datasetId": ["urn:ngsi-ld:dataset:1", "@none"],
             "scope": ["/Madrid"],
             "location": {"type": "Point", "coordinates": [13.0, 52.0]},
             "observationSpace": {"type": "Point", "coordinates": [13.0, 52.0]},
             "operationSpace": {"type": "Point", "coordinates": [13.0, 52.0]},
-            "observationInterval": {"start": "2024-01-01T00:00:00Z"},
-            "managementInterval": {"start": "2024-01-01T00:00:00Z"},
+            "observationInterval": {"startAt": "2024-01-01T00:00:00Z"},
+            "managementInterval": {"startAt": "2024-01-01T00:00:00Z", "endAt": "2025-01-01T00:00:00Z"},
             "endpoint": "https://source.example.com/",
             "accept": "application/ld+json",
             "mode": "inclusive",
             "operations": ["retrieveEntity", "updateEntity"],
             "refreshRate": "PT1H",
-            "management": {"localOnly": false},
+            "management": {"cacheDuration": "PT10S", "cooldown": 500, "localOnly": false, "timeout": 3000},
             "contextSourceInfo": [{"key": "Authorization", "value": "Bearer x"}],
             "jsonldContext": "https://example.com/context.jsonld",
             "contextSourceAlias": "source-1",
@@ -452,6 +521,42 @@ mod tests {
             serde_json::to_value(&built).expect("serialises"),
             serde_json::to_value(&parsed).expect("serialises")
         );
+    }
+
+    #[test]
+    fn a_registration_without_a_type_is_rejected_because_clause_5_2_9_makes_it_mandatory() {
+        let mut document = fully_populated_registration();
+        document.as_object_mut().expect("object").remove("type");
+        assert!(serde_json::from_value::<ContextSourceRegistration>(document).is_err());
+    }
+
+    #[test]
+    fn an_empty_registration_name_or_description_is_rejected() {
+        for member in ["registrationName", "description"] {
+            let mut document = fully_populated_registration();
+            document[member] = serde_json::json!("");
+            assert!(
+                serde_json::from_value::<ContextSourceRegistration>(document).is_err(),
+                "empty {member} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_registration_info_with_no_member_or_an_empty_member_is_rejected() {
+        assert!(serde_json::from_value::<RegistrationInfo>(serde_json::json!({})).is_err());
+        assert!(serde_json::from_value::<RegistrationInfo>(serde_json::json!({"entities": []})).is_err());
+        assert!(serde_json::from_value::<RegistrationInfo>(serde_json::json!({"propertyNames": []})).is_err());
+        assert!(serde_json::from_value::<RegistrationInfo>(serde_json::json!({"relationshipNames": []})).is_err());
+        assert!(serde_json::from_value::<RegistrationInfo>(serde_json::json!({"propertyNames": ["speed"]})).is_ok());
+    }
+
+    #[test]
+    fn a_registration_info_yields_its_names_from_both_axes() {
+        let info: RegistrationInfo =
+            serde_json::from_value(serde_json::json!({"propertyNames": ["speed"], "relationshipNames": ["isParked"]})).expect("info parses");
+        let names: Vec<&str> = info.attribute_names().map(AttributeName::as_str).collect();
+        pretty_assertions::assert_eq!(names, vec!["speed", "isParked"]);
     }
 
     #[test]

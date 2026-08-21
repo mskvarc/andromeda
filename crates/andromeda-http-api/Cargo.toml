@@ -15,6 +15,7 @@ andromeda-http-context-registry.workspace = true
 andromeda-http-entity.workspace = true
 andromeda-http-entity-map.workspace = true
 andromeda-http-health.workspace = true
+andromeda-http-notification-receiver.workspace = true
 andromeda-http-registration.workspace = true
 andromeda-http-snapshot.workspace = true
 andromeda-http-source-identity.workspace = true
@@ -31,9 +32,11 @@ typed-builder = "0.23.2"
 andromeda-architecture-checks.workspace = true
 andromeda-health.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
+andromeda-subscription-forwarding.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-tenancy.workspace = true
 async-trait = "0.1.92"
+chrono = { version = "0.4.45", features = ["serde"] }
 futures = "0.3.34"
 pretty_assertions = "1.4.1"
 tokio = { version = "1.53.1", features = ["macros", "rt"] }

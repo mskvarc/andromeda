@@ -193,7 +193,6 @@ async fn entity_map_delete_removes_and_returns_204() {
 
 /// An EntityMap survives a broker restart when durably stored (test plan §6.3).
 /// Tracked gap: the store is in-memory.
-#[ignore = "GAP: in-memory store, no durability"]
 #[tokio::test]
 async fn entity_map_durability_survives_restart() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -205,7 +204,6 @@ async fn entity_map_durability_survives_restart() {
 
 /// An EntityMap created on one instance is not visible on a peer (test plan §6.3).
 /// Tracked gap: entity maps are not shared cross-instance.
-#[ignore = "GAP: cross-instance sharing"]
 #[tokio::test]
 async fn entity_map_cross_instance_not_visible_on_peer() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");

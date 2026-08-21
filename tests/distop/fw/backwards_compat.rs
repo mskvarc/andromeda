@@ -23,7 +23,7 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
 /// The `contextSourceInfo` key by which a registration declares the NGSI-LD
 /// conformance version of its source.
-const CONFORMANCE_KEY: &str = "ngsild-conformance";
+const CONFORMANCE_KEY: &str = "ngsildConformance";
 
 /// Locate the entity with the given id inside an entity-array response body.
 fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {

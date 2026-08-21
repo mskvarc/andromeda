@@ -26,6 +26,13 @@ pub enum RegistrationError {
         /// Conflicting registration identifier.
         identifier: Uri,
     },
+    /// A proxied registration overlaps an existing registration or a local
+    /// entity (clauses 5.9.2.4 and 5.9.3.4, `Conflict`).
+    #[error("context-source registration conflicts with existing context data: {detail}")]
+    Conflict {
+        /// Which registration or entity the footprint collides with.
+        detail: String,
+    },
     /// JSON-LD processing failed.
     #[error(transparent)]
     JsonLd(#[from] JsonLdError),
@@ -70,6 +77,11 @@ impl RegistrationError {
         RegistrationError::AlreadyExists {
             identifier: identifier.clone(), // clone: the error must outlive the borrowed request identifier.
         }
+    }
+
+    /// Construct a proxied-registration overlap error.
+    pub fn conflict(detail: impl Into<String>) -> RegistrationError {
+        RegistrationError::Conflict { detail: detail.into() }
     }
 
     /// Construct a persistence-adapter error.

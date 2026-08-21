@@ -30,11 +30,15 @@ use crate::entity::{
     collect_warnings,
     merge_retrieve_results,
     public_error,
+    remote_sources_of,
     render_flat_join,
     start_rendering,
     with_linked_resolution_warnings,
 };
+use andromeda_entity_map::service::ReferencedEntityMap;
+use andromeda_federation::request::{ForwardRetrieveRequest, TriggeringRequest};
 use andromeda_http_extraction::tenant_state;
+use axum::http::HeaderMap;
 use std::{iter::once, slice::from_ref};
 
 pub(crate) async fn get(
@@ -45,6 +49,7 @@ pub(crate) async fn get(
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(mut params): ValidatedQuery<GetEntityParams>,
     protocol: NgsiLdProtocolHeaders,
+    headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entity_query;
     let context: ContextSpec = context.into_inner();
@@ -53,6 +58,7 @@ pub(crate) async fn get(
     let prefer = protocol.prefer;
     let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
+    let entity_map_header = protocol.entity_map;
 
     // Validate the representation parameters before entity lookup so an invalid
     // `format` or `options` returns 400, not 404 (clause 5.5.4 general
@@ -105,30 +111,52 @@ pub(crate) async fn get(
 
     let is_local = params.local.unwrap_or(false);
 
+    // Clause 5.7.1.4: a referenced live EntityMap fixes the registrations the
+    // retrieval contacts; an expired or unknown one yields no inference, so a
+    // fresh map is created instead.
+    let mut entity_map_requested = params.entity_map.unwrap_or(false);
+    let referenced_map = match &entity_map_header {
+        Some(map_id) if !is_local => match state.entity_maps.referenced(map_id.as_inner()).await.with_entity_instance(&uri)? {
+            ReferencedEntityMap::Live(map) => Some(*map),
+            ReferencedEntityMap::Unavailable => {
+                entity_map_requested = true;
+                None
+            }
+        },
+        Some(_) | None => None,
+    };
+    let mut entity_map_uri = None;
+
     // If local=true, skip distributed forwarding
     let (entity, warnings) = if is_local {
         let entity = local_result.with_entity_instance(&uri)?;
         (entity, Vec::new())
     } else {
         // Forward to context sources
-        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         // Phase 1: forward to primary (non-auxiliary) CSRs
         let forwarded = state
             .forwarding
-            .forward_retrieve(
-                &id,
+            .forward_retrieve(ForwardRetrieveRequest {
+                entity_id: &id,
+                exclude_registration: None,
                 query_string,
-                context_url,
-                ForwardingOperation::RetrieveEntity,
-                incoming_via.as_ref(),
-                CsrModeFilter::ExcludeAuxiliary,
-            )
+                context: &context,
+                operation: ForwardingOperation::RetrieveEntity,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
+                mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                entity_map: referenced_map.as_ref(),
+            })
             .await
             .unwrap_or_default(); // Retrieve forwarding: best-effort -- missing CSR data is not fatal
         let mut warnings = collect_warnings(&forwarded);
+        let mut remote_sources: Vec<(Uri, Vec<Uri>)> = remote_sources_of(&forwarded).collect();
 
         let local_entity = local_result.ok();
+        let held_locally = local_entity.is_some();
 
         let merged = merge_retrieve_results(local_entity, forwarded);
 
@@ -137,18 +165,24 @@ pub(crate) async fn get(
         let merged = if merged.is_some() {
             let aux_forwarded = state
                 .forwarding
-                .forward_retrieve(
-                    &id,
+                .forward_retrieve(ForwardRetrieveRequest {
+                    entity_id: &id,
+                    exclude_registration: None,
                     query_string,
-                    context_url,
-                    ForwardingOperation::RetrieveEntity,
-                    incoming_via.as_ref(),
-                    CsrModeFilter::AuxiliaryOnly,
-                )
+                    context: &context,
+                    operation: ForwardingOperation::RetrieveEntity,
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
+                    mode_filter: CsrModeFilter::AuxiliaryOnly,
+                    entity_map: referenced_map.as_ref(),
+                })
                 .await
                 .unwrap_or_default();
             if !aux_forwarded.is_empty() {
                 warnings.extend(collect_warnings(&aux_forwarded));
+                remote_sources.extend(remote_sources_of(&aux_forwarded));
                 merge_retrieve_results(merged, aux_forwarded)
             } else {
                 merged
@@ -161,6 +195,23 @@ pub(crate) async fn get(
             None => {
                 return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("Entity {id} not found"), &uri));
             }
+        };
+        // Table 6.5.3.1-1 `entityMap`: the map the retrieval used is returned,
+        // created now when none was in use (clause 5.7.1.4), naming this
+        // broker and every registration that returned the entity.
+        entity_map_uri = if entity_map_requested {
+            let local_ids = held_locally.then(|| id.clone()); // clone: the map owns its entity identifiers
+            let mut map = state
+                .entity_maps
+                .local_map(local_ids, params.entity_map_lifetime.as_ref())
+                .with_entity_instance(&uri)?;
+            for (registration, ids) in remote_sources {
+                map.add_remote_entities(&registration, ids);
+            }
+            state.entity_maps.store(&map).await.with_entity_instance(&uri)?;
+            Some(map.id)
+        } else {
+            referenced_map.map(|map| map.id)
         };
         (entity, warnings)
     };
@@ -195,7 +246,11 @@ pub(crate) async fn get(
                     .with_payload(ResponsePayload::Collection(all_entities))
                     .render()
                     .with_entity_instance(&uri)?;
-                return Ok(NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings).into_response());
+                let mut response = NgsiLdCollectionResponse::ok(rendered).with_warnings(warnings);
+                if let Some(map_uri) = entity_map_uri {
+                    response = response.with_entity_map_uri(map_uri);
+                }
+                return Ok(response.into_response());
             }
             RetrievingJoin::Inline => {
                 // Inline: the renderer nests the linked entities into the
@@ -214,7 +269,11 @@ pub(crate) async fn get(
                     .with_payload(ResponsePayload::Single(entity_value))
                     .render()
                     .with_entity_instance(&uri)?;
-                return Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response());
+                let mut response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
+                if let Some(map_uri) = entity_map_uri {
+                    response = response.with_entity_map_uri(map_uri);
+                }
+                return Ok(response.into_response());
             }
         }
     }
@@ -230,5 +289,9 @@ pub(crate) async fn get(
         .with_payload(ResponsePayload::Single(entity_value))
         .render()
         .with_entity_instance(&uri)?;
-    Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
+    let mut response = NgsiLdResponse::ok(rendered).with_warnings(warnings);
+    if let Some(map_uri) = entity_map_uri {
+        response = response.with_entity_map_uri(map_uri);
+    }
+    Ok(response.into_response())
 }

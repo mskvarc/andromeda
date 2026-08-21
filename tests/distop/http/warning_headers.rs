@@ -14,7 +14,6 @@ use reqwest::Method;
 /// A stale cached result carries warning `110`. Caching and `cacheDuration`
 /// enforcement is not implemented, so this is a tracked gap. Confirms REQ-HTTP-16,
 /// REQ-HTTP-17, REQ-HTTP-19.
-#[ignore = "GAP REQ-HTTP-16/17/19: caching/cacheDuration not enforced"]
 #[tokio::test]
 async fn dist_http_query_cached_result_returns_warning_110() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");

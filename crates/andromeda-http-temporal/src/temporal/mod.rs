@@ -43,7 +43,7 @@ use andromeda_ngsi_ld_render::{
 use andromeda_ngsi_ld_request::{
     attribute_deletion::DeleteAttrParams,
     deferred_split_filters::DeferredSplitFilters,
-    empty::EmptyParams,
+    local::LocalOnlyParams,
     query::temporal::TemporalQueryParameters,
 };
 use andromeda_temporal::{

@@ -1,5 +1,5 @@
 use crate::{
-    entity_result::{collect_forwarded_exclusive_attrs, collect_warnings, merge_query_results, strip_exclusive_attrs_from_value},
+    entity_result::{collect_proxied_attrs, collect_warnings, merge_query_results, strip_attributes_from_value},
     forwarding_url::build_forwarding_query_string,
     loop_detected,
     outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteOutcome, ForwardedWriteResult},
@@ -51,11 +51,12 @@ fn entity_from_json(value: serde_json::Value) -> Entity {
     serde_json::from_value(value).expect("test entity fixture")
 }
 
-fn write_result(mode: ForwardingMode, exclusive_attrs: Vec<AttributeName>) -> ForwardedWriteResult {
+fn write_result(mode: ForwardingMode, proxied_attrs: Vec<AttributeName>) -> ForwardedWriteResult {
     ForwardedWriteResult {
+        registration_id: entity_uri("urn:ngsi-ld:ContextSourceRegistration:test"),
         mode,
         outcome: ForwardedWriteOutcome::Completed { status: 204, body: None },
-        exclusive_attrs,
+        proxied_attrs,
     }
 }
 
@@ -87,6 +88,7 @@ fn warning_header_format_revalidation_failed_per_clause_6_3_17() {
 fn collect_warnings_from_results() {
     let results = vec![
         ForwardedEntities {
+            registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
             mode: ForwardingMode::Inclusive,
             entities: Vec::new(),
             warnings: vec![
@@ -95,6 +97,7 @@ fn collect_warnings_from_results() {
             ],
         },
         ForwardedEntities {
+            registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
             mode: ForwardingMode::Inclusive,
             entities: vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))],
             warnings: Vec::new(),
@@ -117,6 +120,7 @@ fn merge_query_local_only() {
 fn merge_query_adds_remote_entities() {
     let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))];
     let remote = vec![ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Inclusive,
         entities: vec![entity_from_json(serde_json::json!({"id": "urn:b", "type": "T"}))],
         warnings: Vec::new(),
@@ -201,6 +205,7 @@ fn merge_temporal_query_unions_instances_for_same_entity() {
         ]
     })];
     let remote = vec![ForwardedTemporalEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Inclusive,
         entities: vec![serde_json::json!({
             "id": "urn:a",
@@ -229,6 +234,7 @@ fn merge_temporal_query_deduplicates_by_instance_id() {
         ]
     })];
     let remote = vec![ForwardedTemporalEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Inclusive,
         entities: vec![serde_json::json!({
             "id": "urn:a",
@@ -250,6 +256,7 @@ fn merge_temporal_query_auxiliary_only_supplements_existing() {
 
     let local = vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})];
     let remote = vec![ForwardedTemporalEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Auxiliary,
         entities: vec![
             serde_json::json!({"id": "urn:a", "type": "T", "fuel": [{"value": 50}]}),
@@ -273,6 +280,7 @@ fn merge_temporal_retrieve_combines_remote_attributes() {
         "speed": [{"value": 10, "instanceId": "urn:i1"}]
     }));
     let remote = vec![ForwardedTemporalEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Inclusive,
         entities: vec![serde_json::json!({
             "id": "urn:a",
@@ -292,6 +300,7 @@ fn merge_temporal_retrieve_remote_only() {
     use crate::temporal_result::merge_temporal_retrieve_results;
 
     let remote = vec![ForwardedTemporalEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Inclusive,
         entities: vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})],
         warnings: Vec::new(),
@@ -362,18 +371,18 @@ fn collect_discovery_warnings_aggregates() {
 }
 
 #[test]
-fn collect_forwarded_exclusive_attrs_empty_results() {
-    let result = collect_forwarded_exclusive_attrs(&[]);
+fn collect_proxied_attrs_empty_results() {
+    let result = collect_proxied_attrs(&[]);
     assert!(result.is_empty());
 }
 
 #[test]
-fn collect_forwarded_exclusive_attrs_gathers_attrs() {
+fn collect_proxied_attrs_gathers_attrs() {
     let results = vec![
         write_result(ForwardingMode::Exclusive, vec![attribute_name("speed"), attribute_name("fuel")]),
         write_result(ForwardingMode::Inclusive, vec![attribute_name("temperature")]),
     ];
-    let attrs = collect_forwarded_exclusive_attrs(&results);
+    let attrs = collect_proxied_attrs(&results);
     pretty_assertions::assert_eq!(attrs.len(), 3);
     for expected in ["speed", "fuel", "temperature"] {
         assert!(attrs.iter().any(|attr| attr.as_str() == expected), "{expected} missing");
@@ -381,51 +390,51 @@ fn collect_forwarded_exclusive_attrs_gathers_attrs() {
 }
 
 #[test]
-fn strip_exclusive_attrs_from_value_removes_matching_keys() {
+fn strip_attributes_from_value_removes_matching_keys() {
     let mut value = serde_json::json!({
         "speed": { "type": "Property", "value": 100 },
         "fuel": { "type": "Property", "value": 50 },
         "name": { "type": "Property", "value": "Car" }
     });
-    strip_exclusive_attrs_from_value(&mut value, &[attribute_name("speed"), attribute_name("fuel")]);
+    strip_attributes_from_value(&mut value, &[attribute_name("speed"), attribute_name("fuel")]);
     let obj = value.as_object().expect("is object");
     pretty_assertions::assert_eq!(obj.len(), 1);
     assert!(obj.contains_key("name"));
 }
 
 #[test]
-fn strip_exclusive_attrs_from_value_no_matching_keys() {
+fn strip_attributes_from_value_no_matching_keys() {
     let mut value = serde_json::json!({
         "name": { "type": "Property", "value": "Car" }
     });
-    strip_exclusive_attrs_from_value(&mut value, &[attribute_name("speed")]);
+    strip_attributes_from_value(&mut value, &[attribute_name("speed")]);
     let obj = value.as_object().expect("is object");
     pretty_assertions::assert_eq!(obj.len(), 1);
 }
 
 #[test]
-fn strip_exclusive_attrs_from_value_non_object_noop() {
+fn strip_attributes_from_value_non_object_noop() {
     let mut value = serde_json::json!([1, 2, 3]);
-    strip_exclusive_attrs_from_value(&mut value, &[attribute_name("speed")]);
+    strip_attributes_from_value(&mut value, &[attribute_name("speed")]);
     assert!(value.is_array());
 }
 
 #[test]
-fn collect_forwarded_exclusive_attrs_results_with_no_exclusive_attrs() {
+fn collect_proxied_attrs_results_with_no_proxied_attrs() {
     let results = vec![write_result(ForwardingMode::Inclusive, Vec::new())];
-    let attrs = collect_forwarded_exclusive_attrs(&results);
+    let attrs = collect_proxied_attrs(&results);
     assert!(attrs.is_empty());
 }
 
 #[test]
-fn collect_forwarded_exclusive_attrs_duplicates_not_deduped() {
-    // collect_forwarded_exclusive_attrs does not deduplicate -- callers
+fn collect_proxied_attrs_duplicates_not_deduped() {
+    // collect_proxied_attrs does not deduplicate -- callers
     // use the list for removal which is idempotent on duplicates.
     let results = vec![
         write_result(ForwardingMode::Exclusive, vec![attribute_name("speed")]),
         write_result(ForwardingMode::Exclusive, vec![attribute_name("speed")]),
     ];
-    let attrs = collect_forwarded_exclusive_attrs(&results);
+    let attrs = collect_proxied_attrs(&results);
     pretty_assertions::assert_eq!(attrs.len(), 2);
 }
 
@@ -462,6 +471,7 @@ fn csr_mode_filter_auxiliary_only() {
 fn merge_query_auxiliary_adds_and_merges() {
     let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T", "speed": 100}))];
     let remote = vec![ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Auxiliary,
         entities: vec![
             entity_from_json(serde_json::json!({"id": "urn:a", "type": "T", "fuel": 50})),
@@ -480,6 +490,7 @@ fn merge_query_primary_adds_new_entities() {
     // Non-auxiliary modes should add new entities
     let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))];
     let remote = vec![ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
         mode: ForwardingMode::Inclusive,
         entities: vec![entity_from_json(serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}))],
         warnings: Vec::new(),

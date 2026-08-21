@@ -3,8 +3,9 @@
 //! Extracts the typed `Prefer` header from axum requests and exposes
 //! a convenience `PreferHeader` struct for API handlers.
 
-use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, prefer::Prefer, preference::RespondMode, version::NgsiLdVersion};
+use andromeda_http_headers::{geo_json_body::GeoJsonBodyPreference, prefer::Prefer, preference::RespondMode};
 use andromeda_http_response::render::RenderingPreferences;
+use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use axum::{extract::FromRequestParts, http::request::Parts};
 use headers::HeaderMapExt;
 use std::convert::Infallible;
@@ -18,7 +19,7 @@ pub struct PreferHeader {
     /// GeoJSON body preference: whether @context goes in body or Link header.
     pub geo_json_body: GeoJsonBodyPreference,
     /// Requested NGSI-LD version for backwards-compatible payload adaptation.
-    pub requested_version: Option<NgsiLdVersion>,
+    pub requested_version: Option<SpecVersion>,
     /// Response-mode hint (`respond-async` / `respond-sync`) per RFC 7240 sec. 4.1.
     /// Used by `/entityOperations` batch endpoints to choose between inline
     /// side-effect processing and the durable queue path.
@@ -95,35 +96,41 @@ mod tests {
     fn version_1_0() {
         let prefer = parse_from_header(Some("ngsi-ld=1.0"));
         pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_0));
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(SpecVersion::V1_0));
     }
 
     #[test]
     fn version_1_3() {
         let prefer = parse_from_header(Some("ngsi-ld=1.3"));
         pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_3));
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(SpecVersion::V1_3));
     }
 
     #[test]
     fn version_1_9() {
         let prefer = parse_from_header(Some("ngsi-ld=1.9"));
         pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
-        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_9));
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(SpecVersion::V1_9));
     }
 
     #[test]
     fn combined_preferences() {
         let prefer = parse_from_header(Some("body=json, ngsi-ld=1.4"));
         pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::Json);
-        pretty_assertions::assert_eq!(prefer.requested_version, Some(NgsiLdVersion::V1_4));
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(SpecVersion::V1_4));
     }
 
     #[test]
-    fn unknown_version_ignored() {
-        let prefer = parse_from_header(Some("ngsi-ld=2.5"));
+    fn a_version_token_outside_the_major_dot_minor_form_is_ignored() {
+        let prefer = parse_from_header(Some("ngsi-ld=latest"));
         pretty_assertions::assert_eq!(prefer.geo_json_body, GeoJsonBodyPreference::LdJson);
         pretty_assertions::assert_eq!(prefer.requested_version, None);
+    }
+
+    #[test]
+    fn a_version_newer_than_the_conformant_one_is_still_a_version() {
+        let prefer = parse_from_header(Some("ngsi-ld=2.5"));
+        pretty_assertions::assert_eq!(prefer.requested_version, Some(SpecVersion::new(2, 5)));
     }
 
     #[test]

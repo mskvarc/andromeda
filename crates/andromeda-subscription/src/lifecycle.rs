@@ -8,6 +8,7 @@ use crate::{
     change::SubscriptionChangeSink,
     error::SubscriptionError,
     fields,
+    forwarding_hook::SubscriptionForwardingHook,
     status::compute_updated_status,
     store::{StatusUpdateFields, SubscriptionStore},
     validation,
@@ -142,6 +143,9 @@ pub struct SubscriptionService<V: SubscriptionVariant> {
     /// Optional sink for completed subscription changes.
     change_sink: Option<Arc<dyn SubscriptionChangeSink<V::Change>>>,
     endpoint_validator: Arc<dyn SubscriptionEndpointValidator>,
+    /// The distributed side of the lifecycle (clauses 5.8.1.4, 5.8.2.4,
+    /// 5.8.5.4), absent for the variants that have none.
+    forwarding_hook: Option<Arc<dyn SubscriptionForwardingHook>>,
 }
 
 impl<V> SubscriptionService<V>
@@ -168,6 +172,26 @@ where
             variant,
             change_sink,
             endpoint_validator,
+            forwarding_hook: None,
+        }
+    }
+
+    /// Attach the distributed side of the lifecycle.
+    #[must_use]
+    pub fn with_forwarding_hook(mut self, hook: Arc<dyn SubscriptionForwardingHook>) -> SubscriptionService<V> {
+        self.forwarding_hook = Some(hook);
+        self
+    }
+
+    /// Run one hook step after the local change committed. The local
+    /// subscription is valid whatever the distributed side does, so a failing
+    /// hook is logged rather than turned into a failed request.
+    async fn run_hook<'a>(&'a self, id: &Uri, step: impl FnOnce(&'a dyn SubscriptionForwardingHook) -> BoxFuture<'a, Result<(), SubscriptionError>>) {
+        let Some(hook) = self.forwarding_hook.as_deref() else {
+            return;
+        };
+        if let Err(error) = step(hook).await {
+            tracing::warn!(subscription = %id, %error, "subscription forwarding hook failed");
         }
     }
 
@@ -210,6 +234,10 @@ where
 
         self.repo.create_subscription(&id, &fields, status).await?;
         self.emit_change(self.variant.make_upserted(id.clone())); // clone: the caller and change event each own the identifier.
+        if self.forwarding_hook.is_some() {
+            let created = self.get(&id).await?;
+            self.run_hook(&id, |hook| hook.created(&created, context)).await;
+        }
         Ok(id)
     }
 
@@ -275,6 +303,10 @@ where
         }
 
         self.emit_change(self.variant.make_upserted(id.clone())); // clone: the change event owns the identifier.
+        if self.forwarding_hook.is_some() {
+            let merged = self.get(id).await?;
+            self.run_hook(id, |hook| hook.updated(&merged, context)).await;
+        }
         Ok(())
     }
 
@@ -286,6 +318,7 @@ where
         }
 
         self.emit_change(self.variant.make_deleted(id.clone())); // clone: the change event owns the identifier.
+        self.run_hook(id, |hook| hook.deleted(id)).await;
         Ok(())
     }
 

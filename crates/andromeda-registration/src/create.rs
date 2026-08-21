@@ -1,12 +1,13 @@
-//! Context-source registration creation policy.
+//! Context-source registration creation policy (ETSI GS CIM 009 clause 5.9.2).
 
 use crate::{
     RegistrationService,
     context_source_properties::expand_context_source_properties,
     error::RegistrationError,
     identifier::generate_registration_id,
+    mode_rules::check_conflicts,
     payload::extract_create_params,
-    validation::validate_common_members,
+    validation::{RegistrationShape, validate_shape},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -16,14 +17,6 @@ use serde_json::Value;
 impl RegistrationService {
     /// Create a context-source registration from a JSON-LD payload.
     pub async fn create(&self, payload: Value, context: &ContextSpec) -> Result<Uri, RegistrationError> {
-        validate_common_members(&payload)?;
-        if payload.get("information").is_none() {
-            return Err(RegistrationError::csr_validation("information is required"));
-        }
-        if payload.get("endpoint").is_none() {
-            return Err(RegistrationError::csr_validation("endpoint is required"));
-        }
-
         let id = match payload.get("id").and_then(Value::as_str) {
             Some(raw) => {
                 let id = raw.parse::<Uri>().map_err(|_| RegistrationError::csr_validation("id must be a valid URI"))?;
@@ -49,6 +42,14 @@ impl RegistrationService {
 
         let mut params = extract_create_params(&payload)?;
         params.additional_properties = expanded_properties;
+        validate_shape(&RegistrationShape {
+            mode: params.mode,
+            information: &params.information,
+            operations: &params.operations,
+            context_source_info: params.context_source_info.as_deref(),
+            expires_at: params.expires_at,
+        })?;
+        check_conflicts(self.repo.as_ref(), self.entity_probe.as_ref(), params.mode, &params.information, None).await?;
         self.repo.create(&id, &params).await?;
         self.emit_csr_change(CsrChangeEvent {
             csr_id: id.clone(), // clone: the change event and response each own the identifier.

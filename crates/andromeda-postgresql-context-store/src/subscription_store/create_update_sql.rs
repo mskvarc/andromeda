@@ -68,6 +68,7 @@ pub fn bind_entity_create<'q>(
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
+        .bind(fields.split_entities)
 }
 
 /// Bind an entity-subscription update command in statement order.
@@ -101,6 +102,7 @@ pub fn bind_entity_update<'q>(
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
+        .bind(fields.split_entities)
 }
 
 /// Bind a context-source-subscription create command in statement order.
@@ -192,6 +194,7 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::Lang,
         Subscriptions::JsonldContext,
         Subscriptions::LocalOnly,
+        Subscriptions::SplitEntities,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
     ]);
@@ -218,6 +221,7 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(18),
             external_placeholder(19),
             external_placeholder(20),
+            external_placeholder(21),
             now(),
             now(),
         ])
@@ -250,6 +254,7 @@ pub fn entity_update_sql() -> String {
             (Subscriptions::Lang, external_placeholder(17)),
             (Subscriptions::JsonldContext, external_placeholder(18)),
             (Subscriptions::LocalOnly, external_placeholder(19)),
+            (Subscriptions::SplitEntities, external_placeholder(20)),
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
@@ -352,10 +357,10 @@ mod tests {
         assert!(!sql.contains("'Subscription'"), "the constant type token is no longer a column: {sql}");
         assert!(sql.contains("$16::subscription_status"), "{sql}");
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=20 {
+        for marker in 1..=21 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
-        assert!(!sql.contains("$21"), "the create binds exactly twenty values: {sql}");
+        assert!(!sql.contains("$22"), "the create binds exactly twenty-one values: {sql}");
         assert!(!sql.contains("is_active"), "the redundant is_active column is gone: {sql}");
     }
 

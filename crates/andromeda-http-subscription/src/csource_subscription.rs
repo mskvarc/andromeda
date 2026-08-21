@@ -52,7 +52,12 @@ pub async fn create(
 
     let id = service.create(payload, &context, None).await.with_subscription_instance(&uri)?;
 
-    Ok(with_location(StatusCode::CREATED.into_response(), &id))
+    // Clause 6.12.3.1: the Location is the relative path of the created
+    // resource, not the bare identifier.
+    Ok(with_location(
+        StatusCode::CREATED.into_response(),
+        format!("/ngsi-ld/v1/csourceSubscriptions/{id}"),
+    ))
 }
 
 /// GET /ngsi-ld/v1/csourceSubscriptions/{subscription_id} -- Retrieve a context source subscription.

@@ -4,10 +4,10 @@ use crate::temporal::{
     AttributeName,
     ContextSpec,
     ContextUrl,
-    EmptyParams,
     InstanceFamily,
     InstanceIdentity,
     IntoResponse,
+    LocalOnlyParams,
     OriginalUri,
     ProblemResponse,
     Response,
@@ -25,7 +25,7 @@ pub async fn delete_attr_instance(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,
-    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
+    ValidatedQuery(_params): ValidatedQuery<LocalOnlyParams>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();

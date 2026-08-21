@@ -25,6 +25,7 @@ andromeda-http-entity-map.workspace = true
 andromeda-http-entity.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-health.workspace = true
+andromeda-http-notification-receiver.workspace = true
 andromeda-http-registration.workspace = true
 andromeda-http-server.workspace = true
 andromeda-http-snapshot.workspace = true
@@ -49,6 +50,7 @@ andromeda-registration.workspace = true
 andromeda-snapshot.workspace = true
 andromeda-spatial-index.workspace = true
 andromeda-subscription.workspace = true
+andromeda-subscription-forwarding.workspace = true
 andromeda-task-runtime.workspace = true
 andromeda-telemetry.workspace = true
 andromeda-temporal.workspace = true
@@ -58,6 +60,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 confique = { version = "0.4.0", features = ["toml"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "debug", "deref", "display", "from", "into", "is_variant"] }
 futures = "0.3.34"
+iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 shadow-rs = "2.0.0"

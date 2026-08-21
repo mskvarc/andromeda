@@ -4,7 +4,7 @@
 //! owns (attribute-less entities are dropped); a source advertising the batch
 //! operation is handed the whole batch and its result merged keyed by
 //! `registrationId`; otherwise the broker drives per-entity Merge Entity. An
-//! exclusive registration advertising no viable operation fails each owned entity
+//! redirect registration advertising no viable operation fails each owned entity
 //! with `409 Conflict`. This whole family is first-run classification (UNKNOWN).
 
 use crate::{
@@ -52,13 +52,13 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
     let reg_gear = topology.id("registration:batch-merge-filter-gear");
 
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
-        .mode("exclusive")
+        .mode("redirect")
         .property_names(&["speed"])
         .operations(&["mergeEntity", "queryBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let gear_csr = CsrBuilder::new(&reg_gear, &mock.url("/s2"))
-        .mode("exclusive")
+        .mode("redirect")
         .property_names(&["gear"])
         .operations(&["mergeEntity", "queryBatch", "retrieveEntity"])
         .build();
@@ -162,10 +162,10 @@ async fn batch_merge_fallback_per_entity_merge() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration advertising no viable operation fails every owned
+/// A redirect registration advertising no viable operation fails every owned
 /// entity with a `409 Conflict` keyed by `registrationId`. Confirms REQ-PROV-128.
 #[tokio::test]
-async fn batch_merge_exclusive_neither_op_conflict_per_entity() {
+async fn batch_merge_redirect_neither_op_conflict_per_entity() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let client = topology.front().client();
     let mock = ContextSourceAdapter::start().await;
@@ -174,7 +174,7 @@ async fn batch_merge_exclusive_neither_op_conflict_per_entity() {
     let reg_id = topology.id("registration:batch-merge-noviable");
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
+        .mode("redirect")
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
         .build();
@@ -221,7 +221,7 @@ async fn batch_merge_local_phase_populates_results() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("auxiliary")
-        .operations(&["mergeEntity", "retrieveEntity"])
+        .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 

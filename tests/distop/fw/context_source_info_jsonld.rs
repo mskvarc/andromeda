@@ -197,7 +197,7 @@ async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
     let accepted = CsrBuilder::new(&topology.id("registration:csi-conformance-ok"), PEER_ENDPOINT)
         .mode("inclusive")
         .entity_type("Vehicle")
-        .context_source_info("ngsild-conformance", "1.5")
+        .context_source_info("ngsildConformance", "1.5")
         .build();
     assert_status(&topology.front().client().create_registration(&accepted).await.expect("valid conformance"), 201);
 
@@ -205,7 +205,7 @@ async fn distop_entity_csi_ngsild_conformance_value_form_major_minor() {
         let registration = CsrBuilder::new(&topology.id(&format!("registration:csi-conformance-{bad}")), PEER_ENDPOINT)
             .mode("inclusive")
             .entity_type("Vehicle")
-            .context_source_info("ngsild-conformance", bad)
+            .context_source_info("ngsildConformance", bad)
             .build();
         let rejected = topology.front().client().create_registration(&registration).await.expect("invalid conformance");
         assert_status(&rejected, 400);
@@ -230,7 +230,7 @@ async fn distop_entity_csi_ngsild_conformance_triggers_backwards_compat_transfor
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .operations(&["createEntity"])
-        .context_source_info("ngsild-conformance", "1.3")
+        .context_source_info("ngsildConformance", "1.3")
         .build();
     assert_status(
         &topology.front().client().create_registration(&registration).await.expect("create registration"),

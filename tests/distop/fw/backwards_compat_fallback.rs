@@ -23,7 +23,7 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
 /// The `contextSourceInfo` key by which a registration declares the NGSI-LD
 /// conformance version of its source.
-const CONFORMANCE_KEY: &str = "ngsild-conformance";
+const CONFORMANCE_KEY: &str = "ngsildConformance";
 
 /// Provision an entity through an inclusive registration declaring an older
 /// source conformance version and return the exact payload forwarded to the

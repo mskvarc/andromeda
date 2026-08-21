@@ -13,7 +13,11 @@ use andromeda_entity::{
     error::EntityError,
     query::remote_linked::{RemoteLinkedEntities, RemoteLinkedEntitySource},
 };
-use andromeda_federation::{FederationService, operation::ForwardingOperation, request::CsrModeFilter};
+use andromeda_federation::{
+    FederationService,
+    operation::ForwardingOperation,
+    request::{CsrModeFilter, ForwardRetrieveRequest, TriggeringRequest},
+};
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
@@ -52,18 +56,21 @@ impl RemoteLinkedEntitySource for ForwardedLinkedEntitySource {
         let query_string = linked_retrieval_query(remaining_depth, visited);
         let forwarded = self
             .federation
-            .forward_retrieve(
-                id,
-                &query_string,
-                context.link_contexts().first(),
-                ForwardingOperation::RetrieveEntity,
+            .forward_retrieve(ForwardRetrieveRequest {
+                entity_id: id,
+                exclude_registration: None,
+                query_string: &query_string,
+                context,
+                operation: ForwardingOperation::RetrieveEntity,
                 // A linked retrieval starts at this broker rather than being a
-                // hop of an inbound one, so there is no `Via` chain to extend.
-                None,
+                // hop of an inbound one, so there is no `Via` chain to extend
+                // and no headers to pass through.
+                triggering: TriggeringRequest::default(),
                 // Clause 4.3.6.2: an auxiliary context source only supplements
                 // an entity that already exists, never supplies a missing one.
-                CsrModeFilter::ExcludeAuxiliary,
-            )
+                mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                entity_map: None,
+            })
             .await;
 
         // A Linked Entity that cannot be reached degrades the join instead of

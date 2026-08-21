@@ -6,12 +6,11 @@ use crate::entity::{
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
-    ForwardingModes,
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
-    Json,
     LocalOnlyParams,
+    LocalOutcome,
     OriginalUri,
     ProblemResponse,
     Response,
@@ -19,11 +18,13 @@ use crate::entity::{
     TypedPath,
     Uri,
     ValidatedQuery,
-    build_multi_status_body,
-    has_remote_errors,
+    provision_response,
 };
+use andromeda_entity::error::EntityError;
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
-use axum::http::Method;
+use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn delete(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -32,6 +33,7 @@ pub(crate) async fn delete(
     TypedPath(id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let is_local = params.local.unwrap_or(false);
@@ -42,7 +44,6 @@ pub(crate) async fn delete(
     }
 
     let context: ContextSpec = context.into_inner();
-    let context_url = context.link_contexts().first();
 
     let forwarded = state
         .forwarding
@@ -52,12 +53,14 @@ pub(crate) async fn delete(
             attribute_name: None,
             method: Method::DELETE,
             body: None,
-            context_url,
             context: &context,
             operation: ForwardingOperation::DeleteEntity,
             path_suffix: None,
             query_string: None,
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;
@@ -67,32 +70,15 @@ pub(crate) async fn delete(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    let modes = ForwardingModes::from_results(&forwarded);
-
-    if modes.has_exclusive {
-        if let Err(e) = service.delete(&id).await {
-            tracing::warn!(error = %e, entity_id = %id, "Failed to delete local entity during exclusive forwarding");
-        }
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-
-    if modes.has_redirect {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-
-    if modes.has_inclusive {
-        let local_result = service.delete(&id).await;
-        let local_ok = local_result.is_ok();
-        let local_error = local_result.err();
-
-        if local_ok && !has_remote_errors(&forwarded) {
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-
-        let body = build_multi_status_body(&id, local_ok, local_error.as_ref(), &forwarded);
-        return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
-    }
-
-    service.delete(&id).await.with_entity_instance(&uri)?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+    // Clause 5.6.6.4: proxied registrations delete their part; the entity this
+    // broker holds for the unregistered attributes goes as well, and its
+    // absence is no failure when the entity lives only at the sources.
+    let proxied = forwarded
+        .iter()
+        .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
+    let local = match service.delete(&id).await {
+        Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
+        other => LocalOutcome::Processed(other.map(|_| ())),
+    };
+    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

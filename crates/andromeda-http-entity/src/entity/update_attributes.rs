@@ -5,12 +5,12 @@ use crate::entity::{
     EntityResultExt,
     EntityTenantState,
     ForwardProvisionRequest,
-    ForwardingModes,
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
     Json,
     JsonLd,
+    LocalOutcome,
     OriginalUri,
     ProblemResponse,
     Response,
@@ -18,14 +18,13 @@ use crate::entity::{
     TypedPath,
     Uri,
     Value,
-    build_multi_status_body,
-    collect_forwarded_exclusive_attrs,
-    first_forwarded_status,
-    has_remote_errors,
-    strip_exclusive_attrs_from_value,
+    collect_proxied_attrs,
+    provision_response,
+    strip_attributes_from_value,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
-use axum::http::Method;
+use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn update_attrs(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -33,6 +32,7 @@ pub(crate) async fn update_attrs(
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     JsonLd {
         value: fragment,
         context: body_context,
@@ -42,7 +42,6 @@ pub(crate) async fn update_attrs(
     let context = context.merge(body_context);
 
     // Forward to matching context sources
-    let context_url = context.link_contexts().first();
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
 
     let forwarded = state
@@ -53,12 +52,14 @@ pub(crate) async fn update_attrs(
             attribute_name: None,
             method: Method::PATCH,
             body: Some(&fragment_body),
-            context_url,
             context: &context,
             operation: ForwardingOperation::UpdateEntityAttributes,
             path_suffix: Some("/attrs"),
             query_string: None,
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;
@@ -77,35 +78,15 @@ pub(crate) async fn update_attrs(
         return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
     }
 
-    let modes = ForwardingModes::from_results(&forwarded);
-    if modes.has_redirect {
-        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 204)).unwrap_or(StatusCode::NO_CONTENT);
-        return Ok(status.into_response());
-    }
-
-    // Strip exclusive attributes before local update
-    let exclusive_attrs = collect_forwarded_exclusive_attrs(&forwarded);
+    // Clause 5.6.2.4: the attributes proxied registrations cover leave the
+    // fragment; whatever remains is updated here.
+    let proxied = collect_proxied_attrs(&forwarded);
     let mut local_fragment = fragment;
-    if !exclusive_attrs.is_empty() {
-        strip_exclusive_attrs_from_value(&mut local_fragment, &exclusive_attrs);
-    }
-
-    // Exclusive-only updates may strip all local attributes; in that case
-    // local processing is complete and only remote status matters.
-    if local_fragment.as_object().is_some_and(|obj| obj.is_empty()) {
-        if !has_remote_errors(&forwarded) {
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
-        let body = build_multi_status_body(&id, true, None, &forwarded);
-        return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
-    }
-
-    let local_result = service.update_attrs(&id, local_fragment, &context).await;
-
-    if local_result.is_ok() && !has_remote_errors(&forwarded) {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-
-    let body = build_multi_status_body(&id, local_result.is_ok(), local_result.err().as_ref(), &forwarded);
-    Ok((StatusCode::MULTI_STATUS, Json(body)).into_response())
+    strip_attributes_from_value(&mut local_fragment, &proxied);
+    let local = if local_fragment.as_object().is_some_and(|object| object.is_empty()) {
+        LocalOutcome::NothingRemained
+    } else {
+        LocalOutcome::Processed(service.update_attrs(&id, local_fragment, &context).await.map(|_| ()))
+    };
+    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

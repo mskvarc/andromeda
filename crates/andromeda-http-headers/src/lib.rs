@@ -48,7 +48,6 @@ pub mod preference;
 pub mod preference_applied;
 pub mod quality;
 pub mod received_protocol;
-pub mod version;
 pub mod via;
 pub mod warning;
 pub mod x_request_id;

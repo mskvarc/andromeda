@@ -183,10 +183,11 @@ async fn distop_entity_via_chain_appends_alias_and_excludes_loop() {
 }
 
 /// A single exclusive registration on each of two brokers pointing at the other
-/// for the same id forms a loop, resolved with 508 LoopDetected (clause
-/// 6.3.18). Confirms REQ-FW-31.
+/// for the same id forms a loop. For a distributed GET clause 6.3.17 reports the
+/// loop as `NGSILD-Warning` 199 rather than 508, which is reserved for the HTTP
+/// unsafe methods. Confirms REQ-FW-31.
 #[tokio::test]
-async fn distop_entity_loop_single_exclusive_returns_508() {
+async fn distop_entity_loop_single_exclusive_returns_199_warning() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");
     let front = topology.front();
     let peer = topology.broker(BrokerRole::B);
@@ -209,7 +210,12 @@ async fn distop_entity_loop_single_exclusive_returns_508() {
     assert_status(&peer.client().create_registration(&peer_registration).await.expect("peer registration"), 201);
 
     let retrieved = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
-    assert_status(&retrieved, 508);
+    assert!(
+        retrieved.status.as_u16() < 500,
+        "a GET loop is a warning, not a 5xx: got {}",
+        retrieved.status.as_u16()
+    );
+    assert!(has_warning(&retrieved, 199), "the loop is reported as NGSILD-Warning 199");
 
     topology.finish().await.expect("topology cleanup");
 }

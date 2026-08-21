@@ -1,8 +1,8 @@
 //! Retrieve Entity entity-map create and reuse (clauses 5.7.1.4, 5.5.14, 6.3.15):
 //! minting a map, reusing a supplied map so only its recorded CSRs are consulted,
 //! recreating on an unreachable/expired map, and echoing the in-use map. Linked
-//! cross-instance maps (`REQ-CONS-8/13`) are `#[ignore]`d against
-//! `crate::gaps::KNOWN_GAPS`. Query-entity map rows live in
+//! cross-instance maps (`REQ-CONS-8/13`) run against the durable, shared
+//! entity-map store. Query-entity map rows live in
 //! `crate::cons::entity_map_query`; temporal map rows in
 //! `crate::cons::entity_map_temporal`.
 
@@ -292,7 +292,6 @@ async fn distop_retrieve_entity_map_location_returned_when_supplied() {
 
 /// A linked map entry forwards the linked downstream map location on the forwarded
 /// retrieve (clause 5.5.14). Confirms REQ-CONS-8.
-#[ignore = "GAP REQ-CONS-8: cross-instance linked entity-map forwarding not implemented"]
 #[tokio::test]
 async fn distop_retrieve_entity_map_linked_entry_forwards_linked_location() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -340,7 +339,6 @@ async fn distop_retrieve_entity_map_linked_entry_forwards_linked_location() {
 
 /// Maps returned by forwarded CSRs update the in-use map's `linkedMaps`
 /// (clause 5.5.14). Confirms REQ-CONS-13.
-#[ignore = "GAP REQ-CONS-13: cross-instance linked entity-map forwarding not implemented"]
 #[tokio::test]
 async fn distop_retrieve_entity_map_linkedmaps_updated() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");

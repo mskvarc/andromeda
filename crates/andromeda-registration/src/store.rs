@@ -47,12 +47,20 @@
 
 use crate::{error::RegistrationError, resolved_update::ResolvedCsrUpdate};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    non_empty_text::NonEmptyText,
+    scope::grammar::ScopeBuf,
+    tenant::TenantName,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
+    registration_management::RegistrationManagementInfo,
+    time_interval::TimeInterval,
 };
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, dataset::DatasetSelector, pagination::Pagination};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
@@ -64,25 +72,27 @@ use url::Url;
 
 /// Parameters for creating a new context source registration.
 #[derive(Debug, TypedBuilder)]
-pub struct CreateCsrParams<'a> {
+pub struct CreateCsrParams {
     /// Human-readable name of the registration.
     #[builder(default = Default::default())]
-    pub registration_name: Option<&'a str>,
+    pub registration_name: Option<NonEmptyText>,
     /// Free-text description of the registration.
     #[builder(default = Default::default())]
-    pub description: Option<&'a str>,
+    pub description: Option<NonEmptyText>,
     /// Registration information entries describing provided entities/attributes.
+    pub information: Vec<RegistrationInfo>,
+    /// The `datasetId`s of the attribute instances the source provides.
     #[builder(default = Default::default())]
-    pub information: Option<Vec<RegistrationInfo>>,
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// Tenant identifier for multi-tenancy.
     #[builder(default = Default::default())]
     pub tenant: Option<TenantName>,
-    /// Expected interval between observations.
+    /// Interval the source's observations span.
     #[builder(default = Default::default())]
-    pub observation_interval: Option<&'a Value>,
-    /// Expected interval between management interactions.
+    pub observation_interval: Option<TimeInterval>,
+    /// Interval the source's management data spans.
     #[builder(default = Default::default())]
-    pub management_interval: Option<&'a Value>,
+    pub management_interval: Option<TimeInterval>,
     /// The `location` geometry.
     #[builder(default = Default::default())]
     pub location: Option<Geometry>,
@@ -96,16 +106,16 @@ pub struct CreateCsrParams<'a> {
     #[builder(default = Default::default())]
     pub expires_at: Option<DateTime<Utc>>,
     /// Base endpoint URL of the context source.
-    #[builder(default = Default::default())]
-    pub endpoint: Option<Url>,
+    pub endpoint: Url,
     /// Preferred MIME type for responses from the context source.
     #[builder(default = Default::default())]
     pub accept: Option<MediaTypeBuf>,
     /// Forwarding mode for distributed operations.
-    pub mode: ForwardingMode,
-    /// NGSI-LD operations supported by the context source.
     #[builder(default = Default::default())]
-    pub operations: Option<Vec<CsrOperation>>,
+    pub mode: ForwardingMode,
+    /// NGSI-LD operations supported by the context source; the clause 4.20
+    /// `federationOps` default is already materialised here.
+    pub operations: Vec<CsrOperation>,
     /// Scope values for the registration.
     #[builder(default = Default::default())]
     pub scope: Option<Vec<ScopeBuf>>,
@@ -114,7 +124,7 @@ pub struct CreateCsrParams<'a> {
     pub refresh_rate: Option<Iso8601Duration>,
     /// Management information for the registration.
     #[builder(default = Default::default())]
-    pub management: Option<&'a Value>,
+    pub management: Option<RegistrationManagementInfo>,
     /// Additional context source metadata entries.
     #[builder(default = Default::default())]
     pub context_source_info: Option<Vec<KeyValuePair>>,
@@ -129,7 +139,7 @@ pub struct CreateCsrParams<'a> {
     pub additional_properties: Option<Value>,
 }
 
-impl CreateCsrParams<'_> {
+impl CreateCsrParams {
     /// Keys recognized as standard NGSI-LD CSR properties.
     pub const STANDARD_KEYS: &'static [&'static str] = &[
         "id",
@@ -138,6 +148,7 @@ impl CreateCsrParams<'_> {
         "registrationName",
         "description",
         "information",
+        "datasetId",
         "tenant",
         "observationInterval",
         "managementInterval",
@@ -171,22 +182,25 @@ impl CreateCsrParams<'_> {
 pub struct CsrUpdateFragment {
     /// Updated registration name.
     #[builder(default = Default::default())]
-    pub registration_name: Option<Option<String>>,
+    pub registration_name: Option<Option<NonEmptyText>>,
     /// Updated description.
     #[builder(default = Default::default())]
-    pub description: Option<Option<String>>,
+    pub description: Option<Option<NonEmptyText>>,
     /// Updated registration information entries.
     #[builder(default = Default::default())]
     pub information: Option<Vec<RegistrationInfo>>,
+    /// Updated dataset identifiers.
+    #[builder(default = Default::default())]
+    pub dataset_id: Option<Option<Vec<DatasetSelector>>>,
     /// Updated tenant identifier.
     #[builder(default = Default::default())]
     pub tenant: Option<Option<TenantName>>,
     /// Updated observation interval.
     #[builder(default = Default::default())]
-    pub observation_interval: Option<Option<Value>>,
+    pub observation_interval: Option<Option<TimeInterval>>,
     /// Updated management interval.
     #[builder(default = Default::default())]
-    pub management_interval: Option<Option<Value>>,
+    pub management_interval: Option<Option<TimeInterval>>,
     /// Updated `location` geometry (`Some(None)` clears, `Some(Some(_))` replaces).
     #[builder(default = Default::default())]
     pub location: Option<Option<Geometry>>,
@@ -219,7 +233,7 @@ pub struct CsrUpdateFragment {
     pub refresh_rate: Option<Option<Iso8601Duration>>,
     /// Updated management information.
     #[builder(default = Default::default())]
-    pub management: Option<Option<Value>>,
+    pub management: Option<Option<RegistrationManagementInfo>>,
     /// Updated context source metadata entries.
     #[builder(default = Default::default())]
     pub context_source_info: Option<Option<Vec<KeyValuePair>>>,
@@ -232,6 +246,16 @@ pub struct CsrUpdateFragment {
     /// Updated non-standard properties.
     #[builder(default = Default::default())]
     pub additional_properties: Option<Value>,
+}
+
+/// How one distributed operation through a registration ended, for the
+/// read-only health members of Table 5.2.9-2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardingOutcome {
+    /// The source answered the operation.
+    Succeeded,
+    /// The source failed to answer, or answered with an error.
+    Failed,
 }
 
 /// Outcome of a mutation against one registration identifier.
@@ -298,16 +322,15 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Writes the routing projection derived from `params.information` in the
     /// same transaction as the payload, so the registration never becomes
     /// visible without the rows that make it discoverable.
-    fn create<'life0, 'life1, 'life2, 'life3, 'async_trait>(
+    fn create<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
         id: &'life1 Uri,
-        params: &'life2 CreateCsrParams<'life3>,
+        params: &'life2 CreateCsrParams,
     ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
-        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// Retrieve a registration by identifier.
@@ -373,6 +396,25 @@ pub trait RegistrationStore: Send + Sync + 'static {
         'life2: 'async_trait,
         Self: 'async_trait;
 
+    /// Non-expired proxied registrations — mode `exclusive` or `redirect` —
+    /// that may cover `entity_id` and declare one of `attributes`, or declare
+    /// no attribute at all (clauses 4.3.6.3, 5.9.2.4, 5.9.3.4).
+    ///
+    /// Like [`RegistrationStore::find_matching`] this is a preselect over the
+    /// routing projection and returns a superset: the typed overlap evaluation
+    /// in registration policy decides whether a returned registration actually
+    /// collides. A `None` identifier places no entity constraint.
+    fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
+        &'life0 self,
+        entity_id: Option<&'life1 Uri>,
+        attributes: &'life2 [IriBuf],
+    ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        'life2: 'async_trait,
+        Self: 'async_trait;
+
     /// One page of non-expired registrations, keyset-paginated on the identifier.
     ///
     /// `after` is the last identifier of the previous page, exclusive.
@@ -391,6 +433,22 @@ pub trait RegistrationStore: Send + Sync + 'static {
     /// Removes that registration's routing projection rows in the same
     /// transaction as the payload.
     fn delete<'life0, 'life1, 'async_trait>(&'life0 self, id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
+    where
+        'life0: 'async_trait,
+        'life1: 'async_trait,
+        Self: 'async_trait;
+
+    /// Record one distributed operation on the registration's health members
+    /// (Table 5.2.9-2): `timesSent` always grows, `timesFailed`, `lastFailure`
+    /// and `status: failed` on a failure, `lastSuccess` and `status: ok` on a
+    /// success. A missing registration is not an error: it may have been
+    /// deleted while the operation was in flight.
+    fn record_forwarding_outcome<'life0, 'life1, 'async_trait>(
+        &'life0 self,
+        id: &'life1 Uri,
+        outcome: ForwardingOutcome,
+        at: DateTime<Utc>,
+    ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,

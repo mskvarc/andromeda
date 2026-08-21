@@ -25,6 +25,8 @@ pub enum Csr {
     Description,
     /// The `information` array of registered entity/attribute coverage.
     Information,
+    /// The `datasetId` list of attribute instances the source provides.
+    DatasetId,
     /// Owning tenant.
     Tenant,
     /// The `observationInterval` temporal bounds.
@@ -127,6 +129,7 @@ mod tests {
         assert_eq!(Csr::Id.to_string(), "id");
         assert_eq!(Csr::Type.to_string(), "type");
         assert_eq!(Csr::RegistrationName.to_string(), "registration_name");
+        assert_eq!(Csr::DatasetId.to_string(), "dataset_id");
         assert_eq!(Csr::ObservationInterval.to_string(), "observation_interval");
         assert_eq!(Csr::ObservationSpace.to_string(), "observation_space");
         assert_eq!(Csr::JsonldContext.to_string(), "jsonld_context");

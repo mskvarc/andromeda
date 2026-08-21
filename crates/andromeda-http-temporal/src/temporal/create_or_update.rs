@@ -3,9 +3,9 @@
 use crate::temporal::{
     ContextUrl,
     CreateOrUpdateResult,
-    EmptyParams,
     IntoResponse,
     JsonLd,
+    LocalOnlyParams,
     OriginalUri,
     ProblemResponse,
     Response,
@@ -22,7 +22,7 @@ pub async fn create_or_update(
     tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
-    ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
+    ValidatedQuery(_params): ValidatedQuery<LocalOnlyParams>,
     JsonLd {
         value: payload,
         context: body_context,

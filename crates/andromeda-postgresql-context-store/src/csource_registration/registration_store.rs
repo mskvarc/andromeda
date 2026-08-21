@@ -4,14 +4,16 @@ use crate::csource_registration::{mapper::row_to_csr, routing_rewrite::replace_r
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     context_source_pseudonym::ContextSourcePseudonym,
+    non_empty_text::NonEmptyText,
     scope::grammar::ScopeBuf,
     tenant::TenantName,
     uri::Uri,
 };
-use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
-use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation, CsrStatus, ForwardingMode};
+use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, dataset::DatasetSelector, pagination::Pagination};
 use andromeda_postgresql_context_query::csr::{
     coverage::{entity_id_coverage, entity_type_coverage},
+    projection::attribute_name_candidate,
     statement as csr_sql,
 };
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
@@ -29,9 +31,10 @@ use andromeda_postgresql_seaquery::{
 use andromeda_registration::{
     error::RegistrationError,
     resolved_update::ResolvedCsrUpdate,
-    store::{CreateCsrParams, RegistrationMutation, RegistrationPage, RegistrationStore},
+    store::{CreateCsrParams, ForwardingOutcome, RegistrationMutation, RegistrationPage, RegistrationStore},
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use iri_rs::IriBuf;
 use sea_query::{CaseStatement, Cond, Expr as SeaExpr, ExprTrait, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
@@ -121,6 +124,7 @@ fn apply_csr_projection(select: &mut SelectStatement) {
         .column(Csr::RegistrationName)
         .column(Csr::Description)
         .column(Csr::Information)
+        .column(Csr::DatasetId)
         .column(Csr::Tenant)
         .column(Csr::ObservationInterval)
         .column(Csr::ManagementInterval)
@@ -179,6 +183,7 @@ fn csr_create_sql() -> Result<String, RegistrationError> {
         Csr::RegistrationName,
         Csr::Description,
         Csr::Information,
+        Csr::DatasetId,
         Csr::Tenant,
         Csr::ObservationInterval,
         Csr::ManagementInterval,
@@ -210,14 +215,14 @@ fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(5),
             external_placeholder(6),
             external_placeholder(7),
-            geometry_write(8),
+            external_placeholder(8),
             geometry_write(9),
             geometry_write(10),
-            external_placeholder(11),
+            geometry_write(11),
             external_placeholder(12),
             external_placeholder(13),
-            cast(external_placeholder(14), PostgresType::CsrMode),
-            external_placeholder(15),
+            external_placeholder(14),
+            cast(external_placeholder(15), PostgresType::CsrMode),
             external_placeholder(16),
             external_placeholder(17),
             external_placeholder(18),
@@ -225,6 +230,7 @@ fn csr_create_sql() -> Result<String, RegistrationError> {
             external_placeholder(20),
             external_placeholder(21),
             external_placeholder(22),
+            external_placeholder(23),
             now(),
             now(),
         ])
@@ -241,24 +247,25 @@ fn csr_update_sql() -> String {
             (Csr::RegistrationName, external_placeholder(2)),
             (Csr::Description, external_placeholder(3)),
             (Csr::Information, external_placeholder(4)),
-            (Csr::Tenant, external_placeholder(5)),
-            (Csr::ObservationInterval, external_placeholder(6)),
-            (Csr::ManagementInterval, external_placeholder(7)),
-            (Csr::Location, geometry_write(8)),
-            (Csr::ObservationSpace, geometry_write(9)),
-            (Csr::OperationSpace, geometry_write(10)),
-            (Csr::ExpiresAt, external_placeholder(11)),
-            (Csr::Endpoint, external_placeholder(12)),
-            (Csr::Accept, external_placeholder(13)),
-            (Csr::Mode, cast(external_placeholder(14), PostgresType::CsrMode)),
-            (Csr::Operations, external_placeholder(15)),
-            (Csr::Scope, external_placeholder(16)),
-            (Csr::RefreshRate, external_placeholder(17)),
-            (Csr::Management, external_placeholder(18)),
-            (Csr::ContextSourceInfo, external_placeholder(19)),
-            (Csr::JsonldContext, external_placeholder(20)),
-            (Csr::ContextSourceAlias, external_placeholder(21)),
-            (Csr::AdditionalProperties, external_placeholder(22)),
+            (Csr::DatasetId, external_placeholder(5)),
+            (Csr::Tenant, external_placeholder(6)),
+            (Csr::ObservationInterval, external_placeholder(7)),
+            (Csr::ManagementInterval, external_placeholder(8)),
+            (Csr::Location, geometry_write(9)),
+            (Csr::ObservationSpace, geometry_write(10)),
+            (Csr::OperationSpace, geometry_write(11)),
+            (Csr::ExpiresAt, external_placeholder(12)),
+            (Csr::Endpoint, external_placeholder(13)),
+            (Csr::Accept, external_placeholder(14)),
+            (Csr::Mode, cast(external_placeholder(15), PostgresType::CsrMode)),
+            (Csr::Operations, external_placeholder(16)),
+            (Csr::Scope, external_placeholder(17)),
+            (Csr::RefreshRate, external_placeholder(18)),
+            (Csr::Management, external_placeholder(19)),
+            (Csr::ContextSourceInfo, external_placeholder(20)),
+            (Csr::JsonldContext, external_placeholder(21)),
+            (Csr::ContextSourceAlias, external_placeholder(22)),
+            (Csr::AdditionalProperties, external_placeholder(23)),
             (Csr::ModifiedAt, now()),
         ])
         .and_where(SeaExpr::col(Csr::Id).eq(external_placeholder(1)));
@@ -274,13 +281,48 @@ fn not_expired() -> Cond {
 }
 
 /// Encode supported operations using their PostgreSQL enum labels.
-fn operation_names(operations: Option<&[CsrOperation]>) -> Option<Vec<String>> {
-    operations.map(|values| values.iter().map(ToString::to_string).collect())
+fn operation_names(operations: &[CsrOperation]) -> Vec<String> {
+    operations.iter().map(ToString::to_string).collect()
+}
+
+/// Encode the `datasetId` list in its clause 4.5.5 wire form.
+fn dataset_selectors(dataset_id: Option<&[DatasetSelector]>) -> Option<Vec<String>> {
+    dataset_id.map(|values| values.iter().map(ToString::to_string).collect())
+}
+
+/// The health update one forwarding outcome applies (Table 5.2.9-2): the sent
+/// counter always grows; the failed counter, the matching timestamp and the
+/// status follow the outcome.
+fn health_update_sql(outcome: ForwardingOutcome) -> String {
+    let mut update = Query::update();
+    update
+        .table(Csr::Table)
+        .value(Csr::TimesSent, SeaExpr::col(Csr::TimesSent).add(1))
+        .and_where(SeaExpr::col(Csr::Id).eq(external_placeholder(1)));
+    match outcome {
+        ForwardingOutcome::Succeeded => {
+            update
+                .value(Csr::LastSuccess, external_placeholder(2))
+                .value(Csr::Status, cast(text_literal(<&str>::from(CsrStatus::Ok)), PostgresType::CsrStatus));
+        }
+        ForwardingOutcome::Failed => {
+            update
+                .value(Csr::TimesFailed, SeaExpr::col(Csr::TimesFailed).add(1))
+                .value(Csr::LastFailure, external_placeholder(2))
+                .value(Csr::Status, cast(text_literal(<&str>::from(CsrStatus::Failed)), PostgresType::CsrStatus));
+        }
+    }
+    update.to_string(PostgresQueryBuilder)
+}
+
+/// The predicate matching proxied registrations: mode `exclusive` or `redirect`.
+fn proxied_mode() -> sea_query::SimpleExpr {
+    cast(SeaExpr::col(Csr::Mode), PostgresType::Text).is_in([<&str>::from(ForwardingMode::Exclusive), <&str>::from(ForwardingMode::Redirect)])
 }
 
 #[async_trait]
 impl RegistrationStore for PostgresRegistrationStore {
-    async fn delete_expired(&self, cutoff: chrono::DateTime<chrono::Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+    async fn delete_expired(&self, cutoff: DateTime<Utc>) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         // The rows to return are read before either deletion, so the projection
         // sees the geometries and enums the payload carried; the two deletions
@@ -348,32 +390,37 @@ impl RegistrationStore for PostgresRegistrationStore {
         Ok(row.0)
     }
 
-    async fn create(&self, id: &Uri, params: &CreateCsrParams<'_>) -> Result<(), RegistrationError> {
-        let information = params.information.as_ref().map(serde_json::to_value).transpose()?;
+    async fn create(&self, id: &Uri, params: &CreateCsrParams) -> Result<(), RegistrationError> {
+        let information = serde_json::to_value(&params.information)?;
+        let observation_interval = params.observation_interval.map(serde_json::to_value).transpose()?;
+        let management_interval = params.management_interval.map(serde_json::to_value).transpose()?;
+        let management = params.management.as_ref().map(serde_json::to_value).transpose()?;
         let context_source_info = params.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
-        let operations = operation_names(params.operations.as_deref());
+        let operations = operation_names(&params.operations);
+        let dataset_id = dataset_selectors(params.dataset_id.as_deref());
         let scopes = params.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let create_sql = csr_create_sql()?;
         sqlx::query(sqlx::AssertSqlSafe(create_sql.as_str()))
             .bind(id.as_str())
-            .bind(params.registration_name)
-            .bind(params.description)
+            .bind(params.registration_name.as_ref().map(NonEmptyText::as_str))
+            .bind(params.description.as_ref().map(NonEmptyText::as_str))
             .bind(information)
+            .bind(dataset_id.as_deref())
             .bind(params.tenant.as_ref().map(TenantName::as_str))
-            .bind(params.observation_interval.cloned())
-            .bind(params.management_interval.cloned())
+            .bind(observation_interval)
+            .bind(management_interval)
             .bind(geometry_bytes(params.location.as_ref()).map_err(persistence_error)?)
             .bind(geometry_bytes(params.observation_space.as_ref()).map_err(persistence_error)?)
             .bind(geometry_bytes(params.operation_space.as_ref()).map_err(persistence_error)?)
             .bind(params.expires_at)
-            .bind(params.endpoint.as_ref().map(url::Url::as_str))
+            .bind(params.endpoint.as_str())
             .bind(params.accept.as_ref().map(ToString::to_string))
             .bind(<&str>::from(params.mode))
-            .bind(operations.as_deref())
+            .bind(operations.as_slice())
             .bind(scopes.as_deref())
             .bind(params.refresh_rate.as_ref().map(ToString::to_string))
-            .bind(params.management.cloned())
+            .bind(management)
             .bind(context_source_info)
             .bind(params.jsonld_context.as_ref().map(url::Url::as_str))
             .bind(params.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
@@ -384,8 +431,8 @@ impl RegistrationStore for PostgresRegistrationStore {
         replace_registration_information(
             &mut transaction,
             id,
-            params.information.as_deref().unwrap_or_default(),
-            params.operations.as_deref(),
+            &params.information,
+            Some(&params.operations),
             self.attribute_names.as_ref(),
         )
         .await
@@ -459,19 +506,24 @@ impl RegistrationStore for PostgresRegistrationStore {
 
     async fn update(&self, id: &Uri, values: &ResolvedCsrUpdate) -> Result<RegistrationMutation, RegistrationError> {
         let information = serde_json::to_value(&values.information)?;
+        let observation_interval = values.observation_interval.map(serde_json::to_value).transpose()?;
+        let management_interval = values.management_interval.map(serde_json::to_value).transpose()?;
+        let management = values.management.as_ref().map(serde_json::to_value).transpose()?;
         let context_source_info = values.context_source_info.as_ref().map(serde_json::to_value).transpose()?;
-        let operations = operation_names(values.operations.as_deref());
+        let operations = operation_names(&values.operations);
+        let dataset_id = dataset_selectors(values.dataset_id.as_deref());
         let scopes = values.scope.as_deref().map(|values| values.iter().map(ScopeBuf::as_str).collect::<Vec<_>>());
         let mut transaction = self.pool.begin().await.map_err(persistence_error)?;
         let update_sql = csr_update_sql();
         let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
             .bind(id.as_str())
-            .bind(values.registration_name.as_deref())
-            .bind(values.description.as_deref())
+            .bind(values.registration_name.as_ref().map(NonEmptyText::as_str))
+            .bind(values.description.as_ref().map(NonEmptyText::as_str))
             .bind(information)
+            .bind(dataset_id.as_deref())
             .bind(values.tenant.as_ref().map(TenantName::as_str))
-            .bind(&values.observation_interval)
-            .bind(&values.management_interval)
+            .bind(observation_interval)
+            .bind(management_interval)
             .bind(geometry_bytes(values.location.as_ref()).map_err(persistence_error)?)
             .bind(geometry_bytes(values.observation_space.as_ref()).map_err(persistence_error)?)
             .bind(geometry_bytes(values.operation_space.as_ref()).map_err(persistence_error)?)
@@ -479,10 +531,10 @@ impl RegistrationStore for PostgresRegistrationStore {
             .bind(values.endpoint.as_str())
             .bind(values.accept.as_ref().map(ToString::to_string))
             .bind(<&str>::from(values.mode))
-            .bind(operations.as_deref())
+            .bind(operations.as_slice())
             .bind(scopes.as_deref())
             .bind(values.refresh_rate.as_ref().map(ToString::to_string))
-            .bind(&values.management)
+            .bind(management)
             .bind(context_source_info)
             .bind(values.jsonld_context.as_ref().map(url::Url::as_str))
             .bind(values.context_source_alias.as_ref().map(ContextSourcePseudonym::as_str))
@@ -500,7 +552,7 @@ impl RegistrationStore for PostgresRegistrationStore {
                     &mut transaction,
                     id,
                     &values.information,
-                    values.operations.as_deref(),
+                    Some(&values.operations),
                     self.attribute_names.as_ref(),
                 )
                 .await
@@ -529,6 +581,29 @@ impl RegistrationStore for PostgresRegistrationStore {
         rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
     }
 
+    async fn find_overlapping(&self, entity_id: Option<&Uri>, attributes: &[IriBuf]) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
+        let mut select = csr_base_select();
+        select.cond_where(not_expired());
+        select.and_where(proxied_mode());
+        if let Some(entity_id) = entity_id {
+            select.and_where(entity_id_coverage(entity_id));
+        }
+        // The attribute preselect admits a row declaring one of the names and a
+        // row declaring none at all (the `{0}` sentinel), which is exactly the
+        // clause 4.3.6.3 overlap: a whole-entity registration covers every
+        // attribute. The typed residual in registration policy decides.
+        if !attributes.is_empty() {
+            select.and_where(attribute_name_candidate(attributes));
+        }
+        select.order_by(Csr::CreatedAt, Order::Asc);
+        let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(persistence_error)?;
+        rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+    }
+
     async fn find_all_active(&self, after: Option<&Uri>, limit: u32) -> Result<Vec<ContextSourceRegistration>, RegistrationError> {
         let mut select = csr_base_select();
         select.cond_where(not_expired());
@@ -542,6 +617,17 @@ impl RegistrationStore for PostgresRegistrationStore {
             .await
             .map_err(persistence_error)?;
         rows.iter().map(|row| row_to_csr(row).map_err(persistence_error)).collect()
+    }
+
+    async fn record_forwarding_outcome(&self, id: &Uri, outcome: ForwardingOutcome, at: DateTime<Utc>) -> Result<(), RegistrationError> {
+        let sql = health_update_sql(outcome);
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(id.as_str())
+            .bind(at)
+            .execute(&self.pool)
+            .await
+            .map_err(persistence_error)?;
+        Ok(())
     }
 
     async fn delete(&self, id: &Uri) -> Result<RegistrationMutation, RegistrationError> {
@@ -575,22 +661,22 @@ impl RegistrationStore for PostgresRegistrationStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::csource_registration::registration_store::{csr_create_sql, csr_update_sql, mutation_outcome};
-    use andromeda_registration::store::RegistrationMutation;
+    use crate::csource_registration::registration_store::{csr_create_sql, csr_update_sql, health_update_sql, mutation_outcome};
+    use andromeda_registration::store::{ForwardingOutcome, RegistrationMutation};
 
     #[test]
     fn the_create_writes_its_type_geometries_and_mode_with_contiguous_markers() {
         let sql = csr_create_sql().expect("the fixed registration insert builds");
         assert!(sql.contains("'ContextSourceRegistration'"), "{sql}");
-        assert!(sql.contains("$14::csr_mode"), "{sql}");
-        for marker in [8, 9, 10] {
+        assert!(sql.contains("$15::csr_mode"), "{sql}");
+        for marker in [9, 10, 11] {
             assert!(
                 sql.contains(&format!("ST_MakeValid(ST_GeomFromEWKB(${marker}))")),
                 "geometry {marker} is validated from its EWKB: {sql}"
             );
         }
         assert!(sql.contains("NOW()"), "created_at and modified_at stamp the transaction clock: {sql}");
-        for marker in 1..=22 {
+        for marker in 1..=23 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
     }
@@ -599,9 +685,23 @@ mod tests {
     fn the_update_pins_the_row_by_id_and_decodes_its_geometries() {
         let sql = csr_update_sql();
         assert!(sql.contains(r#""id" = ($1)"#), "{sql}");
-        assert!(sql.contains("$14::csr_mode"), "{sql}");
+        assert!(sql.contains("$15::csr_mode"), "{sql}");
         assert!(sql.contains(r#""modified_at" = NOW()"#), "{sql}");
-        assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($8))"), "{sql}");
+        assert!(sql.contains("ST_MakeValid(ST_GeomFromEWKB($9))"), "{sql}");
+    }
+
+    #[test]
+    fn a_success_stamps_last_success_and_an_ok_status_while_a_failure_counts_and_stamps_the_failure() {
+        let success = health_update_sql(ForwardingOutcome::Succeeded);
+        assert!(success.contains(r#""times_sent" = "times_sent" + 1"#), "{success}");
+        assert!(success.contains(r#""last_success" = $2"#), "{success}");
+        assert!(success.contains("'ok'::csr_status"), "{success}");
+        assert!(!success.contains("times_failed"), "{success}");
+        let failure = health_update_sql(ForwardingOutcome::Failed);
+        assert!(failure.contains(r#""times_failed" = "times_failed" + 1"#), "{failure}");
+        assert!(failure.contains(r#""last_failure" = $2"#), "{failure}");
+        assert!(failure.contains("'failed'::csr_status"), "{failure}");
+        assert!(failure.contains(r#""id" = ($1)"#), "{failure}");
     }
 
     /// Zero affected rows preserve the policy-level missing outcome.

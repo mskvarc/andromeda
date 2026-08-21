@@ -5,7 +5,11 @@ use crate::{
     state::EntityTenantState,
 };
 use andromeda_entity::discovery::AttributeCollectionRepresentation;
-use andromeda_federation::discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results};
+use andromeda_federation::{
+    discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
+    operation::ForwardingOperation,
+    request::{ForwardDiscoveryRequest, TriggeringRequest},
+};
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
@@ -24,6 +28,7 @@ use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_ngsi_ld_request::{discovery::DiscoveryListParams, local::LocalOnlyParams};
 use axum::{
     extract::OriginalUri,
+    http::HeaderMap,
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -35,6 +40,7 @@ pub async fn query(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     SnapshotHeader(snapshot_id): SnapshotHeader,
     ValidatedQuery(params): ValidatedQuery<DiscoveryListParams>,
 ) -> Result<Response, ProblemResponse> {
@@ -68,11 +74,23 @@ pub async fn query(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         let forwarded = state
             .forwarding
-            .forward_discovery_query("/attributes", query_string, context_url, incoming_via.as_ref())
+            .forward_discovery_query(ForwardDiscoveryRequest {
+                path: "/attributes",
+                query_string,
+                context: &context,
+                operation: if params.details {
+                    ForwardingOperation::RetrieveAttrTypeDetails
+                } else {
+                    ForwardingOperation::RetrieveAttrTypes
+                },
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
+            })
             .await;
         let warnings = collect_discovery_warnings(&forwarded);
         let merged = merge_attributes_results(local_result, forwarded, params.details);
@@ -93,6 +111,7 @@ pub async fn get(
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     SnapshotHeader(snapshot_id): SnapshotHeader,
     TypedPath(attr_id): TypedPath<AttributeName>,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
@@ -131,12 +150,20 @@ pub async fn get(
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
     } else {
-        let context_url = context.link_contexts().first();
         let query_string = uri.query().unwrap_or("");
         let path = format!("/attributes/{}", attr_id);
         let forwarded = state
             .forwarding
-            .forward_discovery_query(&path, query_string, context_url, incoming_via.as_ref())
+            .forward_discovery_query(ForwardDiscoveryRequest {
+                path: &path,
+                query_string,
+                context: &context,
+                operation: ForwardingOperation::RetrieveAttrTypeInfo,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
+            })
             .await;
         let warnings = collect_discovery_warnings(&forwarded);
         let merged = merge_attribute_info_results(local_result, forwarded);

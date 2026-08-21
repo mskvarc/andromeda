@@ -14,6 +14,7 @@ mod linked_resolution_failure_mapping;
 mod linked_traversal_parameters;
 pub mod outcome;
 mod postgresql_maintenance;
+mod registered_entity_probe;
 mod retry_delay;
 mod routes;
 mod temporal_linked_forwarding;

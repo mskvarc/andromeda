@@ -59,6 +59,8 @@ pub enum Subscriptions {
     JsonldContext,
     /// Whether the subscription is confined to the local broker (`local`)
     LocalOnly,
+    /// Whether entities are assumed split across sources (`splitEntities`), `NULL` deferring to the deployment default
+    SplitEntities,
     /// The instant the subscription was created (clause 4.8 `createdAt`)
     CreatedAt,
     /// The instant the subscription was last modified (clause 4.8 `modifiedAt`)
@@ -104,6 +106,7 @@ mod tests {
         assert_eq!(Subscriptions::TimeInterval.to_string(), "time_interval");
         assert_eq!(Subscriptions::JsonldContext.to_string(), "jsonld_context");
         assert_eq!(Subscriptions::LocalOnly.to_string(), "local_only");
+        assert_eq!(Subscriptions::SplitEntities.to_string(), "split_entities");
         assert_eq!(Subscriptions::ModifiedAt.to_string(), "modified_at");
     }
 

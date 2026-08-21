@@ -1,7 +1,13 @@
 //! Row-to-domain mapping for context source registrations.
 
 use crate::error::ContextStoreError;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    non_empty_text::NonEmptyText,
+    scope::grammar::ScopeBuf,
+    tenant::TenantName,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     registration::{
@@ -14,7 +20,10 @@ use andromeda_ngsi_ld_model::{
         RegistrationHealth,
         RegistrationLifecycle,
     },
+    registration_management::RegistrationManagementInfo,
+    time_interval::TimeInterval,
 };
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -28,16 +37,37 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
     let id: Uri = id_raw
         .parse()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR id '{id_raw}': {e}")))?;
-    let registration_name: Option<String> = row.get("registration_name");
-    let description: Option<String> = row.get("description");
+    let registration_name = row
+        .get::<Option<String>, _>("registration_name")
+        .map(NonEmptyText::try_from)
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR registrationName: {e}")))?;
+    let description = row
+        .get::<Option<String>, _>("description")
+        .map(NonEmptyText::try_from)
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR description: {e}")))?;
     let information_json: Value = row.get("information");
+    let dataset_id = row
+        .get::<Option<Vec<String>>, _>("dataset_id")
+        .map(|values| values.iter().map(|raw| DatasetSelector::parse(raw)).collect::<Result<Vec<_>, _>>())
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR datasetId: {e}")))?;
     let tenant_str: Option<String> = row.get("tenant");
     let tenant = tenant_str
         .map(TenantName::try_from)
         .transpose()
         .map_err(|e| ContextStoreError::Internal(e.to_string()))?;
-    let observation_interval: Option<Value> = row.get("observation_interval");
-    let management_interval: Option<Value> = row.get("management_interval");
+    let observation_interval = row
+        .get::<Option<Value>, _>("observation_interval")
+        .map(serde_json::from_value::<TimeInterval>)
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR observationInterval: {e}")))?;
+    let management_interval = row
+        .get::<Option<Value>, _>("management_interval")
+        .map(serde_json::from_value::<TimeInterval>)
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR managementInterval: {e}")))?;
     let location: Option<Value> = row.get("location");
     let observation_space: Option<Value> = row.get("observation_space");
     let operation_space: Option<Value> = row.get("operation_space");
@@ -81,7 +111,11 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .map(|raw| raw.parse::<Iso8601Duration>().map_err(|e| format!("{e:?}")))
         .transpose()
         .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR refreshRate: {e}")))?;
-    let management: Option<Value> = row.get("management");
+    let management = row
+        .get::<Option<Value>, _>("management")
+        .map(serde_json::from_value::<RegistrationManagementInfo>)
+        .transpose()
+        .map_err(|e| ContextStoreError::Internal(format!("Invalid CSR management: {e}")))?;
     let context_source_info = row
         .get::<Option<Value>, _>("context_source_info")
         .map(serde_json::from_value::<Vec<KeyValuePair>>)
@@ -123,6 +157,7 @@ pub fn row_to_csr(row: &PgRow) -> Result<ContextSourceRegistration, ContextStore
         .coverage(
             RegistrationCoverage::builder()
                 .information(information)
+                .dataset_id(dataset_id)
                 .scope(scope)
                 .location(location)
                 .observation_space(observation_space)

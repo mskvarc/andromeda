@@ -2,8 +2,8 @@
 //!
 //! The static half is `IMPL`: client-supplied health values are ignored and a
 //! fresh registration exposes only server-owned counters. The dynamic half —
-//! flipping `status` and incrementing counters on a real forward — is a tracked
-//! `GAP` (`T-MOCK`, `#[ignore]`) mirrored in `crate::gaps::KNOWN_GAPS`.
+//! flipping `status` and incrementing counters on a real forward — is driven
+//! through a mock context source (`T-MOCK`).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -74,7 +74,6 @@ async fn reg_fresh_registration_counters_nonnegative() {
 
 /// A forward to an endpoint that always fails flips the registration `status` to
 /// `failed` (clause 5.2.9, dynamic). Confirms REQ-REG-31 (dynamic).
-#[ignore = "GAP REQ-REG-31: dynamic CSR status transition to failed on forward error not implemented"]
 #[tokio::test]
 async fn reg_health_status_transitions_to_failed_on_forward_error() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -125,7 +124,6 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
 
 /// Every forward attempt increments the delivery counters and stamps the matching
 /// success/failure timestamp (clause 5.2.9, dynamic). Confirms REQ-REG-32 (dynamic).
-#[ignore = "GAP REQ-REG-32: dynamic CSR health counter increment on forward attempt not implemented"]
 #[tokio::test]
 async fn reg_health_counters_increment_on_forward_attempt() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");

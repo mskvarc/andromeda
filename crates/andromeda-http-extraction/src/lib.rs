@@ -19,6 +19,7 @@ pub mod protocol;
 pub mod query;
 pub mod snapshot;
 pub mod snapshot_purge;
+pub mod temporal_query;
 pub mod tenant;
 pub mod tenant_state;
 pub mod typed_path;

@@ -3,6 +3,7 @@
 pub mod context_registry;
 pub mod entity;
 pub mod entity_map;
+pub mod notification_receiver;
 pub mod registration;
 pub mod snapshot;
 pub mod subscription;

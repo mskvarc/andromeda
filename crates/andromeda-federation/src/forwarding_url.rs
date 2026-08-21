@@ -5,6 +5,9 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use url::{Url, form_urlencoded};
 
+/// The API base every NGSI-LD resource path hangs below (clause 6.2).
+const API_BASE: [&str; 2] = ["ngsi-ld", "v1"];
+
 pub(crate) fn build_forwarding_query_string(entity_type: Option<&TypeExprRaw>, entity_ids: Option<&[Uri]>) -> String {
     let mut serializer = form_urlencoded::Serializer::new(String::new());
     if let Some(ids) = entity_ids
@@ -19,14 +22,36 @@ pub(crate) fn build_forwarding_query_string(entity_type: Option<&TypeExprRaw>, e
     serializer.finish()
 }
 
-/// Append path segments and decoded query pairs through [`Url`]'s encoder.
+/// Whether a registration endpoint already ends in the API base.
+///
+/// Clause 5.2.9 describes `endpoint` as the URI "through which the Context
+/// Source exposes its NGSI-LD interface", which deployments spell both as the
+/// origin and as the origin plus `/ngsi-ld/v1`; appending the base to the
+/// latter would double it.
+fn ends_with_api_base(endpoint: &Url) -> bool {
+    let Some(segments) = endpoint.path_segments() else {
+        return false;
+    };
+    let segments = segments.filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
+    segments.len() >= API_BASE.len() && segments[segments.len() - API_BASE.len()..] == API_BASE
+}
+
+/// Append API-relative path segments and decoded query pairs to a registration
+/// endpoint through [`Url`]'s encoder.
+///
+/// `path` is the resource path below the API base, so the caller never spells
+/// `ngsi-ld/v1` and an endpoint already carrying it is joined without doubling.
 pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: &str) -> Result<Url, FederationError> {
     let mut url = endpoint.clone(); // clone: a forwarding target owns a mutated URL while the registration remains reusable
+    let has_base = ends_with_api_base(endpoint);
     {
         let mut segments = url
             .path_segments_mut()
             .map_err(|()| FederationError::internal(format!("Context source endpoint cannot be a base URL: {endpoint}")))?;
         segments.pop_if_empty();
+        if !has_base {
+            segments.extend(API_BASE);
+        }
         segments.extend(path.iter().copied());
     }
     if !query_string.is_empty() {
@@ -35,35 +60,100 @@ pub(crate) fn forwarding_url(endpoint: &Url, path: &[&str], query_string: &str) 
     Ok(url)
 }
 
+/// Append `local=true` (clause 6.3.18) to a forwarded URL, which is how clause
+/// 5.5.13's local scope binds in HTTP when a registration sets `localOnly`.
+pub(crate) fn with_local_scope(mut url: Url) -> Url {
+    url.query_pairs_mut().append_pair("local", "true");
+    url
+}
+
 /// Build a forwarding URL for entity creation (POST).
 pub(crate) fn build_create_url(endpoint: &Url) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "entities"], "")
+    forwarding_url(endpoint, &["entities"], "")
 }
 
 /// Build a forwarding URL for entity queries.
-/// The endpoint may already contain a path (e.g., for redirect mode).
 pub(crate) fn build_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "entities"], query_string)
+    forwarding_url(endpoint, &["entities"], query_string)
 }
 
 /// Build a forwarding URL for entity retrieval by ID.
 pub(crate) fn build_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "entities", entity_id.as_str()], query_string)
+    forwarding_url(endpoint, &["entities", entity_id.as_str()], query_string)
 }
 
 /// Build a forwarding URL for discovery queries (types, attributes).
 pub(crate) fn build_discovery_url(endpoint: &Url, path: &str, query_string: &str) -> Result<Url, FederationError> {
-    let mut segments = vec!["ngsi-ld", "v1"];
-    segments.extend(path.split('/').filter(|segment| !segment.is_empty()));
+    let segments = path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
     forwarding_url(endpoint, &segments, query_string)
 }
 
 /// Build a forwarding URL for temporal entity queries.
 pub(crate) fn build_temporal_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "temporal", "entities"], query_string)
+    forwarding_url(endpoint, &["temporal", "entities"], query_string)
 }
 
 /// Build a forwarding URL for temporal entity retrieval by ID.
 pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Uri, query_string: &str) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["ngsi-ld", "v1", "temporal", "entities", entity_id.as_str()], query_string)
+    forwarding_url(endpoint, &["temporal", "entities", entity_id.as_str()], query_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::forwarding_url::{build_create_url, build_retrieve_url, forwarding_url, with_local_scope};
+    use url::Url;
+
+    fn url(raw: &str) -> Url {
+        Url::parse(raw).expect("valid URL")
+    }
+
+    #[test]
+    fn an_endpoint_without_the_api_base_gets_it_appended() {
+        for endpoint in ["http://peer", "http://peer/"] {
+            pretty_assertions::assert_eq!(
+                build_create_url(&url(endpoint)).expect("joins").as_str(),
+                "http://peer/ngsi-ld/v1/entities",
+                "{endpoint}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_endpoint_already_ending_in_the_api_base_is_not_doubled() {
+        for endpoint in ["http://peer/ngsi-ld/v1", "http://peer/ngsi-ld/v1/"] {
+            pretty_assertions::assert_eq!(
+                build_create_url(&url(endpoint)).expect("joins").as_str(),
+                "http://peer/ngsi-ld/v1/entities",
+                "{endpoint}"
+            );
+        }
+        pretty_assertions::assert_eq!(
+            build_create_url(&url("http://peer/prefix/ngsi-ld/v1")).expect("joins").as_str(),
+            "http://peer/prefix/ngsi-ld/v1/entities"
+        );
+    }
+
+    #[test]
+    fn a_prefixed_endpoint_keeps_its_prefix_below_the_base() {
+        pretty_assertions::assert_eq!(
+            build_create_url(&url("http://peer/prefix")).expect("joins").as_str(),
+            "http://peer/prefix/ngsi-ld/v1/entities"
+        );
+    }
+
+    #[test]
+    fn entity_identifiers_and_query_pairs_are_encoded_by_the_url_encoder() {
+        let id = "urn:ngsi-ld:Vehicle:A 1".parse().expect("valid URI");
+        let built = build_retrieve_url(&url("http://peer"), &id, "attrs=speed&type=Vehicle").expect("joins");
+        pretty_assertions::assert_eq!(
+            built.as_str(),
+            "http://peer/ngsi-ld/v1/entities/urn:ngsi-ld:Vehicle:A%201?attrs=speed&type=Vehicle"
+        );
+    }
+
+    #[test]
+    fn the_local_scope_parameter_is_appended_after_the_forwarded_query() {
+        let built = forwarding_url(&url("http://peer"), &["entities"], "type=Vehicle").expect("joins");
+        pretty_assertions::assert_eq!(with_local_scope(built).as_str(), "http://peer/ngsi-ld/v1/entities?type=Vehicle&local=true");
+    }
 }

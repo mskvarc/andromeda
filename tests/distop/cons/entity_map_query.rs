@@ -1,7 +1,7 @@
 //! Query Entities entity-map create and reuse (clauses 5.7.2.4, 5.5.14, 6.3.15):
 //! minting a map and returning `201`, reusing a valid map so its CSR set is fixed,
 //! and recreating on an expired/missing map. The linked cross-instance map row
-//! (`REQ-CONS-26`) is `#[ignore]`d against `crate::gaps::KNOWN_GAPS`.
+//! (`REQ-CONS-26`) runs against the durable, shared entity-map store.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -126,7 +126,6 @@ async fn distop_query_entities_return_flag_creates_map_and_header() {
 
 /// A query reusing a map whose CSR entry links a downstream map forwards that
 /// linked location (clause 5.5.14). Confirms REQ-CONS-26.
-#[ignore = "GAP REQ-CONS-26: cross-instance linked entity-map forwarding not implemented"]
 #[tokio::test]
 async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");

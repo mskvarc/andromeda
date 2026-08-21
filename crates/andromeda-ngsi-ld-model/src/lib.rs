@@ -13,6 +13,7 @@
 pub mod attribute;
 pub mod attribute_list;
 pub mod context_source_identity;
+pub mod context_source_info;
 pub mod entity;
 pub mod entity_map;
 pub mod entity_type;
@@ -23,11 +24,13 @@ pub mod key_value_pair;
 pub mod notification;
 pub mod query;
 pub mod registration;
+pub mod registration_management;
 pub mod snapshot;
 pub mod snapshot_filter;
 pub mod subscription;
 pub mod temporal;
 pub mod tenant_list;
+pub mod time_interval;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {

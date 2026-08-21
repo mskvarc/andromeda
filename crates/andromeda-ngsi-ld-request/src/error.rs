@@ -18,6 +18,9 @@ use thiserror::Error;
 /// A query parameter the broker cannot act on.
 #[derive(Debug, Error)]
 pub enum ParameterError {
+    /// `type=*` implies local scope (Table 5.2.33-1), so `local=false` contradicts it.
+    #[error("type=* implies local scope and cannot be combined with local=false")]
+    WildcardTypeWithLocalFalse,
     /// The parameter's value was rejected by the language that owns it.
     #[error(transparent)]
     Query(#[from] QueryError),

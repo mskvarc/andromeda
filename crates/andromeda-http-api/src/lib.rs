@@ -15,6 +15,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-http-entity",
         "andromeda-http-entity-map",
         "andromeda-http-health",
+        "andromeda-http-notification-receiver",
         "andromeda-http-registration",
         "andromeda-http-snapshot",
         "andromeda-http-source-identity",
@@ -27,6 +28,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dev_dependencies: [
         "andromeda-health",
         "andromeda-ngsi-ld-lexicon",
+        "andromeda-subscription-forwarding",
         "andromeda-telemetry",
         "andromeda-tenancy",
     ],

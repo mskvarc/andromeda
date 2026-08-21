@@ -7,25 +7,24 @@ use crate::entity::{
     EntityTenantStateOrCreate,
     EntityTypeValue,
     ForwardProvisionRequest,
-    ForwardingModes,
     ForwardingOperation,
     IncomingVia,
     IntoResponse,
-    Json,
     JsonLd,
     LocalOnlyParams,
+    LocalOutcome,
     OriginalUri,
     ProblemResponse,
     Response,
     StatusCode,
     ValidatedQuery,
-    build_multi_status_body,
-    first_forwarded_status,
-    has_remote_errors,
+    collect_proxied_attrs,
+    provision_response,
 };
+use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 use andromeda_http_response::headers::with_location;
-use axum::http::Method;
+use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn create(
     tenant_state::ProvisionableTenantState(state): EntityTenantStateOrCreate,
@@ -33,6 +32,7 @@ pub(crate) async fn create(
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     JsonLd {
         value: entity,
         context: body_context,
@@ -48,7 +48,6 @@ pub(crate) async fn create(
     }
 
     // Check for matching CSRs for distributed forwarding
-    let context_url = context.link_contexts().first();
     let entity_body = serde_json::to_vec(&entity).with_entity_instance(&uri)?;
     let entity_id = entity.id.clone(); // clone: the forwarding request and local create both need the identifier
     let entity_type = match &entity.type_ {
@@ -64,12 +63,14 @@ pub(crate) async fn create(
             attribute_name: None,
             method: Method::POST,
             body: Some(&entity_body),
-            context_url,
             context: &context,
             operation: ForwardingOperation::CreateEntity,
             path_suffix: None,
             query_string: None,
-            incoming_via: incoming_via.as_ref(),
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
         })
         .await
         .with_entity_instance(&uri)?;
@@ -79,32 +80,15 @@ pub(crate) async fn create(
         return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{}", id)));
     }
 
-    let modes = ForwardingModes::from_results(&forwarded);
-
-    if modes.has_exclusive || modes.has_redirect {
-        let status = StatusCode::from_u16(first_forwarded_status(&forwarded, 201)).unwrap_or(StatusCode::CREATED);
-        if status == StatusCode::CREATED {
-            return Ok(with_location((status).into_response(), format!("/ngsi-ld/v1/entities/{}", entity_id)));
-        }
-        return Ok(status.into_response());
-    }
-
-    if modes.has_inclusive {
-        let local_result = service.create(&entity, &context).await;
-        let local_ok = local_result.is_ok();
-        let local_error = local_result.err();
-
-        if local_ok && !has_remote_errors(&forwarded) {
-            return Ok(with_location(
-                StatusCode::CREATED.into_response(),
-                format!("/ngsi-ld/v1/entities/{}", entity_id),
-            ));
-        }
-
-        let body = build_multi_status_body(&entity_id, local_ok, local_error.as_ref(), &forwarded);
-        return Ok((StatusCode::MULTI_STATUS, Json(body)).into_response());
-    }
-
-    let id = service.create(&entity, &context).await.with_entity_instance(&uri)?;
-    Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{}", id)))
+    // Clause 5.6.1.4: the attributes proxied registrations cover leave the
+    // fragment; whatever remains creates the entity here.
+    let proxied = collect_proxied_attrs(&forwarded);
+    let mut entity = entity;
+    let local = if entity.strip_attributes(&proxied) {
+        LocalOutcome::Processed(service.create(&entity, &context).await.map(|_| ()))
+    } else {
+        LocalOutcome::NothingRemained
+    };
+    let created = with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{entity_id}"));
+    provision_response(&entity_id, &forwarded, local, created, &uri)
 }

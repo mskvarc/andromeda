@@ -130,6 +130,14 @@ impl Entity {
         self
     }
 
+    /// Remove the named attributes, returning whether any attribute remains.
+    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> bool {
+        for attribute in attributes {
+            self.attrs.shift_remove(attribute.as_str());
+        }
+        !self.attrs.is_empty()
+    }
+
     /// Remove attribute instances whose `expiresAt` has passed (clause 4.22).
     ///
     /// Filters out expired instances from both regular attributes and the
@@ -209,12 +217,13 @@ pub struct EntityPatch {
 }
 
 impl EntityPatch {
-    /// Strip attributes marked as exclusive per spec 4.3.6.3.
+    /// Remove the named attributes (those a proxied registration owns per
+    /// clause 4.3.6.3), returning whether any attribute remains.
     ///
-    /// Removes attributes whose names appear in `exclusive_attrs` from this
+    /// Removes attributes whose names appear in `attributes` from this
     /// patch. Returns `true` if any attributes remain after stripping.
-    pub fn strip_exclusive_attrs(&mut self, exclusive_attrs: &[AttributeName]) -> bool {
-        for attr in exclusive_attrs {
+    pub fn strip_attributes(&mut self, attributes: &[AttributeName]) -> bool {
+        for attr in attributes {
             self.attrs.shift_remove(attr.as_str());
         }
         !self.attrs.is_empty()
@@ -643,49 +652,49 @@ mod tests {
     }
 
     #[test]
-    fn strip_exclusive_attrs_no_overlap_all_remain() {
+    fn strip_attributes_no_overlap_all_remain() {
         let mut patch: EntityPatch = serde_json::from_value(json!({
             "speed": { "type": "Property", "value": 100 },
             "fuel": { "type": "Property", "value": 50 }
         }))
         .unwrap();
         let exclusive = vec!["temperature".parse::<AttributeName>().expect("name")];
-        assert!(patch.strip_exclusive_attrs(&exclusive));
+        assert!(patch.strip_attributes(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 2);
     }
 
     #[test]
-    fn strip_exclusive_attrs_partial_overlap() {
+    fn strip_attributes_partial_overlap() {
         let mut patch: EntityPatch = serde_json::from_value(json!({
             "speed": { "type": "Property", "value": 100 },
             "fuel": { "type": "Property", "value": 50 }
         }))
         .unwrap();
         let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
-        assert!(patch.strip_exclusive_attrs(&exclusive));
+        assert!(patch.strip_attributes(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
         assert!(patch.attrs.contains_key("fuel"));
     }
 
     #[test]
-    fn strip_exclusive_attrs_full_overlap_returns_false() {
+    fn strip_attributes_full_overlap_returns_false() {
         let mut patch: EntityPatch = serde_json::from_value(json!({
             "speed": { "type": "Property", "value": 100 }
         }))
         .unwrap();
         let exclusive = vec!["speed".parse::<AttributeName>().expect("name")];
-        assert!(!patch.strip_exclusive_attrs(&exclusive));
+        assert!(!patch.strip_attributes(&exclusive));
         assert!(patch.attrs.is_empty());
     }
 
     #[test]
-    fn strip_exclusive_attrs_empty_exclusive_list() {
+    fn strip_attributes_empty_exclusive_list() {
         let mut patch: EntityPatch = serde_json::from_value(json!({
             "speed": { "type": "Property", "value": 100 }
         }))
         .unwrap();
         let exclusive: Vec<AttributeName> = Vec::new();
-        assert!(patch.strip_exclusive_attrs(&exclusive));
+        assert!(patch.strip_attributes(&exclusive));
         pretty_assertions::assert_eq!(patch.attrs.len(), 1);
     }
 }

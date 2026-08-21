@@ -26,6 +26,8 @@ pub mod entity;
 pub mod error;
 pub mod expiry;
 mod fields;
+/// The distributed side of the subscription lifecycle, as a port.
+pub mod forwarding_hook;
 /// Subscription lifecycle orchestration shared by both subscription kinds.
 pub mod lifecycle;
 /// In-memory subscription matching policy.

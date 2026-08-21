@@ -17,12 +17,14 @@
 
 pub mod csr;
 pub mod current;
+pub mod entity_map;
 pub mod jsonld;
 pub mod maintenance;
 pub mod name_dictionary;
 pub mod notification;
 pub mod queue;
 pub mod snapshot;
+pub mod subscription_forwarding;
 pub mod subscriptions;
 pub mod temporal;
 pub mod tenancy;

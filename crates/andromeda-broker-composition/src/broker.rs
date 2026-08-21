@@ -9,6 +9,7 @@ use crate::{
         context_registry::BrokerContextRegistryStateResolver,
         entity::BrokerEntityStateResolver,
         entity_map::BrokerEntityMapStateResolver,
+        notification_receiver::BrokerNotificationReceiverResolver,
         registration::BrokerRegistrationStateResolver,
         snapshot::BrokerSnapshotStateResolver,
         subscription::BrokerSubscriptionStateResolver,
@@ -24,6 +25,7 @@ use andromeda_http_context_registry::routes::ContextRegistryRoutes;
 use andromeda_http_entity::routes::EntityRoutes;
 use andromeda_http_entity_map::routes::EntityMapRoutes;
 use andromeda_http_health::routes::HealthRoutes;
+use andromeda_http_notification_receiver::routes::NotificationReceiverRoutes;
 use andromeda_http_registration::routes::RegistrationRoutes;
 use andromeda_http_server::execution;
 use andromeda_http_snapshot::routes::SnapshotRoutes;
@@ -35,10 +37,12 @@ use andromeda_http_temporal::routes::TemporalRoutes;
 use andromeda_http_tenancy::routes::TenancyRoutes;
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
+    forwarded_subscription_routes::PostgresForwardedSubscriptionRouter,
     health::DatabaseHealthIndicator,
     tenant_database::{DatabaseUrl, configure_pool_options},
     tenant_registry::PostgresTenantRegistry,
 };
+use andromeda_subscription_forwarding::mapping::ForwardedSubscriptionRouter;
 use andromeda_task_runtime::supervisor::TaskSupervisor;
 use andromeda_telemetry::{error::TelemetryError, recorder::TelemetryRecorder};
 use andromeda_tenancy::{
@@ -48,6 +52,7 @@ use andromeda_tenancy::{
     runtime::TenantRuntimeManager,
     tenant_ref::TenantRef,
 };
+use chrono::{DateTime, Utc};
 use std::{io::Error as IoError, sync::Arc};
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -109,7 +114,10 @@ pub async fn run(config: RuntimeConfig) -> ProcessExitOutcome {
             return ProcessExitOutcome::StartupFailure;
         }
     };
-    let BrokerExecution { api, tenants, process_tasks } = match construct(Arc::clone(&config), telemetry).await {
+    // Table 5.2.40-1: `contextSourceUptime` counts from the instant the
+    // broker became available, captured once here.
+    let started_at = Utc::now();
+    let BrokerExecution { api, tenants, process_tasks } = match construct(Arc::clone(&config), telemetry, started_at).await {
         Ok(execution) => execution,
         Err(startup_error) => {
             error!(error = %startup_error, event = "broker_startup_failed");
@@ -146,7 +154,11 @@ fn install_telemetry(exposure: MetricsExposure) -> Result<Option<Arc<TelemetryRe
 }
 
 /// Construct tenant composition, focused route fragments and the complete HTTP API.
-async fn construct(config: Arc<RuntimeConfig>, telemetry: Option<Arc<TelemetryRecorder>>) -> Result<BrokerExecution, BrokerStartupError> {
+async fn construct(
+    config: Arc<RuntimeConfig>,
+    telemetry: Option<Arc<TelemetryRecorder>>,
+    started_at: DateTime<Utc>,
+) -> Result<BrokerExecution, BrokerStartupError> {
     let database_url = DatabaseUrl::new(config.database.url.clone()); // clone: the tenant factory retains the validated base URL
     let main_pool = configure_pool_options(config.database.max_connections, config.database.synchronous_commit.as_postgres_setting())
         .connect(config.database.url.as_str())
@@ -168,10 +180,14 @@ async fn construct(config: Arc<RuntimeConfig>, telemetry: Option<Arc<TelemetryRe
         config.database.maintenance,
         config.database.synchronous_commit.as_postgres_setting(),
     )?;
+    // The platform route from minted subscription identifiers to tenants is
+    // shared by every tenant's forwarding service and by the receiver.
+    let subscription_router: Arc<dyn ForwardedSubscriptionRouter> = Arc::new(PostgresForwardedSubscriptionRouter::new(registry.main_pool()));
     let factory = Arc::new(BrokerTenantFactory::new(
         &config,
         database_url,
         process_tasks.clone(), // clone: tenant scopes and process shutdown share supervision
+        Arc::clone(&subscription_router),
     ));
     let tenants = TenantRuntimeManager::new(config.tenancy.clone(), Arc::clone(&registry), Arc::clone(&factory)); // clone: manager owns its policy
     drop(tenants.spawn_janitor());
@@ -205,7 +221,13 @@ async fn construct(config: Arc<RuntimeConfig>, telemetry: Option<Arc<TelemetryRe
         .source_identity(SourceIdentityRoutes::new(SourceIdentityState::new(
             config.info.source_id.clone(),    // clone: configuration and immutable route state own the identifier
             config.info.source_alias.clone(), // clone: configuration and immutable route state own the alias
+            started_at,
+            config.info.source_extras.clone(), // clone: configuration and immutable route state own the raw extras
         )))
+        .notification_receiver(NotificationReceiverRoutes::new(Arc::new(BrokerNotificationReceiverResolver::new(
+            Arc::clone(&tenants),
+            subscription_router,
+        ))))
         .tenancy(TenancyRoutes::new(directory, evictor))
         .health(HealthRoutes::new(health.build()))
         .component_report(ComponentReportRoutes::new(component_reports))

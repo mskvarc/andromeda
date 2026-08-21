@@ -143,7 +143,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
         .mode("auxiliary")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["appendAttrs"])
+        .operations(&["queryEntity"])
         .build();
     assert_status(
         &topology.front().client().create_registration(&registration).await.expect("create registration"),
@@ -195,6 +195,7 @@ async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
         .mode("auxiliary")
         .entity_id(&entity_id)
         .property_names(&["speed"])
+        .operations(&["retrieveEntity", "queryEntity"])
         .build();
     let accepted = topology.front().client().create_registration(&auxiliary).await.expect("auxiliary registration");
     assert_status(&accepted, 201);

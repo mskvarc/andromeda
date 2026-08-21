@@ -61,12 +61,13 @@ fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
 fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
     match error {
         FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
-        FederationError::Gateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, "Context source gateway failed"),
+        FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, error.to_string()),
+        FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
+        FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
+        FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, error.to_string()),
         FederationError::JsonLd(source) => classify_jsonld_error(source),
         FederationError::Query(source) => classify_query_error(source),
-        FederationError::Registration(_) | FederationError::Request(_) | FederationError::Representation(_) | FederationError::Internal { .. } => {
-            ClassifiedReport::internal(error)
-        }
+        FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal { .. } => ClassifiedReport::internal(error),
     }
 }
 

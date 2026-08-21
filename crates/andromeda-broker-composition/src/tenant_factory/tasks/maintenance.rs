@@ -199,6 +199,7 @@ pub(super) fn classify_registration_expiry_failure(error: RegistrationError) -> 
         RegistrationError::Validation { .. }
         | RegistrationError::NotFound { .. }
         | RegistrationError::AlreadyExists { .. }
+        | RegistrationError::Conflict { .. }
         | RegistrationError::JsonLd(_)
         | RegistrationError::Query(_)
         | RegistrationError::Representation(_)

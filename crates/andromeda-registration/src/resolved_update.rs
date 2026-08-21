@@ -7,11 +7,14 @@
 
 use crate::{error::RegistrationError, store::CsrUpdateFragment};
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, scope::grammar::ScopeBuf, tenant::TenantName};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, non_empty_text::NonEmptyText, scope::grammar::ScopeBuf, tenant::TenantName};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
+    registration_management::RegistrationManagementInfo,
+    time_interval::TimeInterval,
 };
+use andromeda_ngsi_ld_query::dataset::DatasetSelector;
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use mediatype::MediaTypeBuf;
@@ -25,17 +28,19 @@ use url::Url;
 #[derive(Debug, TypedBuilder)]
 pub struct ResolvedCsrUpdate {
     /// New `registration_name` value (nullable).
-    pub registration_name: Option<String>,
+    pub registration_name: Option<NonEmptyText>,
     /// New `description` value (nullable).
-    pub description: Option<String>,
+    pub description: Option<NonEmptyText>,
     /// New `information` array, serialised as JSON.
     pub information: Vec<RegistrationInfo>,
+    /// New `datasetId` list.
+    pub dataset_id: Option<Vec<DatasetSelector>>,
     /// New `tenant` value.
     pub tenant: Option<TenantName>,
     /// New `observation_interval` object.
-    pub observation_interval: Option<Value>,
+    pub observation_interval: Option<TimeInterval>,
     /// New `management_interval` object.
-    pub management_interval: Option<Value>,
+    pub management_interval: Option<TimeInterval>,
     /// New `expires_at` timestamp.
     pub expires_at: Option<DateTime<Utc>>,
     /// New `endpoint` (required).
@@ -44,14 +49,15 @@ pub struct ResolvedCsrUpdate {
     pub accept: Option<MediaTypeBuf>,
     /// New forwarding mode.
     pub mode: ForwardingMode,
-    /// New supported operations list.
-    pub operations: Option<Vec<CsrOperation>>,
+    /// New supported operations list; the clause 4.20 `federationOps` default
+    /// is already materialised here.
+    pub operations: Vec<CsrOperation>,
     /// New scope strings.
     pub scope: Option<Vec<ScopeBuf>>,
     /// New refresh-rate duration string.
     pub refresh_rate: Option<Iso8601Duration>,
     /// New management object.
-    pub management: Option<Value>,
+    pub management: Option<RegistrationManagementInfo>,
     /// New context-source-info object.
     pub context_source_info: Option<Vec<KeyValuePair>>,
     /// New JSON-LD context identifier.
@@ -81,17 +87,21 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
     let registration_name = fragment.registration_name.clone().unwrap_or(existing.registration_name); // clone: own fragment side; existing moves
     let description = fragment.description.clone().unwrap_or(existing.description); // clone: own fragment side; existing moves
     let information = fragment.information.clone().unwrap_or(existing.coverage.information); // clone: own the borrowed update fragment when it supplied information.
+    let dataset_id = fragment.dataset_id.clone().unwrap_or(existing.coverage.dataset_id); // clone: own fragment side; existing moves
     let tenant = fragment.tenant.clone().unwrap_or(existing.tenant); // clone: own fragment side; existing moves
-    let observation_interval = fragment.observation_interval.clone().unwrap_or(existing.coverage.observation_interval); // clone: own fragment side
-    let management_interval = fragment.management_interval.clone().unwrap_or(existing.coverage.management_interval); // clone: own fragment side
+    let observation_interval = fragment.observation_interval.unwrap_or(existing.coverage.observation_interval);
+    let management_interval = fragment.management_interval.unwrap_or(existing.coverage.management_interval);
     let expires_at = fragment.expires_at.unwrap_or(existing.lifecycle.expires_at);
     let endpoint = fragment.endpoint.clone().unwrap_or(existing.access.endpoint); // clone: own the borrowed update fragment when it supplied the URL.
     let accept = fragment.accept.clone().unwrap_or(existing.access.accept); // clone: own the borrowed update fragment when it supplied the media type.
     let mode = fragment.mode.unwrap_or_else(|| existing.access.mode.unwrap_or_default());
+    // Clause 4.20: `federationOps` is the effective set whenever the
+    // registration, after the merge, names no explicit subset.
     let operations = fragment
         .operations
         .clone() // clone: own fragment side; existing path moves the typed operations
-        .unwrap_or(existing.access.operations);
+        .unwrap_or(existing.access.operations)
+        .unwrap_or_else(|| vec![CsrOperation::FederationOps]);
     let scope = fragment.scope.clone().unwrap_or(existing.coverage.scope); // clone: own the borrowed update fragment when it supplied scopes.
     let refresh_rate = fragment.refresh_rate.unwrap_or(existing.access.refresh_rate);
     let management = fragment.management.clone().unwrap_or(existing.access.management); // clone: own fragment side
@@ -149,6 +159,7 @@ pub fn apply_fragment(existing: ContextSourceRegistration, fragment: &CsrUpdateF
         registration_name,
         description,
         information,
+        dataset_id,
         tenant,
         observation_interval,
         management_interval,

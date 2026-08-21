@@ -1,79 +1,99 @@
-//! Single-source and multi-source error mapping (clause 6.3.16 / 6.3.18): when a
-//! distributed operation resolves to exactly one authoritative source, that
-//! source's outcome maps onto the client status (508 loop, 504 timeout, 404
-//! absent, 502 other), while a multi-endpoint operation with a failing member
-//! yields `207`. Auxiliary registrations never receive unsafe methods.
+//! Single-source and multi-source error mapping (clause 6.3.17): when an HTTP
+//! unsafe method resolves to exactly one exclusive or redirect source holding
+//! all of the data, that source's outcome maps onto the client status (508
+//! loop, 504 timeout, 404 absent, 502 other), while a multi-endpoint operation
+//! with a failing member yields `207`. Distributed GET failures never become
+//! status codes: clause 6.3.17 routes them to `NGSILD-Warning` 199 on a
+//! successful response. Auxiliary registrations never advertise unsafe
+//! methods (clause 5.9.2.4).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::vehicle,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, forwarded_entity_path, provision_source, retrieval_source},
-    oracle::{assert_status, json_body},
-    topology::{BrokerRole, DistributedTopology},
+    oracle::{assert_status, has_warning, json_body},
+    registration::CsrBuilder,
+    topology::DistributedTopology,
 };
 use reqwest::Method;
+use serde_json::json;
 
-/// A single source that forwards back to the origin broker is a loop, mapped to
-/// `508 Loop Detected` (clause 6.3.18). Confirms REQ-HTTP-25.
+/// An endpoint no packet reaches, so a forwarded request only ends by its
+/// deadline.
+const BLACKHOLE_ENDPOINT: &str = "http://10.255.255.1:9";
+
+/// A single exclusive source registered back onto the broker itself is a loop,
+/// mapped to `508 Loop Detected` for an unsafe method (clause 6.3.17).
+/// Confirms REQ-HTTP-25.
 #[tokio::test]
 async fn dist_http_single_source_loop_back_returns_508() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
     let front = topology.front();
-    let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:loop");
-    let front_reg = topology.id("registration:loop-front");
-    let peer_reg = topology.id("registration:loop-peer");
+    let reg_id = topology.id("registration:loop");
 
-    let to_peer = retrieval_source(&front_reg, peer.peer_url(), &entity_id, "exclusive");
-    assert_status(&front.client().create_registration(&to_peer).await.expect("front registers peer"), 201);
-    let back_to_front = retrieval_source(&peer_reg, front.peer_url(), &entity_id, "exclusive");
-    assert_status(&peer.client().create_registration(&back_to_front).await.expect("peer registers front"), 201);
+    let loop_back = CsrBuilder::new(&reg_id, front.peer_url())
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["createEntity"])
+        .alias(front.alias())
+        .build();
+    assert_status(&front.client().create_registration(&loop_back).await.expect("register loop-back source"), 201);
 
     let response = front
         .client()
-        .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
+        .post_entity(&vehicle(&entity_id, 5))
+        .with_ld_json()
+        .send()
         .await
-        .expect("looping retrieve");
+        .expect("looping create");
     assert_status(&response, 508);
 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single unreachable source is a timeout, mapped to `504 Gateway Timeout`
-/// (clause 6.3.16). Confirms REQ-HTTP-26.
+/// A single source that does not answer within the registration's timeout is
+/// mapped to `504 Gateway Timeout` for an unsafe method (clause 6.3.17).
+/// Confirms REQ-HTTP-26.
 #[tokio::test]
 async fn dist_http_single_source_timeout_returns_504() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:timeout");
     let reg_id = topology.id("registration:timeout");
-    let mock = ContextSourceAdapter::start().await;
-    let endpoint = mock.url("");
-    mock.shutdown().await;
 
-    let registration = retrieval_source(&reg_id, &endpoint, &entity_id, "exclusive");
+    let registration = CsrBuilder::new(&reg_id, BLACKHOLE_ENDPOINT)
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["createEntity"])
+        .management(json!({"timeout": 500}))
+        .build();
     assert_status(
         &topology
             .front()
             .client()
             .create_registration(&registration)
             .await
-            .expect("register unreachable source"),
+            .expect("register stalling source"),
         201,
     );
 
     let response = topology
         .front()
         .client()
-        .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
+        .post_entity(&vehicle(&entity_id, 5))
+        .with_ld_json()
+        .send()
         .await
-        .expect("retrieve");
+        .expect("forwarded create");
     assert_status(&response, 504);
 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A single source reporting the resource absent maps to `404 Not Found`
-/// (clause 6.3.16). Confirms REQ-HTTP-27.
+/// A single source reporting the resource absent maps to `404 Not Found` for
+/// an unsafe method (clause 6.3.17). Confirms REQ-HTTP-27.
 #[tokio::test]
 async fn dist_http_single_source_resource_absent_returns_404() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -81,19 +101,21 @@ async fn dist_http_single_source_resource_absent_returns_404() {
     let reg_id = topology.id("registration:absent");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive");
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
     assert_status(
         &topology.front().client().create_registration(&registration).await.expect("register source"),
         201,
     );
-    mock.set_stub(Method::GET, &forwarded_entity_path(&entity_id), 404).await;
+    mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 404).await;
 
     let response = topology
         .front()
         .client()
-        .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
+        .post_entity(&vehicle(&entity_id, 5))
+        .with_ld_json()
+        .send()
         .await
-        .expect("retrieve");
+        .expect("forwarded create");
     assert_status(&response, 404);
 
     mock.shutdown().await;
@@ -101,7 +123,7 @@ async fn dist_http_single_source_resource_absent_returns_404() {
 }
 
 /// A single source failing with a definite error other than absence maps to
-/// `502 Bad Gateway` (clause 6.3.16). Confirms REQ-HTTP-28.
+/// `502 Bad Gateway` for an unsafe method (clause 6.3.17). Confirms REQ-HTTP-28.
 #[tokio::test]
 async fn dist_http_single_source_other_failure_returns_502() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -109,12 +131,86 @@ async fn dist_http_single_source_other_failure_returns_502() {
     let reg_id = topology.id("registration:badgateway");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive");
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
     assert_status(
         &topology.front().client().create_registration(&registration).await.expect("register source"),
         201,
     );
-    mock.set_stub(Method::GET, &forwarded_entity_path(&entity_id), 500).await;
+    mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 500).await;
+
+    let response = topology
+        .front()
+        .client()
+        .post_entity(&vehicle(&entity_id, 5))
+        .with_ld_json()
+        .send()
+        .await
+        .expect("forwarded create");
+    assert_status(&response, 502);
+
+    mock.shutdown().await;
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A distributed GET whose single exclusive source loops back onto the broker
+/// is not a 508: clause 6.3.17 reports the loop as `NGSILD-Warning` 199 on the
+/// response. Confirms REQ-HTTP-25 for the safe method.
+#[tokio::test]
+async fn dist_http_get_loop_back_returns_199_warning_not_508() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let front = topology.front();
+    let entity_id = topology.id("Vehicle:get-loop");
+    let reg_id = topology.id("registration:get-loop");
+
+    let loop_back = CsrBuilder::new(&reg_id, front.peer_url())
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["retrieveEntity"])
+        .alias(front.alias())
+        .build();
+    assert_status(&front.client().create_registration(&loop_back).await.expect("register loop-back source"), 201);
+
+    let response = front
+        .client()
+        .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
+        .await
+        .expect("looping retrieve");
+    assert!(
+        response.status.as_u16() < 500,
+        "a GET loop is a warning, not a 5xx: got {}",
+        response.status.as_u16()
+    );
+    assert!(has_warning(&response, 199), "the loop is reported as NGSILD-Warning 199");
+
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// A distributed GET whose single exclusive source times out is not a 504:
+/// clause 6.3.17 reports the missing response as `NGSILD-Warning` 199.
+/// Confirms REQ-HTTP-26 for the safe method.
+#[tokio::test]
+async fn dist_http_get_timeout_returns_199_warning_not_504() {
+    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:get-timeout");
+    let reg_id = topology.id("registration:get-timeout");
+
+    let registration = CsrBuilder::new(&reg_id, BLACKHOLE_ENDPOINT)
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["retrieveEntity"])
+        .management(json!({"timeout": 500}))
+        .build();
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register stalling source"),
+        201,
+    );
 
     let response = topology
         .front()
@@ -122,14 +218,18 @@ async fn dist_http_single_source_other_failure_returns_502() {
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
         .expect("retrieve");
-    assert_status(&response, 502);
+    assert!(
+        response.status.as_u16() < 500,
+        "a GET timeout is a warning, not a 5xx: got {}",
+        response.status.as_u16()
+    );
+    assert!(has_warning(&response, 199), "the timeout is reported as NGSILD-Warning 199");
 
-    mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
 }
 
 /// A create spanning several endpoints where one fails is a multi-status result,
-/// mapped to `207` (clause 6.3.16). Confirms REQ-HTTP-29.
+/// mapped to `207` (clause 6.3.17). Confirms REQ-HTTP-29.
 #[tokio::test]
 async fn dist_http_multi_endpoint_source_error_returns_207() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -165,7 +265,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
 }
 
 /// An auxiliary registration is read-only, so an unsafe (write) method is never
-/// forwarded to it and is handled locally (clause 5.7.3.4). Confirms REQ-HTTP-30.
+/// forwarded to it and is handled locally (clause 4.3.6.2). Confirms REQ-HTTP-30.
 #[tokio::test]
 async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -173,7 +273,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     let reg_id = topology.id("registration:aux-unsafe");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "auxiliary", &["createEntity", "updateAttrs", "appendAttrs"]);
+    let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "auxiliary", &["retrieveEntity", "queryEntity"]);
     assert_status(
         &topology
             .front()
@@ -205,7 +305,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
 }
 
 /// An unsafe method forwarded to a failing source produces an informative
-/// response body rather than a silent success (clause 6.3.16). Confirms REQ-HTTP-32.
+/// response body rather than a silent success (clause 6.3.17). Confirms REQ-HTTP-32.
 #[tokio::test]
 async fn dist_http_unsafe_method_source_error_is_informative() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -218,7 +318,8 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
         &topology.front().client().create_registration(&registration).await.expect("register source"),
         201,
     );
-    mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 500).await;
+    mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES_PATH, 403, &json!({"detail": "no access"}))
+        .await;
 
     let response = topology
         .front()
@@ -228,22 +329,21 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
         .send()
         .await
         .expect("forwarded create");
-    assert!(
-        response.status.as_u16() != 201,
-        "a failed forwarded write must not report a bare success, got {}",
-        response.status.as_u16()
-    );
+    assert_status(&response, 502);
     let body = json_body(&response);
-    assert!(!body.is_null(), "the failed forwarded write must carry an informative body");
+    let detail = body["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("403") && detail.contains("no access"),
+        "the failed forwarded write carries the source's detail: {body}"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A failed endpoint is declined for the duration of its cooldown before being
-/// retried. Cooldown decline is not implemented, so this is a tracked gap.
-/// Confirms REQ-HTTP-31.
-#[ignore = "GAP REQ-HTTP-31: cooldown decline not enforced"]
+/// A failed endpoint whose registration declares a `cooldown` is declined for
+/// that period, with `NGSILD-Warning` 199 standing in for its answer (clauses
+/// 5.2.34 and 6.3.17). Confirms REQ-HTTP-31.
 #[tokio::test]
 async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -251,7 +351,8 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     let reg_id = topology.id("registration:cooldown");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let mut registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    registration["management"] = json!({"cooldown": 60_000});
     assert_status(
         &topology.front().client().create_registration(&registration).await.expect("register source"),
         201,
@@ -264,14 +365,14 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
         .expect("first retrieve marks the endpoint failed");
-    assert_status(&first, 200);
+    assert!(has_warning(&first, 299), "the failing source is reported as NGSILD-Warning 299");
     let second = topology
         .front()
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
         .expect("second retrieve");
-    assert_status(&second, 200);
+    assert!(has_warning(&second, 199), "the declined source is reported as NGSILD-Warning 199");
     assert_eq!(
         mock.get_count(Method::GET, &forwarded_entity_path(&entity_id)).await,
         1,
