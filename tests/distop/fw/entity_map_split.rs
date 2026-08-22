@@ -66,8 +66,13 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
 
 /// A split entity is assembled from both sources before the local filter is
 /// applied: with speed on one source and a supplementary attribute on another,
-/// the assembled entity passes `q=speed>50` and carries both attributes (clause
-/// 5.7.2). Confirms REQ-FW-54, REQ-FW-55.
+/// the assembled entity passes `q=speed>50` and carries both attributes. The
+/// query sets `splitEntities=true` explicitly, since clause 5.7.2.4 applies the
+/// assemble-then-filter path only "If the split entities flag is explicitly
+/// set to true or, if not explicitly set, the default setting of the deployment
+/// allows split entities" and the deployment default is complete entities,
+/// under which `q` is forwarded and the fuel-only source returns nothing.
+/// Confirms REQ-FW-54, REQ-FW-55.
 #[tokio::test]
 async fn distop_entity_map_split_entities_assembled_before_filtering() {
     let topology = DistributedTopology::chain().await.expect("three-broker topology");
@@ -114,7 +119,11 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
 
     let response = front
         .client()
-        .query_entities(&format!("type=Vehicle&id={entity_id}&q=speed%3E50"), "application/ld+json", None)
+        .query_entities(
+            &format!("type=Vehicle&id={entity_id}&q=speed%3E50&splitEntities=true"),
+            "application/ld+json",
+            None,
+        )
         .await
         .expect("query");
     assert_status(&response, 200);

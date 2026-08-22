@@ -16,11 +16,13 @@ use crate::entity::{
     LocalOutcome,
     OriginalUri,
     ProblemResponse,
+    ProvisionResource,
     Response,
     StatusCode,
     TypedPath,
     Uri,
     ValidatedQuery,
+    classify_entity_error,
     collect_proxied_attrs,
     provision_response,
 };
@@ -68,6 +70,7 @@ pub(crate) async fn delete_attr(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: Some(&attr_id),
@@ -95,7 +98,7 @@ pub(crate) async fn delete_attr(
     let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
         LocalOutcome::NothingRemained
     } else {
-        LocalOutcome::Processed(service.delete_attr(&id, &attr_id, selection, &context).await.map(|_| ()))
+        LocalOutcome::processed(service.delete_attr(&id, &attr_id, selection, &context).await, classify_entity_error)
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

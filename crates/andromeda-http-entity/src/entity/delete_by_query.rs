@@ -1,4 +1,5 @@
-//! HTTP handling for the delete by query entity operation.
+//! HTTP handling for Purge Entities (clause 5.6.21, bound to
+//! `DELETE /entities` by clause 6.4.3.3).
 
 use crate::entity::{
     BatchOperationResult,
@@ -7,25 +8,43 @@ use crate::entity::{
     EntityQuery,
     EntityResultExt,
     EntityTenantState,
-    ForwardBatchProvisionRequest,
-    ForwardingModes,
-    ForwardingOperation,
+    ForwardPurgeRequest,
+    ForwardedPurgeResult,
     IncomingVia,
     IntoResponse,
-    Json,
     OriginalUri,
     ProblemResponse,
     PurgeMode,
     Response,
     StatusCode,
+    Uri,
     batch_operation_result,
-    internal_error,
+    classify_entity_error,
+    classify_forwarding_error,
+    forwarded_write_error,
+    multi_status,
     reject_linked_retrieval,
+    single_source_failure,
 };
 use andromeda_entity::side_effect::BatchSideEffectMode;
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 use axum::http::HeaderMap;
+use std::slice;
+
+/// Fold the forwarded purges into the clause 5.2.16 result: every failed
+/// registration contributes one clause 5.2.17 error per entity it is reported
+/// against, naming the registration.
+fn merge_forwarded_purges(result: &mut BatchOperationResult, forwarded: &[ForwardedPurgeResult]) {
+    for entry in forwarded {
+        for id in &entry.reported_ids {
+            if let Some(error) = forwarded_write_error(id.clone(), &entry.result.registration_id, &entry.result.outcome) {
+                // clone: each error owns the identifier it is reported against
+                result.errors.push(error);
+            }
+        }
+    }
+}
 
 pub(crate) async fn delete_by_query(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -54,75 +73,70 @@ pub(crate) async fn delete_by_query(
     };
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_entity_instance(&uri)?;
-    let entity_ids = state.entity_query.query_ids(&compiled).await.with_entity_instance(&uri)?;
+    let entity_ids: Vec<Uri> = state.entity_query.query_ids(&compiled).await.with_entity_instance(&uri)?;
 
-    if entity_ids.is_empty() {
-        return Ok(StatusCode::NO_CONTENT.into_response());
-    }
-
-    // When drop/keep is specified, modify attributes instead of deleting entities
-    match purge_mode {
+    // Clause 5.6.21.4: the local phase deletes the matched entities, or only
+    // the listed (or all but the listed) members of each.
+    let mut result = match purge_mode {
         PurgeMode::Drop(_) | PurgeMode::Keep(_) => {
             state
                 .entities
                 .purge_attrs(&entity_ids, &purge_mode, &context)
                 .await
                 .with_entity_instance(&uri)?;
-            return Ok(StatusCode::NO_CONTENT.into_response());
+            BatchOperationResult {
+                success: entity_ids.clone(), // clone: the result owns the identifiers it reports
+                errors: Vec::new(),
+            }
         }
-        PurgeMode::DeleteEntities => {}
-    }
+        PurgeMode::DeleteEntities if entity_ids.is_empty() => BatchOperationResult {
+            success: Vec::new(),
+            errors: Vec::new(),
+        },
+        PurgeMode::DeleteEntities => {
+            let batch = state
+                .entities
+                .batch_delete(&entity_ids, BatchSideEffectMode::Inline)
+                .await
+                .with_entity_instance(&uri)?;
+            batch_operation_result(batch.success, batch.errors, classify_entity_error)
+        }
+    };
 
-    if !is_local {
-        let body = serde_json::to_vec(&entity_ids).with_entity_instance(&uri)?;
-        let forwarded = state
+    // Clause 5.6.21.4: unless the request is local, the purge is forwarded to
+    // every matching registration that supports it.
+    let forwarded = if is_local {
+        Vec::new()
+    } else {
+        state
             .forwarding
-            .forward_batch_provision(ForwardBatchProvisionRequest {
-                entity_type_compact: None,
-                body: &body,
+            .forward_purge(ForwardPurgeRequest {
+                entity_type_compact: query.entity_type.as_ref(),
+                entity_ids: query.id.as_deref(),
+                local_ids: &entity_ids,
+                query_string: uri.query().unwrap_or(""),
                 context: &context,
-                operation: ForwardingOperation::DeleteBatch,
-                batch_path: "/entityOperations/delete",
-                query_string: None,
                 triggering: TriggeringRequest {
                     via: incoming_via.as_ref(),
                     headers: Some(&headers),
                 },
             })
             .await
-            .with_entity_instance(&uri)?;
-
-        let modes = ForwardingModes::from_results(&forwarded);
-
-        if modes.has_redirect {
-            let Some(first) = forwarded.first() else {
-                return Err(internal_error(&"Expected forwarded result", &uri));
-            };
-            let status = StatusCode::from_u16(first.status()).unwrap_or(StatusCode::NO_CONTENT);
-            if let Some(resp_body) = first.body() {
-                return Ok((status, Json(resp_body.clone())).into_response());
-            }
-            return Ok(status.into_response());
-        }
-
-        if modes.has_exclusive {
-            if let Err(e) = state.entities.batch_delete(&entity_ids, BatchSideEffectMode::Inline).await {
-                tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
-            }
-            return Ok(StatusCode::NO_CONTENT.into_response());
-        }
+            .with_entity_instance(&uri)?
+    };
+    let local_failed = !result.errors.is_empty();
+    let remote_failed = forwarded.iter().any(|entry| entry.result.is_failure());
+    if !local_failed && !remote_failed {
+        return Ok(StatusCode::NO_CONTENT.into_response());
     }
-
-    let batch = state
-        .entities
-        .batch_delete(&entity_ids, BatchSideEffectMode::Inline)
-        .await
-        .with_entity_instance(&uri)?;
-    let result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
-
-    if result.errors.is_empty() {
-        Ok(StatusCode::NO_CONTENT.into_response())
-    } else {
-        Ok((StatusCode::MULTI_STATUS, Json(result)).into_response())
+    // Clause 6.3.17: a purge that did nothing here and failed at its single
+    // proxied source carries that source's error; anything else is partial.
+    if entity_ids.is_empty()
+        && let [single] = forwarded.as_slice()
+        && let Some(error) = single_source_failure(slice::from_ref(&single.result))
+    {
+        return Err(classify_forwarding_error(&error).with_instance(uri));
     }
+    merge_forwarded_purges(&mut result, &forwarded);
+    Ok(multi_status(result))
 }

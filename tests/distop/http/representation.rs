@@ -1,8 +1,9 @@
 //! Representation and format negotiation (clause 6.3.7, 6.3.8, 4.5.16): the
 //! simplified `keyValues` form, the normalized default forwarded to sources, the
 //! GeoJSON `Feature`/`FeatureCollection` forms, the `501` on an unsupported
-//! forwarded representation, and the `203 Preference-Applied` version-amendment
-//! responses (not yet implemented).
+//! forwarded representation, the `203 Preference-Applied` version-amendment
+//! responses driven by a `Prefer: ngsi-ld=<version>` request header, and the
+//! profile `Link` version hint of clause 6.3.21.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -14,6 +15,14 @@ use crate::{
 use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;
+
+/// The `Prefer` header asking for the previous NGSI-LD version (clause 4.3.6.8
+/// names versions as `major.minor`), so the broker has a fallback to apply.
+const PREFER_PREVIOUS_VERSION: &str = "ngsi-ld=1.8";
+
+/// The RFC 6906 profile `Link` naming the previous NGSI-LD version in the
+/// `<https://uri.etsi.org/ngsi-ld/profile/version>` form of clause 6.3.21.
+const PROFILE_LINK_PREVIOUS_VERSION: &str = "<https://uri.etsi.org/ngsi-ld/profile/1.8>; rel=\"profile\"";
 
 /// A location GeoProperty node for a `Vehicle`, so GeoJSON rendering has a
 /// geometry to project.
@@ -205,9 +214,14 @@ async fn dist_http_retrieve_geojson_accept_returns_feature() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A version-amended query returns `203` with `Preference-Applied`. Version
-/// amendment is not yet implemented. Confirms REQ-HTTP-55.
-#[ignore = "UNKNOWN REQ-HTTP-55: 203 Preference-Applied version amendment pending"]
+/// A query carrying `Prefer: ngsi-ld=1.8` is amended to that version and answers
+/// `203` with `Preference-Applied` (Table 6.4.3.2-3: "203 Non-Authoritative
+/// Information ... returning an altered response body, amended to conform to a
+/// specific version of the NGSI-LD specification as mandated in clause 4.3.6.8.
+/// The response shall also include a "Preference-Applied" HTTP header set to
+/// "ngsi-ld=<conformant-version>""). Without the `Prefer` header there is
+/// nothing to amend, so the header is what turns a `200` into a `203`.
+/// Confirms REQ-HTTP-55.
 #[tokio::test]
 async fn dist_http_query_version_amended_returns_203_preference_applied() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -228,7 +242,11 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
     let response = topology
         .front()
         .client()
-        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
+        .header("accept", "application/ld+json")
+        .header("link", context_link_header())
+        .header("prefer", PREFER_PREVIOUS_VERSION)
+        .send()
         .await
         .expect("amended query");
     assert_status(&response, 203);
@@ -241,9 +259,13 @@ async fn dist_http_query_version_amended_returns_203_preference_applied() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A version-amended retrieve returns `203` with `Preference-Applied`. Version
-/// amendment is not yet implemented. Confirms REQ-HTTP-66.
-#[ignore = "UNKNOWN REQ-HTTP-66: 203 Preference-Applied version amendment pending"]
+/// A retrieve carrying `Prefer: ngsi-ld=1.8` is amended to that version and
+/// answers `203` with `Preference-Applied` (clause 5.7.1.4: "If the Prefer
+/// Header [26] is set to "ngsi-ld=<version>" then the ContextBroker shall
+/// endeavour to amend the JSON-LD object to conform to the specified version of
+/// the NGSI-LD specification as mandated in clause 4.3.6.8, and return a
+/// Preference-Applied Header set to "ngsi-ld=<conformant-version>" in the
+/// response"). Confirms REQ-HTTP-66.
 #[tokio::test]
 async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -265,7 +287,11 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     let response = topology
         .front()
         .client()
-        .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
+        .raw(Method::GET, &format!("/ngsi-ld/v1/entities/{}", urlencoding::encode(&entity_id)))
+        .header("accept", "application/ld+json")
+        .header("link", context_link_header())
+        .header("prefer", PREFER_PREVIOUS_VERSION)
+        .send()
         .await
         .expect("amended retrieve");
     assert_status(&response, 203);
@@ -278,9 +304,11 @@ async fn dist_http_retrieve_version_amended_returns_203_preference_applied() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A version-amended entityMaps response returns `203` with `Preference-Applied`.
-/// Version amendment is not yet implemented. Confirms REQ-HTTP-99.
-#[ignore = "UNKNOWN REQ-HTTP-99: 203 Preference-Applied version amendment pending"]
+/// An `entityMaps` request carrying `Prefer: ngsi-ld=1.8` is amended to that
+/// version and answers `203` with `Preference-Applied` (clause 6.3.6: "If the
+/// Prefer Header [26] is set to "ngsi-ld=<version>" then implementations shall
+/// set Preference-Applied header to "ngsi-ld=<conformant-version>" in the
+/// returned response"). Confirms REQ-HTTP-99.
 #[tokio::test]
 async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -290,6 +318,7 @@ async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() 
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
+        .header("prefer", PREFER_PREVIOUS_VERSION)
         .send()
         .await
         .expect("entity-maps request");
@@ -301,10 +330,16 @@ async fn dist_http_entity_maps_version_amended_returns_203_preference_applied() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A profile `Link` header selecting an NGSI-LD version is accepted, falling back
-/// across advertised versions. Profile version negotiation is not yet
-/// implemented. Confirms REQ-HTTP-45.
-#[ignore = "UNKNOWN REQ-HTTP-45: profile Link version fallbacks pending"]
+/// A profile `Link` header naming an earlier NGSI-LD version is accepted
+/// alongside the context `Link`, and the request still succeeds (clause 6.3.21:
+/// "if an HTTP Link header with a profile parameter in accordance with IETF RFC
+/// 6906 [33], is found set to <https://uri.etsi.org/ngsi-ld/profile/version>
+/// then implementations that are only partially capable of interpreting the
+/// datatypes conformant to the supplied NGSI-LD version may use this
+/// information to allow the payload to be accepted within the constraints of
+/// the current implementation (see clause 5.5.4) through amending the payload
+/// body and applying the fallbacks defined within clause 4.3.6.8").
+/// Confirms REQ-HTTP-45.
 #[tokio::test]
 async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -327,7 +362,7 @@ async fn dist_http_profile_link_header_version_accepted_with_fallbacks() {
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
-        .header("link", "<https://uri.etsi.org/ngsi-ld/v1.9>; rel=\"profile\"")
+        .header("link", PROFILE_LINK_PREVIOUS_VERSION)
         .send()
         .await
         .expect("profile-link query");

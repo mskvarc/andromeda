@@ -1,8 +1,10 @@
 //! Temporal delete-attribute and instance forwarding — REQ-PROV-89..103
-//! (clauses 5.6.13.4, 5.6.14.4, 5.6.15.4). Whole module UNKNOWN: rows run and
-//! classify. Exclusive registrations forward and terminate, inclusive forward
-//! the input, an unadvertised operation is `409 Conflict`, and `404` surfaces
-//! only when nothing matches.
+//! (clauses 5.6.13.4, 5.6.14.4, 5.6.15.4). Exclusive registrations forward and
+//! terminate, inclusive forward the input, an unadvertised operation is
+//! `409 Conflict`, and `404` surfaces only when nothing matches. The advertised
+//! operations are the Table 4.20-1 temporal names: `deleteAttrsTemporal`
+//! (5.6.13), `updateAttrInstanceTemporal` (5.6.14) and
+//! `deleteAttrInstanceTemporal` (5.6.15).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -79,15 +81,14 @@ async fn temporal_delete_attr_exclusive_match_forwards_and_terminates() {
     let entity_id = topology.id("Vehicle:prov-tdelattr-excl");
     let reg_id = topology.id("registration:prov-tdelattr-excl");
 
-    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["deleteAttrs", "retrieveEntity"])
+        .operations(&["deleteAttrsTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
     let attr_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed");
     mock.set_stub(Method::DELETE, &attr_path, 204).await;
 
@@ -131,7 +132,7 @@ async fn temporal_delete_attr_inclusive_forwards_input() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["deleteAttrs", "retrieveEntity"])
+        .operations(&["deleteAttrsTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let attr_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed");
@@ -206,15 +207,14 @@ async fn temporal_modify_instance_exclusive_supported_forwards_and_terminates() 
     let reg_id = topology.id("registration:prov-tmod-excl");
     let instance_id = topology.id("instance:1");
 
-    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateAttrInstanceTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
     let instance_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed/{instance_id}");
     mock.set_stub(Method::PATCH, &instance_path, 204).await;
 
@@ -253,8 +253,6 @@ async fn temporal_modify_instance_op_unsupported_returns_409() {
     let reg_id = topology.id("registration:prov-tmod-unsup");
     let instance_id = topology.id("instance:1");
 
-    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
@@ -262,6 +260,7 @@ async fn temporal_modify_instance_op_unsupported_returns_409() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
     let instance_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed/{instance_id}");
 
     let response = client
@@ -294,7 +293,7 @@ async fn temporal_modify_instance_inclusive_forwards_input() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateAttrInstanceTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let instance_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed/{instance_id}");
@@ -349,15 +348,14 @@ async fn temporal_delete_instance_exclusive_match_forwards_and_terminates() {
     let reg_id = topology.id("registration:prov-tdelinst-excl");
     let instance_id = topology.id("instance:1");
 
-    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["deleteAttrs", "retrieveEntity"])
+        .operations(&["deleteAttrInstanceTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
     let instance_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed/{instance_id}");
     mock.set_stub(Method::DELETE, &instance_path, 204).await;
 
@@ -401,7 +399,7 @@ async fn temporal_delete_instance_inclusive_forwards_input() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["deleteAttrs", "retrieveEntity"])
+        .operations(&["deleteAttrInstanceTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let instance_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs/speed/{instance_id}");

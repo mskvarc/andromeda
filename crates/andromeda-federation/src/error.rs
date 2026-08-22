@@ -21,6 +21,13 @@ pub enum FederationError {
         /// Human-readable conflict detail.
         detail: String,
     },
+    /// The single registered source cannot perform the operation the request
+    /// needs of it (422; clause 5.6.8.4).
+    #[error("operation not supported at the registered source: {detail}")]
+    OperationNotSupported {
+        /// Human-readable detail.
+        detail: String,
+    },
     /// The single registered source redirects back onto this broker (508).
     #[error("registration {registration} loops back onto this context broker")]
     LoopDetected {

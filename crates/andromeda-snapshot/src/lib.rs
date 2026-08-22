@@ -29,7 +29,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-temporal",
     ],
     allow_workspace_dev_dependencies: [],
-    allow_production_dependencies: ["confique"],
+    allow_production_dependencies: ["confique", "tokio"],
 }
 
 #[cfg(test)]

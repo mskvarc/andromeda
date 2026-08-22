@@ -1,40 +1,61 @@
 //! Axum construction of a classified NGSI-LD problem response.
 
+use andromeda_http_headers::ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader};
 use andromeda_ngsi_ld_problem_details::problem_detail::ProblemDetail;
 use axum::{
     Json,
     response::{IntoResponse, Response},
 };
+use headers::HeaderMapExt;
 
 /// A local Axum response wrapper around the framework-independent clause 5.5.3 wire value.
 #[derive(Debug)]
 pub struct ProblemResponse {
     /// Invariant-bearing wire value.
     problem: ProblemDetail,
+    /// Distributed-operation warnings emitted as `NGSILD-Warning` headers
+    /// (clause 6.3.17): a forwarded read that found nothing still reports the
+    /// sources it could not reach.
+    warnings: Vec<NgsiLdWarning>,
 }
 
 impl ProblemResponse {
     /// Wrap a fully classified and request-bound problem detail.
     pub const fn new(problem: ProblemDetail) -> ProblemResponse {
-        ProblemResponse { problem }
+        ProblemResponse { problem, warnings: Vec::new() }
+    }
+
+    /// Attach the clause 6.3.17 warnings the failed operation gathered.
+    pub fn with_warnings(mut self, warnings: Vec<NgsiLdWarning>) -> ProblemResponse {
+        self.warnings = warnings;
+        self
     }
 
     /// Borrow the framework-independent wire value.
     pub const fn problem(&self) -> &ProblemDetail {
         &self.problem
     }
+
+    /// The warnings the response carries.
+    pub fn warnings(&self) -> &[NgsiLdWarning] {
+        &self.warnings
+    }
 }
 
 impl IntoResponse for ProblemResponse {
     fn into_response(self) -> Response {
         let status = self.problem.status_code();
-        (status, Json(self.problem)).into_response()
+        let mut response = (status, Json(self.problem)).into_response();
+        if !self.warnings.is_empty() {
+            response.headers_mut().typed_insert(NgsiLdWarningHeader::new(self.warnings));
+        }
+        response
     }
 }
-
 #[cfg(test)]
 mod tests {
     use crate::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
+    use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use axum::{
         body::{Body, to_bytes},
@@ -69,6 +90,22 @@ mod tests {
         );
         pretty_assertions::assert_eq!(value["instance"], "/ngsi-ld/v1/entities/x");
         pretty_assertions::assert_eq!(value["detail"], "Entity missing");
+        Ok(())
+    }
+
+    /// Clause 6.3.17: a distributed GET that ends in a 404 still reports the
+    /// sources it could not reach, so the warnings ride on the problem response.
+    #[tokio::test]
+    async fn a_problem_response_carries_its_distributed_warnings_as_headers() -> Result<(), serde_json::Error> {
+        let response = ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, "Entity missing")
+            .with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"))
+            .with_warnings(vec![NgsiLdWarning::MiscellaneousWarning("registration loop detected".to_string())]);
+        let (response, _) = body(response).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        pretty_assertions::assert_eq!(
+            response.headers().get("ngsild-warning").and_then(|value| value.to_str().ok()),
+            Some("199 - \"registration loop detected\"")
+        );
         Ok(())
     }
 

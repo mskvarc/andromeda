@@ -40,12 +40,17 @@ pub async fn subscription_source(topology: &DistributedTopology, registration_lo
     mock
 }
 
+/// The forwarded subscriptions resource: the registration `endpoint` is the
+/// source origin and the broker appends the full NGSI-LD path to it (clause
+/// 6.3.15 / 4.3.6), so the mock must answer under `/ngsi-ld/v1`.
+pub const FORWARDED_SUBSCRIPTIONS_PATH: &str = "/ngsi-ld/v1/subscriptions";
+
 /// Stub the mock's subscription-management endpoints so a forwarded create,
 /// update, or delete receives a plausible success.
 pub async fn stub_subscription_endpoints(mock: &ContextSourceAdapter) {
-    mock.set_stub(Method::POST, "/subscriptions", 201).await;
-    mock.set_stub(Method::PATCH, "/subscriptions", 204).await;
-    mock.set_stub(Method::DELETE, "/subscriptions", 204).await;
+    mock.set_stub(Method::POST, FORWARDED_SUBSCRIPTIONS_PATH, 201).await;
+    mock.set_stub(Method::PATCH, FORWARDED_SUBSCRIPTIONS_PATH, 204).await;
+    mock.set_stub(Method::DELETE, FORWARDED_SUBSCRIPTIONS_PATH, 204).await;
 }
 
 /// The JSON subscription document carried by a forwarded request.

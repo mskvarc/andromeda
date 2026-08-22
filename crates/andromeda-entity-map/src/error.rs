@@ -12,13 +12,12 @@ pub enum EntityMapError {
         /// The requested Entity Map identifier.
         identifier: Uri,
     },
-    /// An entity expected in a map is not one of its members.
-    #[error("entity {entity_identifier} is not present in entity map {map_identifier}")]
-    EntityNotInMap {
-        /// The Entity Map whose membership was checked.
-        map_identifier: Uri,
-        /// The entity identifier that was not present.
-        entity_identifier: Uri,
+    /// A follow-up request under a live map changed a filter parameter of
+    /// the request that created it, which clause 5.5.14 forbids.
+    #[error("the request under entity map {identifier} does not use the parameters of the request that created it")]
+    RequestChanged {
+        /// The Entity Map the request referenced.
+        identifier: Uri,
     },
     /// A storage implementation could not complete an operation.
     #[error("entity map storage failed: {detail}")]

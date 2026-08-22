@@ -5,12 +5,22 @@
 use crate::entity_map::persistence_error;
 use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::entity_map::EntityMap;
 use andromeda_postgresql_schema::entity_map::EntityMaps;
 use andromeda_postgresql_seaquery::clock::now;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, ExprTrait, PostgresQueryBuilder, Query, QueryStatementBuilder, SimpleExpr};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, PgPool, Row};
+
+/// The control record of a live map, as read back from `entity_maps`.
+pub(crate) struct MapControlRecord {
+    /// The map's expiry.
+    pub(crate) expires_at: DateTime<Utc>,
+    /// The stored `<operation>:<sha256 hex>` fingerprint of the creating
+    /// request, absent on maps created before it was recorded.
+    pub(crate) request_fingerprint: Option<String>,
+}
 
 /// `(SELECT entity_maps.map_key FROM entity_maps WHERE entity_maps.id = <id>)`.
 pub(crate) fn map_key_of(id: SimpleExpr) -> SimpleExpr {
@@ -49,13 +59,15 @@ pub(crate) async fn delete_map_row(connection: &mut PgConnection, id: &Uri) -> R
     Ok(mutation_outcome(result.rows_affected()))
 }
 
-/// Write the control record.
-pub(crate) async fn insert_map_row(connection: &mut PgConnection, id: &Uri, expires_at: DateTime<Utc>) -> Result<(), EntityMapError> {
+/// Write the control record: identifier, expiry and the creating request's
+/// fingerprint.
+pub(crate) async fn insert_map_row(connection: &mut PgConnection, map: &EntityMap) -> Result<(), EntityMapError> {
+    let fingerprint = map.request_fingerprint.as_ref().map(ToString::to_string);
     let mut insert = Query::insert();
     insert
         .into_table(EntityMaps::Table)
-        .columns([EntityMaps::Id, EntityMaps::ExpiresAt])
-        .values([Expr::val(id.as_str()), Expr::val(expires_at)])
+        .columns([EntityMaps::Id, EntityMaps::ExpiresAt, EntityMaps::RequestFingerprint])
+        .values([Expr::val(map.id.as_str()), Expr::val(map.expires_at), Expr::val(fingerprint)])
         .map_err(persistence_error)?;
     let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -65,10 +77,11 @@ pub(crate) async fn insert_map_row(connection: &mut PgConnection, id: &Uri, expi
     Ok(())
 }
 
-/// The expiry of a live map, or `None` when the map is absent or expired.
-pub(crate) async fn read_live_expiry(pool: &PgPool, id: &Uri) -> Result<Option<DateTime<Utc>>, EntityMapError> {
+/// The control record of a live map, or `None` when the map is absent or expired.
+pub(crate) async fn read_live_control(pool: &PgPool, id: &Uri) -> Result<Option<MapControlRecord>, EntityMapError> {
     let (sql, values) = Query::select()
         .column((EntityMaps::Table, EntityMaps::ExpiresAt))
+        .column((EntityMaps::Table, EntityMaps::RequestFingerprint))
         .from(EntityMaps::Table)
         .and_where(Expr::col((EntityMaps::Table, EntityMaps::Id)).eq(id.as_str()))
         .and_where(live())
@@ -77,8 +90,13 @@ pub(crate) async fn read_live_expiry(pool: &PgPool, id: &Uri) -> Result<Option<D
         .fetch_optional(pool)
         .await
         .map_err(persistence_error)?;
-    row.map(|row| row.try_get::<DateTime<Utc>, _>("expires_at").map_err(persistence_error))
-        .transpose()
+    row.map(|row| {
+        Ok(MapControlRecord {
+            expires_at: row.try_get::<DateTime<Utc>, _>("expires_at").map_err(persistence_error)?,
+            request_fingerprint: row.try_get::<Option<String>, _>("request_fingerprint").map_err(persistence_error)?,
+        })
+    })
+    .transpose()
 }
 
 /// Move a live map's expiry.

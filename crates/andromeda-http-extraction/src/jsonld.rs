@@ -7,16 +7,13 @@
 use andromeda_http_headers::link::header::Link;
 use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::spec_version::SpecVersion;
 use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exact};
-use andromeda_ngsi_ld_render::version::VersionRenderer;
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
     http::{StatusCode, header::LINK},
 };
 use headers::HeaderMapExt;
-use iri_rs::{Iri, iri};
 use mediatype::{MediaTypeBuf, names};
 use serde::de::DeserializeOwned;
 use std::{collections::HashSet, str::FromStr};
@@ -128,6 +125,31 @@ fn merge_context_values_from_document(document: &serde_json::Value) -> Option<se
     }
 }
 
+/// Whether a `@context` value has one of the shapes JSON-LD 1.1 section 3.1
+/// gives it: an IRI string, a context definition object, or an array of those
+/// (and `null`, which resets). Clause 5.5.4: any other shape is data that is
+/// not syntactically correct according to the API data type definitions.
+fn is_well_formed_context(context: &serde_json::Value) -> bool {
+    match context {
+        serde_json::Value::Null | serde_json::Value::String(_) | serde_json::Value::Object(_) => true,
+        serde_json::Value::Array(items) => items
+            .iter()
+            .all(|item| matches!(item, serde_json::Value::Null | serde_json::Value::String(_) | serde_json::Value::Object(_))),
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => false,
+    }
+}
+
+/// Whether every top-level `@context` a document carries is well formed.
+fn document_contexts_are_well_formed(document: &serde_json::Value) -> bool {
+    match document {
+        serde_json::Value::Object(obj) => obj.get("@context").is_none_or(is_well_formed_context),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .all(|item| item.as_object().and_then(|o| o.get("@context")).is_none_or(is_well_formed_context)),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => true,
+    }
+}
+
 /// Remove top-level JSON-LD context members before policy deserialization.
 fn strip_context_from_value(value: &mut serde_json::Value) {
     match value {
@@ -143,20 +165,6 @@ fn strip_context_from_value(value: &mut serde_json::Value) {
         }
         serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) | serde_json::Value::String(_) => {}
     }
-}
-
-/// NGSI-LD version profile URI (clause 6.3.21, RFC 6906).
-const NGSI_LD_VERSION_PROFILE: Iri<&'static str> = iri!("https://uri.etsi.org/ngsi-ld/profile/version");
-
-/// Check whether any Link header carries the NGSI-LD version profile (clause 6.3.21).
-fn has_version_profile(link_headers: &[String]) -> bool {
-    link_headers.iter().any(|raw| {
-        Link::from_str(raw).ok().is_some_and(|link| {
-            link.values()
-                .iter()
-                .any(|value| value.profile().is_some_and(|profile| NGSI_LD_VERSION_PROFILE.as_str() == profile.as_str()))
-        })
-    })
 }
 
 impl<S, T> FromRequest<S> for JsonLd<T>
@@ -225,13 +233,10 @@ where
             ));
         }
 
-        // Clause 6.3.21: if Link header carries the version profile, apply
-        // conformance fallbacks (clause 4.3.6.8) to the incoming payload so
-        // that features from a newer spec version are adapted before validation.
-        if has_version_profile(&link_header_strings) {
-            value = VersionRenderer::new(SpecVersion::CONFORMANT).with_payload(value).render().0;
-        }
-
+        // Clause 6.3.21: a profile `Link` announcing the payload's NGSI-LD
+        // version is read by the `PayloadProfile` extractor. This broker
+        // interprets every version the clause 4.3.6.8 tables describe, so no
+        // amendment of the payload is needed for it to be accepted here.
         // Per NGSI-LD 6.3.5: application/json MUST NOT contain @context in body
         if is_plain_json && document_has_context(&value) {
             return Err(ExtractorRejection::bad_request_data("application/json body must not contain @context", uri));
@@ -240,6 +245,13 @@ where
         // Per NGSI-LD 6.3.5: application/ld+json MUST contain @context in body
         if is_ld_json && !document_has_context(&value) {
             return Err(ExtractorRejection::bad_request_data("application/ld+json body must contain @context", uri));
+        }
+
+        if !document_contexts_are_well_formed(&value) {
+            return Err(ExtractorRejection::bad_request_data(
+                "@context must be a string, an object, or an array of those",
+                uri,
+            ));
         }
 
         let mut context = ContextSpec::none();
@@ -382,6 +394,26 @@ mod tests {
             result.context.body_context(),
             Some(&serde_json::json!(["https://example.org/a", "https://example.org/b"]))
         );
+    }
+
+    #[tokio::test]
+    async fn a_context_that_is_not_a_string_object_or_array_is_bad_request_data() {
+        // Clause 5.5.4: a `@context` shaped outside JSON-LD section 3.1 is
+        // syntactically incorrect data.
+        for context in [
+            serde_json::json!(42),
+            serde_json::json!(true),
+            serde_json::json!([1, "https://example.org/ctx"]),
+        ] {
+            let body = serde_json::json!({"@context": context, "id": "urn:ngsi-ld:T:1", "type": "T"});
+            let req = Request::builder()
+                .uri("/ngsi-ld/v1/entities")
+                .header(CONTENT_TYPE, "application/ld+json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap();
+            let result = JsonLd::<Value>::from_request(req, &()).await;
+            assert!(matches!(result, Err(ExtractorRejection::BadRequestData { .. })), "{context}");
+        }
     }
 
     #[tokio::test]

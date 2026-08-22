@@ -9,15 +9,18 @@
 //! produced, so a regression to a whole-entity trigger would fail loudly rather
 //! than only under an HTTP-status integration test.
 
-use crate::notification_recording_harness::{
-    CATEGORY_IRI,
-    NAME_IRI,
-    assert_matches,
-    assert_single_match,
-    core_context,
-    entity_uri,
-    recording_service,
-    single_recorded_write,
+use crate::{
+    merge_options::MergeOptions,
+    notification_recording_harness::{
+        CATEGORY_IRI,
+        NAME_IRI,
+        assert_matches,
+        assert_single_match,
+        core_context,
+        entity_uri,
+        recording_service,
+        single_recorded_write,
+    },
 };
 use andromeda_ngsi_ld_model::{entity::EntityPatch, notification::NotificationTrigger};
 use serde_json::json;
@@ -36,6 +39,7 @@ async fn merge_records_an_attribute_updated_match() {
             &entity_uri(),
             &patch(json!({"category": {"type": "Property", "value": "retail"}})),
             &core_context(),
+            MergeOptions::default(),
         )
         .await
         .expect("the merge lands");
@@ -48,7 +52,12 @@ async fn merge_records_an_attribute_updated_match() {
 async fn merge_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
     service
-        .merge(&entity_uri(), &patch(json!({"name": {"type": "Property", "value": "lobby"}})), &core_context())
+        .merge(
+            &entity_uri(),
+            &patch(json!({"name": {"type": "Property", "value": "lobby"}})),
+            &core_context(),
+            MergeOptions::default(),
+        )
         .await
         .expect("the merge lands");
 

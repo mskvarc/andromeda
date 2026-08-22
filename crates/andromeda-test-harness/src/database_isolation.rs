@@ -2,6 +2,7 @@
 
 use crate::configuration::DatabaseEndpoint;
 use sqlx::{PgPool, Postgres, pool::PoolConnection, postgres::PgPoolOptions};
+use std::time::Duration;
 use thiserror::Error;
 
 const ISOLATION_LOCK_KEY: i64 = 0x414e_4452_4f4d_4544;
@@ -93,11 +94,21 @@ impl Drop for SerializedLease {
     }
 }
 
+/// Connections a harness pool may hold: teardown and persistence probes run
+/// one statement at a time, so two connections cover a probe overlapping a
+/// cleanup without letting a multi-broker suite crowd the broker's own pools.
+const POOL_MAX_CONNECTIONS: u32 = 2;
+
+/// How long an acquire may wait before the harness reports the server as
+/// saturated instead of hanging the test.
+const POOL_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Open a bounded pool for the configured test database.
 pub async fn connect_pool(endpoint: &DatabaseEndpoint) -> Result<PgPool, DatabaseIsolationError> {
     PgPoolOptions::new()
         .min_connections(0)
-        .max_connections(16)
+        .max_connections(POOL_MAX_CONNECTIONS)
+        .acquire_timeout(POOL_ACQUIRE_TIMEOUT)
         .connect(endpoint.url().as_str())
         .await
         .map_err(DatabaseIsolationError::Sqlx)

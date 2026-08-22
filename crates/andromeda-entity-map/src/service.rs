@@ -2,10 +2,14 @@
 
 use crate::{
     error::EntityMapError,
+    reuse::{EntityMapFlag, EntityMapUse},
     store::{EntityMapMutation, EntityMapStore},
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::entity_map::EntityMap;
+use andromeda_ngsi_ld_model::{
+    entity_map::EntityMap,
+    entity_map_fingerprint::{RequestComparison, RequestFingerprint},
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use std::sync::Arc;
@@ -34,24 +38,25 @@ impl EntityMapService {
         EntityMapService { store }
     }
 
-    /// A fresh, unstored map over entities this broker holds, expiring after
-    /// `lifetime` (one hour when the request suggests none).
-    pub fn local_map(&self, entity_ids: impl IntoIterator<Item = Uri>, lifetime: Option<&Iso8601Duration>) -> Result<EntityMap, EntityMapError> {
+    /// A fresh, unstored map over entities this broker holds for the request
+    /// `fingerprint` describes, expiring after `lifetime` (one hour when the
+    /// request suggests none).
+    pub fn local_map(
+        &self,
+        entity_ids: impl IntoIterator<Item = Uri>,
+        lifetime: Option<&Iso8601Duration>,
+        fingerprint: RequestFingerprint,
+    ) -> Result<EntityMap, EntityMapError> {
         let identifier = build_entity_map_identifier()?;
         let expires_at = Utc::now() + lifetime.copied().unwrap_or_else(default_lifetime);
-        Ok(EntityMap::local(identifier, expires_at, entity_ids))
+        let mut map = EntityMap::local(identifier, expires_at, entity_ids);
+        map.request_fingerprint = Some(fingerprint);
+        Ok(map)
     }
 
     /// Store a composed map and make it accessible by its identifier.
     pub async fn store(&self, map: &EntityMap) -> Result<(), EntityMapError> {
         self.store.insert(map).await
-    }
-
-    /// Create and store a map over entities this broker holds.
-    pub async fn create_local(&self, entity_ids: impl IntoIterator<Item = Uri>, lifetime: Option<&Iso8601Duration>) -> Result<EntityMap, EntityMapError> {
-        let map = self.local_map(entity_ids, lifetime)?;
-        self.store.insert(&map).await?;
-        Ok(map)
     }
 
     /// Retrieve a live Entity Map by identifier.
@@ -71,6 +76,46 @@ impl EntityMapService {
         })
     }
 
+    /// What a read does about Entity Maps (clause 5.5.14): resolve the map the
+    /// request referenced, decide between reusing it, minting one (an empty
+    /// map for the request `fingerprint` describes, living `lifetime`, to be
+    /// filled and stored after the read) and none, and hold a reused map's
+    /// follow-up to the parameters of the request that created it.
+    ///
+    /// # Errors
+    ///
+    /// [`EntityMapError::RequestChanged`] when the same operation runs under
+    /// the map with different filter parameters.
+    pub async fn resolve_use(
+        &self,
+        referenced: Option<&Uri>,
+        flag: EntityMapFlag,
+        fingerprint: &RequestFingerprint,
+        lifetime: Option<&Iso8601Duration>,
+    ) -> Result<EntityMapUse, EntityMapError> {
+        let referenced = match referenced {
+            Some(identifier) => Some(self.referenced(identifier).await?),
+            None => None,
+        };
+        let decided = EntityMapUse::decide(referenced, flag, || self.local_map(Vec::new(), lifetime, *fingerprint))?;
+        if let Some(map) = decided.reused() {
+            EntityMapService::require_same_request(map, fingerprint)?;
+        }
+        Ok(decided)
+    }
+
+    /// Clause 5.5.14: a follow-up under a map uses the creating request's
+    /// parameters. A map created before fingerprints were recorded, or by a
+    /// different operation, cannot be compared and is accepted.
+    fn require_same_request(map: &EntityMap, follow_up: &RequestFingerprint) -> Result<(), EntityMapError> {
+        match map.request_fingerprint.as_ref().map(|created| created.compare(follow_up)) {
+            Some(RequestComparison::Changed) => Err(EntityMapError::RequestChanged {
+                identifier: map.id.clone(), // clone: the error must own the identifier after this call returns.
+            }),
+            Some(RequestComparison::Same | RequestComparison::DifferentOperation) | None => Ok(()),
+        }
+    }
+
     /// Update the expiry of a live Entity Map.
     pub async fn update(&self, identifier: &Uri, expires_at: DateTime<Utc>) -> Result<(), EntityMapError> {
         match self.store.update(identifier, expires_at).await? {
@@ -79,6 +124,17 @@ impl EntityMapService {
                 identifier: identifier.clone(), // clone: the error must own the identifier after this call returns.
             }),
         }
+    }
+
+    /// Record on a live map the maps its sources answered a follow-up with
+    /// (clause 5.5.14: "the EntityMap's linked maps are updated to hold the
+    /// location of every EntityMap used by the Context Source
+    /// Registrations"). A map that expired meanwhile is left alone.
+    pub async fn record_linked_maps<'a>(&self, identifier: &Uri, links: impl IntoIterator<Item = (&'a Uri, &'a Uri)>) -> Result<(), EntityMapError> {
+        for (registration, linked_map) in links {
+            self.store.link(identifier, registration, linked_map).await?;
+        }
+        Ok(())
     }
 
     /// Intersect query identifiers with a live map while preserving query order.
@@ -90,19 +146,6 @@ impl EntityMapService {
                 .cloned() // clone: the result owns identifiers borrowed from the incoming query.
                 .collect(),
             None => map.entity_ids().cloned().collect(), // clone: the result owns identifiers borrowed from the map.
-        }
-    }
-
-    /// Require an entity identifier to be a member of a live Entity Map.
-    pub async fn validate_entity_in_map(&self, map_identifier: &Uri, entity_identifier: &Uri) -> Result<(), EntityMapError> {
-        let map = self.retrieve(map_identifier).await?;
-        if map.contains(entity_identifier) {
-            Ok(())
-        } else {
-            Err(EntityMapError::EntityNotInMap {
-                map_identifier: map_identifier.clone(),       // clone: the error owns both identifiers beyond the borrowed call.
-                entity_identifier: entity_identifier.clone(), // clone: the error owns both identifiers beyond the borrowed call.
-            })
         }
     }
 
@@ -135,11 +178,17 @@ fn build_entity_map_identifier() -> Result<Uri, EntityMapError> {
 mod tests {
     use crate::{
         error::EntityMapError,
+        fingerprint::{FingerprintedRequest, fingerprint_of},
+        reuse::{EntityMapFlag, EntityMapUse},
         service::{EntityMapService, ReferencedEntityMap},
         store::{EntityMapMutation, EntityMapStore, EntityMapStoreFuture},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::entity_map::EntityMap;
+    use andromeda_ngsi_ld_model::{
+        entity_map::EntityMap,
+        entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
+    };
+    use andromeda_ngsi_ld_request::query::entity::parameters::EntityQueryParameters;
     use chrono::{DateTime, Utc};
     use std::sync::{Arc, Mutex};
 
@@ -170,6 +219,19 @@ mod tests {
                 match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
                     Some(map) => {
                         map.expires_at = expires_at;
+                        Ok(EntityMapMutation::Applied)
+                    }
+                    None => Ok(EntityMapMutation::Missing),
+                }
+            })
+        }
+
+        fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation> {
+            Box::pin(async move {
+                let mut maps = self.0.lock().map_err(|_| EntityMapError::Invariant { detail: "poisoned".into() })?;
+                match maps.iter_mut().find(|map| &map.id == identifier && !map.is_expired()) {
+                    Some(map) => {
+                        map.link(registration.clone(), linked_map.clone()); // clone: the fake owns what it stores
                         Ok(EntityMapMutation::Applied)
                     }
                     None => Ok(EntityMapMutation::Missing),
@@ -208,20 +270,36 @@ mod tests {
         EntityMapService::new(Arc::new(VecStore::default()))
     }
 
+    fn query(raw: &str) -> Result<RequestFingerprint, EntityMapError> {
+        let params: EntityQueryParameters = serde_urlencoded::from_str(raw).map_err(|error| EntityMapError::Invariant { detail: error.to_string() })?;
+        fingerprint_of(FingerprintedRequest::QueryEntities(&params))
+    }
+
+    fn any_fingerprint() -> RequestFingerprint {
+        RequestFingerprint::new(MapRequestKind::QueryEntities, [0; 32])
+    }
+
+    async fn stored_map(service: &EntityMapService, entity_ids: Vec<Uri>, fingerprint: RequestFingerprint) -> Result<EntityMap, EntityMapError> {
+        let map = service.local_map(entity_ids, None, fingerprint)?;
+        service.store(&map).await?;
+        Ok(map)
+    }
+
     #[tokio::test]
     async fn absent_lifetime_defaults_to_one_hour() -> Result<(), EntityMapError> {
         let before = Utc::now();
-        let map = service().create_local(Vec::new(), None).await?;
+        let map = service().local_map(Vec::new(), None, any_fingerprint())?;
         let remaining = map.expires_at - before;
         assert!(remaining >= chrono::Duration::minutes(59));
         assert!(remaining <= chrono::Duration::minutes(61));
+        pretty_assertions::assert_eq!(map.request_fingerprint, Some(any_fingerprint()));
         Ok(())
     }
 
     #[tokio::test]
     async fn intersection_preserves_incoming_query_order() -> Result<(), EntityMapError> {
         let service = service();
-        let map = service.create_local(vec![identifier("urn:a")?, identifier("urn:b")?], None).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")?, identifier("urn:b")?], any_fingerprint()).await?;
         let incoming = [identifier("urn:b")?, identifier("urn:a")?, identifier("urn:c")?];
         let scoped = EntityMapService::scope_query_ids(&map, Some(&incoming));
         pretty_assertions::assert_eq!(scoped, vec![identifier("urn:b")?, identifier("urn:a")?]);
@@ -232,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn a_referenced_map_that_is_missing_is_an_outcome_not_an_error() -> Result<(), EntityMapError> {
         let service = service();
-        let map = service.create_local(vec![identifier("urn:a")?], None).await?;
+        let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
         assert!(matches!(service.referenced(&map.id).await?, ReferencedEntityMap::Live(_)));
         assert!(matches!(
             service.referenced(&identifier("urn:ngsi-ld:EntityMap:missing")?).await?,
@@ -251,12 +329,71 @@ mod tests {
     #[tokio::test]
     async fn a_stored_composed_map_is_retrieved_with_its_links() -> Result<(), EntityMapError> {
         let service = service();
-        let mut map = service.local_map(vec![identifier("urn:a")?], None)?;
+        let mut map = service.local_map(vec![identifier("urn:a")?], None, any_fingerprint())?;
         let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:b")?;
         map.add_remote_entities(&registration, vec![identifier("urn:b")?]);
         service.store(&map).await?;
         let stored = service.retrieve(&map.id).await?;
         pretty_assertions::assert_eq!(stored.registrations().collect::<Vec<_>>(), vec![&registration]);
+        Ok(())
+    }
+
+    /// Clause 5.5.14: the same query under its own map is accepted, a changed
+    /// filter is refused, and a retrieval under a query's map is not compared.
+    #[tokio::test]
+    async fn a_reused_map_holds_the_follow_up_to_the_creating_parameters() -> Result<(), EntityMapError> {
+        let service = service();
+        let map = stored_map(&service, vec![identifier("urn:a")?], query("type=Vehicle")?).await?;
+
+        let reused = service
+            .resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &query("type=Vehicle&limit=1&id=urn:a")?, None)
+            .await?;
+        assert!(matches!(&reused, EntityMapUse::Reuse(stored) if stored.id == map.id));
+
+        let refused = service
+            .resolve_use(Some(&map.id), EntityMapFlag::Requested, &query("type=Vehicle&q=speed%3E99")?, None)
+            .await;
+        assert!(matches!(refused, Err(EntityMapError::RequestChanged { identifier }) if identifier == map.id));
+
+        let retrieval = RequestFingerprint::new(MapRequestKind::RetrieveEntity, [0; 32]);
+        let other_operation = service.resolve_use(Some(&map.id), EntityMapFlag::NotRequested, &retrieval, None).await?;
+        assert!(matches!(other_operation, EntityMapUse::Reuse(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_reference_or_the_flag_alone_mints_a_map() -> Result<(), EntityMapError> {
+        let service = service();
+        let fingerprint = query("type=Vehicle")?;
+        let bogus = identifier("urn:ngsi-ld:EntityMap:bogus")?;
+        assert!(
+            service
+                .resolve_use(Some(&bogus), EntityMapFlag::NotRequested, &fingerprint, None)
+                .await?
+                .mints()
+        );
+        let minted = service.resolve_use(None, EntityMapFlag::Requested, &fingerprint, None).await?;
+        let shell = minted.minting().ok_or_else(|| EntityMapError::Invariant {
+            detail: "a map is minted".into(),
+        })?;
+        assert!(shell.entity_map.is_empty());
+        pretty_assertions::assert_eq!(shell.request_fingerprint, Some(fingerprint));
+        assert!(matches!(
+            service.resolve_use(None, EntityMapFlag::NotRequested, &fingerprint, None).await?,
+            EntityMapUse::None
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn linked_maps_are_recorded_on_the_stored_map() -> Result<(), EntityMapError> {
+        let service = service();
+        let map = stored_map(&service, vec![identifier("urn:a")?], any_fingerprint()).await?;
+        let registration = identifier("urn:ngsi-ld:ContextSourceRegistration:b")?;
+        let linked = identifier("urn:ngsi-ld:EntityMap:peer")?;
+        service.record_linked_maps(&map.id, [(&registration, &linked)]).await?;
+        let stored = service.retrieve(&map.id).await?;
+        pretty_assertions::assert_eq!(stored.linked_map_for(&registration), Some(&linked));
         Ok(())
     }
 }

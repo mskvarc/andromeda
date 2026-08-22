@@ -21,6 +21,10 @@ pub enum EntityMaps {
     ExpiresAt,
     /// The map's URI identifier.
     Id,
+    /// The `<operation>:<sha256 hex>` digest of the creating request's
+    /// filter parameters (clause 5.5.14), absent on maps created before it
+    /// was recorded.
+    RequestFingerprint,
 }
 
 /// The `entity_map_entries` table - one (entity, source) pair per row.
@@ -61,6 +65,7 @@ mod tests {
         assert_eq!(EntityMaps::Table.to_string(), "entity_maps");
         assert_eq!(EntityMaps::MapKey.to_string(), "map_key");
         assert_eq!(EntityMaps::ExpiresAt.to_string(), "expires_at");
+        assert_eq!(EntityMaps::RequestFingerprint.to_string(), "request_fingerprint");
         assert_eq!(EntityMapEntries::Table.to_string(), "entity_map_entries");
         assert_eq!(EntityMapEntries::EntityId.to_string(), "entity_id");
         assert_eq!(EntityMapLinks::Table.to_string(), "entity_map_links");

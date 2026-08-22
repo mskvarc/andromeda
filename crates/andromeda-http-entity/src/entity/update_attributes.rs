@@ -13,13 +13,16 @@ use crate::entity::{
     LocalOutcome,
     OriginalUri,
     ProblemResponse,
+    ProvisionResource,
     Response,
     StatusCode,
     TypedPath,
     Uri,
     Value,
+    classify_entity_error,
     collect_proxied_attrs,
     provision_response,
+    reject_unknown_attribute_types,
     strip_attributes_from_value,
 };
 use andromeda_federation::request::TriggeringRequest;
@@ -40,6 +43,7 @@ pub(crate) async fn update_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);
+    reject_unknown_attribute_types(&fragment, &uri)?;
 
     // Forward to matching context sources
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
@@ -47,6 +51,7 @@ pub(crate) async fn update_attrs(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
@@ -86,7 +91,7 @@ pub(crate) async fn update_attrs(
     let local = if local_fragment.as_object().is_some_and(|object| object.is_empty()) {
         LocalOutcome::NothingRemained
     } else {
-        LocalOutcome::Processed(service.update_attrs(&id, local_fragment, &context).await.map(|_| ()))
+        LocalOutcome::processed(service.update_attrs(&id, local_fragment, &context).await, classify_entity_error)
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

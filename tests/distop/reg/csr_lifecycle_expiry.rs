@@ -1,8 +1,7 @@
 //! `expiresAt` semantics and duplicate-id handling (clause 5.9.2.4). A
 //! registration without `expiresAt` persists indefinitely, a past `expiresAt` is
-//! rejected, and a duplicate id is an `AlreadyExists` conflict. Auto-expiry when
-//! the future `expiresAt` is reached depends on a background sweeper and is
-//! `UNKNOWN` until a first run classifies it. All `T-LOCAL`.
+//! rejected, a future `expiresAt` deletes the registration once reached, and a
+//! duplicate id is an `AlreadyExists` conflict. All `T-LOCAL`.
 
 use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
@@ -11,9 +10,18 @@ use crate::{
     topology::DistributedTopology,
 };
 use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA};
+use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::sleep;
+
+/// How far ahead of "now" the near-future `expiresAt` is placed.
+const EXPIRY_LEAD_SECONDS: i64 = 3;
+
+/// How long to wait before asserting the registration is gone: the expiry lead
+/// plus one full cadence of the broker's five-second expiry sweeper, with slack
+/// for the sweep itself.
+const EXPIRY_WAIT: Duration = Duration::from_secs(10);
 
 /// A registration created without `expiresAt` persists indefinitely: it is stored
 /// with no expiry and stays retrievable (clause 5.9.2.4). Confirms REQ-REG-59.
@@ -60,16 +68,16 @@ async fn reg_past_expiresat_returns_400() {
 }
 
 /// A registration with a near-future `expiresAt` is auto-deleted once the instant
-/// is reached (clause 5.9.2.4). Confirms REQ-REG-61.
-#[ignore = "UNKNOWN REQ-REG-61: expiresAt auto-delete background sweeper not classified"]
+/// is reached (clause 5.9.2.4: "If expiresAt is a date and time in the future,
+/// implementations shall delete the Registration when this point in time is
+/// reached"). The expiry is a few seconds ahead and the wait spans one full
+/// sweeper cadence past it. Confirms REQ-REG-61.
 #[tokio::test]
 async fn reg_future_expiresat_auto_deleted_when_reached() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let id = topology.id("registration:future-expiry");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
-    // Placeholder future instant: once the expiry sweeper is classified this is
-    // set a few seconds ahead so the poll below crosses the expiry boundary.
-    body["expiresAt"] = json!("2099-12-31T23:59:59Z");
+    body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(EXPIRY_LEAD_SECONDS)).to_rfc3339());
     let created = topology
         .front()
         .client()
@@ -86,7 +94,7 @@ async fn reg_future_expiresat_auto_deleted_when_reached() {
         .expect("retrieve before expiry");
     assert_status(&before, 200);
 
-    sleep(Duration::from_secs(5)).await;
+    sleep(EXPIRY_WAIT).await;
 
     let after = topology.front().client().retrieve_registration(&id, None).await.expect("retrieve after expiry");
     assert_status(&after, 404);

@@ -81,6 +81,15 @@ impl Via {
     pub fn contains_pseudonym(&self, identity: &ContextSourcePseudonym) -> bool {
         self.0.iter().any(|entry| &entry.pseudonym == identity)
     }
+
+    /// The pseudonym of every hop in the chain, in the order they were
+    /// traversed.
+    ///
+    /// Clause 5.12 excludes from a registration match every context source the
+    /// listing of previously encountered sources names; this is that listing.
+    pub fn pseudonyms(&self) -> impl Iterator<Item = &ContextSourcePseudonym> {
+        self.0.iter().map(|entry| &entry.pseudonym)
+    }
 }
 
 /// Parse a single Via element like `"1.1 broker-a"` or `"HTTP/1.1 proxy (Apache)"`.
@@ -186,13 +195,6 @@ mod tests {
     use http::HeaderValue;
     use std::iter;
 
-    impl Via {
-        /// Iterate over the pseudonyms in the Via chain (test-only).
-        fn pseudonyms(&self) -> impl Iterator<Item = &str> {
-            self.0.iter().map(|entry| entry.pseudonym.as_str())
-        }
-    }
-
     /// A valid received-protocol, for building outgoing entries in tests.
     fn protocol(value: &str) -> ReceivedProtocol {
         ReceivedProtocol::new(value).expect("valid received-protocol")
@@ -279,7 +281,7 @@ mod tests {
     #[test]
     fn pseudonyms_extracts_all() {
         let via = decode_from("1.1 a, 1.1 b, 1.1 c").expect("should decode");
-        let pseudonyms: Vec<&str> = via.pseudonyms().collect();
+        let pseudonyms: Vec<&str> = via.pseudonyms().map(ContextSourcePseudonym::as_str).collect();
         pretty_assertions::assert_eq!(pseudonyms, vec!["a", "b", "c"]);
     }
 

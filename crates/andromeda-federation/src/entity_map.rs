@@ -122,11 +122,11 @@ impl FederationService {
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(&registration, url, context, triggering, Cacheability::Uncacheable, None).await;
                 let (map, warnings) = match outcome {
-                    ForwardGetOutcome::Success(body, cs_warnings) => match serde_json::from_value::<EntityMap>(body) {
-                        Ok(map) => (Some(map), cs_warnings),
+                    ForwardGetOutcome::Success(response) => match serde_json::from_value::<EntityMap>(response.body) {
+                        Ok(map) => (Some(map), response.warnings),
                         Err(error) => {
                             warn!("Context source {} returned an invalid EntityMap: {}", registration.id, error);
-                            let mut warnings = cs_warnings;
+                            let mut warnings = response.warnings;
                             warnings.push(NgsiLdWarning::RevalidationFailed(format!(
                                 "Context source {} returned an invalid EntityMap: {error}",
                                 registration.id
@@ -135,7 +135,7 @@ impl FederationService {
                         }
                     },
                     // A source that declines to create a map is not abnormal (clause 5.5.14).
-                    ForwardGetOutcome::NotFound => (None, Vec::new()),
+                    ForwardGetOutcome::NotFound(_) => (None, Vec::new()),
                     other @ (ForwardGetOutcome::InvalidPayload(_)
                     | ForwardGetOutcome::ErrorStatus(_)
                     | ForwardGetOutcome::Transport(_)

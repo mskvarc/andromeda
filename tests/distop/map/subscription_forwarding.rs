@@ -159,8 +159,13 @@ async fn sub_newly_matching_supporting_source_builds_reduced_copy() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The forwarded copy strips `q`, `geoQ`, and `scopeQ`, which the local broker
-/// re-applies (clause 5.8.5). Confirms REQ-MAP-24.
+/// Under `splitEntities: true` the forwarded copy strips `q`, `geoQ`, and
+/// `scopeQ`, which the local broker re-applies after re-assembly (clause
+/// 5.8.1.4: "If the splitEntities member is explicitly set to true or, if not
+/// explicitly set, the default setting of the deployment allows split entities,
+/// the members q, geoQ and scopeQ shall be removed from the created copy"). The
+/// member is set explicitly because the deployment default is complete
+/// entities. Confirms REQ-MAP-24.
 #[tokio::test]
 async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -169,6 +174,7 @@ async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
     let mut body = subscription(&id, "http://127.0.0.1:9/notify");
     body["q"] = json!("speed>10");
     body["scopeQ"] = json!("/Madrid");
+    body["splitEntities"] = json!(true);
     assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
 
     let captured = mock.next_request(FORWARD_TIMEOUT).await;

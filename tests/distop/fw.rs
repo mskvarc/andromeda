@@ -25,4 +25,4 @@ mod modes_auxiliary;
 mod modes_exclusive;
 mod modes_inclusive;
 mod modes_redirect;
-mod snapshots;
+pub mod snapshots;

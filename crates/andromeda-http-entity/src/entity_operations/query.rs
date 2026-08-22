@@ -18,7 +18,6 @@ use crate::entity_operations::{
     NgsiLdProtocolHeaders,
     OriginalUri,
     PostQueryParams,
-    PreferHeader,
     ProblemResponse,
     Query,
     RequestProjection,
@@ -26,7 +25,6 @@ use crate::entity_operations::{
     Response,
     ResponsePayload,
     RetrievingJoin,
-    SnapshotHeader,
     ValidatedQuery,
     Value,
     collect_warnings,
@@ -34,7 +32,11 @@ use crate::entity_operations::{
     start_rendering,
     with_linked_resolution_warnings,
 };
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_federation::{
+    forwarded_query::ClientQuery,
+    outcome::ForwardReadOutcome,
+    request::{EntityMapInUse, TriggeringRequest},
+};
 use andromeda_http_extraction::tenant_state;
 use axum::http::HeaderMap;
 use std::iter::empty;
@@ -46,7 +48,6 @@ pub(crate) async fn query(
     context: ContextUrl,
     protocol: NgsiLdProtocolHeaders,
     headers: HeaderMap,
-    SnapshotHeader(snapshot_id): SnapshotHeader,
     ValidatedQuery(qparams): ValidatedQuery<PostQueryParams>,
     JsonLd {
         value: request,
@@ -58,25 +59,6 @@ pub(crate) async fn query(
 
     let mut params = EntityQueryParameters::try_from(request).with_entity_instance(&uri)?;
 
-    // ETSI GS CIM 009 clause 5.5.15: when NGSILD-Snapshot is set, serve frozen
-    // data and skip both the live pipeline and CSR forwarding.
-    if let Some(snapshot_id) = snapshot_id {
-        state.snapshots.validate(&snapshot_id).await.with_entity_instance(&uri)?;
-        let entity_type = params.entity_type.as_ref();
-        let entity_ids = params.id.clone();
-        let limit = i64::from(params.limit.unwrap_or(1000));
-        let offset = i64::from(params.offset.unwrap_or(0));
-        let (entities, _total) = state
-            .snapshots
-            .entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
-            .await
-            .with_entity_instance(&uri)?;
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Collection(entities))
-            .render()
-            .with_entity_instance(&uri)?;
-        return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
-    }
     // The same parameter may be written in the URL or in the canonical body.
     // The specification does not say which wins, so this is broker
     // convention: the URL is the more specific of the two and takes
@@ -95,6 +77,29 @@ pub(crate) async fn query(
     protocol.extensions().apply_to_entity_query(&mut params).with_entity_instance(&uri)?;
     let language_filter = qparams.lang.or_else(|| params.lang.take()).or(protocol.language_filter);
     let incoming_via = protocol.incoming_via;
+    let prefer = protocol.prefer;
+
+    // ETSI GS CIM 009 clause 5.5.15: when NGSILD-Snapshot is set, serve frozen
+    // data and skip both the live pipeline and CSR forwarding. Clause 6.3.18
+    // makes a snapshot operation implicitly local, so `local=false` -- from
+    // the query string or the body -- is ignored rather than honoured.
+    if let Some(snapshot_id) = protocol.snapshot.into_inner() {
+        state.snapshots.validate(&snapshot_id).await.with_entity_instance(&uri)?;
+        let entity_type = params.entity_type.as_ref();
+        let entity_ids = params.id.clone();
+        let limit = i64::from(params.limit.unwrap_or(1000));
+        let offset = i64::from(params.offset.unwrap_or(0));
+        let (entities, _total) = state
+            .snapshots
+            .entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
+            .await
+            .with_entity_instance(&uri)?;
+        let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
+            .with_payload(ResponsePayload::Collection(entities))
+            .render()
+            .with_entity_instance(&uri)?;
+        return Ok(NgsiLdCollectionResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
+    }
     params.validate().with_entity_instance(&uri)?;
 
     let opts = params.parse_options();
@@ -106,15 +111,11 @@ pub(crate) async fn query(
     let (entities, warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let entity_type = params.entity_type.as_ref();
-        let entity_ids = params.id.clone();
-        let entity_ids_ref = entity_ids.as_deref();
-
         let forwarded = state
             .forwarding
             .forward_query(ForwardQueryRequest {
-                entity_type_compact: entity_type,
-                entity_ids: entity_ids_ref,
+                client_query: ClientQuery::EntityQuery(&params),
+                split: state.forwarding.split_entities(params.split_entities),
                 context: &context,
                 operation: ForwardingOperation::QueryBatch,
                 triggering: TriggeringRequest {
@@ -123,13 +124,14 @@ pub(crate) async fn query(
                 },
                 csf_expr: None, // csf not supported on batch query endpoint
                 mode_filter: CsrModeFilter::All,
-                entity_map: None,
+                entity_map: EntityMapInUse::None,
             })
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!(error = %e, "Context source forwarding failed during batch query");
-                Vec::new()
-            });
+                ForwardReadOutcome::empty()
+            })
+            .results;
         let warnings = collect_warnings(&forwarded);
 
         if forwarded.is_empty() {
@@ -195,7 +197,7 @@ pub(crate) async fn query(
             }
         };
 
-        let rendered = start_rendering(accept.media_type(), &context, protocol.prefer.rendering_preferences())
+        let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
             .with_geometry_property(params.geometry_property.as_ref())
             .with_payload(ResponsePayload::Collection(payload))
             .render()
@@ -208,7 +210,7 @@ pub(crate) async fn query(
     }
 
     let entity_values = render_flat_join(entities.iter(), empty(), language_filter.as_ref(), opts.render_mode, projection).with_entity_instance(&uri)?;
-    let rendered = start_rendering(accept.media_type(), &context, protocol.prefer.rendering_preferences())
+    let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
         .with_geometry_property(params.geometry_property.as_ref())
         .with_payload(ResponsePayload::Collection(entity_values))
         .render()

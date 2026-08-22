@@ -1,5 +1,5 @@
 //! Temporal delete-evolution forwarding — REQ-PROV-104..107 (clause 5.6.16.4).
-//! Whole module UNKNOWN: rows run and classify.
+//! The advertised operation is the Table 4.20-1 name `deleteTemporal`.
 //!
 //! Deleting a temporal entity's whole evolution reports `404` only when nothing
 //! matches, forwards to the owning source and terminates for exclusive
@@ -62,15 +62,14 @@ async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
     let entity_id = topology.id("Vehicle:prov-tdelevo-excl");
     let reg_id = topology.id("registration:prov-tdelevo-excl");
 
-    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["deleteEntity", "retrieveEntity"])
+        .operations(&["deleteTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local_temporal(client, &temporal_vehicle(&entity_id)).await;
     let evolution_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}");
     mock.set_stub(Method::DELETE, &evolution_path, 204).await;
 
@@ -107,7 +106,7 @@ async fn temporal_delete_evolution_inclusive_forwards_and_removes_local() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["deleteEntity", "retrieveEntity"])
+        .operations(&["deleteTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let evolution_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}");

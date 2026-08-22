@@ -12,6 +12,7 @@ use crate::{
     oracle::assert_status,
     topology::DistributedTopology,
 };
+use andromeda_test_fixtures::context::CORE_CONTEXT;
 use axum::http::Method;
 use serde_json::{Value, json};
 
@@ -64,8 +65,12 @@ async fn sub_updated_supporting_source_builds_reduced_update() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An updated forward strips `q`, `geoQ`, and `scopeQ` (clause 5.8.5).
-/// Confirms REQ-MAP-30.
+/// Under `splitEntities: true` an updated forward strips `q`, `geoQ`, and
+/// `scopeQ` (clause 5.8.1.4, "updated" trigger: "If the splitEntities member is
+/// explicitly set to true or, if not explicitly set, the default setting of the
+/// deployment allows split entities, the members q, geoQ and scopeQ shall be
+/// removed from the updated Subscription"). The member is set explicitly
+/// because the deployment default is complete entities. Confirms REQ-MAP-30.
 #[tokio::test]
 async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -75,7 +80,7 @@ async fn sub_updated_split_forward_strips_q_geoq_scopeq() {
         &topology
             .front()
             .client()
-            .update_subscription(&id, &json!({ "q": "speed>10" }), None)
+            .update_subscription(&id, &json!({ "q": "speed>10", "splitEntities": true }), None)
             .await
             .expect("update subscription"),
         204,
@@ -175,20 +180,23 @@ async fn sub_updated_forward_only_on_relevant_change() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A no-longer-matching change forwards a delete via the mapped id (clause 5.8.5).
-/// Confirms REQ-MAP-34.
+/// A no-longer-matching change forwards a delete via the mapped id (clause
+/// 5.8.1.4, "noLongerMatching" trigger). The fragment is `application/json`, so
+/// its context travels in the `Link` header and never inline (clause 6.3.5: an
+/// inline `@context` is only carried by `application/ld+json`). Confirms
+/// REQ-MAP-34.
 #[tokio::test]
 async fn sub_no_longer_matching_forwards_delete_via_mapped_id() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:no-longer-matching");
     let mock = subscription_over_source(&topology, "registration:no-longer-matching", &id).await;
-    let mut fragment = json!({ "@context": ["https://uri.etsi.org/ngsi-ld/v1/ngsi-ld-core-context-v1.9.jsonld"] });
+    let mut fragment = json!({});
     set_entity_type(&mut fragment, "Device");
     assert_status(
         &topology
             .front()
             .client()
-            .update_subscription(&id, &fragment, None)
+            .update_subscription(&id, &fragment, Some(CORE_CONTEXT.as_str()))
             .await
             .expect("update subscription"),
         204,

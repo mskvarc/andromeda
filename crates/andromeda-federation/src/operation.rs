@@ -2,6 +2,26 @@
 
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
 
+/// The resource a forwarded provision operation addresses below the API base
+/// (clause 6.2): the current entities or their temporal evolutions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProvisionResource {
+    /// `/entities` (clause 6.4).
+    Entities,
+    /// `/temporal/entities` (clause 6.18).
+    TemporalEntities,
+}
+
+impl ProvisionResource {
+    /// The path segments of the resource below the API base.
+    pub const fn segments(self) -> &'static [&'static str] {
+        match self {
+            ProvisionResource::Entities => &["entities"],
+            ProvisionResource::TemporalEntities => &["temporal", "entities"],
+        }
+    }
+}
+
 /// The NGSI-LD operation being forwarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForwardingOperation {
@@ -39,6 +59,20 @@ pub enum ForwardingOperation {
     DeleteBatch,
     /// Batch merge-patch entities (clause 5.6.20).
     MergeBatch,
+    /// Purge the entities a query selects (clause 5.6.21).
+    PurgeEntity,
+    /// Create or update the temporal evolution of an entity (clause 5.6.11).
+    UpsertTemporalEntity,
+    /// Add attribute instances to a temporal evolution (clause 5.6.12).
+    AppendTemporalAttributes,
+    /// Delete an attribute from a temporal evolution (clause 5.6.13).
+    DeleteTemporalAttribute,
+    /// Modify one attribute instance of a temporal evolution (clause 5.6.14).
+    UpdateTemporalAttributeInstance,
+    /// Delete one attribute instance of a temporal evolution (clause 5.6.15).
+    DeleteTemporalAttributeInstance,
+    /// Delete the temporal evolution of an entity (clause 5.6.16).
+    DeleteTemporalEntity,
     /// Retrieve a single temporal entity by ID (clause 5.7.3).
     RetrieveTemporalEntity,
     /// Query temporal entities matching filter criteria (clause 5.7.4).
@@ -104,6 +138,13 @@ impl ForwardingOperation {
             ForwardingOperation::UpdateBatch => &[CsrOperation::UpdateBatch],
             ForwardingOperation::DeleteBatch => &[CsrOperation::DeleteBatch],
             ForwardingOperation::MergeBatch => &[CsrOperation::MergeBatch],
+            ForwardingOperation::PurgeEntity => &[CsrOperation::PurgeEntity],
+            ForwardingOperation::UpsertTemporalEntity => &[CsrOperation::UpsertTemporal],
+            ForwardingOperation::AppendTemporalAttributes => &[CsrOperation::AppendAttrsTemporal],
+            ForwardingOperation::DeleteTemporalAttribute => &[CsrOperation::DeleteAttrsTemporal],
+            ForwardingOperation::UpdateTemporalAttributeInstance => &[CsrOperation::UpdateAttrInstanceTemporal],
+            ForwardingOperation::DeleteTemporalAttributeInstance => &[CsrOperation::DeleteAttrInstanceTemporal],
+            ForwardingOperation::DeleteTemporalEntity => &[CsrOperation::DeleteTemporal],
             ForwardingOperation::RetrieveTemporalEntity => &[CsrOperation::RetrieveTemporal],
             ForwardingOperation::QueryTemporalEntity => &[CsrOperation::QueryTemporal],
             ForwardingOperation::RetrieveEntityTypes => &[
@@ -171,9 +212,10 @@ impl ForwardingOperation {
 
 #[cfg(test)]
 mod tests {
-    use crate::operation::ForwardingOperation;
+    use crate::operation::{ForwardingOperation, ProvisionResource};
     use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, CsrOperation};
     use serde_json::json;
+    use std::str::FromStr;
 
     fn registration(operations: Option<&[&str]>) -> ContextSourceRegistration {
         let mut document = json!({
@@ -236,6 +278,38 @@ mod tests {
         let update = registration(Some(&["updateOps"]));
         assert!(ForwardingOperation::ReplaceEntityAttribute.matches(&update));
         assert!(!ForwardingOperation::AppendEntityAttributes.matches(&update));
+    }
+
+    #[test]
+    fn the_temporal_provision_operations_and_purge_are_advertised_by_name_only() {
+        // Table 4.20-1 names each temporal provision operation and purgeEntity;
+        // no Table 4.20-2 group lists any of them, so a group advertises none.
+        let cases = [
+            (ForwardingOperation::UpsertTemporalEntity, "upsertTemporal"),
+            (ForwardingOperation::AppendTemporalAttributes, "appendAttrsTemporal"),
+            (ForwardingOperation::DeleteTemporalAttribute, "deleteAttrsTemporal"),
+            (ForwardingOperation::UpdateTemporalAttributeInstance, "updateAttrInstanceTemporal"),
+            (ForwardingOperation::DeleteTemporalAttributeInstance, "deleteAttrInstanceTemporal"),
+            (ForwardingOperation::DeleteTemporalEntity, "deleteTemporal"),
+            (ForwardingOperation::PurgeEntity, "purgeEntity"),
+        ];
+        for (operation, token) in cases {
+            pretty_assertions::assert_eq!(
+                operation.advertised_by(),
+                &[CsrOperation::from_str(token).expect("a Table 4.20-1 token")],
+                "{token}"
+            );
+            assert!(operation.matches(&registration(Some(&[token]))), "{token}");
+            for group in ["federationOps", "updateOps", "retrieveOps", "redirectionOps", "associationOps"] {
+                assert!(!operation.matches(&registration(Some(&[group]))), "{token} via {group}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_provision_resources_name_their_clause_6_2_paths() {
+        pretty_assertions::assert_eq!(ProvisionResource::Entities.segments(), &["entities"]);
+        pretty_assertions::assert_eq!(ProvisionResource::TemporalEntities.segments(), &["temporal", "entities"]);
     }
 
     #[test]

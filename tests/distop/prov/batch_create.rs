@@ -37,14 +37,14 @@ async fn batch_create_per_csr_filters_input_copy() {
         .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["speed"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let location_csr = CsrBuilder::new(&reg_location, &mock.url("/s2"))
         .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["location"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&location_csr).await.expect("create location registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/create", 201).await;
@@ -108,14 +108,14 @@ async fn batch_create_strips_redirect_owned_attrs_for_other_csr() {
         .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["speed"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let brand_csr = CsrBuilder::new(&reg_brand, &mock.url("/s2"))
         .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["brandName"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&brand_csr).await.expect("create brand registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/create", 201).await;
@@ -162,14 +162,14 @@ async fn batch_create_empty_in_skips_csr() {
         .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["colour"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&colour_csr).await.expect("create colour registration"), 201);
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s2"))
         .mode("redirect")
         .entity_type("Vehicle")
         .property_names(&["speed"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/create", 201).await;
@@ -207,7 +207,7 @@ async fn batch_create_supported_forwards_and_merges_results() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
         .entity_type("Vehicle")
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["createBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let remote_result = json!({

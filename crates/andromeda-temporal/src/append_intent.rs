@@ -4,6 +4,7 @@ use crate::{error::TemporalError, intent_preparation::prepare, scope_observation
 use andromeda_context_commit::{history_record::HistoryRecord, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, instance_identity::InstanceIdentity, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalHistoryRow;
+use chrono::{DateTime, Utc};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -79,6 +80,9 @@ pub enum TemporalAppendEntry {
     Scope {
         /// What the observation records about the entity's scope.
         observation: ScopeObservation,
+        /// When the scope was observed (clause 4.5.6: the reified temporal
+        /// scope carries `observedAt`); absent when the client declared none.
+        observed_at: Option<DateTime<Utc>>,
         /// Stable scope observation identity.
         instance: InstanceIdentity,
     },

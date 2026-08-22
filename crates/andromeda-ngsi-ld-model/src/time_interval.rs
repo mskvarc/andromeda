@@ -1,6 +1,7 @@
 //! The TimeInterval member (ETSI GS CIM 009 clause 5.2.11).
 
 use andromeda_ngsi_ld_lexicon::rfc3339;
+use andromeda_ngsi_ld_query::temporal::window::TimeInterval as QueryWindow;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -20,6 +21,28 @@ pub struct TimeInterval {
     /// The end of the interval; open when absent.
     #[serde(skip_serializing_if = "Option::is_none", with = "rfc3339::optional_datetime", default)]
     pub end_at: Option<DateTime<Utc>>,
+}
+
+impl TimeInterval {
+    /// Whether the interval meets a clause 4.11 temporal window, as clauses
+    /// 5.10.2.4 and 5.11.2.4 read the match.
+    ///
+    /// For `before` and `after` the window's instant must lie within the
+    /// interval or on one of its endpoints; for `between` the window and the
+    /// interval must overlap. An open-ended interval extends forever, and an
+    /// unbounded window narrows nothing.
+    pub fn meets(&self, window: &QueryWindow) -> bool {
+        match window {
+            QueryWindow::Unbounded => true,
+            QueryWindow::Before(instant) | QueryWindow::After(instant) => self.contains(*instant),
+            QueryWindow::Between { from, to } => self.start_at <= *to && self.end_at.is_none_or(|end_at| *from <= end_at),
+        }
+    }
+
+    /// Whether `instant` lies within the interval or on one of its endpoints.
+    fn contains(&self, instant: DateTime<Utc>) -> bool {
+        self.start_at <= instant && self.end_at.is_none_or(|end_at| instant <= end_at)
+    }
 }
 
 /// Why a wire document cannot be a [`TimeInterval`].
@@ -59,6 +82,7 @@ impl TryFrom<TimeIntervalWire> for TimeInterval {
 #[cfg(test)]
 mod tests {
     use crate::time_interval::TimeInterval;
+    use andromeda_ngsi_ld_query::temporal::window::TimeInterval as QueryWindow;
     use serde_json::json;
 
     #[test]
@@ -79,6 +103,67 @@ mod tests {
     #[test]
     fn a_missing_start_at_is_rejected() {
         assert!(serde_json::from_value::<TimeInterval>(json!({"endAt": "2030-01-01T00:00:00Z"})).is_err());
+    }
+
+    fn interval(start: &str, end: Option<&str>) -> TimeInterval {
+        let mut wire = json!({"startAt": start});
+        if let Some(end) = end {
+            wire["endAt"] = json!(end);
+        }
+        serde_json::from_value(wire).expect("interval parses")
+    }
+
+    fn at(raw: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(raw).expect("valid instant").with_timezone(&chrono::Utc)
+    }
+
+    /// Clauses 5.10.2.4 and 5.11.2.4: for `before` and `after` the instant
+    /// must be contained in the interval or be one of its endpoints.
+    #[test]
+    fn before_and_after_meet_an_interval_that_contains_the_instant() {
+        let closed = interval("2020-01-01T00:00:00Z", Some("2021-01-01T00:00:00Z"));
+        for window in [QueryWindow::After(at("2020-06-01T00:00:00Z")), QueryWindow::Before(at("2020-06-01T00:00:00Z"))] {
+            assert!(closed.meets(&window), "{window:?} lies inside the interval");
+        }
+        assert!(closed.meets(&QueryWindow::After(at("2020-01-01T00:00:00Z"))), "the start endpoint counts");
+        assert!(closed.meets(&QueryWindow::After(at("2021-01-01T00:00:00Z"))), "the end endpoint counts");
+        assert!(
+            !closed.meets(&QueryWindow::After(at("2022-06-01T00:00:00Z"))),
+            "an instant past the end does not"
+        );
+        assert!(
+            !closed.meets(&QueryWindow::Before(at("2019-01-01T00:00:00Z"))),
+            "an instant before the start does not"
+        );
+    }
+
+    #[test]
+    fn an_open_ended_interval_contains_every_later_instant() {
+        let open = interval("2020-01-01T00:00:00Z", None);
+        assert!(open.meets(&QueryWindow::After(at("2030-01-01T00:00:00Z"))));
+        assert!(!open.meets(&QueryWindow::After(at("2019-01-01T00:00:00Z"))));
+    }
+
+    /// Clauses 5.10.2.4 and 5.11.2.4: `between` matches on overlap.
+    #[test]
+    fn between_meets_an_interval_it_overlaps() {
+        let closed = interval("2020-01-01T00:00:00Z", Some("2021-01-01T00:00:00Z"));
+        let overlapping = QueryWindow::Between {
+            from: at("2020-06-01T00:00:00Z"),
+            to: at("2020-09-01T00:00:00Z"),
+        };
+        let straddling = QueryWindow::Between {
+            from: at("2019-06-01T00:00:00Z"),
+            to: at("2020-02-01T00:00:00Z"),
+        };
+        let disjoint = QueryWindow::Between {
+            from: at("2018-01-01T00:00:00Z"),
+            to: at("2019-01-01T00:00:00Z"),
+        };
+        assert!(closed.meets(&overlapping));
+        assert!(closed.meets(&straddling));
+        assert!(!closed.meets(&disjoint));
+        assert!(closed.meets(&QueryWindow::Unbounded));
     }
 
     #[test]

@@ -168,7 +168,10 @@ async fn emq_non_local_forwards_to_supporting_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A forwarded split query strips the local filters (clause 5.14.4).
+/// A forwarded query under `splitEntities=true` strips the local filters
+/// (clause 5.14.4.4 applies the clause 5.7.2.4 split-entities rule: the `q`
+/// filter is evaluated after re-assembly, not at the source). The parameter is
+/// sent explicitly because the deployment default is complete entities.
 /// Confirms REQ-MAP-126.
 #[tokio::test]
 async fn emq_split_forward_strips_filters() {
@@ -176,7 +179,7 @@ async fn emq_split_forward_strips_filters() {
     let remote_entity = topology.id("Vehicle:strip-remote");
     let mock = query_source(&topology, "registration:strip-filters", &remote_entity).await;
     seed_vehicle(topology.front().client(), &topology.id("Vehicle:strip-local"), 20).await;
-    let created = create_entity_map(topology.front().client(), "type=Vehicle&q=speed%3E10").await;
+    let created = create_entity_map(topology.front().client(), "type=Vehicle&q=speed%3E10&splitEntities=true").await;
     assert_status(&created, 201);
     let forwarded = mock.next_request(FORWARD_TIMEOUT).await;
     assert!(

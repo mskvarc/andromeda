@@ -1,17 +1,24 @@
-use crate::error::NotificationError;
+//! Periodic context source notifications (clauses 5.11.2.4 and 5.11.7).
+//!
+//! A subscription with a `timeInterval` is notified of every matching
+//! registration on schedule, regardless of changes; the matching is the same
+//! clause 5.12 reading the change-driven path uses.
+
+use crate::{csource_processor::matching::notified_registration, error::NotificationError};
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::Subscription};
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
 use andromeda_registration::store::RegistrationStore;
-use andromeda_subscription::store::SubscriptionStore;
+use andromeda_subscription::{
+    compilation::compile_csource_subscription,
+    csource_matching::csource_subscription_selects_registration,
+    store::SubscriptionStore,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use serde_json::Value;
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 use tracing::{debug, error};
 use uuid::Uuid;
 
@@ -134,6 +141,7 @@ impl CsourceIntervalNotificationOperation {
     }
 
     async fn fetch_matching_csrs(&self, sub: &Subscription) -> Result<Vec<Value>, NotificationError> {
+        let compiled = compile_csource_subscription(sub);
         let mut matching = Vec::new();
         let page_size = 500;
         let mut offset = 0;
@@ -151,10 +159,9 @@ impl CsourceIntervalNotificationOperation {
                 break;
             }
 
-            for csr in page.registrations {
-                let csr_value = serde_json::to_value(&csr).map_err(|error| NotificationError::representation(error.to_string()))?;
-                if matches_csr_for_subscription(&csr_value, sub) {
-                    matching.push(csr_value);
+            for csr in &page.registrations {
+                if csource_subscription_selects_registration(&compiled, csr) {
+                    matching.push(notified_registration(csr, &compiled)?);
                 }
             }
 
@@ -166,74 +173,4 @@ impl CsourceIntervalNotificationOperation {
 
         Ok(matching)
     }
-}
-
-fn matches_csr_for_subscription(csr_data: &Value, sub: &Subscription) -> bool {
-    // Entity selector matching
-    if let Some(ref selectors) = sub.selection.entities {
-        let information = csr_data.get("information").and_then(|v| v.as_array());
-        let any_matches = selectors.iter().any(|sel| match information {
-            Some(info_arr) => info_arr.iter().any(|info| {
-                let entities = info.get("entities").and_then(|v| v.as_array());
-                match entities {
-                    Some(ents) => ents.iter().any(|ent| {
-                        let ent_type = ent.get("type").and_then(|value| value.as_str()).map_or("", |value| value);
-                        if !sel.type_.matches(&[ent_type]) {
-                            return false;
-                        }
-                        if let Some(ref id) = sel.id {
-                            let ent_id = ent.get("id").and_then(|value| value.as_str()).map_or("", |value| value);
-                            // `AsRef` hands back the identifier's own text; rendering it
-                            // would allocate once per candidate in a matching loop.
-                            if ent_id != id.as_ref() {
-                                return false;
-                            }
-                        }
-                        if let Some(ref pattern) = sel.id_pattern {
-                            let ent_id = ent.get("id").and_then(|value| value.as_str()).map_or("", |value| value);
-                            if !pattern.is_match(ent_id) {
-                                return false;
-                            }
-                        }
-                        true
-                    }),
-                    None => false,
-                }
-            }),
-            None => false,
-        });
-
-        if !any_matches {
-            return false;
-        }
-    }
-
-    // Watched attributes matching
-    if let Some(ref watched) = sub.selection.watched_attributes {
-        let watched_set: HashSet<&AttributeName> = watched.iter().collect();
-        let information = csr_data.get("information").and_then(|v| v.as_array());
-        let any_attr_matches = match information {
-            Some(info_arr) => info_arr.iter().any(|info| {
-                let prop_names: Vec<AttributeName> = info
-                    .get("propertyNames")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
-                    .unwrap_or_default();
-                let rel_names: Vec<AttributeName> = info
-                    .get("relationshipNames")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
-                    .unwrap_or_default();
-
-                prop_names.iter().any(|n| watched_set.contains(n)) || rel_names.iter().any(|n| watched_set.contains(n))
-            }),
-            None => false,
-        };
-
-        if !any_attr_matches {
-            return false;
-        }
-    }
-
-    true
 }

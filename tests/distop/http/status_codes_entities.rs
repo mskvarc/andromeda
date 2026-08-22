@@ -1,7 +1,8 @@
 //! Response-code matrix for entity create, query and purge (clause 6.3.16,
 //! 6.4.3): local success codes and `Location`, forwarded partial failure `207`
-//! with a `BatchOperationResult`, invalid/absent/conflict codes, and the
-//! single-source `501` on an unsupported representation.
+//! with a `BatchOperationResult`, invalid/absent/conflict codes, the
+//! unadvertised-operation `409 Conflict`, and the single-source `501` on an
+//! unsupported representation.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -11,7 +12,7 @@ use crate::{
     topology::DistributedTopology,
 };
 use andromeda_test_client::response::TestResponse;
-use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA, OPERATION_NOT_SUPPORTED};
+use andromeda_test_fixtures::problem_detail::{ALREADY_EXISTS, BAD_REQUEST_DATA, CONFLICT};
 use reqwest::Method;
 use serde_json::json;
 
@@ -129,8 +130,13 @@ async fn dist_http_create_entity_already_exists_local_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Creating an entity whose id is owned by an exclusive registration is a
-/// conflict, mapped to `409` (clause 5.7.2). Confirms REQ-HTTP-49.
+/// Creating an entity whose id is owned by an exclusive registration forwards
+/// the owned attributes to that registration; when that single source answers
+/// `409 AlreadyExists` the create fails with that error (clause 5.6.1.4: "If the
+/// endpoint then raises an error, this shall result in an error in case the
+/// complete create failed"; clause 6.3.17 asks unsafe-method errors to be "as
+/// informative as possible", so the source's status is relayed). Confirms
+/// REQ-HTTP-49.
 #[tokio::test]
 async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -147,6 +153,7 @@ async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
             .expect("register exclusive source"),
         201,
     );
+    mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 409).await;
 
     let response = topology
         .front()
@@ -162,13 +169,16 @@ async fn dist_http_create_entity_exclusive_registration_owns_id_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A create for which no matching source advertises the operation is rejected
-/// with `422 OperationNotSupported` (clause 6.3.16). Confirms REQ-HTTP-50.
+/// A create whose only matching exclusive source does not advertise
+/// `createEntity` is rejected with `409 Conflict` (clause 5.6.1.4: "For matching
+/// Registrations where the Create Entity operation is not supported, this shall
+/// result in an error of type Conflict if the complete Create Entity operation
+/// failed"). Confirms REQ-HTTP-50.
 #[tokio::test]
-async fn dist_http_create_entity_operation_unavailable_returns_422() {
+async fn dist_http_create_entity_operation_unavailable_returns_409_conflict() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let entity_id = topology.id("Vehicle:create-422");
-    let reg_id = topology.id("registration:create-422");
+    let entity_id = topology.id("Vehicle:create-409-unadvertised");
+    let reg_id = topology.id("registration:create-409-unadvertised");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
@@ -189,8 +199,8 @@ async fn dist_http_create_entity_operation_unavailable_returns_422() {
         .send()
         .await
         .expect("create with unavailable operation");
-    assert_status(&response, 422);
-    assert_problem_details(&response, OPERATION_NOT_SUPPORTED);
+    assert_status(&response, 409);
+    assert_problem_details(&response, CONFLICT);
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -273,7 +283,8 @@ async fn dist_http_purge_entities_local_returns_204() {
 }
 
 /// A purge where a forwarded endpoint fails is a partial failure, mapped to `207`
-/// (clause 6.3.16). Confirms REQ-HTTP-61.
+/// (clause 6.3.16). The registration advertises `purgeEntity`, the Table 4.20-1
+/// name of 5.6.21 Purge Entities. Confirms REQ-HTTP-61.
 #[tokio::test]
 async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -296,7 +307,7 @@ async fn dist_http_purge_entities_partial_failure_returns_207_batch_result() {
         &topology
             .front()
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
             .await
             .expect("register source"),
         201,

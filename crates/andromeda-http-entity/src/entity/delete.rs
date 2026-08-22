@@ -13,11 +13,13 @@ use crate::entity::{
     LocalOutcome,
     OriginalUri,
     ProblemResponse,
+    ProvisionResource,
     Response,
     StatusCode,
     TypedPath,
     Uri,
     ValidatedQuery,
+    classify_entity_error,
     provision_response,
 };
 use andromeda_entity::error::EntityError;
@@ -48,6 +50,7 @@ pub(crate) async fn delete(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
@@ -70,15 +73,17 @@ pub(crate) async fn delete(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    // Clause 5.6.6.4: proxied registrations delete their part; the entity this
-    // broker holds for the unregistered attributes goes as well, and its
-    // absence is no failure when the entity lives only at the sources.
+    // Clause 5.6.6.4: proxied registrations delete their part, and the local
+    // row holding the unregistered attributes goes with it. Clause 6.3.17
+    // treats the entity as held at the proxied source, so removing that row
+    // is no part the client can be told succeeded on its own: a failure at the
+    // source is the operation's failure, and the row's absence is no failure.
     let proxied = forwarded
         .iter()
         .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
     let local = match service.delete(&id).await {
-        Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
-        other => LocalOutcome::Processed(other.map(|_| ())),
+        Ok(()) | Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
+        other => LocalOutcome::processed(other, classify_entity_error),
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

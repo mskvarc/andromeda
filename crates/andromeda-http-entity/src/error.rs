@@ -5,14 +5,13 @@ use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, provision::classify_forwarding_error};
+use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::error::RenderError;
 use andromeda_ngsi_ld_request::error::ParameterError;
 use andromeda_tenancy::error::TenancyError;
 use axum::http::Uri;
-use std::fmt::Display;
 
 /// Classifies a typed failure consumed by the entity route binding.
 pub trait EntityHttpClassify {
@@ -32,13 +31,9 @@ impl EntityHttpClassify for EntityMapError {
             EntityMapError::NotFound { identifier } => {
                 ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, format!("Entity Map {identifier} not found"))
             }
-            EntityMapError::EntityNotInMap {
-                entity_identifier,
-                map_identifier,
-            } => ClassifiedReport::public(
-                NgsiLdErrorType::ResourceNotFound,
-                format!("Entity {entity_identifier} is not present in Entity Map {map_identifier}"),
-            ),
+            // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
+            // the request that created the map are an invalid request.
+            EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
         }
     }
@@ -47,16 +42,19 @@ impl EntityHttpClassify for EntityMapError {
 impl EntityHttpClassify for FederationError {
     fn classify_for_entity_http(&self) -> ClassifiedReport {
         match self {
-            FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
-            // Clause 6.3.17: the single-source failures of an unsafe method
-            // carry their own status and the most informative detail available.
-            FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, self.to_string()),
-            FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, self.to_string()),
-            FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, self.to_string()),
-            FederationError::BadGateway { .. } => ClassifiedReport::public_binding(ProblemClassification::BadGateway, self.to_string()),
-            FederationError::Registration(_) | FederationError::Representation(_) | FederationError::Internal { .. } => ClassifiedReport::internal(self),
             FederationError::JsonLd(source) => classify_jsonld_error(source),
             FederationError::Query(source) => classify_query_error(source),
+            // Clause 6.3.17: the failures of a forwarded request carry their
+            // own status and the most informative detail available.
+            FederationError::Conflict { .. }
+            | FederationError::OperationNotSupported { .. }
+            | FederationError::LoopDetected { .. }
+            | FederationError::GatewayTimeout { .. }
+            | FederationError::RemoteNotFound { .. }
+            | FederationError::BadGateway { .. }
+            | FederationError::Registration(_)
+            | FederationError::Representation(_)
+            | FederationError::Internal { .. } => classify_forwarding_error(self),
         }
     }
 }
@@ -103,11 +101,6 @@ impl EntityHttpClassify for TenancyError {
 /// Construct a deliberate public failure and attach the inbound request URI.
 pub(crate) fn public_error(error_type: NgsiLdErrorType, detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
     ClassifiedReport::public(error_type, detail).with_instance(instance.clone())
-}
-
-/// Log and sanitize an internal failure before attaching the inbound request URI.
-pub(crate) fn internal_error(source: &impl Display, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::internal(source).with_instance(instance.clone())
 }
 
 /// Attach the inbound request URI while converting a typed result at the entity HTTP boundary.

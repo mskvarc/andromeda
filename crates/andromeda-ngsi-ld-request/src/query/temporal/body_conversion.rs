@@ -1,0 +1,151 @@
+//! Conversion of the canonical clause-5.2.23 body into temporal-query parameters.
+
+use crate::{
+    attribute_selection::validate_attrs,
+    error::ParameterError,
+    query::{deserialization::OptionalGeoQuery, entity_selector::EntitySelectorParams, temporal::TemporalQueryParameters},
+};
+use andromeda_http_headers::language::LanguageFilter;
+use andromeda_ngsi_ld_model::query::body::Query;
+
+impl TryFrom<Query> for TemporalQueryParameters {
+    type Error = ParameterError;
+
+    fn try_from(query: Query) -> Result<TemporalQueryParameters, ParameterError> {
+        let temporal = query.temporal_q.ok_or(ParameterError::TemporalQueryMissing)?;
+        let aggregation = match query.aggr_params {
+            Some(_) if temporal.aggr_methods.is_some() || temporal.aggr_period_duration.is_some() => {
+                return Err(ParameterError::TemporalAggregationConflict);
+            }
+            Some(aggregation) => (Some(aggregation.aggr_methods), aggregation.aggr_period_duration),
+            None => (temporal.aggr_methods, temporal.aggr_period_duration),
+        };
+        let entity_selectors = query
+            .entities
+            .unwrap_or_default()
+            .into_iter()
+            .map(|selector| EntitySelectorParams {
+                id: selector.id,
+                id_pattern: selector.id_pattern,
+                type_: Some(selector.type_),
+            })
+            .collect();
+
+        let parameters = TemporalQueryParameters {
+            id: None,
+            entity_type: None,
+            id_pattern: None,
+            entity_selectors,
+            attrs: query.attrs,
+            q: query.q,
+            geo: OptionalGeoQuery(query.geo_q),
+            timerel: Some(temporal.timerel),
+            time_at: Some(temporal.time_at),
+            end_time_at: temporal.end_time_at,
+            timeproperty: temporal.timeproperty,
+            last_n: temporal.last_n,
+            format: None,
+            options: None,
+            aggr_methods: aggregation.0,
+            aggr_period_duration: aggregation.1,
+            limit: None,
+            offset: None,
+            count: None,
+            ordering: query.ordering.unwrap_or_default(),
+            pick: query.pick,
+            omit: query.omit,
+            join: query.join,
+            join_level: query.join_level,
+            contained_by: query.contained_by,
+            dataset_id: query.dataset_id,
+            lang: query.lang.map(LanguageFilter::from_tag),
+            local: None,
+            entity_map: query.entity_map,
+            entity_map_lifetime: query.entity_map_lifetime,
+            split_entities: query.split_entities,
+            scope_q: query.scope_q,
+            csf: query.csf,
+            expand_values: query.expand_values,
+            json_keys: query.json_keys,
+        };
+        validate_attrs(parameters.attrs.as_deref())?;
+        // Clause 4.21 governs the POST body's projection exactly as it
+        // governs the query string's, so the body cannot smuggle both members
+        // past the rule the GET binding enforces.
+        if parameters.pick.is_some() && parameters.omit.is_some() {
+            return Err(ParameterError::PickOmitExclusive);
+        }
+        if (parameters.pick.is_some() || parameters.omit.is_some()) && parameters.attrs.is_some() {
+            return Err(ParameterError::PickOmitWithAttrs);
+        }
+        Ok(parameters)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{error::ParameterError, query::temporal::TemporalQueryParameters};
+    use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
+    use andromeda_ngsi_ld_model::query::body::Query;
+    use andromeda_ngsi_ld_representation::join_mode::JoinMode;
+    use std::num::NonZeroU32;
+
+    fn canonical(body: &str) -> Query {
+        serde_json::from_str::<Query>(body).expect("valid canonical temporal query")
+    }
+
+    /// The same rule governs the POST body's projection: clause 4.21 is a
+    /// property of the projection, not of the binding that carried it.
+    #[test]
+    fn a_canonical_temporal_query_naming_pick_and_omit_is_rejected() {
+        let request = canonical(r#"{"type":"Query","pick":["speed"],"omit":["fuel"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
+        let err = TemporalQueryParameters::try_from(request).expect_err("pick and omit are mutually exclusive");
+        assert!(matches!(err, ParameterError::PickOmitExclusive));
+    }
+
+    /// The POST body carries the join the same way the query string does
+    /// (clause 5.2.23 `Query`).
+    #[test]
+    fn a_canonical_temporal_query_preserves_the_join_members() {
+        let request = canonical(
+            r#"{"type":"Query","join":"inline","joinLevel":2,"containedBy":["urn:ngsi-ld:T:1"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#,
+        );
+        let params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
+        pretty_assertions::assert_eq!(params.join, Some(JoinMode::Inline));
+        pretty_assertions::assert_eq!(params.join_level.map(NonZeroU32::get), Some(2));
+        pretty_assertions::assert_eq!(
+            params.contained_by.as_deref().map(|ids| ids.iter().map(Uri::as_str).collect::<Vec<_>>()),
+            Some(vec!["urn:ngsi-ld:T:1"])
+        );
+    }
+
+    #[test]
+    fn canonical_temporal_query_requires_temporal_q() {
+        assert!(TemporalQueryParameters::try_from(canonical(r#"{"type":"Query"}"#)).is_err());
+    }
+
+    #[test]
+    fn canonical_temporal_query_preserves_temporal_members() {
+        let request = canonical(
+            r#"{"type":"Query","attrs":["speed"],"temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z","timeproperty":"observedAt","aggrMethods":"avg","aggrPeriodDuration":"PT1H","lastN":10}}"#,
+        );
+        let params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
+        pretty_assertions::assert_eq!(params.timerel, Some(TimeRel::After));
+        pretty_assertions::assert_eq!(params.time_at, Some("2024-01-01T00:00:00Z".parse().expect("valid RFC 3339 instant")));
+        pretty_assertions::assert_eq!(params.timeproperty, Some(TimeProp::Observed));
+        pretty_assertions::assert_eq!(params.aggr_methods, Some(vec![AggrMethod::Avg]));
+        pretty_assertions::assert_eq!(params.aggr_period_duration.map(|period| period.as_iso8601()), Some("PT1H".to_string()));
+        pretty_assertions::assert_eq!(params.attrs.as_deref().map(|names| names[0].as_str()), Some("speed"));
+        pretty_assertions::assert_eq!(params.last_n, Some(10));
+    }
+
+    /// Clause 5.7.4.3: the context source filter is an input of the temporal
+    /// query, and the canonical body carries it under the same `csf` member
+    /// the entity query reads.
+    #[test]
+    fn canonical_temporal_query_preserves_the_context_source_filter() {
+        let request = canonical(r#"{"type":"Query","csf":"tier==\"gold\"","temporalQ":{"timerel":"after","timeAt":"2024-01-01T00:00:00Z"}}"#);
+        let params = TemporalQueryParameters::try_from(request).expect("applicable temporal query");
+        pretty_assertions::assert_eq!(params.csf.as_ref().map(ToString::to_string).as_deref(), Some("tier==\"gold\""));
+    }
+}

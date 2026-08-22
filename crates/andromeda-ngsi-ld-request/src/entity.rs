@@ -5,6 +5,7 @@ use crate::{
     case_insensitive_bool::deserialize_option_bool_case_insensitive,
     error::ParameterError,
     language_filter::deserialize_optional_language_filter,
+    language_tag::deserialize_optional_language_tag,
     linked_retrieval_consistency::validate_projection_join_depth,
     options::{EntityRepresentationOptions, OverwritePolicy, deserialize_entity_representation_options, deserialize_overwrite_policy},
     query::deserialization::{
@@ -19,9 +20,11 @@ use crate::{
 };
 use andromeda_http_headers::language::LanguageFilter;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm};
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
+use andromeda_ngsi_ld_query::{dataset::DatasetSelector, projection::grammar::RawProjectionTerm, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, merge_representation::MergeRepresentation, response_format::ResponseFormat};
+use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
+use langtag::LangTagBuf;
 use serde::Deserialize;
 use std::num::NonZeroU32;
 
@@ -54,11 +57,57 @@ pub struct ReplaceAttrParams {
     pub dataset_id: Option<DatasetSelector>,
 }
 
+/// Query parameters for `PATCH /entities/{id}` (Merge Entity, Table 6.5.3.4-1).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MergeParams {
+    /// The representation the fragment is written in: `simplified` (or
+    /// `keyValues`) says the fragment carries bare values whose attribute
+    /// types the target entity fixes.
+    #[serde(default, deserialize_with = "deserialize_option_response_format")]
+    pub format: Option<ResponseFormat>,
+    /// The natural language of string values merged into a pre-existing
+    /// LanguageProperty: the `languageMap` key they update.
+    #[serde(default, deserialize_with = "deserialize_optional_language_tag")]
+    pub lang: Option<LangTagBuf>,
+    /// The `observedAt` a merged attribute that previously carried one takes
+    /// when the fragment names none.
+    #[serde(rename = "observedAt")]
+    pub observed_at: Option<DateTime<Utc>>,
+    /// The deprecated alternative to `format` (`options=simplified`).
+    #[serde(default, deserialize_with = "deserialize_entity_representation_options")]
+    pub options: Option<EntityRepresentationOptions>,
+    /// The clause 4.17 selector the target entity's types must satisfy.
+    #[serde(rename = "type")]
+    pub entity_type: Option<TypeExprRaw>,
+    /// Whether the operation is confined to this broker (clause 5.5.13).
+    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
+    pub local: Option<bool>,
+}
+
+impl MergeParams {
+    /// The representation the fragment is written in: `format` wins over the
+    /// deprecated `options` (Table 6.5.3.4-1), and the default is normalized.
+    ///
+    /// # Errors
+    ///
+    /// [`ParameterError::FormatInvalid`] for a representation Table 6.5.3.4-1
+    /// does not admit as a merge input (`concise`).
+    pub fn representation(&self) -> Result<MergeRepresentation, ParameterError> {
+        let format = self.format.or_else(|| self.options.and_then(|options| options.format)).unwrap_or_default();
+        MergeRepresentation::try_from(format).map_err(|error| ParameterError::FormatInvalid(error.to_string()))
+    }
+}
+
 /// Query parameters for `GET /entities/{id}` (retrieve single entity).
 ///
 /// Supports format selection, attribute filtering, join traversal,
 /// dataset selection, language negotiation, and snapshot/entity-map scoping.
-#[derive(Debug, Deserialize)]
+///
+/// The default is the parameter-less retrieval, which is what a forwarded
+/// Linked Entity retrieval (clause 4.5.23) starts from before adding its
+/// traversal continuation.
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GetEntityParams {
     /// Attributes the response is narrowed to, comma-separated (`attrs`).
@@ -310,6 +359,31 @@ mod tests {
         let params: PartialUpdateAttrParams = serde_urlencoded::from_str("datasetId=urn:ngsi-ld:Dataset:test").expect("valid dataset id");
         pretty_assertions::assert_eq!(params.dataset_id.as_ref().map(ToString::to_string).as_deref(), Some("urn:ngsi-ld:Dataset:test"));
         assert!(serde_urlencoded::from_str::<ReplaceAttrParams>("datasetId=not-a-urn").is_err());
+    }
+
+    #[test]
+    fn merge_parameters_read_every_table_6_5_3_4_1_member() {
+        let params: MergeParams =
+            serde_urlencoded::from_str("format=simplified&lang=de&observedAt=2024-01-01T00:00:00Z&type=Vehicle&local=true").expect("parses");
+        pretty_assertions::assert_eq!(params.representation().expect("simplified is a merge input"), MergeRepresentation::Simplified);
+        pretty_assertions::assert_eq!(params.lang.as_ref().map(ToString::to_string).as_deref(), Some("de"));
+        pretty_assertions::assert_eq!(params.observed_at.map(|at| at.to_rfc3339()).as_deref(), Some("2024-01-01T00:00:00+00:00"));
+        assert!(matches!(params.entity_type, Some(TypeExprRaw::Type(ref name)) if name.as_str() == "Vehicle"));
+        pretty_assertions::assert_eq!(params.local, Some(true));
+    }
+
+    #[test]
+    fn merge_representation_defaults_to_normalized_prefers_format_and_rejects_concise() {
+        let bare: MergeParams = serde_urlencoded::from_str("").expect("parses");
+        pretty_assertions::assert_eq!(bare.representation().expect("normalized"), MergeRepresentation::Normalized);
+        let options: MergeParams = serde_urlencoded::from_str("options=keyValues").expect("parses");
+        pretty_assertions::assert_eq!(options.representation().expect("simplified"), MergeRepresentation::Simplified);
+        let both: MergeParams = serde_urlencoded::from_str("format=normalized&options=keyValues").expect("parses");
+        pretty_assertions::assert_eq!(both.representation().expect("format wins"), MergeRepresentation::Normalized);
+        let concise: MergeParams = serde_urlencoded::from_str("format=concise").expect("parses");
+        assert!(matches!(concise.representation(), Err(ParameterError::FormatInvalid(_))));
+        assert!(serde_urlencoded::from_str::<MergeParams>("observedAt=yesterday").is_err());
+        assert!(serde_urlencoded::from_str::<MergeParams>("unknown=1").is_err());
     }
 
     #[test]

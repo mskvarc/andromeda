@@ -49,11 +49,10 @@
 //!   as a regular expression in SQL, because PostgreSQL's dialect is not the one
 //!   clause 4.9 mandates and a dialect disagreement here would drop candidates
 //!   rather than merely over-admit them.
-//! - **Identifier pattern.** Discovery filters registrations whose declared
-//!   `idPattern` equals the one asked for, so the projection compares the stored
-//!   pattern text; a row that constrains no entity axis at all — the row of an
-//!   information item without `entities`, which clause 5.10.2 says covers
-//!   everything — is admitted as well.
+//! - **Identifier pattern.** A queried `idPattern` is not preselected on: clause
+//!   5.12 lets it match a registered identifier (a regular-expression
+//!   evaluation), any registered pattern, and any entry constraining neither,
+//!   which together admit every row, so the residual unnesting decides it alone.
 //! - **Attribute names.** Names are interned, so the comparison resolves the
 //!   requested expanded IRIs through the `attribute_names` dictionary inside the
 //!   same statement and overlaps the resulting key set, with the sentinel
@@ -69,7 +68,6 @@
 //! demanding one row satisfy two dimensions would exclude legitimate candidates.
 
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_schema::{
     csr::{Csr, RegistrationInformation},
     name_dictionary::AttributeNames,
@@ -132,39 +130,20 @@ pub fn entity_type_candidate(entity_type: &IriBuf) -> SimpleExpr {
     any_row(ri_col(RegistrationInformation::EntityTypes).array_overlaps(text_array(&[entity_type.as_str(), ANY_TYPE])))
 }
 
-/// Registrations that may serve `entity_id`, by the routing projection.
+/// Registrations that may serve one of `entity_ids`, by the routing projection.
 ///
-/// A row naming the identifier exactly or naming none (the `''` sentinel) is
-/// admitted through `idx_registration_information_entity_id`; a pattern row is
-/// admitted whatever its pattern through the partial
+/// A row naming one of the identifiers exactly or naming none (the `''`
+/// sentinel) is admitted through `idx_registration_information_entity_id`; a
+/// pattern row is admitted whatever its pattern through the partial
 /// `idx_registration_information_entity_id_pattern`, because deciding it needs
 /// the clause-4.9 regular-expression engine, which is the caller's residual
-/// evaluation, not PostgreSQL's.
-pub fn entity_id_candidate(entity_id: &Uri) -> SimpleExpr {
+/// evaluation, not the preselect's.
+pub fn entity_id_candidate(entity_ids: &[Uri]) -> SimpleExpr {
+    let named = entity_ids.iter().map(Uri::as_str).chain([ANY_IDENTIFIER]);
     any_row(
         ri_col(RegistrationInformation::EntityId)
-            .is_in([entity_id.as_str(), ANY_IDENTIFIER])
+            .is_in(named)
             .or(ri_col(RegistrationInformation::EntityIdPattern).is_not_null()),
-    )
-}
-
-/// Registrations that may declare `id_pattern`, by the routing projection.
-///
-/// Discovery asks which registrations advertise a given `idPattern`, which is a
-/// comparison of the pattern text itself rather than an evaluation of it, so the
-/// stored pattern is compared as written. The row of an information item that
-/// constrains no entity axis — wildcard type set, no identifier, no pattern —
-/// is admitted beside it: clause 5.10.2 makes such an item cover everything,
-/// and the residual unnesting decides it the same way.
-pub fn id_pattern_candidate(id_pattern: &Pattern) -> SimpleExpr {
-    let unconstrained_entity_axis = ri_col(RegistrationInformation::EntityTypes)
-        .array_contains(text_array(&[ANY_TYPE]))
-        .and(ri_col(RegistrationInformation::EntityId).eq(ANY_IDENTIFIER))
-        .and(ri_col(RegistrationInformation::EntityIdPattern).is_null());
-    any_row(
-        ri_col(RegistrationInformation::EntityIdPattern)
-            .eq(id_pattern.as_str())
-            .or(unconstrained_entity_axis),
     )
 }
 
@@ -224,11 +203,10 @@ mod tests {
             .to_string(PostgresQueryBuilder)
     }
 
-    fn every_dimension() -> [String; 4] {
+    fn every_dimension() -> [String; 3] {
         [
             render(entity_type_candidate(&iri("https://example.com/Vehicle"))),
-            render(entity_id_candidate(&uri("urn:ngsi-ld:Vehicle:1"))),
-            render(id_pattern_candidate(&Pattern::parse("urn:ngsi-ld:.*").expect("valid pattern"))),
+            render(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1")])),
             render(attribute_name_candidate(&[iri("https://example.com/speed")])),
         ]
     }
@@ -272,19 +250,12 @@ mod tests {
     fn the_identifier_dimension_names_the_identifier_beside_the_sentinel_and_admits_pattern_rows_unevaluated() {
         // Clause 4.9 regular expressions are decided by the residual, never by
         // PostgreSQL: a pattern row is a candidate whatever it holds.
-        let sql = render(entity_id_candidate(&uri("urn:ngsi-ld:Vehicle:1")));
-        assert!(sql.contains("\"ri\".\"entity_id\" IN ('urn:ngsi-ld:Vehicle:1', '')"), "{sql}");
+        let sql = render(entity_id_candidate(&[uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:2")]));
+        assert!(
+            sql.contains("\"ri\".\"entity_id\" IN ('urn:ngsi-ld:Vehicle:1', 'urn:ngsi-ld:Vehicle:2', '')"),
+            "{sql}"
+        );
         assert!(sql.contains("OR \"ri\".\"entity_id_pattern\" IS NOT NULL"), "{sql}");
-        assert!(!sql.contains(" ~ "), "the preselect must not run a regular expression: {sql}");
-    }
-
-    #[test]
-    fn the_pattern_dimension_compares_the_pattern_text_and_admits_the_row_of_an_entity_free_item() {
-        let sql = render(id_pattern_candidate(&Pattern::parse("urn:ngsi-ld:.*").expect("valid pattern")));
-        assert!(sql.contains("\"ri\".\"entity_id_pattern\" = 'urn:ngsi-ld:.*'"), "{sql}");
-        assert!(sql.contains("\"ri\".\"entity_types\" @> ARRAY ['*']"), "{sql}");
-        assert!(sql.contains("\"ri\".\"entity_id\" = ''"), "{sql}");
-        assert!(sql.contains("\"ri\".\"entity_id_pattern\" IS NULL"), "{sql}");
         assert!(!sql.contains(" ~ "), "the preselect must not run a regular expression: {sql}");
     }
 

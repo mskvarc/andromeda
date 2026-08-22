@@ -5,8 +5,10 @@ use crate::{
     state::{TemporalRouteState, TemporalStateResolver},
     temporal,
 };
+use andromeda_http_extraction::snapshot_write_guard::reject_snapshot_scoped_writes;
 use axum::{
     Router,
+    middleware::from_fn,
     routing::{delete, get, patch, post},
 };
 use std::sync::Arc;
@@ -34,7 +36,10 @@ impl TemporalRoutes {
             .route(
                 "/{id}/attrs/{attr_id}/{instance_id}",
                 delete(temporal::delete_attribute_instance::delete_attr_instance),
-            );
+            )
+            // Clause 5.5.15: reads are served from the Snapshot; writes into
+            // one are not supported, so they are refused before any handler.
+            .layer(from_fn(reject_snapshot_scoped_writes));
         let operation_routes = Router::new().route("/query", post(operation_query::query));
         let state = TemporalRouteState::new(resolver);
         let router = Router::new()

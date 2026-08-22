@@ -1,0 +1,39 @@
+//! Loop prevention in registration matching (clauses 4.3.6.4 and 5.12).
+//!
+//! A distributed operation carries the listing of the context sources it has
+//! already passed through. No registration whose `contextSourceAlias` appears
+//! in that listing matches, so the request is never forwarded back to a source
+//! it came from.
+
+use andromeda_ngsi_ld_lexicon::context_source_pseudonym::ContextSourcePseudonym;
+use andromeda_postgresql_schema::csr::Csr;
+use andromeda_postgresql_seaquery::pg_array::{any, text_array};
+use sea_query::{Condition, Expr as SeaExpr, ExprTrait};
+
+/// `context_source_alias IS NULL OR NOT (context_source_alias = ANY(ARRAY[...]))`.
+pub(crate) fn not_encountered(encountered: &[ContextSourcePseudonym]) -> Condition {
+    let aliases: Vec<&str> = encountered.iter().map(ContextSourcePseudonym::as_str).collect();
+    Condition::any()
+        .add(SeaExpr::col(Csr::ContextSourceAlias).is_null())
+        .add(Condition::all().add(SeaExpr::col(Csr::ContextSourceAlias).eq(any(text_array(&aliases)))).not())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_query::{Alias, PostgresQueryBuilder, Query};
+
+    #[test]
+    fn an_aliased_registration_is_excluded_when_its_alias_was_encountered() {
+        let encountered = [ContextSourcePseudonym::new("broker-b").expect("valid pseudonym")];
+        let sql = Query::select()
+            .expr(SeaExpr::cust("1"))
+            .from(Alias::new("context_source_registrations"))
+            .cond_where(not_encountered(&encountered))
+            .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains("\"context_source_alias\" IS NULL OR (NOT \"context_source_alias\" = ANY(ARRAY ['broker-b']))"),
+            "{sql}"
+        );
+    }
+}

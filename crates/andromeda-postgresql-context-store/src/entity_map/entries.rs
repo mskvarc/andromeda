@@ -4,16 +4,17 @@
 //! entities is one statement per child table rather than one per row.
 
 use crate::entity_map::{lifecycle::map_key_of, persistence_error};
-use andromeda_entity_map::error::EntityMapError;
+use andromeda_entity_map::{error::EntityMapError, store::EntityMapMutation};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity_map::EntityMap;
-use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMapLinks};
+use andromeda_postgresql_schema::entity_map::{EntityMapEntries, EntityMapLinks, EntityMaps as EntityMapsTable};
 use andromeda_postgresql_seaquery::{
+    clock::now,
     pg_type::PostgresType,
     placeholder::external_placeholder,
     unnest::{UnnestColumn, apply_column_alias, unnest_call},
 };
-use sea_query::{Expr, ExprTrait, Iden, IntoIden, Order, PostgresQueryBuilder, Query};
+use sea_query::{Expr, ExprTrait, Iden, InsertStatement, IntoIden, OnConflict, Order, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgConnection, PgPool, Row};
 
@@ -131,6 +132,49 @@ pub(crate) async fn insert_children(connection: &mut PgConnection, map: &EntityM
     Ok(())
 }
 
+/// The upsert of one link under a live map: the row is selected off the live
+/// control record, so an absent or expired map writes nothing, and a link
+/// already recorded for the registration is replaced.
+fn link_upsert(id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<InsertStatement, EntityMapError> {
+    let mut staged = Query::select();
+    staged
+        .column((EntityMapsTable::Table, EntityMapsTable::MapKey))
+        .expr(Expr::val(registration.as_str()))
+        .expr(Expr::val(linked_map.as_str()))
+        .from(EntityMapsTable::Table)
+        .and_where(Expr::col((EntityMapsTable::Table, EntityMapsTable::Id)).eq(id.as_str()))
+        .and_where(Expr::col((EntityMapsTable::Table, EntityMapsTable::ExpiresAt)).gt(now()));
+    let mut insert = Query::insert();
+    insert
+        .into_table(EntityMapLinks::Table)
+        .columns([
+            EntityMapLinks::MapKey.into_iden(),
+            EntityMapLinks::RegistrationId.into_iden(),
+            EntityMapLinks::LinkedMapId.into_iden(),
+        ])
+        .on_conflict(
+            OnConflict::columns([EntityMapLinks::MapKey, EntityMapLinks::RegistrationId])
+                .update_column(EntityMapLinks::LinkedMapId)
+                .to_owned(),
+        );
+    insert.select_from(staged).map_err(persistence_error)?;
+    Ok(insert)
+}
+
+/// Record the map a registration's context source used under a live map,
+/// replacing the link recorded for that registration (clause 5.5.14).
+pub(crate) async fn upsert_link(pool: &PgPool, id: &Uri, registration: &Uri, linked_map: &Uri) -> Result<EntityMapMutation, EntityMapError> {
+    let (sql, values) = link_upsert(id, registration, linked_map)?.build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(match result.rows_affected() {
+        0 => EntityMapMutation::Missing,
+        1.. => EntityMapMutation::Applied,
+    })
+}
+
 /// A map's `(entity_id, source)` pairs in the order they were produced.
 pub(crate) async fn read_entries(pool: &PgPool, id: &Uri) -> Result<Vec<(String, String)>, EntityMapError> {
     let (sql, values) = Query::select()
@@ -179,7 +223,8 @@ pub(crate) async fn read_links(pool: &PgPool, id: &Uri) -> Result<Vec<(String, S
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_map::entries::{entries_insert_sql, links_insert_sql};
+    use crate::entity_map::entries::{entries_insert_sql, link_upsert, links_insert_sql};
+    use sea_query::PostgresQueryBuilder;
 
     #[test]
     fn the_entries_insert_stages_three_arrays_under_the_resolved_map_key() {
@@ -206,5 +251,26 @@ mod tests {
             "{sql}"
         );
         assert!(sql.contains("UNNEST($2::text[], $3::text[]) AS d(registration_id, linked_map_id)"), "{sql}");
+    }
+
+    #[test]
+    fn the_link_upsert_selects_the_live_map_key_and_replaces_the_registration_link() {
+        let sql = link_upsert(
+            &"urn:ngsi-ld:EntityMap:1".parse().expect("valid URI"),
+            &"urn:ngsi-ld:csr:b".parse().expect("valid URI"),
+            &"urn:ngsi-ld:EntityMap:b".parse().expect("valid URI"),
+        )
+        .expect("builds")
+        .to_string(PostgresQueryBuilder);
+        assert!(
+            sql.contains(r#"INSERT INTO "entity_map_links" ("map_key", "registration_id", "linked_map_id")"#),
+            "{sql}"
+        );
+        assert!(sql.contains(r#""entity_maps"."id" = 'urn:ngsi-ld:EntityMap:1'"#), "{sql}");
+        assert!(sql.contains(r#""entity_maps"."expires_at" > "#), "{sql}");
+        assert!(
+            sql.contains(r#"ON CONFLICT ("map_key", "registration_id") DO UPDATE SET "linked_map_id" = "excluded"."linked_map_id""#),
+            "{sql}"
+        );
     }
 }

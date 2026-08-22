@@ -24,11 +24,12 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
+        "andromeda-ngsi-ld-representation",
         "andromeda-ngsi-ld-request",
         "andromeda-temporal",
         "andromeda-tenancy",
     ],
-    allow_workspace_dev_dependencies: ["andromeda-context-commit", "andromeda-ngsi-ld-representation"],
+    allow_workspace_dev_dependencies: ["andromeda-context-commit"],
     allow_production_dependencies: ["axum"],
 }
 

@@ -1,10 +1,10 @@
 //! Handlers for the `/snapshots` endpoints.
 
 use crate::{
-    error::{SnapshotResultExt, bad_request_data, internal_problem, invalid_request, project_purge_failure},
+    error::{SnapshotResultExt, internal_problem, project_purge_failure},
     state::SnapshotTenantState,
 };
-use andromeda_http_extraction::{json_body::classify_json_body, snapshot_purge::SnapshotPurgeQ, tenant_state, typed_path::TypedPath};
+use andromeda_http_extraction::{jsonld::JsonLd, snapshot_purge::SnapshotPurgeQ, tenant_state, typed_path::TypedPath};
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
@@ -12,22 +12,27 @@ use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, e
 use andromeda_snapshot::service::PurgeOutcome;
 use axum::{
     Json,
-    extract::{OriginalUri, rejection::JsonRejection},
+    extract::OriginalUri,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 
 /// POST /ngsi-ld/v1/snapshots -- Create a new snapshot.
+///
+/// The body is a JSON-LD document (clause 6.3.5): under `application/ld+json`
+/// it carries its own `@context`, which the extractor lifts off before the
+/// Snapshot members are read. The snapshot stores its queries as written, so
+/// the context is not needed beyond that.
 pub async fn create(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
-    input: Result<Json<SnapshotInput>, JsonRejection>,
+    JsonLd { value: input, context: _ }: JsonLd<SnapshotInput>,
 ) -> Result<Response, ProblemResponse> {
-    let Json(input) =
-        input.map_err(|rejection| classify_json_body(rejection).map(|detail| invalid_request(detail, &uri), |detail| bad_request_data(detail, &uri)))?;
     let snapshot = state.snapshots.create(input).await.with_snapshot_instance(&uri)?;
+    state.snapshots.prepare_now();
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
+
     let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, &uri))?;
     Ok(with_location((StatusCode::CREATED, Json(body)).into_response(), location))
 }
@@ -49,10 +54,8 @@ pub async fn update(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Uri>,
-    patch: Result<Json<SnapshotPatch>, JsonRejection>,
+    JsonLd { value: patch, context: _ }: JsonLd<SnapshotPatch>,
 ) -> Result<Response, ProblemResponse> {
-    let Json(patch) =
-        patch.map_err(|rejection| classify_json_body(rejection).map(|detail| invalid_request(detail, &uri), |detail| bad_request_data(detail, &uri)))?;
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, &uri))?;

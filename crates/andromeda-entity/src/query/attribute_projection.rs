@@ -45,11 +45,15 @@ impl EntityQueryService {
     /// are members of the *rendered* representation, not of the typed
     /// [`Entity`], so their half of the rule belongs to the renderer.
     ///
+    /// Public because a subscription's `notification.pick`/`omit` (clause
+    /// 5.8.6) is the same clause 4.21 projection applied to an entity on its
+    /// way to a subscriber rather than to a client.
+    ///
     /// # Errors
     ///
     /// Returns [`EntityError`] when an attribute key cannot be expanded
     /// through the context.
-    pub(crate) async fn project_entity(&self, entity: &mut Entity, projection: &Projection, context: &ContextSpec) -> Result<(), EntityError> {
+    pub async fn project_entity(&self, entity: &mut Entity, projection: &Projection, context: &ContextSpec) -> Result<(), EntityError> {
         if !projection.pick.is_empty() {
             let mut keys_to_remove = Vec::new();
             for key in entity.attrs.keys() {
@@ -90,7 +94,16 @@ impl EntityQueryService {
     }
 
     /// Retain only the attributes whose expanded IRI appears in `wanted_iris`.
-    pub(super) async fn filter_entity_attrs(&self, entity: &mut Entity, wanted_iris: &[IriBuf], context: &ContextSpec) -> Result<(), EntityError> {
+    ///
+    /// Public for the same reason as [`EntityQueryService::project_entity`]:
+    /// a subscription's `notification.attributes` (clause 5.8.6) is this
+    /// narrowing applied on the way to a subscriber.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EntityError`] when an attribute key cannot be expanded
+    /// through the context.
+    pub async fn filter_entity_attrs(&self, entity: &mut Entity, wanted_iris: &[IriBuf], context: &ContextSpec) -> Result<(), EntityError> {
         let mut keys_to_remove = Vec::new();
         for key in entity.attrs.keys() {
             let iri = self.expanded_key(key.as_str(), context).await?;

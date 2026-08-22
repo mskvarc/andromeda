@@ -15,6 +15,10 @@ pub mod entity_probe;
 /// Registration policy failures.
 pub mod error;
 pub mod expiry;
+#[cfg(test)]
+mod fixed_probe;
+#[cfg(test)]
+mod fixed_store;
 mod geometry;
 mod identifier;
 mod information_expansion;

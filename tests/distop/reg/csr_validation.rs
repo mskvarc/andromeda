@@ -107,7 +107,9 @@ async fn reg_entityinfo_type_as_array_accepted() {
 }
 
 /// When both `id` and `idPattern` are present the exact `id` wins and the
-/// pattern is ignored (clause 5.2.9). Confirms REQ-REG-5.
+/// pattern is ignored (clause 5.2.9). The discovery queries name `type=Vehicle`
+/// because clause 5.10.2.4 rejects a query carrying only entity identifiers as
+/// too wide. Confirms REQ-REG-5.
 #[tokio::test]
 async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -123,7 +125,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     let by_exact = topology
         .front()
         .client()
-        .query_registrations(&format!("id={}", urlencoding::encode(&exact)), None)
+        .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&exact)), None)
         .await
         .expect("discovery by exact id");
     assert_status(&by_exact, 200);
@@ -136,7 +138,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     let by_other = topology
         .front()
         .client()
-        .query_registrations(&format!("id={}", urlencoding::encode(&other)), None)
+        .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&other)), None)
         .await
         .expect("discovery by pattern-covered id");
     assert_status(&by_other, 200);

@@ -230,10 +230,12 @@ mod tests {
         let entries = vec![
             TemporalAppendEntry::Scope {
                 observation: ScopeObservation::Path(ScopeBuf::new("/a".to_owned()).expect("a valid scope")),
+                observed_at: None,
                 instance: InstanceIdentity::Generated(Uuid::nil()),
             },
             TemporalAppendEntry::Scope {
                 observation: ScopeObservation::Deleted,
+                observed_at: None,
                 instance: InstanceIdentity::Generated(Uuid::nil()),
             },
         ];

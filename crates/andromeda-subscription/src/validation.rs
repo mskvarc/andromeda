@@ -1,10 +1,15 @@
 //! Subscription payload validation.
 
 use crate::error::SubscriptionError;
-use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::{processor::JsonLdEngine, term_lookup::PreparedTermContext},
+    term_expansion::ContextualExpander,
+};
 use andromeda_ngsi_ld_geometry::{geometry::Geometry, geometry_type::GeometryType};
 use andromeda_ngsi_ld_query::{
     filter::{expansion::expand_q_expr, expression::Expr, parser, predicate::Predicate, serialize},
+    projection::term::ProjectionTerm,
     type_selection::{expansion::expand_type_expression, grammar::TypeExprRaw},
 };
 use chrono::Utc;
@@ -215,9 +220,51 @@ pub fn validate_notification_fragment(payload: &Value) -> Result<(), Subscriptio
 // Term expansion (shared by create + update)
 // ---------------------------------------------------------------------------
 
-/// Expand entities, watchedAttributes, notification.attributes, q, and geoQ
-/// in a subscription payload. Context hosting is NOT handled here — the
-/// entity-subscription service adds that on top.
+/// Which names of an attribute list are left as written rather than expanded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructuralKeywords {
+    /// Every name is an attribute term and expands.
+    Expand,
+    /// The clause 4.21 `id`, `type` and `scope` name structural members of
+    /// the representation, not attributes, and stay as written.
+    Keep,
+}
+
+/// Expand every string of one attribute-name list in place (clause 5.5.7).
+///
+/// An unavailable `@context` fails the request; a single name the context
+/// cannot expand is left as written and reported, the same lenience the
+/// attribute lists always had.
+async fn expand_name_list(
+    engine: &JsonLdEngine,
+    prepared_context: &PreparedTermContext,
+    names: &mut [Value],
+    member: &str,
+    keywords: StructuralKeywords,
+) -> Result<(), SubscriptionError> {
+    for name in names.iter_mut() {
+        let Some(term) = name.as_str() else {
+            continue;
+        };
+        if keywords == StructuralKeywords::Keep && matches!(term, ProjectionTerm::ID_KEYWORD | ProjectionTerm::TYPE_KEYWORD | ProjectionTerm::SCOPE_KEYWORD) {
+            continue;
+        }
+        match engine.expand_term(term, prepared_context).await {
+            Ok(expanded) => *name = Value::String(expanded.to_string()),
+            Err(error) => {
+                if error.is_context_not_available() {
+                    return Err(SubscriptionError::from(error));
+                }
+                warn!(member, term, %error, "Failed to expand subscription attribute name");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Expand entities, watchedAttributes, the notification's attributes, pick
+/// and omit, q, and geoQ in a subscription payload. Context hosting is NOT
+/// handled here — the entity-subscription service adds that on top.
 pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &mut Value, context: &ContextSpec) -> Result<(), SubscriptionError> {
     let prepared_context = engine.prepare_term_context(context);
     let expander = ContextualExpander::new(engine, &prepared_context);
@@ -240,45 +287,20 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         }
     }
 
-    // Expand watchedAttributes
-    if let Some(watched) = payload.get_mut("watchedAttributes")
-        && let Some(arr) = watched.as_array_mut()
-    {
-        for attr in arr.iter_mut() {
-            if let Some(term) = attr.as_str() {
-                match engine.expand_term(term, &prepared_context).await {
-                    Ok(expanded) => {
-                        *attr = Value::String(expanded.to_string());
-                    }
-                    Err(e) => {
-                        if e.is_context_not_available() {
-                            return Err(SubscriptionError::from(e));
-                        }
-                        warn!("Failed to expand watchedAttribute '{}': {}", term, e);
-                    }
-                }
-            }
-        }
+    if let Some(watched) = payload.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
+        expand_name_list(engine, &prepared_context, watched, "watchedAttributes", StructuralKeywords::Expand).await?;
     }
 
-    // Expand notification.attributes
-    if let Some(notification) = payload.get_mut("notification")
-        && let Some(attrs) = notification.get_mut("attributes")
-        && let Some(arr) = attrs.as_array_mut()
-    {
-        for attr in arr.iter_mut() {
-            if let Some(term) = attr.as_str() {
-                match engine.expand_term(term, &prepared_context).await {
-                    Ok(expanded) => {
-                        *attr = Value::String(expanded.to_string());
-                    }
-                    Err(e) => {
-                        if e.is_context_not_available() {
-                            return Err(SubscriptionError::from(e));
-                        }
-                        warn!("Failed to expand notification attribute '{}': {}", term, e);
-                    }
-                }
+    // Clause 5.2.14: `attributes` names attributes only; `pick` and `omit`
+    // may also name the structural members of clause 4.21.
+    if let Some(notification) = payload.get_mut("notification") {
+        for (member, keywords) in [
+            ("attributes", StructuralKeywords::Expand),
+            ("pick", StructuralKeywords::Keep),
+            ("omit", StructuralKeywords::Keep),
+        ] {
+            if let Some(names) = notification.get_mut(member).and_then(Value::as_array_mut) {
+                expand_name_list(engine, &prepared_context, names, member, keywords).await?;
             }
         }
     }
@@ -291,6 +313,20 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
         let expanded_str = serialize::serialize(&expanded);
         if let Some(obj) = payload.as_object_mut() {
             obj.insert("q".to_string(), Value::String(expanded_str));
+        }
+    }
+
+    // Expand the context source filter's property terms the same way: a
+    // registration's Context Source Properties are stored expanded (clause
+    // 5.5.7), so the filter matched against them (clauses 5.8.1.4 and
+    // 5.11.2.4) has to name them by IRI too.
+    if let Some(csf_str) = payload.get("csf").and_then(|v| v.as_str()).map(String::from)
+        && let Ok(expr) = parser::parse(&csf_str)
+        && let Ok(expanded) = expand_q_expr(expr, &expander).await
+    {
+        let expanded_str = serialize::serialize(&expanded);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("csf".to_string(), Value::String(expanded_str));
         }
     }
 
@@ -325,8 +361,38 @@ pub async fn expand_common_subscription_terms(engine: &JsonLdEngine, payload: &m
 mod tests {
     use crate::{
         error::SubscriptionError,
-        validation::{validate_common_fields, validate_create_payload},
+        validation::{expand_common_subscription_terms, validate_common_fields, validate_create_payload},
     };
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use serde_json::{Value, json};
+
+    /// Clause 5.5.7 for the clause 5.2.14 lists: `attributes`, `pick` and
+    /// `omit` expand their attribute names through the context, and the
+    /// clause 4.21 structural keywords of `pick`/`omit` stay as written.
+    #[tokio::test]
+    async fn notification_pick_and_omit_expand_attribute_names_and_keep_the_structural_keywords() {
+        let engine = JsonLdEngine::builder().allow_remote(false).build().expect("engine builds");
+        let mut payload = json!({
+            "notification": {
+                "attributes": ["speed"],
+                "pick": ["id", "speed"],
+                "omit": ["scope", "type", "colour"]
+            }
+        });
+
+        expand_common_subscription_terms(&engine, &mut payload, &ContextSpec::none())
+            .await
+            .expect("expands");
+
+        let notification = &payload["notification"];
+        let is_iri = |value: &Value| value.as_str().is_some_and(|name| name.starts_with("https://"));
+        assert!(is_iri(&notification["attributes"][0]), "{notification}");
+        pretty_assertions::assert_eq!(notification["pick"][0], json!("id"));
+        assert!(is_iri(&notification["pick"][1]), "{notification}");
+        pretty_assertions::assert_eq!(notification["omit"][0], json!("scope"));
+        pretty_assertions::assert_eq!(notification["omit"][1], json!("type"));
+        assert!(is_iri(&notification["omit"][2]), "{notification}");
+    }
 
     #[test]
     fn create_requires_notification_configuration() {

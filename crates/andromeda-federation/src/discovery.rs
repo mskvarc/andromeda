@@ -72,12 +72,12 @@ impl FederationService {
                 // Clause 6.3.17 allows caching for `/entities` only.
                 let outcome = self.forward_get(&csr, url, context, triggering, Cacheability::Uncacheable, None).await;
                 match outcome {
-                    ForwardGetOutcome::Success(body, cs_warnings) => Some(ForwardedDiscoveryResult {
-                        body: Some(body),
-                        warnings: cs_warnings,
+                    ForwardGetOutcome::Success(response) => Some(ForwardedDiscoveryResult {
+                        body: Some(response.body),
+                        warnings: response.warnings,
                     }),
                     // 404 is not abnormal per spec clause 6.3.17
-                    ForwardGetOutcome::NotFound => None,
+                    ForwardGetOutcome::NotFound(_) => None,
                     other @ (ForwardGetOutcome::InvalidPayload(_)
                     | ForwardGetOutcome::ErrorStatus(_)
                     | ForwardGetOutcome::Transport(_)

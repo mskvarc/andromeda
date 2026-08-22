@@ -4,8 +4,11 @@ use andromeda_jsonld::{
     compaction::{compact_attr_iri, compact_type_iri},
     context_spec::ContextSpec,
     engine::processor::JsonLdEngine,
+    term_compaction::ContextualCompactor,
 };
-use chrono::Utc;
+use andromeda_ngsi_ld_model::subscription::{SubscriptionFilters, SubscriptionStatus};
+use andromeda_ngsi_ld_query::{filter::compaction::compact_q_expr, projection::term::ProjectionTerm};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 pub fn fixup_integer_fields(value: &mut Value) {
@@ -46,14 +49,47 @@ pub fn fixup_jsonld_context(value: &mut Value) {
     }
 }
 
-/// Compute expired status at read time based on expiresAt.
-pub fn fixup_expired_status(value: &mut Value, expires_at: Option<chrono::DateTime<Utc>>) {
+/// Report the clause 5.2.12 `status` as `expired` once `expiresAt` has passed.
+///
+/// Clause 5.8.1.4 has the status change "automatically" when the expiration
+/// date is due. The sweeper that persists the transition runs on a cadence,
+/// so a read that lands between the due instant and the sweep reports the
+/// status the subscription already has rather than the one the row still
+/// carries. `isActive` is the client's own member and is left as written.
+pub fn fixup_expired_status(value: &mut Value, expires_at: Option<DateTime<Utc>>) {
     if let Some(expires_at) = expires_at
         && expires_at <= Utc::now()
         && let Some(obj) = value.as_object_mut()
     {
-        obj.insert("status".to_string(), Value::String("expired".to_string()));
-        obj.insert("isActive".to_string(), Value::Bool(false));
+        obj.insert("status".to_string(), Value::String(SubscriptionStatus::Expired.to_string()));
+    }
+}
+
+/// Which names of an attribute list are left as written rather than compacted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructuralKeywords {
+    /// Every name is an attribute IRI and compacts.
+    Compact,
+    /// The clause 4.21 `id`, `type` and `scope` name structural members of
+    /// the representation, not attributes, and stay as written.
+    Keep,
+}
+
+/// Compact every string of one attribute-name list in place.
+async fn compact_name_list(engine: &JsonLdEngine, names: &mut [Value], context: &ContextSpec, keywords: StructuralKeywords) {
+    for name in names.iter_mut() {
+        let Some(iri) = name.as_str().map(String::from) else {
+            continue;
+        };
+        if keywords == StructuralKeywords::Keep
+            && matches!(
+                iri.as_str(),
+                ProjectionTerm::ID_KEYWORD | ProjectionTerm::TYPE_KEYWORD | ProjectionTerm::SCOPE_KEYWORD
+            )
+        {
+            continue;
+        }
+        *name = Value::String(compact_attr_iri(engine, &iri, context).await);
     }
 }
 
@@ -73,35 +109,64 @@ pub async fn compact_subscription_iris(engine: &JsonLdEngine, value: &mut Value,
         }
     }
 
-    // Compact watchedAttributes IRIs
-    if let Some(watched) = value.get_mut("watchedAttributes")
-        && let Some(arr) = watched.as_array_mut()
-    {
-        for attr in arr.iter_mut() {
-            if let Some(iri) = attr.as_str().map(String::from) {
-                let compacted = compact_attr_iri(engine, &iri, context).await;
-                *attr = Value::String(compacted);
+    if let Some(watched) = value.get_mut("watchedAttributes").and_then(Value::as_array_mut) {
+        compact_name_list(engine, watched, context, StructuralKeywords::Compact).await;
+    }
+
+    // Clause 5.2.14: `attributes` names attributes only; `pick` and `omit`
+    // may also name the structural members of clause 4.21.
+    if let Some(notification) = value.get_mut("notification") {
+        for (member, keywords) in [
+            ("attributes", StructuralKeywords::Compact),
+            ("pick", StructuralKeywords::Keep),
+            ("omit", StructuralKeywords::Keep),
+        ] {
+            if let Some(names) = notification.get_mut(member).and_then(Value::as_array_mut) {
+                compact_name_list(engine, names, context, keywords).await;
             }
         }
     }
+}
 
-    // Compact notification.attributes IRIs
-    if let Some(notification) = value.get_mut("notification")
-        && let Some(attrs) = notification.get_mut("attributes")
-        && let Some(arr) = attrs.as_array_mut()
-    {
-        for attr in arr.iter_mut() {
-            if let Some(iri) = attr.as_str().map(String::from) {
-                let compacted = compact_attr_iri(engine, &iri, context).await;
-                *attr = Value::String(compacted);
-            }
+/// Spell the stored `q` and `csf` of a serialized Subscription in the terms
+/// of the reader's `@context` (clause 5.5.7).
+///
+/// Both are clause 4.9 expressions whose attribute terms were expanded when
+/// the subscription was written; the serialized document carries them as
+/// their expanded text. `scopeQ` is a clause 4.19 scope path and carries no
+/// attribute terms, so it is rendered as stored.
+pub async fn compact_subscription_filters(engine: &JsonLdEngine, value: &mut Value, filters: &SubscriptionFilters, context: &ContextSpec) {
+    let compactor = ContextualCompactor::new(engine, context);
+    for (member, expr) in [("q", filters.q.as_ref()), ("csf", filters.csf.as_ref())] {
+        let Some(expr) = expr else {
+            continue;
+        };
+        // clone: the stored filter stays in the resource while the compacted copy is rendered
+        let compacted = compact_q_expr(expr.clone(), &compactor).await;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(member.to_string(), Value::String(compacted.to_string()));
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::normalization::{fixup_default_notification_trigger, fixup_integer_fields};
+    use crate::normalization::{
+        compact_subscription_filters,
+        compact_subscription_iris,
+        fixup_default_notification_trigger,
+        fixup_expired_status,
+        fixup_integer_fields,
+    };
+    use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
+    use andromeda_ngsi_ld_model::subscription::SubscriptionFilters;
+    use chrono::{Duration, Utc};
+    use serde_json::json;
+
+    /// An engine that resolves only what is embedded, never the network.
+    fn offline_engine() -> JsonLdEngine {
+        JsonLdEngine::builder().allow_remote(false).build().expect("engine builds")
+    }
 
     #[test]
     fn integral_delivery_intervals_serialize_as_json_integers() {
@@ -116,8 +181,60 @@ mod tests {
         fixup_default_notification_trigger(&mut value);
         assert_eq!(value["notificationTrigger"], serde_json::json!(["attributeCreated", "attributeUpdated"]));
     }
-}
 
-// ---------------------------------------------------------------------------
-// Field extraction from payload (shared by create)
-// ---------------------------------------------------------------------------
+    /// Clause 5.8.1.4: a subscription whose `expiresAt` is due reports
+    /// `expired` on read, whatever status the row still carries, and the
+    /// client's `isActive` is not rewritten.
+    #[test]
+    fn a_due_expiration_reports_status_expired_at_read_time() {
+        let mut value = json!({"status": "active", "isActive": true});
+        fixup_expired_status(&mut value, Some(Utc::now() - Duration::seconds(1)));
+        pretty_assertions::assert_eq!(value, json!({"status": "expired", "isActive": true}));
+    }
+
+    #[test]
+    fn a_future_or_absent_expiration_leaves_the_status_alone() {
+        let mut future = json!({"status": "active"});
+        fixup_expired_status(&mut future, Some(Utc::now() + Duration::hours(1)));
+        pretty_assertions::assert_eq!(future, json!({"status": "active"}));
+
+        let mut perpetual = json!({"status": "paused"});
+        fixup_expired_status(&mut perpetual, None);
+        pretty_assertions::assert_eq!(perpetual, json!({"status": "paused"}));
+    }
+
+    /// Clause 5.5.7: a stored `q` and `csf` read back in the reader's terms.
+    #[tokio::test]
+    async fn stored_filters_are_compacted_into_the_readers_terms() {
+        let engine = offline_engine();
+        let filters: SubscriptionFilters = serde_json::from_value(json!({
+            "q": "\"https://uri.etsi.org/ngsi-ld/default-context/speed\">10",
+            "csf": "\"https://uri.etsi.org/ngsi-ld/default-context/tier\"==\"gold\""
+        }))
+        .expect("valid filters");
+        let mut value = serde_json::to_value(&filters).expect("serialises");
+
+        compact_subscription_filters(&engine, &mut value, &filters, &ContextSpec::none()).await;
+
+        pretty_assertions::assert_eq!(value["q"], json!("speed>10"));
+        pretty_assertions::assert_eq!(value["csf"], json!("tier==\"gold\""));
+    }
+
+    /// Clause 4.21: the `pick`/`omit` keywords are structural members and
+    /// come back as written beside the compacted attribute IRIs.
+    #[tokio::test]
+    async fn pick_and_omit_compact_their_attribute_iris_and_keep_the_keywords() {
+        let engine = offline_engine();
+        let mut value = json!({
+            "notification": {
+                "pick": ["id", "https://uri.etsi.org/ngsi-ld/default-context/speed"],
+                "omit": ["scope", "https://uri.etsi.org/ngsi-ld/default-context/colour"]
+            }
+        });
+
+        compact_subscription_iris(&engine, &mut value, &ContextSpec::none()).await;
+
+        pretty_assertions::assert_eq!(value["notification"]["pick"], json!(["id", "speed"]));
+        pretty_assertions::assert_eq!(value["notification"]["omit"], json!(["scope", "colour"]));
+    }
+}

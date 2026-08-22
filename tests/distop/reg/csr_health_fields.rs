@@ -3,7 +3,11 @@
 //! The static half is `IMPL`: client-supplied health values are ignored and a
 //! fresh registration exposes only server-owned counters. The dynamic half —
 //! flipping `status` and incrementing counters on a real forward — is driven
-//! through a mock context source (`T-MOCK`).
+//! through a mock context source (`T-MOCK`). The registration `endpoint` is the
+//! mock origin and the stubbed paths splice the entity id in verbatim: the
+//! broker rebuilds the canonical `/ngsi-ld/v1/...` path against the endpoint
+//! authority (clause 6.3.7) without percent-encoding the URN, and the mock
+//! matches request paths literally.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -15,7 +19,6 @@ use crate::{
 };
 use reqwest::Method;
 use serde_json::json;
-use urlencoding::encode;
 
 /// Client-supplied `status`, `timesSent`, `timesFailed` and `lastSuccess` are
 /// server-owned and must be discarded, not stored (clause 5.2.9). Confirms
@@ -80,11 +83,9 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
     let adapter = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:health-fail");
     let registration_id = topology.id("registration:health-fail");
-    adapter
-        .set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{}", encode(&entity_id)), 502)
-        .await;
+    adapter.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{entity_id}"), 502).await;
 
-    let registration = CsrBuilder::new(&registration_id, &adapter.url("/ngsi-ld/v1"))
+    let registration = CsrBuilder::new(&registration_id, &adapter.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
@@ -132,18 +133,11 @@ async fn reg_health_counters_increment_on_forward_attempt() {
     let fail_entity = topology.id("Vehicle:health-bad");
     let registration_id = topology.id("registration:health-counters");
     adapter
-        .set_stub_with_body(
-            Method::GET,
-            &format!("/ngsi-ld/v1/entities/{}", encode(&ok_entity)),
-            200,
-            &vehicle(&ok_entity, 10),
-        )
+        .set_stub_with_body(Method::GET, &format!("/ngsi-ld/v1/entities/{ok_entity}"), 200, &vehicle(&ok_entity, 10))
         .await;
-    adapter
-        .set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{}", encode(&fail_entity)), 502)
-        .await;
+    adapter.set_stub(Method::GET, &format!("/ngsi-ld/v1/entities/{fail_entity}"), 502).await;
 
-    let registration = CsrBuilder::new(&registration_id, &adapter.url("/ngsi-ld/v1"))
+    let registration = CsrBuilder::new(&registration_id, &adapter.url(""))
         .mode("inclusive")
         .id_pattern(&format!("{}.*", topology.id("Vehicle:health")))
         .operations(&["retrieveEntity"])

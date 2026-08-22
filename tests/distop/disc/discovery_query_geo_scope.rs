@@ -58,9 +58,12 @@ async fn query_csr_geoquery_matches_direct_and_possible_containment() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A Context Source Filter matches registrations by their own source
-/// properties: the registration advertising the filtered contextSourceInfo
-/// value matches and the other is excluded (clause 5.10.2). Confirms
+/// A Context Source Filter matches registrations by their own Context Source
+/// Properties (clause 4.9: the filter's "target is the name of a Context Source
+/// Property member of the CSourceRegistration, see Table 5.2.9-1"), so the
+/// fixture carries `tier` as a top-level registration member rather than a
+/// `contextSourceInfo` header pair: the registration whose `tier` satisfies the
+/// filter matches and the other is excluded (clause 5.10.2.4). Confirms
 /// REQ-DISC-37.
 #[tokio::test]
 async fn query_csr_csf_matched_against_source_properties() {
@@ -68,22 +71,12 @@ async fn query_csr_csf_matched_against_source_properties() {
     let vtype = topology.id("CsfType");
     let gold = topology.id("registration:csf-gold");
     let silver = topology.id("registration:csf-silver");
-    register(
-        &topology,
-        &CsrBuilder::new(&gold, PEER_ENDPOINT)
-            .entity_type(&vtype)
-            .context_source_info("tier", "gold")
-            .build(),
-    )
-    .await;
-    register(
-        &topology,
-        &CsrBuilder::new(&silver, PEER_ENDPOINT)
-            .entity_type(&vtype)
-            .context_source_info("tier", "silver")
-            .build(),
-    )
-    .await;
+    let mut gold_body = CsrBuilder::new(&gold, PEER_ENDPOINT).entity_type(&vtype).build();
+    gold_body["tier"] = json!("gold");
+    let mut silver_body = CsrBuilder::new(&silver, PEER_ENDPOINT).entity_type(&vtype).build();
+    silver_body["tier"] = json!("silver");
+    register(&topology, &gold_body).await;
+    register(&topology, &silver_body).await;
 
     let body = query(&topology, &format!("type={}&csf={}", encode(&vtype), encode("tier==gold"))).await;
     assert!(contains(&body, &gold), "the registration satisfying the context source filter matches");

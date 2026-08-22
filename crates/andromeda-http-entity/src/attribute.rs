@@ -4,7 +4,7 @@ use crate::{
     error::{EntityResultExt, public_error},
     state::EntityTenantState,
 };
-use andromeda_entity::discovery::AttributeCollectionRepresentation;
+use andromeda_entity::discovery::{AttributeCollectionRepresentation, DiscoveryScope};
 use andromeda_federation::{
     discovery_result::{collect_discovery_warnings, merge_attribute_info_results, merge_attributes_results},
     operation::ForwardingOperation,
@@ -69,7 +69,10 @@ pub async fn query(
         true => AttributeCollectionRepresentation::Detailed,
         false => AttributeCollectionRepresentation::List,
     };
-    let local_result = service.attributes(representation, &context).await.with_entity_instance(&uri)?;
+    let local_result = service
+        .attributes(representation, DiscoveryScope::for_local_request(params.local), &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())
@@ -145,7 +148,10 @@ pub async fn get(
 
     let is_local = params.local.unwrap_or(false);
 
-    let local_result = service.attribute_info(&attr_id, &context).await.with_entity_instance(&uri)?;
+    let local_result = service
+        .attribute_info(&attr_id, DiscoveryScope::for_local_request(params.local), &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())

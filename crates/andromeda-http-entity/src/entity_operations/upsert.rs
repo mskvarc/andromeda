@@ -1,28 +1,22 @@
-//! HTTP handling for the upsert entity operation.
+//! HTTP handling for the batch upsert entity operation (clause 5.6.8).
 
 use crate::entity_operations::{
     AcceptFormatNoGeo,
     BatchBody,
     BatchOperationResult,
+    BatchProvisionOperation,
     ContextUrl,
     EntityResultExt,
     EntityTenantState,
-    EntityTypeValue,
-    ForwardBatchProvisionRequest,
-    ForwardingModes,
-    ForwardingOperation,
     IncomingVia,
     IntoResponse,
-    Json,
-    NgsiLdBatchResponse,
     NgsiLdErrorType,
     OriginalUri,
     PreferHeader,
     ProblemResponse,
     Response,
-    ResponseMediaType,
-    ResponsePayload,
     StatusCode,
+    TriggeringRequest,
     UpsertMode,
     UpsertParams,
     UpsertPolicy,
@@ -30,12 +24,16 @@ use crate::entity_operations::{
     apply_preference_applied,
     async_preference,
     batch_operation_result,
-    internal_error,
+    classify_entity_error,
+    created_remotely,
+    created_response,
+    forward_entities,
+    local_remainder,
+    merge_forwarded,
+    multi_status_response,
     parse_batch_entities,
     public_error,
-    start_rendering,
 };
-use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 
 pub(crate) async fn batch_upsert(
@@ -60,83 +58,48 @@ pub(crate) async fn batch_upsert(
         ));
     }
 
-    let upsert_policy = match params.options {
-        Some(UpsertMode::Update) => UpsertPolicy::Update,
-        Some(UpsertMode::Replace) | None => UpsertPolicy::Replace,
+    let upsert_mode = params.options.unwrap_or_default();
+    let upsert_policy = match upsert_mode {
+        UpsertMode::Update => UpsertPolicy::Update,
+        UpsertMode::Replace => UpsertPolicy::Replace,
     };
 
-    // Distributed forwarding: forward to matching context sources
-    // Per spec 5.6.8: iterate CSRs, forward matching entities
-    let entity_type = entities.first().and_then(|entity| match &entity.type_ {
-        EntityTypeValue::Single(name) => Some(name),
-        EntityTypeValue::Multiple(names) => names.first(),
-    });
-    let qs = params.options.map(|option| format!("options={option}"));
-    let forwarded = state
-        .forwarding
-        .forward_batch_provision(ForwardBatchProvisionRequest {
-            entity_type_compact: entity_type,
-            body: &body,
-            context: &context,
-            operation: ForwardingOperation::UpsertBatch,
-            batch_path: "/entityOperations/upsert",
-            query_string: qs.as_deref(),
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
-            },
-        })
+    let query_string = params.options.map(|option| format!("options={option}"));
+    let triggering = TriggeringRequest {
+        via: incoming_via.as_ref(),
+        headers: Some(&headers),
+    };
+    let forwarded = forward_entities(
+        &state,
+        BatchProvisionOperation::Upsert(upsert_mode),
+        &entities,
+        &context,
+        query_string.as_deref(),
+        triggering,
+        &uri,
+    )
+    .await?;
+
+    // Clause 5.6.8.4: the local phase creates or updates what proxied
+    // registrations left.
+    let remainder = local_remainder(entities, &forwarded);
+    let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
+    let (batch, mut created) = service
+        .batch_upsert(&remainder, &context, upsert_policy, mode)
         .await
         .with_entity_instance(&uri)?;
-
-    let modes = ForwardingModes::from_results(&forwarded);
-
-    if modes.has_exclusive || modes.has_redirect {
-        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
-        let Some(first) = forwarded.first() else {
-            return Err(internal_error(&"Expected forwarded result", &uri));
-        };
-        let status = StatusCode::from_u16(first.status()).unwrap_or(StatusCode::NO_CONTENT);
-        if let Some(resp_body) = first.body() {
-            return Ok((status, Json(resp_body.clone())).into_response());
-        }
-        return Ok(status.into_response());
-    }
-
-    // Inclusive or no match: upsert locally
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), entities.len());
-    let (batch, created_ids) = service
-        .batch_upsert(&entities, &context, upsert_policy, mode)
-        .await
-        .with_entity_instance(&uri)?;
-    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
+    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut parse_errors);
+    merge_forwarded(&mut result, &forwarded);
+    created.extend(created_remotely(&forwarded).cloned()); // clone: the response body owns the identifiers it lists
 
-    if result.errors.is_empty() {
-        if created_ids.is_empty() {
-            Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
-        } else {
-            let value = serde_json::to_value(&created_ids).with_entity_instance(&uri)?;
-            let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-                .with_payload(ResponsePayload::Batch(value))
-                .render()
-                .with_entity_instance(&uri)?;
-            Ok(apply_preference_applied(
-                NgsiLdBatchResponse::new(StatusCode::CREATED, rendered).into_response(),
-                mode,
-            ))
-        }
+    // Clause 5.6.8.5: nothing when every entity already existed, the created
+    // identifiers when some were created, the full result on any failure.
+    if !result.errors.is_empty() {
+        multi_status_response(&result, &context, &uri, mode)
+    } else if created.is_empty() {
+        Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
-        // Clause 6.3.6: the 207 Multi-Status body is always application/json,
-        // regardless of the negotiated Accept, so it carries no JSON-LD @context.
-        let value = serde_json::to_value(&result).with_entity_instance(&uri)?;
-        let rendered = start_rendering(ResponseMediaType::Json, &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Batch(value))
-            .render()
-            .with_entity_instance(&uri)?;
-        Ok(apply_preference_applied(
-            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
-            mode,
-        ))
+        created_response(&created, &accept, &context, &uri, mode)
     }
 }

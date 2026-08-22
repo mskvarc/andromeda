@@ -34,12 +34,15 @@ fn far_vehicle(id: &str) -> Value {
     })
 }
 
-/// A temporal `Vehicle` carrying a scope.
+/// A temporal `Vehicle` carrying a scope stamped inside the `BEFORE_2022`
+/// window, so the temporal representation exposes the scope within the queried
+/// interval (clause 5.14.5.4 evaluates the scope query against the selected
+/// temporal evolution).
 fn scoped_vehicle(id: &str, scope: &str) -> Value {
     json!({
         "id": id,
         "type": "Vehicle",
-        "scope": scope,
+        "scope": { "type": "Property", "value": scope, "observedAt": "2020-06-01T00:00:00Z" },
         "speed": [ { "type": "Property", "value": 90, "observedAt": "2021-01-01T00:00:00Z" } ],
         "@context": COMPOUND_CONTEXT.as_str()
     })

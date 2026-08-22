@@ -1,8 +1,9 @@
 //! Purge forwarding — REQ-PROV-130..133 (clause 5.6.21.4).
 //!
-//! `POST /entityOperations/purge` deletes matched entities and, unless the
-//! request is `local=true`, forwards a purge to every matching registration that
-//! supports it. The whole area is first-run UNKNOWN, so success statuses are
+//! Purge Entities is bound to `DELETE /entities?<query>` (clause 6.4.3.3, Table
+//! 6.4.3.3-1) and advertised by the Table 4.20-1 name `purgeEntity`. It deletes
+//! matched entities and, unless the request is `local=true`, forwards the purge
+//! to every matching registration that supports it. Success statuses are
 //! asserted tolerantly while the forwarding gate, the per-registration fan-out,
 //! the unsupported-operation branch, and the local query-then-delete phase are
 //! each asserted directly.
@@ -48,15 +49,13 @@ async fn purge_local_scope_skips_forwarding() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
-        .operations(&["deleteEntity", "retrieveEntity"])
+        .operations(&["purgeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
-        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/purge?type=Vehicle&local=true")
-        .header("content-type", "application/ld+json")
+        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle&local=true")
         .header("link", context_link().as_str())
-        .body(Vec::new())
         .send()
         .await
         .expect("purge");
@@ -89,23 +88,21 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
 
     let registration_one = CsrBuilder::new(&reg_id_one, &mock.url("/s1"))
         .mode("redirect")
-        .operations(&["deleteEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["purgeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration_one).await.expect("create registration one"), 201);
     let registration_two = CsrBuilder::new(&reg_id_two, &mock.url("/s2"))
         .mode("redirect")
-        .operations(&["deleteEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["purgeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration_two).await.expect("create registration two"), 201);
 
-    mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/purge", 204).await;
-    mock.set_stub(Method::POST, "/s2/ngsi-ld/v1/entityOperations/purge", 204).await;
+    mock.set_stub(Method::DELETE, "/s1/ngsi-ld/v1/entities", 204).await;
+    mock.set_stub(Method::DELETE, "/s2/ngsi-ld/v1/entities", 204).await;
 
     let purged = client
-        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/purge?type=Vehicle")
-        .header("content-type", "application/ld+json")
+        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("link", context_link().as_str())
-        .body(Vec::new())
         .send()
         .await
         .expect("purge");
@@ -116,11 +113,11 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
     );
 
     assert!(
-        mock.get_count(Method::POST, "/s1/ngsi-ld/v1/entityOperations/purge").await >= 1,
+        mock.get_count(Method::DELETE, "/s1/ngsi-ld/v1/entities").await >= 1,
         "the first registration is forwarded a purge"
     );
     assert!(
-        mock.get_count(Method::POST, "/s2/ngsi-ld/v1/entityOperations/purge").await >= 1,
+        mock.get_count(Method::DELETE, "/s2/ngsi-ld/v1/entities").await >= 1,
         "the second registration is forwarded a purge"
     );
 
@@ -128,8 +125,10 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A matching registration that does not advertise the purge operation yields a
-/// `409 Conflict` (bare) or a keyed `207 Multi-Status`, with no forwarding.
+/// A matching registration that does not advertise `purgeEntity` yields a
+/// `409 Conflict` (bare) or a keyed `207 Multi-Status`, with no forwarding
+/// (clause 5.6.21.4: "If the Purge Entity operation is not supported by the
+/// matched registration, this shall result in an error of type Conflict").
 /// Confirms REQ-PROV-132.
 #[tokio::test]
 async fn purge_op_unsupported_returns_conflict_or_partial() {
@@ -142,10 +141,8 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
-        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/purge?type=Vehicle")
-        .header("content-type", "application/ld+json")
+        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("link", context_link().as_str())
-        .body(Vec::new())
         .send()
         .await
         .expect("purge");
@@ -155,7 +152,7 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
         String::from_utf8_lossy(&purged.body)
     );
     assert_eq!(
-        mock.get_count(Method::POST, "/ngsi-ld/v1/entityOperations/purge").await,
+        mock.get_count(Method::DELETE, "/ngsi-ld/v1/entities").await,
         0,
         "no purge is forwarded on an unsupported operation"
     );
@@ -193,10 +190,8 @@ async fn purge_local_phase_queries_then_deletes() {
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let purged = client
-        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/purge?type=Vehicle&local=true")
-        .header("content-type", "application/ld+json")
+        .raw(Method::DELETE, "/ngsi-ld/v1/entities?type=Vehicle&local=true")
         .header("link", context_link().as_str())
-        .body(Vec::new())
         .send()
         .await
         .expect("purge");

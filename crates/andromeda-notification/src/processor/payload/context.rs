@@ -1,27 +1,8 @@
-//! Notification context selection and compacted-entity normalization.
+//! Compacted-entity normalization for notification payloads.
 
-use andromeda_jsonld::context_spec::{ContextSpec, CoreContextPolicy};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
-use andromeda_subscription::compiled::CompiledSubscription;
-use iri_rs::IriRefBuf;
 use serde_json::Value;
-use url::Url;
-
-pub fn context_for_subscription(sub: &CompiledSubscription) -> ContextSpec {
-    context_from_url(sub.jsonld_context.as_ref())
-}
-
-/// Build a context specification from an optional `jsonldContext` URL.
-pub fn context_from_url(jsonld_context: Option<&Url>) -> ContextSpec {
-    let Some(url) = jsonld_context else {
-        return ContextSpec::none().with_core_policy(CoreContextPolicy::Append);
-    };
-    if let Ok(iri) = IriRefBuf::new(url.as_str().to_owned()) {
-        return ContextSpec::from_links(vec![iri]).with_core_policy(CoreContextPolicy::Append);
-    }
-    ContextSpec::none().with_core_policy(CoreContextPolicy::Append)
-}
 
 pub fn normalize_compacted_entity(mut entity: Value) -> Value {
     if let Value::Object(obj) = &mut entity {

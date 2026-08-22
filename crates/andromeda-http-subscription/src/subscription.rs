@@ -27,7 +27,7 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
-    subscription::{JsonldContextStripRenderer, SubscriptionFlavor, SubscriptionRenderer},
+    subscription::{SubscriptionFlavor, SubscriptionRenderer},
 };
 use andromeda_ngsi_ld_request::{empty::EmptyParams, subscription::ListParams};
 use axum::{
@@ -35,7 +35,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use iri_rs::IriRefBuf;
 use serde_json::Value;
 
 /// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
@@ -78,23 +77,11 @@ pub async fn get(
         .with_sys_attrs(options.sys_attrs)
         .render();
 
-    // Extract jsonldContext from body and use it for the response context
-    let strip = JsonldContextStripRenderer::new(subscription).render();
-    // The extracted jsonldContext is a context URL when it parses as an IRI
-    // reference; a body-embedded inline context (an object or array) is not one
-    // and leaves the request's own context in force.
-    let response_context = match strip
-        .extracted
-        .as_ref()
-        .and_then(|v| v.as_str())
-        .and_then(|url| IriRefBuf::new(url.to_string()).ok())
-    {
-        Some(url) => ContextSpec::from_links(vec![url]),
-        None => context,
-    };
-    let subscription = strip.payload;
-
-    let rendered = start_rendering(accept.media_type(), &response_context, PreferHeader::default().rendering_preferences())
+    // Clause 6.3.5: a GET is rendered under the context its `Link` header
+    // names, or the default context. The subscription's own `jsonldContext`
+    // governs its notifications (clause 5.8.1.4), not this response, and it
+    // stays in the clause 5.2.12 document as a member.
+    let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
         .with_payload(ResponsePayload::Single(subscription))
         .render()
         .with_subscription_instance(&uri)?;
@@ -132,11 +119,9 @@ pub async fn query(
     let subscriptions = subscriptions
         .into_iter()
         .map(|sub| {
-            let sub = SubscriptionRenderer::new(sub, SubscriptionFlavor::Local)
+            SubscriptionRenderer::new(sub, SubscriptionFlavor::Local)
                 .with_sys_attrs(options.sys_attrs)
-                .render();
-            // Strip jsonldContext from each subscription body
-            JsonldContextStripRenderer::new(sub).render().payload
+                .render()
         })
         .collect::<Vec<_>>();
 

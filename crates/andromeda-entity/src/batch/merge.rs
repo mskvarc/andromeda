@@ -34,7 +34,7 @@ impl EntityService {
             };
             let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
 
-            if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded) {
+            if let Err(error) = merge_entity(&mut existing, &prepared_entity.expanded, None) {
                 errors.push((id, error.into()));
                 continue;
             }

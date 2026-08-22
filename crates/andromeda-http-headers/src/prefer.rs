@@ -46,6 +46,13 @@ use std::iter;
 pub struct Prefer(Vec<Preference>);
 
 impl Prefer {
+    /// A `Prefer: ngsi-ld=<version>` asking the receiver for a payload that
+    /// conforms to `version` (clause 4.3.6.8), which is what a broker sends on
+    /// every forwarded context consumption request.
+    pub fn version(version: SpecVersion) -> Prefer {
+        Prefer(vec![Preference::Version(version)])
+    }
+
     /// Return the GeoJSON body preference, defaulting to `LdJson` if absent.
     pub fn geo_json_body(&self) -> GeoJsonBodyPreference {
         self.0
@@ -218,6 +225,14 @@ mod tests {
     fn requested_version_extracts_version() {
         let prefer = Prefer(vec![Preference::Version(SpecVersion::V1_3)]);
         pretty_assertions::assert_eq!(prefer.requested_version(), Some(SpecVersion::V1_3));
+    }
+
+    #[test]
+    fn a_version_preference_encodes_as_the_major_minor_token() {
+        let mut encoded = Vec::new();
+        Prefer::version(SpecVersion::new(1, 5)).encode(&mut encoded);
+        pretty_assertions::assert_eq!(encoded.len(), 1);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.5");
     }
 
     #[test]

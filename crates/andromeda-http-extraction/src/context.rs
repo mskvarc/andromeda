@@ -1,12 +1,13 @@
 //! JSON-LD context URL extraction from Link headers.
 
 use andromeda_http_headers::link::header::Link;
+use andromeda_http_response::extraction_rejection::ExtractorRejection;
 use andromeda_jsonld::context_spec::ContextSpec;
 use axum::{
     extract::FromRequestParts,
     http::{header::LINK, request::Parts},
 };
-use std::{convert::Infallible, str::FromStr};
+use std::str::FromStr;
 
 /// JSON-LD context extracted from Link header.
 #[derive(Clone, Debug, Default)]
@@ -24,21 +25,25 @@ impl ContextUrl {
     }
 }
 
+/// The clause 5.5.4 JSON-LD validation of a request's `Link` headers: a
+/// header that is not a well-formed `Link` (IETF RFC 8288) cannot name a
+/// context, and the request is rejected as `BadRequestData` rather than served
+/// as if it had named none.
 impl<S> FromRequestParts<S> for ContextUrl
 where
     S: Send + Sync,
 {
-    type Rejection = Infallible;
+    type Rejection = ExtractorRejection;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let mut links = Vec::new();
         for value in parts.headers.get_all(LINK) {
-            let Ok(link_str) = value.to_str() else {
-                continue;
-            };
-            if let Ok(parsed) = Link::from_str(link_str) {
-                links.extend(parsed.context_urls().cloned());
-            }
+            let link_str = value
+                .to_str()
+                .map_err(|error| ExtractorRejection::bad_request_data(format!("Link header is not visible ASCII: {error}"), parts.uri.clone()))?;
+            let parsed = Link::from_str(link_str)
+                .map_err(|error| ExtractorRejection::bad_request_data(format!("Link header is malformed: {error}"), parts.uri.clone()))?;
+            links.extend(parsed.context_urls().cloned());
         }
 
         let context = if links.is_empty() {
@@ -93,6 +98,38 @@ mod tests {
             context.link_contexts(),
             &[iri_ref("https://example.com/a.jsonld"), iri_ref("https://example.com/b.jsonld")]
         );
+    }
+
+    /// Clause 5.5.4: a `Link` header that is not a well-formed link is a
+    /// `BadRequestData`, not an absent context.
+    #[tokio::test]
+    async fn a_malformed_link_header_is_rejected_as_bad_request_data() {
+        let request = Request::builder()
+            .uri("/ngsi-ld/v1/csourceRegistrations?type=Vehicle")
+            .header("Link", "this is not a valid link header")
+            .body(())
+            .unwrap();
+        let (mut parts, _) = request.into_parts();
+
+        let rejection = ContextUrl::from_request_parts(&mut parts, &()).await.expect_err("malformed Link is rejected");
+
+        assert!(matches!(rejection, ExtractorRejection::BadRequestData { .. }), "{rejection:?}");
+    }
+
+    /// A well-formed `Link` naming a relation other than the JSON-LD context
+    /// is not a context, but it is not an error either.
+    #[tokio::test]
+    async fn a_link_with_another_relation_leaves_the_context_empty() {
+        let request = Request::builder()
+            .uri("/")
+            .header("Link", r#"<https://example.com/other>; rel="stylesheet""#)
+            .body(())
+            .unwrap();
+        let (mut parts, _) = request.into_parts();
+
+        let context = ContextUrl::from_request_parts(&mut parts, &()).await.unwrap().into_inner();
+
+        assert!(context.link_contexts().is_empty());
     }
 
     #[tokio::test]

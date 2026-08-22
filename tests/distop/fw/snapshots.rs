@@ -1,7 +1,10 @@
 //! Snapshot locality and lifecycle: a snapshot captures data, its operations are
 //! implicitly local, it is orthogonal to tenancy, and low-resource eviction
-//! follows priority (ETSI GS CIM 009 v1.9.1, clause 5.16). `UNKNOWN` status,
-//! probing the snapshot resources first; the eviction rows lack a deterministic
+//! follows priority (ETSI GS CIM 009 v1.9.1, clause 5.16). Snapshot creation
+//! returns before its queries run (clause 5.16.1.4: "The request returns,
+//! confirming the creation of the snapshot ... The following is executed in the
+//! background"), so every row that scopes an operation to a snapshot first polls
+//! its status out of `preparing`. The eviction rows lack a deterministic
 //! trigger and are ignored.
 
 use crate::{
@@ -12,25 +15,55 @@ use crate::{
     topology::DistributedTopology,
 };
 use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient};
+use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
 use serde_json::{Value, json};
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
+
+/// How long a snapshot may stay in `preparation` before the test gives up.
+const PREPARATION_BUDGET: Duration = Duration::from_secs(30);
+
+/// The pause between two status polls.
+const PREPARATION_POLL: Duration = Duration::from_millis(200);
 
 /// A minimal valid snapshot creation body: a Snapshot resource with one query
-/// and a bounded lifetime (clause 5.16).
+/// and a bounded lifetime (clause 5.16), carrying its `@context` inline because
+/// it is sent as `application/ld+json` (clause 6.3.5).
 fn snapshot_body() -> Value {
-    json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{ "type": "Query" }] })
+    json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{ "type": "Query" }], "@context": COMPOUND_CONTEXT.as_str() })
 }
 
-/// Create a snapshot through the given client and return its identifier.
+/// Create a snapshot through the given client and return its identifier once its
+/// background preparation has finished.
 async fn create_snapshot(client: &TestClient) -> String {
-    let created = client
-        .raw(Method::POST, "/ngsi-ld/v1/snapshots")
-        .json(&snapshot_body())
-        .send()
-        .await
-        .expect("create snapshot");
+    create_prepared_snapshot(client, &snapshot_body()).await
+}
+
+/// Create a snapshot from `body` and poll `GET /snapshots/{id}` until its
+/// `snapshotStatus` has left the pending state, returning the snapshot
+/// identifier. Table 5.2.41-2 names the initial status `preparing` (and the
+/// terminal ones `success`, `partial`, `failure`, `empty`) while the prose of
+/// clause 5.16.1.4 spells it `preparation`; both spellings are treated as
+/// pending so the poll follows the table without contradicting the prose.
+pub async fn create_prepared_snapshot(client: &TestClient, body: &Value) -> String {
+    let created = client.create_snapshot(body).await.expect("create snapshot");
     assert_status(&created, 201);
-    json_body(&created)["id"].as_str().expect("snapshot has an id").to_owned()
+    let snapshot_id = json_body(&created)["id"].as_str().expect("snapshot has an id").to_owned();
+    let started = Instant::now();
+    loop {
+        let status = client.retrieve_snapshot(&snapshot_id, None).await.expect("retrieve snapshot status");
+        assert_status(&status, 200);
+        let snapshot_status = json_body(&status)["snapshotStatus"].as_str().map(str::to_owned).unwrap_or_default();
+        if !matches!(snapshot_status.as_str(), "preparing" | "preparation") {
+            return snapshot_id;
+        }
+        assert!(
+            started.elapsed() < PREPARATION_BUDGET,
+            "snapshot {snapshot_id} is still in preparation after {PREPARATION_BUDGET:?}"
+        );
+        sleep(PREPARATION_POLL).await;
+    }
 }
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
@@ -51,14 +84,7 @@ async fn register_inclusive_query(topology: &DistributedTopology, endpoint: &str
 #[tokio::test]
 async fn distop_entity_snapshot_creation_returns_identifier() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let created = topology
-        .front()
-        .client()
-        .raw(Method::POST, "/ngsi-ld/v1/snapshots")
-        .json(&snapshot_body())
-        .send()
-        .await
-        .expect("create snapshot");
+    let created = topology.front().client().create_snapshot(&snapshot_body()).await.expect("create snapshot");
     assert_status(&created, 201);
     assert!(json_body(&created)["id"].as_str().is_some(), "snapshot creation returns an identifier");
     assert!(location(&created).contains("/snapshots/"), "snapshot creation returns a location");
@@ -227,13 +253,28 @@ async fn distop_entity_snapshot_local_false_ignored() {
 }
 
 /// A tenant snapshot resolves only with both the snapshot id and its tenant: the
-/// same id is unknown under the default tenant (clause 5.16, 4.14). Confirms
+/// same id is unknown under the default tenant (clause 5.16, 4.14). The tenant
+/// is brought into existence by a Create Entity first, since clause 5.5.10
+/// lists the operations that implicitly create a Tenant ("Create Entity (clause
+/// 5.6.1). Batch Entity Creation (clause 5.6.7). Create or Update Temporal
+/// Evolution of an Entity (clause 5.6.11). Create Subscription (clause 5.8.1).
+/// Register Context Source (clause 5.9.2). Create Context Source Registration
+/// (clause 5.11.2)") and snapshot creation is not among them. Confirms
 /// REQ-FW-85.
 #[tokio::test]
 async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantSnapshot").expect("valid tenant name");
     let tenant_client = topology.front().tenant_client(tenant);
+    assert_status(
+        &tenant_client
+            .post_entity(&vehicle(&topology.id("Vehicle:snapshot-tenant"), 10))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("create tenant entity"),
+        201,
+    );
     let snapshot_id = create_snapshot(&tenant_client).await;
 
     let under_tenant = tenant_client
@@ -256,14 +297,7 @@ async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
         .expect("default snapshot query");
     assert_status(&under_default, 404);
 
-    assert_status(
-        &tenant_client
-            .raw(Method::DELETE, &format!("/ngsi-ld/v1/snapshots/{snapshot_id}"))
-            .send()
-            .await
-            .expect("tenant snapshot cleanup"),
-        204,
-    );
+    assert_status(&tenant_client.delete_snapshot(&snapshot_id).await.expect("tenant snapshot cleanup"), 204);
     topology.finish().await.expect("topology cleanup");
 }
 
@@ -277,8 +311,7 @@ async fn distop_entity_snapshot_low_resources_may_delete() {
     let retrieved = topology
         .front()
         .client()
-        .raw(Method::GET, &format!("/ngsi-ld/v1/snapshots/{snapshot_id}"))
-        .send()
+        .retrieve_snapshot(&snapshot_id, None)
         .await
         .expect("retrieve snapshot");
     assert_status(&retrieved, 200);
@@ -291,29 +324,11 @@ async fn distop_entity_snapshot_low_resources_may_delete() {
 #[tokio::test]
 async fn distop_entity_snapshot_deletion_order_by_priority() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let low_priority = json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotPriority": 1, "snapshotQueries": [{ "type": "Query" }] });
-    let high_priority = json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotPriority": 10, "snapshotQueries": [{ "type": "Query" }] });
-    assert_status(
-        &topology
-            .front()
-            .client()
-            .raw(Method::POST, "/ngsi-ld/v1/snapshots")
-            .json(&low_priority)
-            .send()
-            .await
-            .expect("low priority"),
-        201,
-    );
-    assert_status(
-        &topology
-            .front()
-            .client()
-            .raw(Method::POST, "/ngsi-ld/v1/snapshots")
-            .json(&high_priority)
-            .send()
-            .await
-            .expect("high priority"),
-        201,
-    );
+    let mut low_priority = snapshot_body();
+    low_priority["snapshotPriority"] = json!(1);
+    let mut high_priority = snapshot_body();
+    high_priority["snapshotPriority"] = json!(10);
+    assert_status(&topology.front().client().create_snapshot(&low_priority).await.expect("low priority"), 201);
+    assert_status(&topology.front().client().create_snapshot(&high_priority).await.expect("high priority"), 201);
     topology.finish().await.expect("topology cleanup");
 }

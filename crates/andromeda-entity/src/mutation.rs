@@ -8,6 +8,8 @@ use crate::{
     attribute_envelope::validate_attribute_envelopes,
     error::EntityError,
     geo_property_geometry::validate_geo_property_geometries,
+    merge_fragment::{adapt_member, existing_attribute_types},
+    merge_options::MergeOptions,
     notification_plan::{NotificationGroup, attribute_change_groups},
     null_content::reject_null_content,
     sys_attrs::snapshot_with_sys_attrs,
@@ -21,7 +23,7 @@ use andromeda_context_commit::{
     precondition::Precondition,
     write_outcome::single,
 };
-use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     entity::{Entity, EntityPatch},
@@ -29,13 +31,29 @@ use andromeda_ngsi_ld_model::{
         attribute_change::classify_attribute_changes,
         entity_member::{extract_attribute_names, extract_types},
         mutation::entity::merge_entity,
+        node::expanded_object_ref,
     },
     notification::{ChangeOrigin, NotificationTrigger},
 };
-use andromeda_ngsi_ld_representation::normalization::{normalize_entity_attributes, normalize_merge_fragment};
+use andromeda_ngsi_ld_query::type_selection::{expansion::expand_type_expression, grammar::TypeExpr};
+use andromeda_ngsi_ld_representation::{
+    entity_members::ENTITY_MEMBERS,
+    merge_representation::MergeRepresentation,
+    normalization::{normalize_entity_attributes, normalize_merge_fragment},
+};
 use chrono::Utc;
 use serde_json::Value;
 use std::{slice, sync::Arc};
+
+/// Whether an expanded entity's types satisfy a clause 4.17 selector.
+fn entity_satisfies(expanded: &Value, selector: &TypeExpr) -> bool {
+    let types = expanded_object_ref(expanded)
+        .and_then(|object| object.get("@type"))
+        .and_then(Value::as_array)
+        .map(|types| types.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    selector.matches(&types)
+}
 
 /// What one clause 5.6.17 merge produced, beyond the write itself.
 ///
@@ -86,15 +104,22 @@ impl EntityService {
         Ok(id.clone()) // clone: the caller owns the created identifier while the request entity remains borrowed
     }
 
-    /// Merge a partial update into an existing entity (NGSI-LD 5.6.17).
+    /// Merge a partial update into an existing entity (NGSI-LD 5.6.17) under
+    /// the Table 6.5.3.4-1 options the request named.
     ///
     /// The merge is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
-    pub async fn merge(&self, id: &Uri, patch: &EntityPatch, context: &ContextSpec) -> Result<(), EntityError> {
+    pub async fn merge(&self, id: &Uri, patch: &EntityPatch, context: &ContextSpec, options: MergeOptions<'_>) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: mutation events and computed-write closures own the identifier
 
         let mut patch_json = serde_json::to_value(patch).map_err(|err| EntityError::validation(format!("Invalid patch payload: {}", err)))?;
+        let prepared_context = self.engine.prepare_term_context(context);
+        let type_selector = match options.type_selector {
+            Some(raw) => Some(expand_type_expression(raw, &ContextualExpander::new(&self.engine, &prepared_context)).await?),
+            None => None,
+        };
+        self.adapt_merge_fragment(id, &mut patch_json, &prepared_context, options).await?;
         normalize_merge_fragment(&mut patch_json);
         let patch_expanded = Arc::new(self.engine.expand(patch_json, context).await?);
         validate_attribute_envelopes(&patch_expanded)?;
@@ -102,8 +127,13 @@ impl EntityService {
 
         let MergedEntity { events } = self
             .commit_computed_write(&entity_uri, |previous| {
+                // Clause 5.6.17.4: the target is the entity with this id "and,
+                // where specified, type"; one outside the selector is not it.
+                if type_selector.as_ref().is_some_and(|selector| !entity_satisfies(previous, selector)) {
+                    return Err(EntityError::not_found(&entity_uri));
+                }
                 let mut existing = previous.clone(); // clone: the merge mutates its own copy of the stored payload
-                merge_entity(&mut existing, &patch_expanded)?;
+                merge_entity(&mut existing, &patch_expanded, options.observed_at)?;
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
@@ -125,6 +155,40 @@ impl EntityService {
 
         events.into_iter().for_each(|event| self.emit_change(event));
 
+        Ok(())
+    }
+
+    /// Rewrite a merge fragment for the attribute types the target already
+    /// holds (Table 6.5.3.4-1 `format=simplified` and `lang`).
+    ///
+    /// A normalized fragment without `lang` needs no rewrite, so the target is
+    /// not read for it. A target that does not exist is left for the write to
+    /// report as not found.
+    async fn adapt_merge_fragment(
+        &self,
+        id: &Uri,
+        fragment: &mut Value,
+        prepared_context: &PreparedTermContext,
+        options: MergeOptions<'_>,
+    ) -> Result<(), EntityError> {
+        if options.representation == MergeRepresentation::Normalized && options.lang.is_none() {
+            return Ok(());
+        }
+        let Some(members) = fragment.as_object_mut() else {
+            return Ok(());
+        };
+        let Some(existing) = self.reader.get(id).await? else {
+            return Ok(());
+        };
+        let existing_types = expanded_object_ref(&existing).map(existing_attribute_types).unwrap_or_default();
+        for (member, value) in members.iter_mut() {
+            if ENTITY_MEMBERS.contains(&member.as_str()) {
+                continue;
+            }
+            let iri = self.engine.expand_term(member, prepared_context).await?;
+            adapt_member(member, value, existing_types.get(iri.as_str()).copied(), options.representation, options.lang)
+                .map_err(|error| EntityError::validation(error.to_string()))?;
+        }
         Ok(())
     }
 

@@ -13,7 +13,13 @@ pub struct RegistrationExpiryOutcome {
     pub expired: Vec<Uri>,
 }
 
-/// Independently scheduled semantic deletion of expired registrations.
+/// Independently scheduled semantic deletion of expired registrations
+/// (clause 5.9.2.4).
+///
+/// The scheduler that owns the cadence lives in broker composition; this type
+/// is one sweep. Between sweeps the store's reads already hide a registration
+/// past its `expiresAt`, so the sweep is what frees the row and announces the
+/// deletion, not what makes it invisible.
 pub struct RegistrationExpiry {
     store: Arc<dyn RegistrationStore>,
     change_sink: Option<Arc<dyn RegistrationChangeSink>>,

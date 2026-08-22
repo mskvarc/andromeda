@@ -20,6 +20,9 @@ pub const PLACEHOLDER_ENDPOINT: &str = "http://context-source.example/ngsi-ld/v1
 /// The forwarded collection path for entity query and create operations.
 pub const FORWARDED_ENTITIES_PATH: &str = "/ngsi-ld/v1/entities";
 
+/// The forwarded path of a Batch Entity Merge (clause 6.20.3.1).
+pub const FORWARDED_BATCH_MERGE_PATH: &str = "/ngsi-ld/v1/entityOperations/merge";
+
 /// The forwarded resource path for a single entity, with the id spliced in
 /// verbatim (the broker forwards the URN unescaped, as the mock matches it).
 pub fn forwarded_entity_path(id: &str) -> String {

@@ -16,6 +16,9 @@ pub struct DeleteAttrParams {
     /// Whether every instance of the attribute is deleted.
     #[serde(rename = "deleteAll", default, deserialize_with = "deserialize_option_bool_case_insensitive")]
     pub delete_all: Option<bool>,
+    /// Whether the operation is confined to this broker (clause 6.3.18).
+    #[serde(default, deserialize_with = "deserialize_option_bool_case_insensitive")]
+    pub local: Option<bool>,
 }
 
 #[cfg(test)]
@@ -23,10 +26,17 @@ mod tests {
     use crate::attribute_deletion::DeleteAttrParams;
 
     #[test]
-    fn both_parameters_default_to_absent() {
+    fn every_parameter_defaults_to_absent() {
         let params: DeleteAttrParams = serde_urlencoded::from_str("").expect("parses");
         pretty_assertions::assert_eq!(params.dataset_id, None);
         pretty_assertions::assert_eq!(params.delete_all, None);
+        pretty_assertions::assert_eq!(params.local, None);
+    }
+
+    #[test]
+    fn the_local_scope_flag_is_read() {
+        let params: DeleteAttrParams = serde_urlencoded::from_str("local=true").expect("parses");
+        pretty_assertions::assert_eq!(params.local, Some(true));
     }
 
     #[test]

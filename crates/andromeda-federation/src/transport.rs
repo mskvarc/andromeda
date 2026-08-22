@@ -6,8 +6,7 @@ use crate::{
     error::FederationError,
     forwarded_payload::{ForwardedPayload, build_forwarded_payload},
     forwarding_url::with_local_scope,
-    outcome::{ForwardGetOutcome, TransportFailure},
-    registration_loops,
+    outcome::{ForwardGetOutcome, ForwardedResponse, TransportFailure},
     request::TriggeringRequest,
 };
 use andromeda_http_headers::{
@@ -17,11 +16,12 @@ use andromeda_http_headers::{
     ngsild_entity_map::NgsiLdEntityMap,
     ngsild_tenant::NgsiLdTenant,
     ngsild_warning::NgsiLdWarning,
+    prefer::Prefer,
     via::Via,
     warning::Warning,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, registration::ContextSourceRegistration, registration_management::LocalScope};
 use headers::{Header, HeaderMapExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -81,7 +81,7 @@ impl FederationService {
         cacheability: Cacheability,
         linked_map: Option<&Uri>,
     ) -> ForwardGetOutcome {
-        if registration_loops(registration, triggering.via) {
+        if self.registration_loops(registration, triggering.via) {
             return ForwardGetOutcome::LoopDetected;
         }
         let url = match url {
@@ -98,9 +98,9 @@ impl FederationService {
         };
         let cache_key = cache_duration.map(|_| CacheKey::new(registration, &url, &payload.link_contexts));
         if let Some(key) = &cache_key
-            && let Some((body, warnings)) = self.cache.lookup(key)
+            && let Some(response) = self.cache.lookup(key)
         {
-            return ForwardGetOutcome::Success(body, warnings);
+            return ForwardGetOutcome::Success(response);
         }
         if let Some(remaining) = self.cooldowns.remaining(registration) {
             // Clause 5.2.34: a request inside the cooldown window is answered
@@ -129,25 +129,38 @@ impl FederationService {
         };
 
         if sent.status == reqwest::StatusCode::NOT_FOUND {
-            return ForwardGetOutcome::NotFound;
+            return ForwardGetOutcome::NotFound(sent.ngsild_warnings);
         }
         if !sent.status.is_success() {
             return ForwardGetOutcome::ErrorStatus(sent.status.as_u16());
         }
 
+        if let Some(version) = sent.returned_version {
+            // Clause 4.3.6.8: the version the source says its payload conforms
+            // to is recorded; the payload is read as the entity data it is.
+            debug!(registration = %registration.id, %version, "context source answered with its conformant version");
+        }
         // Propagate IANA Warning 110 (Response is Stale) from the context source (clause 6.3.17).
         let mut warnings = Vec::new();
         if let Some(Warning { code: 110, text, .. }) = sent.warning {
             warnings.push(NgsiLdWarning::ResponseIsStale(text));
         }
+        // Clause 6.3.17 applies along the whole chain: what the source could
+        // not reach behind it is as missing from this response as from its own.
+        warnings.extend(sent.ngsild_warnings);
 
         let text = String::from_utf8_lossy(&sent.body);
         match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => {
+            Ok(body) => {
+                let response = ForwardedResponse {
+                    body,
+                    warnings,
+                    entity_map: sent.entity_map,
+                };
                 if let (Some(key), Some(duration)) = (cache_key, cache_duration) {
-                    self.cache.store(key, &value, &warnings, duration);
+                    self.cache.store(key, &response, duration);
                 }
-                ForwardGetOutcome::Success(value, warnings)
+                ForwardGetOutcome::Success(response)
             }
             Err(e) => {
                 warn!("Failed to parse CS response as JSON: {}. Body: {}", e, &text[..text.len().min(200)]);
@@ -199,6 +212,9 @@ impl FederationService {
             })
             .unwrap_or_else(|| Accept::single(ResponseMediaType::Json));
         typed_headers.typed_insert(accept);
+        if method == reqwest::Method::GET {
+            typed_headers.typed_insert(conformance_preference(&info));
+        }
         if payload.body.is_some() {
             typed_headers.typed_insert(payload.media_type);
         }
@@ -209,9 +225,17 @@ impl FederationService {
             request = request.body(body.clone()); // clone: reqwest owns the body it sends
         }
 
-        if let Some(name) = &registration.tenant {
+        // Clause 4.3.6.4: each tenant is federated separately, so the forwarded
+        // request runs in the registration's tenant, or else in the tenant the
+        // triggering request ran in (clause 6.3.4 `NGSILD-Tenant`).
+        let tenant = registration
+            .tenant
+            .clone() // clone: the header owns the tenant name
+            .map(NgsiLdTenant::new)
+            .or_else(|| triggering.headers.and_then(|headers| headers.typed_get::<NgsiLdTenant>()));
+        if let Some(tenant) = tenant {
             let mut request_headers = HeaderMap::new();
-            request_headers.typed_insert(NgsiLdTenant::new(name.clone())); // clone: the header owns the tenant name
+            request_headers.typed_insert(tenant);
             request = request.headers(request_headers);
         }
         if let Some(linked_map) = linked_map {
@@ -233,6 +257,14 @@ impl FederationService {
 
         Ok(request)
     }
+}
+
+/// The `Prefer: ngsi-ld=<version>` a forwarded context consumption request
+/// carries (clause 4.3.6.8): the version the registration's
+/// `ngsildConformance` says the source understands, else the one this broker
+/// conforms to, so the source can amend its payload to it.
+fn conformance_preference(info: &ContextSourceInfo<'_>) -> Prefer {
+    Prefer::version(info.ngsild_conformance.unwrap_or(SpecVersion::CONFORMANT))
 }
 
 /// Add the `contextSourceInfo` pairs outside the reserved keys as custom
@@ -274,8 +306,9 @@ fn protected_header(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::transport::{apply_custom_headers, protected_header};
+    use crate::transport::{apply_custom_headers, conformance_preference, protected_header};
     use andromeda_ngsi_ld_model::{context_source_info::ContextSourceInfo, key_value_pair::KeyValuePair};
+    use headers::Header;
     use http::{HeaderMap, HeaderValue};
 
     fn pair(key: &str, value: &str) -> KeyValuePair {
@@ -304,6 +337,24 @@ mod tests {
 
         let forwarded = apply_custom_headers(client.get("http://peer/"), &info, None).expect("headers apply");
         assert!(headers_of(forwarded).get("authorization").is_none());
+    }
+
+    /// Clause 4.3.6.8: a forwarded GET asks for the version the registration
+    /// declares its source understands, and for this broker's own version when
+    /// it declares none.
+    #[test]
+    fn the_conformance_preference_names_the_registered_version_or_the_conformant_one() {
+        let declared = [pair("ngsildConformance", "1.5")];
+        let info = ContextSourceInfo::try_from(declared.as_slice()).expect("valid info");
+        let mut encoded = Vec::new();
+        conformance_preference(&info).encode(&mut encoded);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.5");
+
+        let undeclared: [KeyValuePair; 0] = [];
+        let info = ContextSourceInfo::try_from(undeclared.as_slice()).expect("valid info");
+        let mut encoded = Vec::new();
+        conformance_preference(&info).encode(&mut encoded);
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.9");
     }
 
     #[test]

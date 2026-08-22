@@ -133,12 +133,18 @@ pub struct Snapshot {
     /// Headers to send with the status notification.
     #[builder(default = Default::default())]
     pub receiver_info: Option<Vec<KeyValuePair>>,
-    /// Current status of the snapshot.
+    /// Current status of the snapshot, the `snapshotStatus` member of
+    /// Table 5.2.41-2.
+    #[serde(rename = "snapshotStatus")]
     pub status: SnapshotStatus,
-    /// Per-entity-query execution details.
+    /// Per-entity-query execution details, the `snapshotQueriesDetails`
+    /// member of Table 5.2.41-2.
+    #[serde(rename = "snapshotQueriesDetails")]
     #[builder(default = Default::default())]
     pub queries_details: Option<Vec<ExecutionResultDetails>>,
-    /// Per-temporal-query execution details.
+    /// Per-temporal-query execution details, the
+    /// `snapshotTemporalQueriesDetails` member of Table 5.2.41-2.
+    #[serde(rename = "snapshotTemporalQueriesDetails")]
     #[builder(default = Default::default())]
     pub temporal_queries_details: Option<Vec<ExecutionResultDetails>>,
     /// When the snapshot was requested.
@@ -411,6 +417,32 @@ mod tests {
         assert!(snapshot.snapshot_lifetime.is_none() && snapshot.endpoint.is_none() && snapshot.receiver_info.is_none());
         assert!(snapshot.queries_details.is_none() && snapshot.temporal_queries_details.is_none());
         assert!(snapshot.last_used_at.is_none());
+    }
+
+    /// Table 5.2.41-2 names the output-only members `snapshotStatus`,
+    /// `snapshotQueriesDetails` and `snapshotTemporalQueriesDetails`.
+    #[test]
+    fn the_output_only_members_carry_their_table_5_2_41_2_names() {
+        let instant = "2024-01-01T00:00:00Z".parse::<DateTime<Utc>>().expect("valid instant");
+        let snapshot = Snapshot::builder()
+            .id("urn:ngsi-ld:Snapshot:1".parse::<Uri>().expect("valid snapshot id"))
+            .snapshot_priority(SnapshotPriority::DEFAULT)
+            .status(SnapshotStatus::Preparing)
+            .queries_details(Some(Vec::new()))
+            .temporal_queries_details(Some(Vec::new()))
+            .created_at(instant)
+            .modified_at(instant)
+            .expires_at(instant)
+            .build();
+        let value = serde_json::to_value(&snapshot).expect("a snapshot serialises");
+        pretty_assertions::assert_eq!(value["snapshotStatus"], serde_json::json!("preparing"));
+        assert!(value.get("status").is_none(), "{value}");
+        assert!(value.get("snapshotQueriesDetails").is_some(), "{value}");
+        assert!(value.get("snapshotTemporalQueriesDetails").is_some(), "{value}");
+        assert!(
+            value.get("queriesDetails").is_none() && value.get("temporalQueriesDetails").is_none(),
+            "{value}"
+        );
     }
 
     #[test]

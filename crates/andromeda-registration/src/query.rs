@@ -1,27 +1,46 @@
-//! Context-source registration query policy.
+//! Context-source registration discovery policy (ETSI GS CIM 009 clause 5.10.2).
 
 use crate::{RegistrationService, context_source_properties::compact_context_source_properties, error::RegistrationError};
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_model::{
+    registration::ContextSourceRegistration,
+    registration_matching::{EntitySpecification, RegistrationMatchSpecification},
+};
 use andromeda_ngsi_ld_query::{
     csr::compiled::{CompiledCsrQuery, CompiledCsrTemporalFilter},
-    filter::expansion::expand_q_expr,
+    filter::{expansion::expand_q_expr, path::expanded_attribute_name, referenced_attributes::referenced_attributes},
     geo::compile as geo_compile,
     pagination::{CountPolicy, Pagination},
     projection::expansion::expand_attrs,
     temporal::window::TimeInterval,
     term_expander::TermExpander,
+    type_selection::grammar::TypeExprRaw,
 };
 use andromeda_ngsi_ld_request::query::{SharedQueryParams, csr::CsrQueryParameters};
+use iri_rs::IriBuf;
 use serde_json::Value;
 
 impl RegistrationService {
-    /// Query registrations matching the supplied discovery parameters.
-    pub async fn query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<(Vec<Value>, u64), RegistrationError> {
+    /// Discover the registrations matching `params` (clause 5.10.2), excluding
+    /// the sources the request already passed through (clause 5.12).
+    ///
+    /// Each returned registration carries only the `RegistrationInfo` elements
+    /// that match (clause 5.10.2.5), compacted under `context`.
+    pub async fn query(
+        &self,
+        params: &CsrQueryParameters,
+        encountered_sources: &[ContextSourcePseudonym],
+        context: &ContextSpec,
+    ) -> Result<(Vec<Value>, u64), RegistrationError> {
         params.validate().map_err(|error| RegistrationError::csr_validation(error.to_string()))?;
-        let compiled = self.compile_csr_query(params, context).await?;
+        let compiled = self.compile_csr_query(params, encountered_sources, context).await?;
         let page = self.repo.query_compiled(&compiled).await?;
         let mut values = Vec::with_capacity(page.registrations.len());
-        for mut registration in page.registrations {
+        for registration in page.registrations {
+            let Some(mut registration) = trim_to_matching_information(registration, &compiled)? else {
+                continue;
+            };
             let additional_properties = registration.additional_properties.take();
             let mut value = serde_json::to_value(registration).map_err(|error| RegistrationError::internal(format!("Failed to serialize CSR: {error}")))?;
             if let Some(information) = value.get_mut("information") {
@@ -38,7 +57,12 @@ impl RegistrationService {
         Ok((values, page.total))
     }
 
-    async fn compile_csr_query(&self, params: &CsrQueryParameters, context: &ContextSpec) -> Result<CompiledCsrQuery, RegistrationError> {
+    async fn compile_csr_query(
+        &self,
+        params: &CsrQueryParameters,
+        encountered_sources: &[ContextSourcePseudonym],
+        context: &ContextSpec,
+    ) -> Result<CompiledCsrQuery, RegistrationError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let expander = ContextualExpander::new(&self.engine, &prepared_context);
         let expanded_type = match params.entity_type.as_ref() {
@@ -48,10 +72,31 @@ impl RegistrationService {
             },
             None => None,
         };
-        let expanded_attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
+        let mut attrs = expand_attrs(params.attrs.as_deref().unwrap_or_default(), &expander).await?;
         let geo = geo_compile::compile_geo_query(params.geo.0.as_ref(), &expander).await?;
-        let q_expr = match params.q.clone() {
-            Some(expression) => Some(expand_q_expr(expression, &expander).await?), // clone: compilation owns and rewrites the request expression without mutating cached parameters.
+        // Clause 5.10.2.4: the attributes the `q` filter and the geoquery name
+        // match registrations exactly as the `attrs` list does, so they join
+        // it; the filter itself is not evaluated against a registration.
+        if let Some(expression) = params.q.clone() {
+            // clone: expansion owns and rewrites the request expression without mutating cached parameters.
+            let expanded = expand_q_expr(expression, &expander).await?;
+            for name in referenced_attributes(&expanded) {
+                let iri = IriBuf::new(name.as_str().to_owned())
+                    .map_err(|error| RegistrationError::csr_validation(format!("q names a non-IRI attribute: {error}")))?;
+                if !attrs.contains(&iri) {
+                    attrs.push(iri);
+                }
+            }
+        }
+        if let Some(geo) = &geo {
+            let iri = IriBuf::new(geo.geoproperty.as_str().to_owned())
+                .map_err(|error| RegistrationError::csr_validation(format!("geoproperty is not an IRI: {error}")))?;
+            if !attrs.contains(&iri) {
+                attrs.push(iri);
+            }
+        }
+        let csf_expr = match params.csf.clone() {
+            Some(expression) => Some(expand_q_expr(expression, &expander).await?), // clone: same reason as `q`.
             None => None,
         };
         let temporal = if let (Some(timerel), Some(time_at)) = (&params.timerel, &params.time_at) {
@@ -69,9 +114,12 @@ impl RegistrationService {
             .ids(params.id.clone().unwrap_or_default()) // clone: the compiled query owns request identifiers across the store await.
             .entity_type(expanded_type)
             .id_pattern(params.id_pattern.clone()) // clone: the compiled query owns the validated pattern.
-            .attrs(expanded_attrs)
-            .q_expr(q_expr)
+            .attrs(attrs)
+            .csf_expr(csf_expr)
             .geo(geo)
+            .scope_q(params.scope_q.clone()) // clone: the compiled query owns the parsed scope query.
+            .dataset_id(params.dataset_ids().map(<[_]>::to_vec).unwrap_or_default()) // clone: same reason.
+            .encountered_sources(encountered_sources.to_vec()) // clone: the compiled query owns the Via listing across the store await.
             .temporal(temporal)
             .pagination(Pagination {
                 limit: params.effective_limit(),
@@ -80,4 +128,43 @@ impl RegistrationService {
             })
             .build())
     }
+}
+
+/// Keep only the `RegistrationInfo` elements the compiled query matches
+/// (clause 5.10.2.5), or nothing when none does.
+///
+/// The statement preselects on the same clause 5.12 reading, but it decides the
+/// two regular-expression cases in the database's dialect; the typed evaluation
+/// here is the authority, and it is what trims the response.
+fn trim_to_matching_information(
+    mut registration: ContextSourceRegistration,
+    compiled: &CompiledCsrQuery,
+) -> Result<Option<ContextSourceRegistration>, RegistrationError> {
+    let type_selector = compiled
+        .entity_type
+        .as_ref()
+        .map(|iri| {
+            iri.as_str()
+                .parse::<EntityTypeName>()
+                .map_err(|error| RegistrationError::internal(format!("expanded entity type is not a type name: {error}")))
+        })
+        .transpose()?
+        .map(TypeExprRaw::Type);
+    let entity = EntitySpecification {
+        type_selector: type_selector.as_ref(),
+        ids: &compiled.ids,
+        id_pattern: compiled.id_pattern.as_ref(),
+    };
+    let entities = if compiled.entity_type.is_some() || !compiled.ids.is_empty() || compiled.id_pattern.is_some() {
+        vec![entity]
+    } else {
+        Vec::new()
+    };
+    let attributes = compiled.attrs.iter().map(expanded_attribute_name).collect::<Result<Vec<AttributeName>, _>>()?;
+    let specification = RegistrationMatchSpecification {
+        entities: &entities,
+        attributes: &attributes,
+    };
+    registration.coverage.information.retain(|info| specification.matches_information(info));
+    Ok((!registration.coverage.information.is_empty()).then_some(registration))
 }

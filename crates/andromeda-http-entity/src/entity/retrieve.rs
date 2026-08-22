@@ -5,9 +5,11 @@ use crate::entity::{
     ContextSpec,
     ContextUrl,
     CsrModeFilter,
+    Entity,
     EntityRenderer,
     EntityResultExt,
     EntityTenantState,
+    EntityTypeValue,
     ForwardingOperation,
     GetEntityParams,
     IntoResponse,
@@ -24,22 +26,45 @@ use crate::entity::{
     RetrievalNarrowing,
     RetrievingJoin,
     SnapshotRenderer,
+    SourceContribution,
     TypedPath,
     Uri,
     ValidatedQuery,
     collect_warnings,
+    contributions_of,
     merge_retrieve_results,
     public_error,
-    remote_sources_of,
     render_flat_join,
+    single_source_declined,
     start_rendering,
     with_linked_resolution_warnings,
 };
-use andromeda_entity_map::service::ReferencedEntityMap;
-use andromeda_federation::request::{ForwardRetrieveRequest, TriggeringRequest};
+use andromeda_entity_map::{
+    fingerprint::{FingerprintedRequest, fingerprint_of},
+    reuse::{EntityMapFlag, EntityMapUse},
+};
+use andromeda_federation::{
+    forwarded_query::ClientQuery,
+    outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
+    request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
+};
 use andromeda_http_extraction::tenant_state;
+use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use axum::http::HeaderMap;
 use std::{iter::once, slice::from_ref};
+use tracing::warn;
+
+/// What the distributed part of a retrieval brought back (clause 5.7.1.4).
+struct ForwardedRetrieval {
+    /// The entity, merged from every source that held it.
+    entity: Option<Entity>,
+    /// The clause 6.3.17 warnings of both forwarding phases.
+    warnings: Vec<NgsiLdWarning>,
+    /// What each source contributed to the map of the request (clause 5.2.39).
+    contributions: Vec<SourceContribution>,
+    /// What the primary registration selection said.
+    sources: MatchedSources,
+}
 
 pub(crate) async fn get(
     tenant_state::ExistingTenantState(state): EntityTenantState,
@@ -113,17 +138,22 @@ pub(crate) async fn get(
 
     // Clause 5.7.1.4: a referenced live EntityMap fixes the registrations the
     // retrieval contacts; an expired or unknown one yields no inference, so a
-    // fresh map is created instead.
-    let mut entity_map_requested = params.entity_map.unwrap_or(false);
-    let referenced_map = match &entity_map_header {
-        Some(map_id) if !is_local => match state.entity_maps.referenced(map_id.as_inner()).await.with_entity_instance(&uri)? {
-            ReferencedEntityMap::Live(map) => Some(*map),
-            ReferencedEntityMap::Unavailable => {
-                entity_map_requested = true;
-                None
-            }
-        },
-        Some(_) | None => None,
+    // fresh map is created instead. A local retrieval contacts no source and
+    // uses no map.
+    let map_use = if is_local {
+        EntityMapUse::None
+    } else {
+        let fingerprint = fingerprint_of(FingerprintedRequest::RetrieveEntity(&params)).with_entity_instance(&uri)?;
+        state
+            .entity_maps
+            .resolve_use(
+                entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner),
+                EntityMapFlag::from_parameter(params.entity_map),
+                &fingerprint,
+                params.entity_map_lifetime.as_ref(),
+            )
+            .await
+            .with_entity_instance(&uri)?
     };
     let mut entity_map_uri = None;
 
@@ -132,88 +162,79 @@ pub(crate) async fn get(
         let entity = local_result.with_entity_instance(&uri)?;
         (entity, Vec::new())
     } else {
-        // Forward to context sources
-        let query_string = uri.query().unwrap_or("");
-        // Phase 1: forward to primary (non-auxiliary) CSRs
-        let forwarded = state
-            .forwarding
-            .forward_retrieve(ForwardRetrieveRequest {
-                entity_id: &id,
-                exclude_registration: None,
-                query_string,
-                context: &context,
-                operation: ForwardingOperation::RetrieveEntity,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
-                },
-                mode_filter: CsrModeFilter::ExcludeAuxiliary,
-                entity_map: referenced_map.as_ref(),
-            })
-            .await
-            .unwrap_or_default(); // Retrieve forwarding: best-effort -- missing CSR data is not fatal
-        let mut warnings = collect_warnings(&forwarded);
-        let mut remote_sources: Vec<(Uri, Vec<Uri>)> = remote_sources_of(&forwarded).collect();
-
         let local_entity = local_result.ok();
         let held_locally = local_entity.is_some();
-
-        let merged = merge_retrieve_results(local_entity, forwarded);
-
-        // Phase 2: forward to auxiliary CSRs only if an entity was found
-        // Per spec 4.3.6.2: auxiliary context sources only supplement existing data
-        let merged = if merged.is_some() {
-            let aux_forwarded = state
-                .forwarding
-                .forward_retrieve(ForwardRetrieveRequest {
-                    entity_id: &id,
-                    exclude_registration: None,
-                    query_string,
-                    context: &context,
-                    operation: ForwardingOperation::RetrieveEntity,
-                    triggering: TriggeringRequest {
-                        via: incoming_via.as_ref(),
-                        headers: Some(&headers),
-                    },
-                    mode_filter: CsrModeFilter::AuxiliaryOnly,
-                    entity_map: referenced_map.as_ref(),
-                })
-                .await
-                .unwrap_or_default();
-            if !aux_forwarded.is_empty() {
-                warnings.extend(collect_warnings(&aux_forwarded));
-                remote_sources.extend(remote_sources_of(&aux_forwarded));
-                merge_retrieve_results(merged, aux_forwarded)
-            } else {
-                merged
-            }
-        } else {
-            merged
+        let triggering = TriggeringRequest {
+            via: incoming_via.as_ref(),
+            headers: Some(&headers),
         };
-        let entity = match merged {
-            Some(entity) => entity,
-            None => {
-                return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("Entity {id} not found"), &uri));
+        let phase = |mode_filter: CsrModeFilter| {
+            let forwarding = &state.forwarding;
+            let params = &params;
+            let context = &context;
+            let id = &id;
+            let entity_map = EntityMapInUse::from(&map_use);
+            async move {
+                forwarding
+                    .forward_retrieve(ForwardRetrieveRequest {
+                        entity_id: id,
+                        exclude_registration: None,
+                        client_query: ClientQuery::EntityRetrieve(params),
+                        context,
+                        operation: ForwardingOperation::RetrieveEntity,
+                        triggering,
+                        mode_filter,
+                        entity_map,
+                    })
+                    .await
+                    .unwrap_or_else(|error| {
+                        // Retrieve forwarding is best-effort: a source that
+                        // cannot be reached is a warning, not a failure.
+                        warn!(%error, "context source forwarding failed during the entity retrieval");
+                        ForwardReadOutcome::empty()
+                    })
             }
+        };
+        let retrieved = retrieve_distributed(local_entity, phase)
+            .await
+            .map_err(|status| single_source_declined(status, &uri))?;
+        let entity = match retrieved.entity {
+            Some(entity) => entity,
+            // Clause 5.7.1.4: ResourceNotFound only when nothing is held
+            // locally and no registration matches. A matching registration
+            // that returned nothing leaves the entity known by its registered
+            // identity alone, so the response is the entity's `id` and `type`.
+            None => match registered_identity(&id, &retrieved.sources) {
+                Some(entity) => entity,
+                None => {
+                    return Err(public_error(NgsiLdErrorType::ResourceNotFound, format!("Entity {id} not found"), &uri).with_warnings(retrieved.warnings));
+                }
+            },
         };
         // Table 6.5.3.1-1 `entityMap`: the map the retrieval used is returned,
         // created now when none was in use (clause 5.7.1.4), naming this
-        // broker and every registration that returned the entity.
-        entity_map_uri = if entity_map_requested {
-            let local_ids = held_locally.then(|| id.clone()); // clone: the map owns its entity identifiers
-            let mut map = state
-                .entity_maps
-                .local_map(local_ids, params.entity_map_lifetime.as_ref())
-                .with_entity_instance(&uri)?;
-            for (registration, ids) in remote_sources {
-                map.add_remote_entities(&registration, ids);
+        // broker and every registration that returned the entity; a reused
+        // map records the maps its sources answered with (clause 5.5.14).
+        entity_map_uri = match map_use {
+            EntityMapUse::Reuse(map) => {
+                let links = retrieved
+                    .contributions
+                    .iter()
+                    .filter_map(|contribution| contribution.linked_map.as_ref().map(|linked| (&contribution.registration, linked)));
+                state.entity_maps.record_linked_maps(&map.id, links).await.with_entity_instance(&uri)?;
+                Some(map.id)
             }
-            state.entity_maps.store(&map).await.with_entity_instance(&uri)?;
-            Some(map.id)
-        } else {
-            referenced_map.map(|map| map.id)
+            EntityMapUse::Mint(mut map) => {
+                map.add_local_entities(held_locally.then(|| id.clone())); // clone: the map owns its entity identifiers
+                for contribution in retrieved.contributions {
+                    map.add_contribution(&contribution.registration, contribution.entity_ids, contribution.linked_map);
+                }
+                state.entity_maps.store(&map).await.with_entity_instance(&uri)?;
+                Some(map.id)
+            }
+            EntityMapUse::None => None,
         };
-        (entity, warnings)
+        (entity, retrieved.warnings)
     };
 
     let mode = params.resolve_render_mode();
@@ -294,4 +315,62 @@ pub(crate) async fn get(
         response = response.with_entity_map_uri(map_uri);
     }
     Ok(response.into_response())
+}
+
+/// The two clause 5.7.1.4 forwarding phases over `phase`, merged onto the
+/// local entity: the exclusive, redirect and inclusive sources first, then
+/// the auxiliary ones, which only supplement an entity found elsewhere
+/// (clause 4.3.6.2).
+///
+/// # Errors
+///
+/// The status of the one proxied source that declined the representation
+/// (Table 6.4.3.2-3), which is the operation's answer.
+async fn retrieve_distributed<F, Fut>(local_entity: Option<Entity>, phase: F) -> Result<ForwardedRetrieval, u16>
+where
+    F: Fn(CsrModeFilter) -> Fut,
+    Fut: Future<Output = ForwardReadOutcome<ForwardedEntities>>,
+{
+    let primary = phase(CsrModeFilter::ExcludeAuxiliary).await;
+    if let Some(status) = primary.sources.single_source_status {
+        return Err(status);
+    }
+    let mut warnings = collect_warnings(&primary.results);
+    let mut contributions: Vec<SourceContribution> = contributions_of(&primary.results).collect();
+    let sources = primary.sources;
+    let merged = merge_retrieve_results(local_entity, primary.results);
+
+    // Phase 2: auxiliary sources only if an entity was found, since they
+    // only supplement existing data (clause 4.3.6.2).
+    let entity = match merged {
+        Some(merged) => {
+            let auxiliary = phase(CsrModeFilter::AuxiliaryOnly).await;
+            warnings.extend(collect_warnings(&auxiliary.results));
+            contributions.extend(contributions_of(&auxiliary.results));
+            merge_retrieve_results(Some(merged), auxiliary.results)
+        }
+        None => None,
+    };
+    Ok(ForwardedRetrieval {
+        entity,
+        warnings,
+        contributions,
+        sources,
+    })
+}
+
+/// The entity a retrieval answers with when a registration matched but no
+/// source returned attribute data (clause 5.7.1.4): its `id` and the type the
+/// registration registers it under.
+fn registered_identity(id: &Uri, sources: &MatchedSources) -> Option<Entity> {
+    if sources.registrations == 0 {
+        return None;
+    }
+    let registered_type = sources.registered_type.clone()?; // clone: the synthesized entity owns its type
+    Some(
+        Entity::builder()
+            .id(id.clone()) // clone: the synthesized entity owns its identifier
+            .type_(EntityTypeValue::Single(registered_type))
+            .build(),
+    )
 }

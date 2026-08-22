@@ -37,7 +37,7 @@ mod tests {
     use andromeda_entity::error::EntityError;
     use andromeda_http_response::batch_projection::batch_entity_error;
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType};
+    use andromeda_ngsi_ld_problem_details::{batch_operation::BatchErrorKind, error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 
     fn entity_id() -> Result<Uri, EntityError> {
         "urn:ngsi-ld:Entity:1"
@@ -98,7 +98,10 @@ mod tests {
         let source = EntityError::already_exists(&identifier);
         let single = classify_entity_error(&source);
         let batch = batch_entity_error(identifier, &source, classify_entity_error);
-        pretty_assertions::assert_eq!(batch.error.error_type, BatchErrorKind::Known(single.error_type()));
+        pretty_assertions::assert_eq!(
+            batch.error.error_type,
+            BatchErrorKind::Known(ProblemClassification::Category(single.error_type()))
+        );
         pretty_assertions::assert_eq!(batch.error.detail, single.detail());
         Ok(())
     }

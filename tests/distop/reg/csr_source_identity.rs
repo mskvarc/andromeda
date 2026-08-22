@@ -1,8 +1,9 @@
 //! Context Source Identity data model (clause 5.2.40). The broker's own
-//! `GET /info/sourceIdentity` is validated positively (`T-LOCAL`, `IMPL`);
-//! preservation of configured extras and adversarial validation-on-consume of a
-//! peer's identity are `UNKNOWN` (`#[ignore]`, first run classifies), the latter
-//! against a mock source (`T-MOCK`).
+//! `GET /info/sourceIdentity` is validated positively and its configured
+//! `contextSourceExtras` checked verbatim (`T-LOCAL`); adversarial
+//! validation-on-consume of a peer's identity runs against a mock source
+//! (`T-MOCK`) whose endpoint is the mock origin, so the broker's canonical
+//! `/ngsi-ld/v1/info/sourceIdentity` path lands on the stub.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -52,9 +53,11 @@ async fn source_identity_returns_conformant_identity() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A configured `contextSourceExtras` term is preserved byte-identically, with no
-/// JSON-LD expansion (clause 5.2.40). Confirms REQ-REG-48.
-#[ignore = "UNKNOWN REQ-REG-48: contextSourceExtras configuration support not classified"]
+/// The deployment's configured `contextSourceExtras` is preserved byte-identically
+/// with no JSON-LD expansion (Table 5.2.40-1: "raw un-expandable JSON which
+/// shall not be interpreted as JSON-LD using the supplied @context"). The
+/// compose stack configures `{"deployment":"distop"}` on broker A. Confirms
+/// REQ-REG-48.
 #[tokio::test]
 async fn source_identity_preserves_extras_verbatim() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -66,9 +69,10 @@ async fn source_identity_preserves_extras_verbatim() {
         .expect("source identity request");
     assert_status(&response, 200);
     let body = json_body(&response);
-    assert!(
-        body.get("contextSourceExtras").is_some(),
-        "the configured extras are present verbatim in the identity document"
+    assert_eq!(
+        body["contextSourceExtras"],
+        json!({ "deployment": "distop" }),
+        "the configured extras are present verbatim in the identity document: {body}"
     );
 
     topology.finish().await.expect("topology cleanup");
@@ -81,7 +85,6 @@ async fn source_identity_preserves_extras_verbatim() {
 macro_rules! source_identity_rejection_cases {
     ($($name:ident => $identity:expr;)+) => {
         $(
-            #[ignore = "UNKNOWN REQ-REG-43..47: validation-on-consume of a peer source identity not classified"]
             #[tokio::test]
             async fn $name() {
                 let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -90,7 +93,7 @@ macro_rules! source_identity_rejection_cases {
                 adapter.set_stub_with_body(Method::GET, "/ngsi-ld/v1/info/sourceIdentity", 200, &identity).await;
 
                 let registration_id = topology.id(concat!("registration:", stringify!($name)));
-                let registration = CsrBuilder::new(&registration_id, &adapter.url("/ngsi-ld/v1"))
+                let registration = CsrBuilder::new(&registration_id, &adapter.url(""))
                     .mode("auxiliary")
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build();

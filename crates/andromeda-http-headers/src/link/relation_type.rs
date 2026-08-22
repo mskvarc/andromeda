@@ -23,6 +23,8 @@ const JSONLD_CONTEXT_REL: Iri<&'static str> = iri!("http://www.w3.org/ns/json-ld
 /// [`Next`](RelationType::Next) and [`Prev`](RelationType::Prev);
 /// [`First`](RelationType::First) and [`Last`](RelationType::Last) are
 /// additional links Andromeda emits, not defined by that clause.
+/// [`Profile`](RelationType::Profile) is the IETF RFC 6906 relation clause
+/// 6.3.21 reads an NGSI-LD version profile from.
 ///
 /// The JSON-LD context relation (`http://www.w3.org/ns/json-ld#context`) is an
 /// extension URI, so it is an `ExtRelType` rather than a variant of its own.
@@ -36,6 +38,9 @@ pub enum RelationType {
     First,
     /// `last` -- last page in a paginated result.
     Last,
+    /// `profile` -- the target names a profile of the representation (IETF
+    /// RFC 6906, clause 6.3.21).
+    Profile,
     /// Any other relation type: a registered name or an extension URI.
     ExtRelType(IriRefBuf),
 }
@@ -64,6 +69,7 @@ impl fmt::Display for RelationType {
             RelationType::Prev => f.write_str("prev"),
             RelationType::First => f.write_str("first"),
             RelationType::Last => f.write_str("last"),
+            RelationType::Profile => f.write_str("profile"),
             RelationType::ExtRelType(uri) => f.write_str(uri),
         }
     }
@@ -81,6 +87,8 @@ impl FromStr for RelationType {
             RelationType::First
         } else if raw.eq_ignore_ascii_case("last") {
             RelationType::Last
+        } else if raw.eq_ignore_ascii_case("profile") {
+            RelationType::Profile
         } else {
             RelationType::ExtRelType(raw.parse().map_err(|_| RelationTypeParseError)?)
         })
@@ -98,6 +106,7 @@ mod tests {
             (RelationType::Prev, "prev"),
             (RelationType::First, "first"),
             (RelationType::Last, "last"),
+            (RelationType::Profile, "profile"),
         ] {
             pretty_assertions::assert_eq!(variant.to_string(), token);
             pretty_assertions::assert_eq!(token.parse::<RelationType>(), Ok(variant.clone()));

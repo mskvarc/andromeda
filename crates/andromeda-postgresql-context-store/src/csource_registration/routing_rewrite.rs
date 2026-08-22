@@ -113,7 +113,10 @@ mod tests {
         routing_rewrite::insert_rows_statement,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-    use andromeda_ngsi_ld_model::{registration::RegistrationInfo, subscription::EntitySelector};
+    use andromeda_ngsi_ld_model::{
+        entity_info::{EntityInfo, EntityTypeSelection},
+        registration::RegistrationInfo,
+    };
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -129,10 +132,10 @@ mod tests {
         let speed: AttributeName = SPEED.parse().expect("valid attribute name");
         let dictionary = HashMap::from([(speed.clone(), AttributeNameId::from(11))]); // clone: the dictionary key is owned beside the declared name.
         let information = vec![RegistrationInfo {
-            entities: Some(vec![EntitySelector {
+            entities: Some(vec![EntityInfo {
                 id: None,
                 id_pattern: None,
-                type_: "Vehicle".parse().expect("valid type expression"),
+                type_: EntityTypeSelection::Single("Vehicle".parse().expect("valid type name")),
             }]),
             property_names: Some(vec![speed]),
             relationship_names: None,

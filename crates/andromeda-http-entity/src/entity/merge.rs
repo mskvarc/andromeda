@@ -1,4 +1,5 @@
-//! HTTP handling for the merge entity operation.
+//! HTTP handling for the merge entity operation (clause 5.6.17, bound by
+//! clause 6.5.3.4 with the parameters of Table 6.5.3.4-1).
 
 use crate::entity::{
     ContextUrl,
@@ -10,17 +11,21 @@ use crate::entity::{
     IncomingVia,
     IntoResponse,
     JsonLd,
-    LocalOnlyParams,
     LocalOutcome,
+    MergeOptions,
+    MergeParams,
     OriginalUri,
     ProblemResponse,
+    ProvisionResource,
     Response,
     StatusCode,
     TypedPath,
     Uri,
     ValidatedQuery,
+    classify_entity_error,
     collect_proxied_attrs,
     provision_response,
+    reject_unknown_attribute_types,
 };
 use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
@@ -31,7 +36,7 @@ pub(crate) async fn merge(
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
-    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
+    ValidatedQuery(params): ValidatedQuery<MergeParams>,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
     JsonLd {
@@ -42,16 +47,26 @@ pub(crate) async fn merge(
     let service = &state.entities;
     let context = context.merge(body_context);
     let is_local = params.local.unwrap_or(false);
+    let representation = params.representation().with_entity_instance(&uri)?;
+    let options = MergeOptions {
+        representation,
+        lang: params.lang.as_ref(),
+        observed_at: params.observed_at,
+        type_selector: params.entity_type.as_ref(),
+    };
+    let patch_value = serde_json::to_value(&patch).with_entity_instance(&uri)?;
+    reject_unknown_attribute_types(&patch_value, &uri)?;
 
     if is_local {
-        service.merge(&id, &patch, &context).await.with_entity_instance(&uri)?;
+        service.merge(&id, &patch, &context, options).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let patch_body = serde_json::to_vec(&patch).with_entity_instance(&uri)?;
+    let patch_body = serde_json::to_vec(&patch_value).with_entity_instance(&uri)?;
 
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
@@ -60,7 +75,7 @@ pub(crate) async fn merge(
             context: &context,
             operation: ForwardingOperation::MergeEntity,
             path_suffix: None,
-            query_string: None,
+            query_string: uri.query(),
             triggering: TriggeringRequest {
                 via: incoming_via.as_ref(),
                 headers: Some(&headers),
@@ -70,7 +85,7 @@ pub(crate) async fn merge(
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.merge(&id, &patch, &context).await.with_entity_instance(&uri)?;
+        service.merge(&id, &patch, &context, options).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -79,7 +94,7 @@ pub(crate) async fn merge(
     let proxied = collect_proxied_attrs(&forwarded);
     let mut patch = patch;
     let local = if patch.strip_attributes(&proxied) {
-        LocalOutcome::Processed(service.merge(&id, &patch, &context).await.map(|_| ()))
+        LocalOutcome::processed(service.merge(&id, &patch, &context, options).await, classify_entity_error)
     } else {
         LocalOutcome::NothingRemained
     };

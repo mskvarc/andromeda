@@ -363,6 +363,17 @@ mod tests {
         }
     }
 
+    /// Clause 5.7.2.4: `orderBy` is rejected unless the execution is limited to
+    /// the local scope, where it is accepted.
+    #[test]
+    fn validate_requires_the_local_scope_for_ordering() {
+        assert!(matches!(
+            params_from_query("type=Vehicle&orderBy=speed").validate(),
+            Err(ParameterError::OrderingRequiresLocalScope)
+        ));
+        assert!(params_from_query("type=Vehicle&orderBy=speed&local=true").validate().is_ok());
+    }
+
     /// Clause 6.3.10 Table 6.3.10-1: `limit=0` is only valid alongside `count`.
     #[test]
     fn validate_rejects_limit_zero_without_count() {

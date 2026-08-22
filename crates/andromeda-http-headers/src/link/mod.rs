@@ -17,6 +17,8 @@
 //!   parameter matching the negotiated media type.
 //! - **Notification context links** (clauses 6.3.8, 6.3.9): same structure as `@context`
 //!   links, included in HTTP notification POST requests.
+//! - **Version profile links** (clause 6.3.21): `rel="profile"` or a `profile` attribute
+//!   naming `https://uri.etsi.org/ngsi-ld/profile/<major>.<minor>`.
 //!
 //! Only the `rel`, `type` and `profile` link-param attributes are supported. Other
 //! RFC 8288 parameters (`anchor`, `rev`, `hreflang`, `media`, `title`, `title*`) are not
@@ -24,6 +26,7 @@
 
 pub mod error;
 pub mod header;
+pub mod profile;
 pub mod quoting;
 pub mod relation_type;
 pub mod value;

@@ -34,6 +34,7 @@ geo = "0.33.1"
 indexmap = { version = "2.14.0", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 jsonld = { version = "0.22.0", features = ["expandable-serde-json", "expandable-chrono", "reqwest", "serde", "serde-json", "vocab"] }
+langtag = "1.1.0"
 moka = { version = "0.12.16", features = ["future"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }

@@ -1,13 +1,13 @@
 //! NGSI-LD subscription types (ETSI GS CIM 009 clause 5.2.12).
 
 use crate::{key_value_pair::KeyValuePair, notification::NotificationTrigger};
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, entity_type_name::EntityTypeName, rfc3339, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, constant_string, rfc3339, uri::Uri};
 use andromeda_ngsi_ld_query::{filter::expression::Expr, pattern::Pattern, scope::query::ScopeQuery, type_selection::grammar::TypeExprRaw};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat};
 use chrono::{DateTime, Utc};
 use langtag::LangTagBuf;
 use mediatype::MediaTypeBuf;
-use serde::{Deserialize, Deserializer, Serialize, de::Error};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::num::NonZeroU32;
 use strum::{Display, EnumIter, EnumString, IntoStaticStr};
@@ -58,42 +58,8 @@ pub struct EntitySelector {
     /// alternate, as in `(Building|Tower)`, and matching used to rebuild that
     /// into an unanchored regex under which `Building` also matched an entity
     /// typed `MyBuilding`.
-    #[serde(rename = "type", deserialize_with = "deserialize_type_selection")]
+    #[serde(rename = "type")]
     pub type_: TypeExprRaw,
-}
-
-/// The wire forms of an `EntityInfo` `type` (Table 5.2.8-1): a clause 4.17
-/// selection string, or a JSON array of type names for entities with several
-/// types.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum TypeSelectionWire {
-    /// A clause 4.17 selection expression.
-    Expression(TypeExprRaw),
-    /// Several type names.
-    Names(Vec<EntityTypeName>),
-}
-
-/// Accept either wire form of an `EntityInfo` `type`. An array of names
-/// selects an entity carrying any of them, the reading under which a source
-/// registered for `["Vehicle", "Car"]` is discovered by a query for either.
-fn deserialize_type_selection<'de, D>(deserializer: D) -> Result<TypeExprRaw, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    match TypeSelectionWire::deserialize(deserializer)? {
-        TypeSelectionWire::Expression(expression) => Ok(expression),
-        TypeSelectionWire::Names(names) => {
-            let mut alternatives = names.into_iter().map(TypeExprRaw::Type).collect::<Vec<_>>();
-            match alternatives.len() {
-                0 => Err(Error::custom("an EntityInfo type array must name at least one type")),
-                1 => alternatives
-                    .pop()
-                    .ok_or_else(|| Error::custom("an EntityInfo type array must name at least one type")),
-                _ => Ok(TypeExprRaw::Or(alternatives)),
-            }
-        }
-    }
 }
 
 /// Notification delivery endpoint configuration (ETSI GS CIM 009 clause 5.2.15).
@@ -322,15 +288,15 @@ mod tests {
     use chrono::TimeZone;
     use std::str::FromStr;
 
+    /// Table 5.2.33-1: an `EntitySelector` `type` is a clause 4.17 selection
+    /// string; the array form belongs to `EntityInfo` (Table 5.2.8-1) alone.
     #[test]
-    fn an_entity_info_type_accepts_a_selection_string_or_an_array_of_names() {
+    fn an_entity_selector_type_is_a_selection_string() {
         let single: EntitySelector = serde_json::from_value(serde_json::json!({"type": "Vehicle"})).expect("string form parses");
         assert!(matches!(single.type_, TypeExprRaw::Type(_)));
-        let one: EntitySelector = serde_json::from_value(serde_json::json!({"type": ["Vehicle"]})).expect("one-element array parses");
-        assert!(matches!(one.type_, TypeExprRaw::Type(_)));
-        let many: EntitySelector = serde_json::from_value(serde_json::json!({"type": ["Vehicle", "Car"]})).expect("array form parses");
-        assert!(matches!(&many.type_, TypeExprRaw::Or(alternatives) if alternatives.len() == 2));
-        assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": []})).is_err());
+        let alternation: EntitySelector = serde_json::from_value(serde_json::json!({"type": "(Vehicle|Car)"})).expect("alternation parses");
+        assert!(matches!(&alternation.type_, TypeExprRaw::Or(alternatives) if alternatives.len() == 2));
+        assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": ["Vehicle", "Car"]})).is_err());
         assert!(serde_json::from_value::<EntitySelector>(serde_json::json!({"type": 5})).is_err());
     }
 

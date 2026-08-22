@@ -11,7 +11,7 @@
 //! grammar, and there is one error chain either way.
 
 use crate::linked_retrieval_term::LinkedRetrievalTerm;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, temporal_format::TemporalFormat};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, temporal_format::TemporalFormat};
 use andromeda_ngsi_ld_query::error::QueryError;
 use thiserror::Error;
 
@@ -140,4 +140,21 @@ pub enum ParameterError {
     /// Aggregation parameters were specified in both supported spec members.
     #[error("aggregation parameters must not be duplicated in temporalQ and aggrParams")]
     TemporalAggregationConflict,
+    /// `orderBy` was sent on a query whose execution is not limited to the
+    /// local scope (clauses 5.7.2.4 and 5.7.4.4).
+    #[error("orderBy requires the execution of the query to be limited to the local scope (local=true)")]
+    OrderingRequiresLocalScope,
+    /// A temporal query ordered by a member other than `id` (clause 5.7.4.4).
+    #[error("a temporal query can only be ordered by id, not by {0}")]
+    TemporalOrderingNotById(String),
+    /// An aggregated temporal representation named an attribute whose recorded
+    /// values cannot be aggregated by one of the requested methods (clause
+    /// 5.7.4.4, Table 4.5.19.1-1).
+    #[error("attribute {attribute} is not eligible for the aggregation method {method} (clause 5.7.4.4)")]
+    AggregationIneligible {
+        /// The attribute the request named.
+        attribute: AttributeName,
+        /// The method the attribute's values cannot be aggregated by.
+        method: AggrMethod,
+    },
 }

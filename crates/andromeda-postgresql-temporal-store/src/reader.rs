@@ -13,9 +13,10 @@ use crate::{
     repo::TemporalRepository,
     temporal_query_execution::TemporalStatement,
 };
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
+use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::{
     dictionary::{query_names::QueryNames, resolved_names::ResolvedNames},
     projected_attribute_names::projected_attribute_names,
@@ -29,11 +30,33 @@ use andromeda_postgresql_temporal_query::{
 use andromeda_temporal::{
     error::TemporalError,
     outcome::{TemporalEntityCandidate, TemporalEntityIdOutcome, TemporalPaginationOutcome, TemporalResidual},
-    port::history_reader::{AggregationPushdown, HistoryVisibility, TemporalHistoryOutcome, TemporalHistoryReader, TemporalReaderCapabilities},
+    port::history_reader::{
+        AggregationPushdown,
+        HistoryVisibility,
+        RecordedValueKind,
+        TemporalHistoryOutcome,
+        TemporalHistoryReader,
+        TemporalReaderCapabilities,
+    },
 };
 use async_trait::async_trait;
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// The neutral value shape a stored value-kind code stands for; a tombstone
+/// carries no value and so no shape.
+const fn recorded_value_kind(kind: ValueKind) -> Option<RecordedValueKind> {
+    match kind {
+        ValueKind::Tombstone => None,
+        ValueKind::Number => Some(RecordedValueKind::Number),
+        ValueKind::String => Some(RecordedValueKind::String),
+        ValueKind::Boolean => Some(RecordedValueKind::Boolean),
+        ValueKind::Geometry => Some(RecordedValueKind::Geometry),
+        ValueKind::Object => Some(RecordedValueKind::Object),
+        ValueKind::DateTime => Some(RecordedValueKind::DateTime),
+        ValueKind::Uri => Some(RecordedValueKind::Uri),
+    }
+}
 
 #[async_trait]
 impl TemporalHistoryReader for TemporalRepository {
@@ -54,6 +77,14 @@ impl TemporalHistoryReader for TemporalRepository {
 
     async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
         self.temporal_entity_types(entity_ids).await.map_err(TemporalError::from)
+    }
+
+    async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+        let recorded = self.recorded_value_kinds(attributes).await.map_err(TemporalError::from)?;
+        Ok(recorded
+            .into_iter()
+            .map(|(name, kinds)| (name, kinds.into_iter().filter_map(recorded_value_kind).collect()))
+            .collect())
     }
 
     async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {

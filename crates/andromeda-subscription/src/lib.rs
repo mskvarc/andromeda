@@ -20,6 +20,8 @@ pub mod compiled;
 pub mod csource;
 /// Compiled context-source-subscription cache.
 pub mod csource_cache;
+/// Matching context source registration subscriptions against registrations.
+pub mod csource_matching;
 /// Entity subscription lifecycle policy.
 pub mod entity;
 /// Subscription policy failures.

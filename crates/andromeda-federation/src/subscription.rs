@@ -12,7 +12,6 @@ use crate::{
     forwarding_url::forwarding_url,
     operation::ForwardingOperation,
     outcome::{ForwardedWriteOutcome, TransportFailure},
-    registration_loops,
     request::TriggeringRequest,
     transport::ForwardedRequest,
 };
@@ -94,7 +93,8 @@ impl ForwardedSubscription {
                 | ForwardedWriteOutcome::RemoteHttpFailure { .. }
                 | ForwardedWriteOutcome::Transport(_)
                 | ForwardedWriteOutcome::LoopDetected
-                | ForwardedWriteOutcome::NotAdvertised,
+                | ForwardedWriteOutcome::NotAdvertised
+                | ForwardedWriteOutcome::UpsertFollowUpNotAdvertised,
             )
             | None => requested.clone(), // clone: same
         }
@@ -131,7 +131,7 @@ impl FederationService {
         // inbound request, so there is no `Via` chain to extend; the
         // registration's own alias still cannot be one this broker answers for.
         let triggering = TriggeringRequest::default();
-        if registration_loops(registration, triggering.via) {
+        if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
         }
         let (method, path, body, context) = match &forward {

@@ -25,7 +25,8 @@ pub enum EntityMapMutation {
 /// Stores Entity Maps, with expiry decided by the store's own clock so every
 /// instance sharing the store agrees on what is live.
 pub trait EntityMapStore: Send + Sync + 'static {
-    /// Store an Entity Map with its entries and links, replacing a map with the same identifier.
+    /// Store an Entity Map with its entries, links and creating-request
+    /// fingerprint, replacing a map with the same identifier.
     fn insert<'a>(&'a self, map: &'a EntityMap) -> EntityMapStoreFuture<'a, ()>;
 
     /// Retrieve a live Entity Map, treating an expired map as absent.
@@ -33,6 +34,10 @@ pub trait EntityMapStore: Send + Sync + 'static {
 
     /// Move a live Entity Map's expiry.
     fn update<'a>(&'a self, identifier: &'a Uri, expires_at: DateTime<Utc>) -> EntityMapStoreFuture<'a, EntityMapMutation>;
+
+    /// Record the map a registration's context source used under a live map
+    /// (clause 5.5.14), replacing the link recorded for that registration.
+    fn link<'a>(&'a self, identifier: &'a Uri, registration: &'a Uri, linked_map: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation>;
 
     /// Remove a live Entity Map.
     fn delete<'a>(&'a self, identifier: &'a Uri) -> EntityMapStoreFuture<'a, EntityMapMutation>;

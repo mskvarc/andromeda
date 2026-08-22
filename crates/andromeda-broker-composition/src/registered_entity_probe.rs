@@ -12,7 +12,7 @@ use andromeda_entity::{
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::subscription::EntitySelector;
+use andromeda_ngsi_ld_model::{entity_info::EntityInfo, expanded::node::expanded_object_ref};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
     entity_selection::{EntitySelection, EntitySelector as CompiledEntitySelector},
@@ -50,9 +50,9 @@ impl EntityStoreRegistrationProbe {
     /// 5.5.7), so the selector's type leaves are absolute IRIs; expanding them
     /// against the core context leaves them unchanged and yields the typed
     /// expression the store evaluates.
-    async fn compile_selector(&self, selector: &EntitySelector) -> Result<CompiledEntitySelector, RegistrationError> {
+    async fn compile_selector(&self, selector: &EntityInfo) -> Result<CompiledEntitySelector, RegistrationError> {
         let prepared = self.engine.prepare_term_context(&ContextSpec::core_only());
-        let type_expr = expand_type_expression(&selector.type_, &ContextualExpander::new(&self.engine, &prepared)).await?;
+        let type_expr = expand_type_expression(&selector.type_.as_type_expression(), &ContextualExpander::new(&self.engine, &prepared)).await?;
         Ok(CompiledEntitySelector::builder()
             .ids(selector.id.iter().cloned().collect()) // clone: the compiled selector owns its identifiers across the store await.
             .id_pattern(selector.id_pattern.clone()) // clone: same reason.
@@ -82,16 +82,18 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
             let Some(entity) = self.reader.get(entity_id).await.map_err(probe_error)? else {
                 return Ok(EntityPresence::Absent);
             };
-            let holds = entity
-                .as_object()
-                .is_some_and(|members| attributes.iter().any(|attribute| members.contains_key(attribute.as_str())));
+            // The reader hands back the stored expanded payload, which wraps
+            // its node in an array; reading it as a bare object found no
+            // member and let an exclusive registration claim an attribute
+            // this broker already holds (clause 5.9.2.4).
+            let holds = expanded_object_ref(&entity).is_some_and(|members| attributes.iter().any(|attribute| members.contains_key(attribute.as_str())));
             Ok(if holds { EntityPresence::Present } else { EntityPresence::Absent })
         })
     }
 
     fn any_entity_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        selector: Option<&'life1 EntitySelector>,
+        selector: Option<&'life1 EntityInfo>,
         attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where

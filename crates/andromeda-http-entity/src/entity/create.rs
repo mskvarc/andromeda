@@ -15,9 +15,11 @@ use crate::entity::{
     LocalOutcome,
     OriginalUri,
     ProblemResponse,
+    ProvisionResource,
     Response,
     StatusCode,
     ValidatedQuery,
+    classify_entity_error,
     collect_proxied_attrs,
     provision_response,
 };
@@ -58,6 +60,7 @@ pub(crate) async fn create(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &entity_id,
             entity_type_compact: entity_type,
             attribute_name: None,
@@ -85,7 +88,7 @@ pub(crate) async fn create(
     let proxied = collect_proxied_attrs(&forwarded);
     let mut entity = entity;
     let local = if entity.strip_attributes(&proxied) {
-        LocalOutcome::Processed(service.create(&entity, &context).await.map(|_| ()))
+        LocalOutcome::processed(service.create(&entity, &context).await, classify_entity_error)
     } else {
         LocalOutcome::NothingRemained
     };

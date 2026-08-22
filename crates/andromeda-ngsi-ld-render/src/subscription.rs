@@ -1,7 +1,9 @@
 //! Presentation logic for subscription responses.
 //!
-//! Handles stripping of system attributes and JSON-LD context from
-//! subscription and CSR subscription payloads before HTTP responses.
+//! Handles stripping of system attributes and defaulted members from
+//! subscription and CSR subscription payloads before HTTP responses. The
+//! `jsonldContext` member of a subscription is part of the clause 5.2.12
+//! representation and stays in the retrieved document (clause 5.8.3.5).
 
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use serde_json::Value;
@@ -90,43 +92,6 @@ impl SubscriptionRenderer {
             }
         }
         payload
-    }
-}
-
-/// Output of [`JsonldContextStripRenderer`]: the payload with `jsonldContext`
-/// removed, together with the extracted context value.
-#[derive(Debug)]
-pub struct JsonldContextStripOutput {
-    /// The payload with `jsonldContext` removed.
-    pub payload: Value,
-    /// The extracted `jsonldContext` value, if one was present.
-    pub extracted: Option<Value>,
-}
-
-/// Extracts and removes the `jsonldContext` field from a subscription payload.
-///
-/// Used for subscription responses where the stored JSON-LD context needs to
-/// be surfaced to the response context before being stripped from the body.
-#[derive(Debug)]
-pub struct JsonldContextStripRenderer {
-    /// The subscription payload the context is taken out of.
-    payload: Value,
-}
-
-impl JsonldContextStripRenderer {
-    /// Create a renderer for the given payload.
-    pub const fn new(payload: Value) -> JsonldContextStripRenderer {
-        JsonldContextStripRenderer { payload }
-    }
-
-    /// Remove `jsonldContext` and answer with it alongside the payload.
-    ///
-    /// Removing a member cannot fail, so this answers with the value rather
-    /// than a `Result` no caller could act on.
-    pub fn render(self) -> JsonldContextStripOutput {
-        let mut payload = self.payload;
-        let extracted = payload.as_object_mut().and_then(|obj| obj.remove("jsonldContext"));
-        JsonldContextStripOutput { payload, extracted }
     }
 }
 
@@ -263,21 +228,18 @@ mod tests {
         );
     }
 
+    /// Clause 5.2.12: `jsonldContext` is a member of the subscription and
+    /// survives rendering of a local subscription, with or without `sysAttrs`.
     #[test]
-    fn strip_jsonld_context_removes_and_returns() {
-        let value = json!({
-            "id": "urn:ngsi-ld:Subscription:1",
-            "jsonldContext": "https://example.org/ctx"
-        });
-        let output = JsonldContextStripRenderer::new(value).render();
-        pretty_assertions::assert_eq!(output.extracted, Some(json!("https://example.org/ctx")));
-        assert!(output.payload.get("jsonldContext").is_none());
-    }
-
-    #[test]
-    fn strip_jsonld_context_returns_none_when_absent() {
-        let value = json!({"id": "urn:ngsi-ld:Subscription:1"});
-        let output = JsonldContextStripRenderer::new(value).render();
-        assert!(output.extracted.is_none());
+    fn render_subscription_keeps_jsonld_context_in_the_document() {
+        for sys_attrs in [SysAttrsInclusion::Strip, SysAttrsInclusion::Include] {
+            let value = json!({
+                "id": "urn:ngsi-ld:Subscription:1",
+                "type": "Subscription",
+                "jsonldContext": "https://example.org/ctx"
+            });
+            let rendered = render_local(value, sys_attrs);
+            pretty_assertions::assert_eq!(rendered["jsonldContext"], json!("https://example.org/ctx"), "{sys_attrs:?}");
+        }
     }
 }

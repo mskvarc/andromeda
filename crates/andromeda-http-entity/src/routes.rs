@@ -7,8 +7,10 @@ use crate::{
     entity_type,
     state::{EntityRouteState, EntityStateResolver},
 };
+use andromeda_http_extraction::snapshot_write_guard::reject_snapshot_scoped_writes;
 use axum::{
     Router,
+    middleware::from_fn,
     routing::{delete, get, patch, post, put},
 };
 use std::sync::Arc;
@@ -36,14 +38,20 @@ impl EntityRoutes {
             .route("/{id}/attrs", patch(entity::update_attributes::update_attrs))
             .route("/{id}/attrs/{attr_id}", patch(entity::partial_update_attribute::partial_update_attr))
             .route("/{id}/attrs/{attr_id}", delete(entity::delete_attribute::delete_attr))
-            .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr));
+            .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr))
+            // Clause 5.5.15: reads are served from the Snapshot; writes into
+            // one are not supported, so they are refused before any handler.
+            .layer(from_fn(reject_snapshot_scoped_writes));
 
+        // The batch query is consumption over POST, so it is added after the
+        // guard layer and stays outside it.
         let entity_operation_routes = Router::new()
             .route("/create", post(entity_operations::create::batch_create))
             .route("/upsert", post(entity_operations::upsert::batch_upsert))
             .route("/update", post(entity_operations::update::batch_update))
             .route("/merge", post(entity_operations::merge::batch_merge))
             .route("/delete", post(entity_operations::delete::batch_delete))
+            .layer(from_fn(reject_snapshot_scoped_writes))
             .route("/query", post(entity_operations::query::query));
 
         let type_routes = Router::new().route("/", get(entity_type::query)).route("/{type_}", get(entity_type::get));
@@ -132,6 +140,36 @@ mod tests {
             let response = routes.clone().oneshot(request(method.clone(), path)?).await?;
             assert_ne!(response.status(), StatusCode::NOT_FOUND, "{method} {path} was not routed");
             assert_ne!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{method} {path} lost its allowed method");
+        }
+        Ok(())
+    }
+
+    /// Clause 5.5.15: a Snapshot scopes reads; a write into one is refused as
+    /// `OperationNotSupported` before any tenant state is resolved, while the
+    /// consumption operations under a Snapshot reach their handlers.
+    #[tokio::test]
+    async fn snapshot_scoped_writes_are_refused_and_reads_pass_through() -> Result<(), Box<dyn Error>> {
+        let routes = EntityRoutes::new(Arc::new(RejectingResolver)).into_router();
+        for (method, path) in [
+            (Method::POST, "/entities"),
+            (Method::PATCH, "/entities/urn:ngsi-ld:Entity:1"),
+            (Method::DELETE, "/entities/urn:ngsi-ld:Entity:1/attrs/speed"),
+            (Method::POST, "/entityOperations/upsert"),
+        ] {
+            let mut scoped = request(method.clone(), path)?;
+            scoped
+                .headers_mut()
+                .insert("ngsild-snapshot", http::HeaderValue::from_static("urn:ngsi-ld:Snapshot:1"));
+            let response = routes.clone().oneshot(scoped).await?;
+            pretty_assertions::assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{method} {path}");
+        }
+        for (method, path) in [(Method::GET, "/entities"), (Method::POST, "/entityOperations/query"), (Method::GET, "/types")] {
+            let mut scoped = request(method.clone(), path)?;
+            scoped
+                .headers_mut()
+                .insert("ngsild-snapshot", http::HeaderValue::from_static("urn:ngsi-ld:Snapshot:1"));
+            let response = routes.clone().oneshot(scoped).await?;
+            assert_ne!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{method} {path} must reach its handler");
         }
         Ok(())
     }

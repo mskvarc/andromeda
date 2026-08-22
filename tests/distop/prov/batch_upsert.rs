@@ -38,13 +38,6 @@ fn speed_vehicle(id: &str, speed: i64) -> Value {
     entity(id, "Vehicle", &[("speed", property(json!(speed)))])
 }
 
-/// Whether a `BatchOperationResult` reports `id` under `success`.
-fn success_contains(body: &Value, id: &str) -> bool {
-    body["success"]
-        .as_array()
-        .is_some_and(|entries| entries.iter().any(|entry| entry.as_str() == Some(id) || entry["entityId"].as_str() == Some(id)))
-}
-
 /// Whether a `BatchOperationResult` carries an error keyed by `registration` with the given status.
 fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
     body["errors"].as_array().is_some_and(|entries| {
@@ -68,13 +61,13 @@ async fn batch_upsert_per_csr_filtering() {
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
         .property_names(&["speed"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["upsertBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let location_csr = CsrBuilder::new(&reg_location, &mock.url("/s2"))
         .mode("redirect")
         .property_names(&["location"])
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["upsertBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&location_csr).await.expect("create location registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/upsert", 204).await;
@@ -133,7 +126,7 @@ async fn batch_upsert_supported_forwards_and_merges() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .operations(&["createEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["upsertBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let source_result = json!({
@@ -159,7 +152,10 @@ async fn batch_upsert_supported_forwards_and_merges() {
 }
 
 /// Without the batch operation, a create-capable source is driven per entity via
-/// Create Entity. Confirms REQ-PROV-59.
+/// Create Entity; with every create succeeding and nothing left locally the
+/// result is `201` (clause 5.6.8.5: "the list of Entities successfully created
+/// (S Array), if all Entities not existing prior to this request have been
+/// successfully created"). Confirms REQ-PROV-59.
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_create() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -181,7 +177,7 @@ async fn batch_upsert_fallback_per_entity_create() {
             .batch_upsert(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
             .await
             .expect("batch upsert"),
-        207,
+        201,
     );
     assert_eq!(
         mock.get_count(Method::POST, "/ngsi-ld/v1/entities").await,
@@ -226,8 +222,11 @@ async fn batch_upsert_already_exists_replace_mode_forwards_replace() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// When the source reports the entity already exists and the mode is update, the
-/// broker follows up with a per-entity Update Attributes. Confirms REQ-PROV-61.
+/// When the source reports the entity already exists and the mode is update
+/// (`options=update`), the broker follows up with a per-entity Update Attributes
+/// (clause 5.6.8.4: "if the Update Attributes operation (clause 5.6.2) is
+/// supported by CSR and the value of the update mode flag is Update").
+/// Confirms REQ-PROV-61.
 #[tokio::test]
 async fn batch_upsert_already_exists_update_mode_forwards_update() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -238,13 +237,19 @@ async fn batch_upsert_already_exists_update_mode_forwards_update() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .operations(&["createEntity", "updateAttrs", "retrieveEntity"])
+        .operations(&["createEntity", "updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::POST, "/ngsi-ld/v1/entities", 409).await;
     mock.set_stub(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs"), 204).await;
 
-    let upserted = client.batch_upsert(&json!([speed_vehicle(&v1, 1)])).await.expect("batch upsert");
+    let upserted = client
+        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/upsert?options=update")
+        .header("content-type", "application/ld+json")
+        .json(&json!([speed_vehicle(&v1, 1)]))
+        .send()
+        .await
+        .expect("batch upsert");
     assert!(
         upserted.status.as_u16() < 500,
         "the upsert resolves without a server error: {}",
@@ -328,7 +333,10 @@ async fn batch_upsert_fallback_per_entity_replace() {
 }
 
 /// An update-only source without the batch operation is driven per entity via
-/// Update Attributes. Confirms REQ-PROV-64.
+/// Update Attributes under `options=update`, which the binding carries as
+/// `PATCH /entities/{id}/attrs` (clause 5.6.8.4 takes that branch only when
+/// "the value of the update mode flag is Update"; Table 4.20-1 calls the
+/// operation `updateEntity`). Confirms REQ-PROV-64.
 #[tokio::test]
 async fn batch_upsert_fallback_per_entity_update() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -340,25 +348,28 @@ async fn batch_upsert_fallback_per_entity_update() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
-    mock.set_stub(Method::POST, &format!("/ngsi-ld/v1/entities/{v1}/attrs"), 204).await;
-    mock.set_stub(Method::POST, &format!("/ngsi-ld/v1/entities/{v2}/attrs"), 204).await;
+    mock.set_stub(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs"), 204).await;
+    mock.set_stub(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs"), 204).await;
 
     let _ = client
-        .batch_upsert(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/upsert?options=update")
+        .header("content-type", "application/ld+json")
+        .json(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .send()
         .await
         .expect("batch upsert");
     assert_eq!(
-        mock.get_count(Method::POST, &format!("/ngsi-ld/v1/entities/{v1}/attrs")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs")).await,
         1,
-        "V1 attrs are posted individually"
+        "V1 attrs are patched individually"
     );
     assert_eq!(
-        mock.get_count(Method::POST, &format!("/ngsi-ld/v1/entities/{v2}/attrs")).await,
+        mock.get_count(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v2}/attrs")).await,
         1,
-        "V2 attrs are posted individually"
+        "V2 attrs are patched individually"
     );
 
     mock.shutdown().await;
@@ -402,8 +413,10 @@ async fn batch_upsert_redirect_no_viable_op_conflict_per_entity() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The local phase applies the upsert to a locally held entity, populating the
-/// result, while an auxiliary registration suppresses forwarding.
+/// The local phase applies the upsert to a locally held entity and, since every
+/// entity already existed and was updated, answers with no content (clause
+/// 5.6.8.5: "none (if all Entities already existed and are successfully
+/// updated)"), while an auxiliary registration suppresses forwarding.
 /// Confirms REQ-PROV-66.
 #[tokio::test]
 async fn batch_upsert_local_phase_per_mode() {
@@ -430,12 +443,7 @@ async fn batch_upsert_local_phase_per_mode() {
 
     let replacement = entity(&v1, "Vehicle", &[("brandName", property(json!("BMW")))]);
     let upserted = client.batch_upsert(&json!([replacement])).await.expect("batch upsert");
-    assert!(upserted.status.as_u16() < 400, "the local upsert succeeds: {}", upserted.status);
-    assert!(
-        success_contains(&json_body(&upserted), &v1),
-        "the locally upserted entity is reported: {}",
-        json_body(&upserted)
-    );
+    assert_status(&upserted, 204);
 
     let local = client
         .get_entity(&v1, "local=true", "application/ld+json", None)

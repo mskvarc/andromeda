@@ -8,20 +8,25 @@ use crate::expanded::{
     node::{expanded_object_mut, expanded_object_ref},
     null_sentinel::{instance_is_null_sentinel, member_is_null_sentinel},
 };
-use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
-use andromeda_ngsi_ld_vocabulary::expanded::properties;
-use serde_json::{Map, Value};
-use std::slice::from_ref;
+use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, rfc3339::whole_seconds};
+use andromeda_ngsi_ld_vocabulary::expanded::{classes, properties};
+use chrono::{DateTime, Utc};
+use serde_json::{Map, Value, json};
+use std::{borrow::Cow, slice::from_ref};
 
 /// NGSI-LD Merge Patch (clause 5.6.17, behaviour in 5.5.4): deep-merge `patch`
 /// into `entity`, handling null sentinels for attribute deletion.
+///
+/// `default_observed_at` is Table 6.5.3.4-1's `observedAt`: when a merged
+/// instance names no `observedAt` and the instance it merges into carried one,
+/// the instance takes this timestamp.
 ///
 /// # Errors
 ///
 /// Returns [`ExpandedEntityError::EntityNotExpanded`] or
 /// [`ExpandedEntityError::PatchNotExpanded`] if either side is not an expanded
 /// JSON-LD node.
-pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEntityError> {
+pub fn merge_entity(entity: &mut Value, patch: &Value, default_observed_at: Option<DateTime<Utc>>) -> Result<(), ExpandedEntityError> {
     let entity_obj = expanded_object_mut(entity).ok_or(ExpandedEntityError::EntityNotExpanded)?;
     let patch_obj = expanded_object_ref(patch).ok_or(ExpandedEntityError::PatchNotExpanded)?;
 
@@ -56,10 +61,42 @@ pub fn merge_entity(entity: &mut Value, patch: &Value) -> Result<(), ExpandedEnt
             continue;
         }
 
-        apply_instance_patch(entity_obj, key, patch_instances, InstancePatchDepth::DeepMerge);
+        let patch_instances = match default_observed_at {
+            Some(observed_at) => Cow::Owned(with_default_observed_at(entity_obj.get(key), patch_instances, observed_at)),
+            None => Cow::Borrowed(patch_instances),
+        };
+        apply_instance_patch(entity_obj, key, &patch_instances, InstancePatchDepth::DeepMerge);
     }
 
     Ok(())
+}
+
+/// Table 6.5.3.4-1 `observedAt`: the patch instances, each one that names no
+/// `observedAt` while the existing instance it merges into (same `datasetId`)
+/// carries one given `observed_at` in its place.
+fn with_default_observed_at(existing: Option<&Value>, patch_instances: &[Value], observed_at: DateTime<Utc>) -> Vec<Value> {
+    let existing_instances = existing.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    patch_instances
+        .iter()
+        .map(|patch_instance| {
+            let dataset_id = get_instance_dataset_id(patch_instance);
+            let previously_observed = existing_instances
+                .iter()
+                .find(|instance| get_instance_dataset_id(instance) == dataset_id)
+                .is_some_and(|instance| instance.get(properties::OBSERVED_AT.as_str()).is_some());
+            match patch_instance.as_object() {
+                Some(instance) if previously_observed && !instance.contains_key(properties::OBSERVED_AT.as_str()) => {
+                    let mut stamped = instance.clone(); // clone: the patch is borrowed and the stamped instance is a new value
+                    stamped.insert(
+                        properties::OBSERVED_AT.as_str().to_string(),
+                        json!([{"@type": classes::DATE_TIME.as_str(), "@value": whole_seconds(observed_at)}]),
+                    );
+                    Value::Object(stamped)
+                }
+                Some(_) | None => patch_instance.clone(), // clone: the patch is borrowed and the result owns every instance
+            }
+        })
+        .collect()
 }
 
 /// Apply one attribute's patch instances, which may mix live updates and null
@@ -305,7 +342,7 @@ mod tests {
             property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B")),
         ]);
 
-        merge_entity(&mut entity, &patch).expect("merge succeeds");
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
         let instances = speed_instances(&entity);
         pretty_assertions::assert_eq!(instances.len(), 1, "A deleted, B kept");
@@ -327,7 +364,7 @@ mod tests {
             property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B")),
         ]);
 
-        merge_entity(&mut entity, &patch).expect("merge succeeds");
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
         let instances = speed_instances(&entity);
         pretty_assertions::assert_eq!(instances.len(), 1, "the default instance is gone, B is kept");
@@ -345,7 +382,7 @@ mod tests {
             "https://example.com/speed": [{"@value": "urn:ngsi-ld:null"}]
         }]);
 
-        merge_entity(&mut entity, &patch).expect("merge succeeds");
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
         assert!(entity[0].get("https://example.com/speed").is_none());
     }
@@ -382,7 +419,7 @@ mod tests {
         let mut entity = entity_with_speed(vec![property_instance(json!(10), None)]);
         let patch = entity_with_speed(vec![property_instance(json!("urn:ngsi-ld:null"), None)]);
 
-        merge_entity(&mut entity, &patch).expect("merge succeeds");
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
         assert!(entity[0].get("https://example.com/speed").is_none(), "the attribute is gone");
     }
@@ -432,7 +469,7 @@ mod tests {
             }]
         }]);
 
-        merge_entity(&mut entity, &patch).expect("merge succeeds");
+        merge_entity(&mut entity, &patch, None).expect("merge succeeds");
 
         let value = &entity[0]["https://example.com/address"][0]["https://uri.etsi.org/ngsi-ld/hasValue"][0];
         pretty_assertions::assert_eq!(value["https://example.com/street"], json!([{"@value": "new"}]));
@@ -440,10 +477,48 @@ mod tests {
     }
 
     #[test]
+    fn a_default_observed_at_stamps_only_instances_that_previously_carried_one() {
+        // Table 6.5.3.4-1 `observedAt`: the parameter fills in a missing
+        // observedAt only where the target instance already had one, and never
+        // overrides one the fragment names.
+        let mut observed = property_instance(json!(10), None);
+        observed["https://uri.etsi.org/ngsi-ld/observedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2020-01-01T00:00:00Z"}]);
+        let mut entity = entity_with_speed(vec![observed, property_instance(json!(15), Some("urn:ngsi-ld:Dataset:B"))]);
+        entity[0]["https://example.com/brand"] = json!([property_instance(json!("old"), None)]);
+        let mut explicit = property_instance(json!(20), Some("urn:ngsi-ld:Dataset:B"));
+        explicit["https://uri.etsi.org/ngsi-ld/observedAt"] = json!([{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2021-06-01T00:00:00Z"}]);
+        let patch = json!([{
+            "https://example.com/speed": [property_instance(json!(11), None), explicit],
+            "https://example.com/brand": [property_instance(json!("new"), None)]
+        }]);
+        let at = "2024-02-03T04:05:06Z".parse::<chrono::DateTime<chrono::Utc>>().expect("valid timestamp");
+
+        merge_entity(&mut entity, &patch, Some(at)).expect("merge succeeds");
+
+        let speed = speed_instances(&entity);
+        pretty_assertions::assert_eq!(
+            speed[0]["https://uri.etsi.org/ngsi-ld/observedAt"][0]["@value"],
+            json!("2024-02-03T04:05:06Z"),
+            "the default instance previously observed takes the parameter"
+        );
+        pretty_assertions::assert_eq!(
+            speed[1]["https://uri.etsi.org/ngsi-ld/observedAt"][0]["@value"],
+            json!("2021-06-01T00:00:00Z"),
+            "an explicit observedAt in the fragment is kept"
+        );
+        assert!(
+            entity[0]["https://example.com/brand"][0]
+                .get("https://uri.etsi.org/ngsi-ld/observedAt")
+                .is_none(),
+            "an attribute that never carried observedAt gets none"
+        );
+    }
+
+    #[test]
     fn merge_entity_adds_new_attr() {
         let mut entity = json!([{"@type": ["https://example.com/T"], "https://example.com/a": [{"@value": 1}]}]);
         let patch = json!([{"https://example.com/b": [{"@value": 2}]}]);
-        merge_entity(&mut entity, &patch).unwrap();
+        merge_entity(&mut entity, &patch, None).unwrap();
         assert!(entity[0].get("https://example.com/b").is_some());
     }
 
@@ -483,7 +558,7 @@ mod tests {
     fn a_non_expanded_entity_is_a_typed_error() {
         let mut entity = json!("not an entity");
         pretty_assertions::assert_eq!(
-            merge_entity(&mut entity, &json!([{}])).expect_err("must fail"),
+            merge_entity(&mut entity, &json!([{}]), None).expect_err("must fail"),
             ExpandedEntityError::EntityNotExpanded
         );
     }

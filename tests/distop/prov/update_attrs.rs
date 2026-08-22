@@ -3,9 +3,10 @@
 //! A partial update of `PATCH /entities/{id}/attrs` returns `404` only when no
 //! local entity and no matching registration exists; an exclusive registration
 //! forwards its owned `speed` and patches the remainder locally; an unadvertised
-//! `updateAttrs` yields `409 Conflict` bare or keyed inside `207 Multi-Status`;
-//! inclusive forwards the full remainder and also patches locally; and a
-//! `T-PAIR` row proves the split end-to-end against real broker B.
+//! `updateEntity` (the Table 4.20-1 name of 5.6.2 Update Attributes) yields
+//! `409 Conflict` bare or keyed inside `207 Multi-Status`; inclusive forwards the
+//! full remainder and also patches locally; and a `T-PAIR` row proves the split
+//! end-to-end against real broker B.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -55,7 +56,7 @@ async fn update_attrs_registration_matches_entity_absent_not_404() {
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PATCH, &attrs_path, 204).await;
@@ -97,7 +98,7 @@ async fn update_attrs_exclusive_match_forwards_and_strips() {
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PATCH, &attrs_path, 204).await;
@@ -135,9 +136,9 @@ async fn update_attrs_exclusive_match_forwards_and_strips() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration without `updateAttrs` rejects an owned-only update
-/// with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-16
-/// (complete-fail).
+/// An exclusive registration without `updateEntity` (the Table 4.20-1 name of
+/// 5.6.2) rejects an owned-only update with a bare `409 Conflict` and no
+/// forwarding. Confirms REQ-PROV-16 (complete-fail).
 #[tokio::test]
 async fn update_attrs_exclusive_op_unsupported_returns_409() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -174,7 +175,7 @@ async fn update_attrs_exclusive_op_unsupported_returns_409() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The same unsupported `updateAttrs`, but with a local remainder, degrades to
+/// The same unsupported `updateEntity`, but with a local remainder, degrades to
 /// `207 Multi-Status` carrying the `409` keyed by `registrationId`; the
 /// remainder is patched locally. Confirms REQ-PROV-16 (partial), 19.
 #[tokio::test]
@@ -255,7 +256,7 @@ async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PATCH, &attrs_path, 204).await;
@@ -319,7 +320,7 @@ async fn update_attrs_pair_exclusive_end_to_end() {
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["updateAttrs", "retrieveEntity", "queryEntity"])
+        .operations(&["updateEntity", "retrieveEntity", "queryEntity"])
         .build();
     assert_status(&front.client().create_registration(&registration).await.expect("create registration"), 201);
 

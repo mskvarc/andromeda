@@ -2,6 +2,8 @@
 
 #![deny(missing_docs)]
 
+/// The clause 4.5.5 merge of attribute instances from several sources.
+pub mod attribute_instance_merge;
 /// Cached forwarded GET responses (clause 6.3.17).
 pub mod cache;
 /// Federation operation configuration.
@@ -20,16 +22,26 @@ pub mod entity_read;
 pub mod entity_result;
 /// Federation policy failures.
 pub mod error;
+/// The parameter vocabulary of a forwarded read request.
+pub mod forwarded_parameter;
 /// The representation a forwarded request carries.
 pub mod forwarded_payload;
+/// Per-registration narrowing of a client's query parameters.
+pub mod forwarded_query;
 /// Forwarded URL construction.
 pub mod forwarding_url;
 /// NGSI-LD operation capability matching.
 pub mod operation;
 /// Typed forwarding outcomes.
 pub mod outcome;
-/// Current-entity provision forwarding.
+/// Single-entity provision forwarding.
 pub mod provision;
+/// Batch provision forwarding.
+pub mod provision_batch;
+/// Purge forwarding.
+pub mod provision_purge;
+/// Registration selection and fan-out shared by forwarded reads.
+pub mod read_fan_out;
 /// Registration-information selection.
 pub mod registration_selection;
 /// Typed forwarding inputs.
@@ -38,6 +50,8 @@ pub mod request;
 pub mod subscription;
 /// Temporal query and retrieve execution.
 pub mod temporal;
+/// Post-aggregation `lastN` truncation of temporal representations.
+pub mod temporal_last_n;
 /// Temporal response merging.
 pub mod temporal_result;
 /// Shared forwarding HTTP transport.
@@ -45,14 +59,21 @@ pub mod transport;
 
 use crate::{
     cache::ForwardedGetCache,
-    config::{FederationConfig, SplitEntitiesDefault},
+    config::{FederationConfig, SplitEntities, SplitEntitiesDefault},
     cooldown::CooldownRegistry,
     error::FederationError,
     outcome::TransportFailure,
 };
-use andromeda_http_headers::{received_protocol::ReceivedProtocol, via::Via, warning::Warning};
+use andromeda_http_headers::{
+    ngsild_entity_map::NgsiLdEntityMap,
+    ngsild_warning::{NgsiLdWarning, NgsiLdWarningHeader},
+    preference_applied::PreferenceApplied,
+    received_protocol::ReceivedProtocol,
+    via::Via,
+    warning::Warning,
+};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, spec_version::SpecVersion, uri::Uri};
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use andromeda_registration::store::{ForwardingOutcome, RegistrationStore};
 use chrono::Utc;
@@ -64,13 +85,15 @@ fn loop_detected(incoming_via: Option<&Via>, source_alias: &ContextSourcePseudon
     incoming_via.is_some_and(|via| via.contains_pseudonym(source_alias))
 }
 
-/// Whether a registration's own alias is already in the incoming `Via` chain,
-/// so contacting it would close a loop (clause 4.3.6.4).
-fn registration_loops(registration: &ContextSourceRegistration, incoming_via: Option<&Via>) -> bool {
-    match (&registration.access.context_source_alias, incoming_via) {
-        (Some(alias), Some(via)) => via.contains_pseudonym(alias),
-        (None, _) | (_, None) => false,
-    }
+/// Whether contacting a registration would close a loop (clauses 4.3.6.4 and
+/// 6.3.17): its alias is already in the incoming `Via` chain, or it is this
+/// broker's own alias, which is the "registered to redirect back on to the
+/// Context Broker" case clause 6.3.17 names.
+fn registration_loops(registration: &ContextSourceRegistration, incoming_via: Option<&Via>, local_alias: &ContextSourcePseudonym) -> bool {
+    let Some(alias) = &registration.access.context_source_alias else {
+        return false;
+    };
+    alias == local_alias || incoming_via.is_some_and(|via| via.contains_pseudonym(alias))
 }
 
 /// What a forwarded request answered with, before the caller reads the body.
@@ -79,6 +102,15 @@ pub(crate) struct SentResponse {
     pub(crate) status: reqwest::StatusCode,
     /// The IANA `Warning` header the source sent, if any.
     pub(crate) warning: Option<Warning>,
+    /// The clause 6.3.17 warnings the source itself reported about the
+    /// sources behind it, relayed to the client as part of this response.
+    pub(crate) ngsild_warnings: Vec<NgsiLdWarning>,
+    /// The specification version the source says its payload conforms to
+    /// (clause 4.3.6.8 `Preference-Applied`), when it said.
+    pub(crate) returned_version: Option<SpecVersion>,
+    /// The EntityMap the source used (clause 5.5.14 `NGSILD-EntityMap`), when
+    /// it returned one.
+    pub(crate) entity_map: Option<Uri>,
     /// The raw body.
     pub(crate) body: Vec<u8>,
 }
@@ -139,7 +171,7 @@ impl FederationService {
 
     /// Resolve a request's or subscription's `splitEntities` against the
     /// deployment default (clauses 4.3.6.7 and 5.2.12).
-    pub const fn split_entities(&self, explicit: Option<bool>) -> bool {
+    pub const fn split_entities(&self, explicit: Option<bool>) -> SplitEntities {
         self.split_entities_default.resolve(explicit)
     }
 
@@ -156,6 +188,12 @@ impl FederationService {
     /// Check whether forwarding would create a Via loop.
     pub fn is_loop_detected(&self, incoming_via: Option<&Via>) -> bool {
         loop_detected(incoming_via, &self.source_alias)
+    }
+
+    /// Whether contacting `registration` would close a loop, through the
+    /// incoming `Via` chain or by pointing back at this broker's own alias.
+    pub(crate) fn registration_loops(&self, registration: &ContextSourceRegistration, incoming_via: Option<&Via>) -> bool {
+        registration_loops(registration, incoming_via, &self.source_alias)
     }
 
     /// The deadline a forwarded request to `registration` gets: its
@@ -185,10 +223,18 @@ impl FederationService {
             Ok(response) => {
                 let status = response.status();
                 let warning = headers::HeaderMapExt::typed_get::<Warning>(response.headers());
+                let ngsild_warnings = headers::HeaderMapExt::typed_get::<NgsiLdWarningHeader>(response.headers())
+                    .map(NgsiLdWarningHeader::into_warnings)
+                    .unwrap_or_default();
+                let returned_version = headers::HeaderMapExt::typed_get::<PreferenceApplied>(response.headers()).and_then(|applied| applied.applied_version());
+                let entity_map = headers::HeaderMapExt::typed_get::<NgsiLdEntityMap>(response.headers()).map(NgsiLdEntityMap::into_inner);
                 match response.bytes().await {
                     Ok(body) => Ok(SentResponse {
                         status,
                         warning,
+                        ngsild_warnings,
+                        returned_version,
+                        entity_map,
                         body: body.to_vec(),
                     }),
                     Err(error) => Err(classify_transport_failure(error, timeout)),
@@ -200,24 +246,21 @@ impl FederationService {
             Ok(sent) if sent.status.is_success() || sent.status == reqwest::StatusCode::NOT_FOUND => ForwardingOutcome::Succeeded,
             Ok(_) | Err(_) => ForwardingOutcome::Failed,
         };
-        self.record_health(&registration.id, health);
+        self.record_health(&registration.id, health).await;
         outcome
     }
 
-    /// Record one attempt on the registration's health members without
-    /// holding up the forwarding that produced it.
-    fn record_health(&self, registration: &Uri, outcome: ForwardingOutcome) {
+    /// Record one attempt on the registration's health members (clause
+    /// 5.2.34) before the response is handed back, so a client reading the
+    /// registration right after the forwarded call observes the attempt.
+    async fn record_health(&self, registration: &Uri, outcome: ForwardingOutcome) {
         match outcome {
             ForwardingOutcome::Succeeded => self.cooldowns.record_success(registration),
             ForwardingOutcome::Failed => self.cooldowns.record_failure(registration),
         }
-        let repo = Arc::clone(&self.csr_repo);
-        let registration = registration.clone(); // clone: the recording task outlives the borrowed registration
-        tokio::spawn(async move {
-            if let Err(error) = repo.record_forwarding_outcome(&registration, outcome, Utc::now()).await {
-                warn!(%registration, %error, "failed to record the forwarding outcome on the registration");
-            }
-        });
+        if let Err(error) = self.csr_repo.record_forwarding_outcome(registration, outcome, Utc::now()).await {
+            warn!(%registration, %error, "failed to record the forwarding outcome on the registration");
+        }
     }
 }
 
@@ -238,6 +281,7 @@ mod tests;
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-entity-map",
         "andromeda-http-headers",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
@@ -245,6 +289,8 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-query",
         "andromeda-ngsi-ld-render",
+        "andromeda-ngsi-ld-representation",
+        "andromeda-ngsi-ld-request",
         "andromeda-ngsi-ld-vocabulary",
         "andromeda-registration",
     ],

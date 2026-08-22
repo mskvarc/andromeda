@@ -111,6 +111,16 @@ where
 }
 
 /// Register semantic registration deletion as its own scheduled operation.
+///
+/// Clause 5.9.2.4: a registration with a future `expiresAt` is deleted when
+/// that instant is reached. The sweep runs immediately at start-up and then
+/// every `expiration_interval` seconds (`ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS`,
+/// 30 s by default, 5 s in the conformance stacks), deleting every
+/// registration whose `expiresAt` is at or before the sweep's cutoff and
+/// publishing the clause 5.11 `NoLongerMatching` change for each. A missed
+/// tick is skipped rather than replayed, so the sweep never runs twice in one
+/// cadence. Until the sweep reaches an expired row, the registration store's
+/// reads already treat it as deleted.
 pub(super) fn register_registration_expiry(
     supervisor: &TaskSupervisor,
     store: Arc<dyn RegistrationStore>,
@@ -240,7 +250,7 @@ fn classify_entity_map_failure(error: EntityMapError) -> TaskFailure {
     match error {
         EntityMapError::Persistence { .. } => TaskFailure::transient(summary),
         EntityMapError::Invariant { .. } => TaskFailure::invariant_violation(summary),
-        EntityMapError::NotFound { .. } | EntityMapError::EntityNotInMap { .. } => TaskFailure::permanent(summary),
+        EntityMapError::NotFound { .. } | EntityMapError::RequestChanged { .. } => TaskFailure::permanent(summary),
     }
 }
 

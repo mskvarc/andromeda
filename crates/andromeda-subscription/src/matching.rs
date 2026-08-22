@@ -4,9 +4,9 @@
 //! a compiled subscription. Used by the notification worker (event-driven
 //! delivery) and the subscription cache (notification-event generation).
 
-use crate::compiled::{CompiledCsrSubscription, CompiledSubscription};
+use crate::compiled::CompiledSubscription;
 use andromeda_context_commit::change_event::ChangeEvent;
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
+use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_model::{
     expanded::query_match::{matches_geo_query, matches_scope_query},
     notification::ChangeOrigin,
@@ -16,61 +16,6 @@ use andromeda_ngsi_ld_query::filter::eval;
 use chrono::Utc;
 use serde_json::Value;
 use tracing::debug;
-
-/// Match a context-source subscription against one registration representation (clause 5.12).
-pub fn matches_csource_subscription(sub: &CompiledCsrSubscription, registration: &Value) -> bool {
-    if sub.status != SubscriptionStatus::Active {
-        return false;
-    }
-    if sub.expires_at.is_some_and(|expires_at| expires_at <= Utc::now()) || sub.time_interval_secs.is_some() {
-        return false;
-    }
-    if !sub.selectors.is_empty() {
-        let information = registration.get("information").and_then(Value::as_array);
-        let selector_matches = sub.selectors.iter().any(|selector| {
-            information.is_some_and(|entries| {
-                entries.iter().any(|entry| {
-                    entry.get("entities").and_then(Value::as_array).is_some_and(|entities| {
-                        entities.iter().any(|entity| {
-                            let entity_type = entity.get("type").and_then(Value::as_str).unwrap_or("");
-                            selector.type_.matches(&[entity_type])
-                                && selector
-                                    .id
-                                    .as_ref()
-                                    .is_none_or(|id| entity.get("id").and_then(Value::as_str) == Some(id.as_ref()))
-                                && selector
-                                    .id_pattern
-                                    .as_ref()
-                                    .is_none_or(|pattern| entity.get("id").and_then(Value::as_str).is_some_and(|id| pattern.is_match(id)))
-                        })
-                    })
-                })
-            })
-        });
-        if !selector_matches {
-            return false;
-        }
-    }
-    if let Some(watched) = &sub.watched_attrs {
-        let attribute_matches = registration.get("information").and_then(Value::as_array).is_some_and(|entries| {
-            entries.iter().any(|entry| {
-                ["propertyNames", "relationshipNames"].iter().any(|member| {
-                    entry.get(*member).and_then(Value::as_array).is_some_and(|names| {
-                        names
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .filter_map(|raw| raw.parse::<AttributeName>().ok())
-                            .any(|name| watched.contains(&name))
-                    })
-                })
-            })
-        });
-        if !attribute_matches {
-            return false;
-        }
-    }
-    sub.compiled_csf.as_ref().is_none_or(|expression| eval::evaluate(expression, registration))
-}
 
 /// Determine whether a compiled subscription matches a change event.
 ///
@@ -222,6 +167,7 @@ mod tests {
     use andromeda_ngsi_ld_query::{
         error::QueryError,
         geo::{compile::compile_geo_query, input::GeoQueryInput},
+        projection::compiled::Projection,
         term_expander::TermExpander,
     };
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
@@ -270,6 +216,7 @@ mod tests {
             notification_join_level: NonZeroU32::MIN,
             compiled_csf: None,
             local_only: false,
+            notification_projection: Projection::default(),
         })
     }
 
@@ -313,24 +260,6 @@ mod tests {
         sub.created_at = at(500)?;
         assert!(matches_subscription(&sub, &event), "a change after the subscription's creation matches");
         Ok(())
-    }
-
-    fn make_csource_sub() -> Result<CompiledCsrSubscription, SubscriptionError> {
-        Ok(CompiledCsrSubscription {
-            id: parse_fixture("urn:ngsi-ld:Subscription:csource", "CSR subscription URI")?,
-            status: SubscriptionStatus::Active,
-            endpoint_uri: Url::parse("http://example.com/notify").map_err(|error| SubscriptionError::internal(format!("invalid endpoint fixture: {error}")))?,
-            endpoint_accept: None,
-            endpoint_receiver_info: None,
-            endpoint_notifier_info: None,
-            selectors: Vec::new(),
-            watched_attrs: None,
-            throttling_secs: None,
-            time_interval_secs: None,
-            jsonld_context: None,
-            expires_at: None,
-            compiled_csf: None,
-        })
     }
 
     /// Resolves every term to the NGSI-LD `location` GeoProperty, which is what
@@ -446,28 +375,6 @@ mod tests {
             NotificationTrigger::EntityDeleted,
         );
         assert!(!matches_subscription(&sub, &event));
-        Ok(())
-    }
-
-    #[test]
-    fn active_csource_subscription_without_filters_matches_a_registration() -> Result<(), SubscriptionError> {
-        assert!(matches_csource_subscription(&make_csource_sub()?, &serde_json::json!({"information": []})));
-        Ok(())
-    }
-
-    #[test]
-    fn paused_csource_subscription_does_not_match_a_registration() -> Result<(), SubscriptionError> {
-        let mut subscription = make_csource_sub()?;
-        subscription.status = SubscriptionStatus::Paused;
-        assert!(!matches_csource_subscription(&subscription, &serde_json::json!({"information": []})));
-        Ok(())
-    }
-
-    #[test]
-    fn interval_csource_subscription_is_excluded_from_event_matching() -> Result<(), SubscriptionError> {
-        let mut subscription = make_csource_sub()?;
-        subscription.time_interval_secs = Some(10.0);
-        assert!(!matches_csource_subscription(&subscription, &serde_json::json!({"information": []})));
         Ok(())
     }
 

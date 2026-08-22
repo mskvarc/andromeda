@@ -1,12 +1,15 @@
 use crate::{
-    entity_result::{collect_proxied_attrs, collect_warnings, merge_query_results, strip_attributes_from_value},
-    forwarding_url::build_forwarding_query_string,
+    entity_result::{collect_proxied_attrs, collect_warnings, merge_query_results, merge_retrieve_results, strip_attributes_from_value},
     loop_detected,
     outcome::{ForwardedEntities, ForwardedTemporalEntities, ForwardedWriteOutcome, ForwardedWriteResult},
+    registration_loops,
 };
 use andromeda_http_headers::{ngsild_warning::NgsiLdWarning, received_protocol::ReceivedProtocol, via::Via};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
-use andromeda_ngsi_ld_model::registration::ForwardingMode;
+use andromeda_ngsi_ld_model::{
+    attribute::instance::AttributeValue,
+    registration::{ContextSourceRegistration, ForwardingMode},
+};
 use url::Url;
 
 fn attribute_name(raw: &str) -> AttributeName {
@@ -95,12 +98,14 @@ fn collect_warnings_from_results() {
                 NgsiLdWarning::MiscellaneousWarning("timeout".to_string()),
                 NgsiLdWarning::RevalidationFailed("invalid JSON".to_string()),
             ],
+            linked_map: None,
         },
         ForwardedEntities {
             registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
             mode: ForwardingMode::Inclusive,
             entities: vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))],
             warnings: Vec::new(),
+            linked_map: None,
         },
     ];
     let warnings = collect_warnings(&results);
@@ -124,6 +129,7 @@ fn merge_query_adds_remote_entities() {
         mode: ForwardingMode::Inclusive,
         entities: vec![entity_from_json(serde_json::json!({"id": "urn:b", "type": "T"}))],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 2);
@@ -215,6 +221,7 @@ fn merge_temporal_query_unions_instances_for_same_entity() {
             ]
         })],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_temporal_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 1);
@@ -244,6 +251,7 @@ fn merge_temporal_query_deduplicates_by_instance_id() {
             ]
         })],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_temporal_query_results(local, remote);
     let speed = result[0].get("speed").unwrap().as_array().unwrap();
@@ -263,6 +271,7 @@ fn merge_temporal_query_auxiliary_only_supplements_existing() {
             serde_json::json!({"id": "urn:b", "type": "T", "speed": [{"value": 20}]}),
         ],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_temporal_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 1);
@@ -288,6 +297,7 @@ fn merge_temporal_retrieve_combines_remote_attributes() {
             "fuel": [{"value": 50}]
         })],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_temporal_retrieve_results(local, remote);
     let entity = result.unwrap();
@@ -304,6 +314,7 @@ fn merge_temporal_retrieve_remote_only() {
         mode: ForwardingMode::Inclusive,
         entities: vec![serde_json::json!({"id": "urn:a", "type": "T", "speed": [{"value": 10}]})],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_temporal_retrieve_results(None, remote);
     assert!(result.is_some());
@@ -468,7 +479,7 @@ fn csr_mode_filter_auxiliary_only() {
 }
 
 #[test]
-fn merge_query_auxiliary_adds_and_merges() {
+fn merge_query_auxiliary_supplements_without_adding_entities() {
     let local = vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T", "speed": 100}))];
     let remote = vec![ForwardedEntities {
         registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
@@ -478,9 +489,12 @@ fn merge_query_auxiliary_adds_and_merges() {
             entity_from_json(serde_json::json!({"id": "urn:b", "type": "T", "speed": 80})),
         ],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_query_results(local, remote);
-    pretty_assertions::assert_eq!(result.len(), 2, "Auxiliary should add remote entities in query merge");
+    // Clause 5.7.2.4: auxiliary data is added only where an attribute is not
+    // present already, and an entity no other source returned is not added.
+    pretty_assertions::assert_eq!(result.len(), 1, "an auxiliary source supplements, it never supplies new entities");
     let entity_a = result.iter().find(|entity| entity.id.to_string() == "urn:a").expect("urn:a should be present");
     assert!(entity_a.attrs.contains_key("fuel"), "Auxiliary attrs should be merged");
 }
@@ -494,20 +508,80 @@ fn merge_query_primary_adds_new_entities() {
         mode: ForwardingMode::Inclusive,
         entities: vec![entity_from_json(serde_json::json!({"id": "urn:b", "type": "T", "speed": 80}))],
         warnings: Vec::new(),
+        linked_map: None,
     }];
     let result = merge_query_results(local, remote);
     pretty_assertions::assert_eq!(result.len(), 2, "Inclusive should add new entities");
 }
 
+fn aliased_registration(alias: &str) -> ContextSourceRegistration {
+    serde_json::from_value(serde_json::json!({
+        "id": "urn:ngsi-ld:csr:loop",
+        "type": "ContextSourceRegistration",
+        "endpoint": "https://peer.example.org",
+        "information": [{"entities": [{"type": "Vehicle"}]}],
+        "contextSourceAlias": alias,
+        "status": "ok",
+        "createdAt": "2024-01-01T00:00:00Z",
+        "modifiedAt": "2024-01-01T00:00:00Z"
+    }))
+    .expect("valid registration")
+}
+
+/// Clause 6.3.17: a registration whose alias is this broker's own alias is
+/// "registered to redirect back on to the Context Broker", a loop even
+/// without any `Via` chain; one whose alias is elsewhere in the chain is a
+/// loop too (clause 4.3.6.4); any other alias is not.
 #[test]
-fn forwarding_query_string_renders_typed_ids_without_reparsing() {
-    let ids = vec![
-        "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid URI"),
-        "urn:ngsi-ld:Entity:b".parse::<Uri>().expect("valid URI"),
-    ];
-    let entity_type = "Vehicle".parse().ok();
-    pretty_assertions::assert_eq!(
-        build_forwarding_query_string(entity_type.as_ref(), Some(&ids)),
-        "id=urn%3Angsi-ld%3AEntity%3Aa%2Curn%3Angsi-ld%3AEntity%3Ab&type=Vehicle"
-    );
+fn a_registration_aliased_as_the_broker_itself_or_as_a_via_hop_is_a_loop() {
+    let local = ContextSourcePseudonym::new("broker-a").expect("valid alias");
+    let upstream = ContextSourcePseudonym::new("broker-b").expect("valid alias");
+    let protocol = ReceivedProtocol::new("1.1").expect("valid protocol");
+
+    assert!(registration_loops(&aliased_registration("broker-a"), None, &local));
+    let via = Via::with_entry(protocol, upstream);
+    assert!(registration_loops(&aliased_registration("broker-b"), Some(&via), &local));
+    assert!(!registration_loops(&aliased_registration("broker-c"), Some(&via), &local));
+    assert!(!registration_loops(&aliased_registration("broker-c"), None, &local));
+}
+
+/// Clause 5.7.1.4: local data is the base and remote attributes are merged on
+/// top per clause 4.5.5, so a distinct `datasetId` instance coexists with the
+/// local default instance.
+#[test]
+fn merge_retrieve_merges_remote_instances_onto_the_local_base() {
+    let local = entity_from_json(serde_json::json!({
+        "id": "urn:a",
+        "type": "T",
+        "speed": {"type": "Property", "value": 10, "observedAt": "2021-01-01T00:00:00Z"}
+    }));
+    let remote = vec![ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
+        mode: ForwardingMode::Inclusive,
+        entities: vec![entity_from_json(serde_json::json!({
+            "id": "urn:a",
+            "type": "T",
+            "speed": {"type": "Property", "value": 30, "observedAt": "2023-01-01T00:00:00Z", "datasetId": "urn:ngsi-ld:ds:2"},
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [1.0, 2.0]}}
+        }))],
+        warnings: Vec::new(),
+        linked_map: None,
+    }];
+    let merged = merge_retrieve_results(Some(local), remote).expect("merged entity");
+    assert!(matches!(merged.attrs.get("speed"), Some(AttributeValue::Multiple(instances)) if instances.len() == 2));
+    assert!(merged.location.is_some());
+}
+
+/// Clause 4.3.6.2: an auxiliary source never supplies an entity that no other
+/// source holds.
+#[test]
+fn merge_retrieve_ignores_an_auxiliary_source_when_nothing_else_holds_the_entity() {
+    let remote = vec![ForwardedEntities {
+        registration_id: Some(entity_uri("urn:ngsi-ld:ContextSourceRegistration:test")),
+        mode: ForwardingMode::Auxiliary,
+        entities: vec![entity_from_json(serde_json::json!({"id": "urn:a", "type": "T"}))],
+        warnings: Vec::new(),
+        linked_map: None,
+    }];
+    assert!(merge_retrieve_results(None, remote).is_none());
 }

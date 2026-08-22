@@ -61,6 +61,7 @@ fn classify_temporal_error(error: &TemporalError) -> ClassifiedReport {
 fn classify_federation_error(error: &FederationError) -> ClassifiedReport {
     match error {
         FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
+        FederationError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
         FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, error.to_string()),
         FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, error.to_string()),
         FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, error.to_string()),
@@ -86,14 +87,6 @@ impl<T> SnapshotResultExt<T> for Result<T, SnapshotError> {
 pub(crate) fn project_purge_failure(failure: SnapshotPurgeFailure) -> BatchEntityError {
     let report = classify_snapshot_error(&failure.error);
     BatchEntityError::new(failure.identifier, report.error_type(), report.detail())
-}
-
-pub(crate) fn invalid_request(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, detail).with_instance(instance.clone())
-}
-
-pub(crate) fn bad_request_data(detail: impl Into<String>, instance: &Uri) -> ProblemResponse {
-    ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail).with_instance(instance.clone())
 }
 
 pub(crate) fn internal_problem(source: &impl Display, instance: &Uri) -> ProblemResponse {

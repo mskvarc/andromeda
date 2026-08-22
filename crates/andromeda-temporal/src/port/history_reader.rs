@@ -1,11 +1,14 @@
 //! Temporal history selection and observation reads.
 
 use crate::{append_intent::TemporalObservationIdentity, error::TemporalError, outcome::TemporalEntityIdOutcome};
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use async_trait::async_trait;
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 /// Result of one entity history read.
 #[derive(Debug)]
@@ -28,6 +31,30 @@ pub struct TemporalHistoryObservation {
     pub row: TemporalHistoryRow,
     /// Intent identity when the sink retained append provenance.
     pub identity: Option<TemporalObservationIdentity>,
+}
+
+/// The shape of a value an attribute has been recorded with, as far as the
+/// aggregation eligibility of Tables 4.5.19.1-1 and 4.5.19.1-2 is concerned.
+///
+/// Backend-neutral: a store maps whatever it keeps in its value columns onto
+/// these. A JSON array is recorded as [`RecordedValueKind::Object`] by the
+/// stores that keep objects and arrays in one column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RecordedValueKind {
+    /// A JSON number.
+    Number,
+    /// A JSON string.
+    String,
+    /// A JSON boolean.
+    Boolean,
+    /// A GeoJSON geometry.
+    Geometry,
+    /// A JSON object or array.
+    Object,
+    /// A point in time.
+    DateTime,
+    /// A URI, which is how a Relationship object is held.
+    Uri,
 }
 
 /// Whether aggregation is materialized, computed from raw history, or unavailable.
@@ -102,4 +129,14 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// Read neutral aggregation buckets for one entity.
     #[must_use = "temporal aggregation reads must be awaited"]
     async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
+
+    /// The value shapes each named attribute has ever been recorded with
+    /// across the whole history view, keyed by expanded attribute name; an
+    /// attribute never recorded is absent from the result.
+    ///
+    /// Clause 5.7.4.4 rejects an aggregated representation over an attribute
+    /// ineligible for a requested method before any history is read, and the
+    /// eligibility of an attribute is a property of the values it carries.
+    #[must_use = "recorded value kind reads must be awaited"]
+    async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError>;
 }

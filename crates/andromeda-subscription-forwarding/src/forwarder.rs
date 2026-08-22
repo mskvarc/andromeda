@@ -48,8 +48,11 @@ pub(crate) fn decide(trigger: CsrTriggerReason, mode: ForwardingMode, existing: 
     }
     match (trigger, existing) {
         (CsrTriggerReason::NewlyMatching, None) => ForwardDecision::Create,
-        // A source that already holds a copy is updated rather than given a second one.
-        (CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated, Some(remote)) => ForwardDecision::Update { remote },
+        // The copy was placed when the subscription was created (or the
+        // registration was already reported): a source that holds one is
+        // neither given a second one nor sent an update it has no change for.
+        (CsrTriggerReason::NewlyMatching, Some(_)) => ForwardDecision::Nothing,
+        (CsrTriggerReason::Updated, Some(remote)) => ForwardDecision::Update { remote },
         // A registration that changed into matching is, for this broker, newly matching.
         (CsrTriggerReason::Updated, None) => ForwardDecision::Create,
         (CsrTriggerReason::NoLongerMatching, Some(remote)) => ForwardDecision::Delete { remote },
@@ -194,10 +197,7 @@ mod tests {
     fn the_decision_table_follows_clause_5_8_1_4() {
         for mode in [ForwardingMode::Inclusive, ForwardingMode::Exclusive, ForwardingMode::Redirect] {
             pretty_assertions::assert_eq!(decide(CsrTriggerReason::NewlyMatching, mode, None), ForwardDecision::Create);
-            pretty_assertions::assert_eq!(
-                decide(CsrTriggerReason::NewlyMatching, mode, Some(remote())),
-                ForwardDecision::Update { remote: remote() }
-            );
+            pretty_assertions::assert_eq!(decide(CsrTriggerReason::NewlyMatching, mode, Some(remote())), ForwardDecision::Nothing);
             pretty_assertions::assert_eq!(
                 decide(CsrTriggerReason::Updated, mode, Some(remote())),
                 ForwardDecision::Update { remote: remote() }

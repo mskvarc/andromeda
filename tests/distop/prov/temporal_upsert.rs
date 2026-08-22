@@ -1,10 +1,12 @@
 //! Temporal upsert and add-attributes forwarding — REQ-PROV-78..88
-//! (clauses 5.6.11.4, 5.6.12.4). Whole module UNKNOWN: rows run and classify.
+//! (clauses 5.6.11.4, 5.6.12.4).
 //!
 //! An exclusive/redirect temporal registration owns `speed` and forwards its
 //! instances while stripping them from the local evolution; an unadvertised
-//! create yields `409 Conflict`; inclusive forwards a copy and writes locally;
-//! and add-attributes only reports `404` when no registration matches.
+//! upsert yields `409 Conflict`; inclusive forwards a copy and writes locally;
+//! and add-attributes only reports `404` when no registration matches. The
+//! advertised operations are the Table 4.20-1 temporal names `upsertTemporal`
+//! (5.6.11) and `appendAttrsTemporal` (5.6.12).
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -25,7 +27,7 @@ use axum::http::Method;
 use serde_json::{Value, json};
 
 /// A temporal `Vehicle` holding only a `speed` instance, for the wholly-owned
-/// create that a registration must reject when it lacks `createEntity`.
+/// upsert that a registration must reject when it lacks `upsertTemporal`.
 fn temporal_speed_only(id: &str) -> Value {
     json!({
         "id": id,
@@ -66,7 +68,7 @@ async fn temporal_upsert_exclusive_match_forwards_and_strips() {
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["createEntity", "retrieveEntity"])
+        .operations(&["upsertTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::POST, "/ngsi-ld/v1/temporal/entities", 201).await;
@@ -96,8 +98,8 @@ async fn temporal_upsert_exclusive_match_forwards_and_strips() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive temporal registration without `createEntity` rejects the owned
-/// create with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-80.
+/// An exclusive temporal registration without `upsertTemporal` rejects the owned
+/// upsert with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-80.
 #[tokio::test]
 async fn temporal_upsert_exclusive_create_unsupported_returns_409() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -140,7 +142,7 @@ async fn temporal_upsert_redirect_match_forwards_and_strips() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
         .entity_id(&entity_id)
-        .operations(&["createEntity", "retrieveEntity"])
+        .operations(&["upsertTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::POST, "/ngsi-ld/v1/temporal/entities", 201).await;
@@ -183,7 +185,7 @@ async fn temporal_upsert_inclusive_forwards_remainder_and_local() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["createEntity", "retrieveEntity"])
+        .operations(&["upsertTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::POST, "/ngsi-ld/v1/temporal/entities", 201).await;
@@ -246,7 +248,7 @@ async fn temporal_add_attrs_registration_matches_absent_not_404_and_strips() {
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["appendAttrs", "retrieveEntity"])
+        .operations(&["appendAttrsTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let attrs_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs");
@@ -289,7 +291,7 @@ async fn temporal_add_attrs_inclusive_forwards_remainder_and_local() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["appendAttrs", "retrieveEntity"])
+        .operations(&["appendAttrsTemporal", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let attrs_path = format!("/ngsi-ld/v1/temporal/entities/{entity_id}/attrs");

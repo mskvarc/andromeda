@@ -85,23 +85,35 @@ async fn emq_invalid_id_q_geoq_csf_returns_400() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unspecified or too-deep linked-entity projection is rejected
-/// `400 BadRequestData` (clause 5.14.4). Confirms REQ-MAP-116.
+/// A linked-entity projection with Linked Entity retrieval unspecified is
+/// rejected `400 BadRequestData` (clause 5.14.4.4: "If projection attributes
+/// are present and indicate the use of Linked Entity retrieval, and the use of
+/// Linked Entity retrieval is not specified, or the projected attribute depth
+/// exceeds the Linked Entity retrieval depth, then an error of type
+/// BadRequestData shall be raised"). The projection uses the clause 4.21
+/// `LinkedEntityTerm` form `linkedTo{speed}` and omits `join`, which clause
+/// 5.14.4.3 lists among the accepted Query Entities parameters. Confirms
+/// REQ-MAP-116.
 #[tokio::test]
 async fn emq_projection_linked_entity_unspecified_or_deep_returns_400() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.front().client(), "type=Vehicle&join=inline&joinLevel=99").await;
+    let response = create_entity_map(topology.front().client(), "type=Vehicle&pick=linkedTo%7Bspeed%7D").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Querying linked-entity attributes is too deep and rejected `400 BadRequestData`
-/// (clause 5.14.4). Confirms REQ-MAP-117.
+/// A `q` filter over linked-entity attributes without Linked Entity retrieval is
+/// rejected `400 BadRequestData` (clause 5.14.4.4: "If the filter conditions
+/// specified by the query includes Linked Entity attributes, and the use of
+/// Linked Entity retrieval is not specified ... an error of type BadRequestData
+/// shall be raised (too deep query)"). The hop uses the clause 4.9 brace form
+/// `linkedTo{speed>5}`; a dotted path would address a sub-attribute, not a
+/// linked entity. Confirms REQ-MAP-117.
 #[tokio::test]
 async fn emq_query_linked_entity_attrs_returns_400() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = create_entity_map(topology.front().client(), "type=Vehicle&q=linkedTo.speed%3E5").await;
+    let response = create_entity_map(topology.front().client(), "type=Vehicle&q=linkedTo%7Bspeed%3E5%7D").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");

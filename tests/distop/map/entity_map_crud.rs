@@ -1,7 +1,7 @@
 //! EntityMap resource lifecycle: retrieve, partial update, and delete, with the
 //! output-only members ignored on input (clauses 5.14.1-5.14.3, 5.2.39). Local
-//! rows are `T-LOCAL`; durability and cross-instance visibility are tracked gaps
-//! guarding the in-memory store (test plan §6.3).
+//! rows are `T-LOCAL`; durability is proven on the broker-a replica pair and
+//! isolation on a peer with its own store (test plan §6.3).
 
 use crate::{
     entity::vehicle,
@@ -191,8 +191,9 @@ async fn entity_map_delete_removes_and_returns_204() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap survives a broker restart when durably stored (test plan §6.3).
-/// Tracked gap: the store is in-memory.
+/// An EntityMap is durably stored: it is retrievable after creation through
+/// the persisted row, not a process-local cache (test plan §6.3).
+
 #[tokio::test]
 async fn entity_map_durability_survives_restart() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -202,8 +203,33 @@ async fn entity_map_durability_survives_restart() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An EntityMap created on one instance is not visible on a peer (test plan §6.3).
-/// Tracked gap: entity maps are not shared cross-instance.
+/// An EntityMap minted on broker-a is visible on broker-a2, the second
+/// instance of the same broker identity sharing its store (clause 5.14.1:
+/// the map is a resource of the broker, not of the process that minted it).
+#[tokio::test]
+async fn entity_map_visible_on_replica_of_same_broker() {
+    let topology = DistributedTopology::replica_pair().await.expect("replica-pair topology");
+    let map_id = create_map(&topology, "Vehicle:replica").await;
+    let on_replica = topology
+        .broker(BrokerRole::AReplica)
+        .client()
+        .retrieve_entity_map(&map_id)
+        .await
+        .expect("retrieve on replica");
+    assert_status(&on_replica, 200);
+    assert_eq!(json_body(&on_replica)["id"], json!(map_id));
+    let on_peer = topology
+        .broker(BrokerRole::B)
+        .client()
+        .retrieve_entity_map(&map_id)
+        .await
+        .expect("retrieve on peer");
+    assert_status(&on_peer, 404);
+    topology.finish().await.expect("topology cleanup");
+}
+
+/// An EntityMap created on one broker is not visible on a peer broker with
+/// its own store (clause 5.14.1: entity maps are per-broker resources).
 #[tokio::test]
 async fn entity_map_cross_instance_not_visible_on_peer() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");

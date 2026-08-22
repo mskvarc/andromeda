@@ -21,6 +21,7 @@
 //! set unchanged and only spares the unnesting the rows it would have rejected.
 
 use crate::csr::{
+    entity_specification::entity_type_admits,
     projection::{entity_id_candidate, entity_type_candidate},
     unnesting::{ent, entities_of_item, information_covers, lacks_key},
 };
@@ -28,19 +29,20 @@ use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_seaquery::{jsonb::jsonb_exists, literal::text_literal, operator::regex_match, pg_operator::PgBinaryOperator};
 use iri_rs::IriBuf;
 use sea_query::{Condition, Expr as SeaExpr, ExprTrait, SimpleExpr};
+use std::slice;
 
 /// Whether a registration's `information[].entities[]` covers `entity_type`.
 ///
 /// A registration whose `information` entry declares no `entities`, or an empty
 /// list, places no type constraint and covers every type; otherwise at least
-/// one entry must declare the type. The type is the expanded entity-type IRI the
-/// query was compiled against.
+/// one entry must declare the type, alone or among several (Table 5.2.8-1).
+/// The type is the expanded entity-type IRI the query was compiled against.
 ///
 /// The projection preselect narrows the candidates the unnesting has to read;
 /// the unnesting decides coverage.
 pub fn entity_type_coverage(entity_type: &IriBuf) -> SimpleExpr {
     let mut entities_match = entities_of_item();
-    entities_match.and_where(SeaExpr::expr(ent().json_get_text(text_literal("type"))).eq(entity_type.as_str()));
+    entities_match.and_where(entity_type_admits(entity_type));
     entity_type_candidate(entity_type).and(information_covers(entities_match))
 }
 
@@ -69,7 +71,7 @@ pub fn entity_id_coverage(entity_id: &Uri) -> SimpleExpr {
                     .add(regex_match(SeaExpr::val(entity_id.as_str()), ent().json_get_text(text_literal("idPattern")))),
             ),
     );
-    entity_id_candidate(entity_id).and(information_covers(entities_match))
+    entity_id_candidate(slice::from_ref(entity_id)).and(information_covers(entities_match))
 }
 
 #[cfg(test)]
@@ -100,8 +102,10 @@ mod tests {
         let sql = render(entity_type_coverage(&iri("https://example.com/Vehicle")));
         assert!(sql.contains("jsonb_exists("), "the no-entities disjunct tests key presence: {sql}");
         assert!(sql.contains("'entities'"), "{sql}");
-        assert!(sql.contains("'type'"), "{sql}");
-        assert!(sql.contains("'https://example.com/Vehicle'"), "{sql}");
+        assert!(
+            sql.contains("jsonb_exists(\"ent\".\"value\" -> ('type'), 'https://example.com/Vehicle')"),
+            "{sql}"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! HTTP handling for the delete entity operation.
+//! HTTP handling for the batch delete entity operation (clause 5.6.10).
 
 use crate::entity_operations::{
     AcceptFormatNoGeo,
@@ -7,32 +7,28 @@ use crate::entity_operations::{
     ContextUrl,
     EntityResultExt,
     EntityTenantState,
-    ForwardBatchProvisionRequest,
-    ForwardingModes,
-    ForwardingOperation,
     IncomingVia,
     IntoResponse,
-    Json,
-    NgsiLdBatchResponse,
     NgsiLdErrorType,
     OriginalUri,
     PreferHeader,
     ProblemResponse,
     Response,
-    ResponseMediaType,
-    ResponsePayload,
     StatusCode,
+    TriggeringRequest,
+    Uri,
     apply_preference_applied,
     async_preference,
     batch_operation_result,
-    internal_error,
+    classify_entity_error,
+    drop_absent_proxied,
+    forward_identifiers,
+    merge_forwarded,
+    multi_status_response,
     public_error,
-    start_rendering,
 };
-use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::http::HeaderMap;
 
 pub(crate) async fn batch_delete(
@@ -63,66 +59,24 @@ pub(crate) async fn batch_delete(
         ));
     }
 
-    // Distributed forwarding per spec 5.6.10
     let context: ContextSpec = context.into_inner();
-    let forwarded = state
-        .forwarding
-        .forward_batch_provision(ForwardBatchProvisionRequest {
-            entity_type_compact: None, // delete doesn't have entity type in payload
-            body: &body,
-            context: &context,
-            operation: ForwardingOperation::DeleteBatch,
-            batch_path: "/entityOperations/delete",
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
-            },
-        })
-        .await
-        .with_entity_instance(&uri)?;
+    let triggering = TriggeringRequest {
+        via: incoming_via.as_ref(),
+        headers: Some(&headers),
+    };
+    let forwarded = forward_identifiers(&state, &entity_ids, &context, triggering, &uri).await?;
 
-    let modes = ForwardingModes::from_results(&forwarded);
-
-    if modes.has_redirect {
-        // Redirect: don't delete locally, return CS result
-        let Some(first) = forwarded.first() else {
-            return Err(internal_error(&"Expected forwarded result", &uri));
-        };
-        let status = StatusCode::from_u16(first.status()).unwrap_or(StatusCode::NO_CONTENT);
-        if let Some(resp_body) = first.body() {
-            return Ok((status, Json(resp_body.clone())).into_response()); // clone: owned Value needed for JSON response
-        }
-        return Ok(status.into_response());
-    }
-
+    // Clause 5.6.10.4: every identifier is also deleted locally; an entity a
+    // proxied registration holds is no local failure when it is absent here.
     let mode = service.effective_side_effect_mode(async_preference(&prefer), entity_ids.len());
-
-    if modes.has_exclusive {
-        // Exclusive: delete locally AND forwarded (already done)
-        if let Err(e) = service.batch_delete(&entity_ids, mode).await {
-            tracing::warn!(error = %e, "Failed to delete local entities during exclusive batch delete");
-        }
-        return Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode));
-    }
-
-    // Inclusive or no match: delete locally
-    let batch = service.batch_delete(&entity_ids, mode).await.with_entity_instance(&uri)?;
-    let result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
+    let mut batch = service.batch_delete(&entity_ids, mode).await.with_entity_instance(&uri)?;
+    drop_absent_proxied(&mut batch.errors, &forwarded);
+    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
+    merge_forwarded(&mut result, &forwarded);
 
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
-        // Clause 6.3.6: the 207 Multi-Status body is always application/json,
-        // regardless of the negotiated Accept, so it carries no JSON-LD @context.
-        let value = serde_json::to_value(&result).with_entity_instance(&uri)?;
-        let rendered = start_rendering(ResponseMediaType::Json, &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Batch(value))
-            .render()
-            .with_entity_instance(&uri)?;
-        Ok(apply_preference_applied(
-            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
-            mode,
-        ))
+        multi_status_response(&result, &context, &uri, mode)
     }
 }

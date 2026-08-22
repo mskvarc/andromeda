@@ -13,24 +13,24 @@
 //! roots and their Linked Entities describe one consistent slice of history
 //! rather than being spliced together from two different ones.
 
-use crate::{linked_resolution_failure_mapping::resolution_failure, linked_traversal_parameters::append_traversal};
+use crate::{linked_resolution_failure_mapping::resolution_failure, linked_traversal_parameters::traversal_continuation};
 use andromeda_federation::{
     FederationService,
+    forwarded_query::ClientQuery,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, ForwardRetrieveRequest, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, uri::Uri};
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_representation::linked_resolution_failure::{LinkedResolutionFailure, LinkedResolutionFailureKind};
+use andromeda_ngsi_ld_request::query::temporal::TemporalQueryParameters;
 use andromeda_temporal::{
     error::TemporalError,
     remote_linked::{RemoteTemporalLinkedEntities, RemoteTemporalLinkedSource, TemporalLinkedWindow},
 };
 use async_trait::async_trait;
-use chrono::SecondsFormat;
 use std::{num::NonZeroU32, sync::Arc};
 use tracing::warn;
-use url::form_urlencoded;
 
 /// Fetches the temporal evolution of an `objectType`-annotated Linked Entity
 /// from the context sources registered for its identifier (clause 4.5.23.1).
@@ -49,51 +49,17 @@ impl ForwardedTemporalLinkedSource {
     }
 }
 
-/// Append the window the forwarded retrieval must reproduce.
-///
-/// Every member the requester used to select its own slice of history is
-/// restated, because a Linked Entity answered over a different window would
-/// splice two unrelated slices into one response. `format=normalized` is the
-/// absence of a format rather than a value clause 6.3.12 accepts, so it is
-/// never written.
-fn append_window(serializer: &mut form_urlencoded::Serializer<'_, String>, window: &TemporalLinkedWindow) {
-    if let Some(timerel) = window.timerel {
-        serializer.append_pair("timerel", &timerel.to_string());
+/// The parameters of the forwarded temporal retrieval: the window the answer
+/// must reproduce, so the roots and their Linked Entities describe one
+/// consistent slice of history, plus the traversal continuation.
+fn linked_temporal_retrieval_parameters(depth: NonZeroU32, visited: &[Uri], window: &TemporalLinkedWindow) -> TemporalQueryParameters {
+    let (join, join_level, contained_by) = traversal_continuation(depth, visited);
+    TemporalQueryParameters {
+        join,
+        join_level,
+        contained_by,
+        ..window.to_parameters()
     }
-    if let Some(time_at) = window.time_at {
-        serializer.append_pair("timeAt", &time_at.to_rfc3339_opts(SecondsFormat::Secs, true));
-    }
-    if let Some(end_time_at) = window.end_time_at {
-        serializer.append_pair("endTimeAt", &end_time_at.to_rfc3339_opts(SecondsFormat::Secs, true));
-    }
-    serializer.append_pair("timeproperty", &window.timeproperty.to_string());
-    if let Some(last_n) = window.last_n {
-        serializer.append_pair("lastN", &last_n.to_string());
-    }
-    match window.format {
-        TemporalFormat::TemporalValues | TemporalFormat::AggregatedValues => {
-            serializer.append_pair("format", &window.format.to_string());
-        }
-        TemporalFormat::Normalized => {}
-    }
-    if let Some(methods) = window.aggr_methods.as_deref()
-        && !methods.is_empty()
-    {
-        let joined = methods.iter().map(AggrMethod::to_string).collect::<Vec<_>>().join(",");
-        serializer.append_pair("aggrMethods", &joined);
-    }
-    if let Some(period) = window.aggr_period_duration {
-        serializer.append_pair("aggrPeriodDuration", &period.as_iso8601());
-    }
-}
-
-/// Build the query string of the forwarded temporal retrieval: the window the
-/// answer must reproduce, followed by the traversal continuation.
-fn linked_temporal_retrieval_query(depth: NonZeroU32, visited: &[Uri], window: &TemporalLinkedWindow) -> String {
-    let mut serializer = form_urlencoded::Serializer::new(String::new());
-    append_window(&mut serializer, window);
-    append_traversal(&mut serializer, depth, visited);
-    serializer.finish()
 }
 
 #[async_trait]
@@ -106,13 +72,13 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
     ) -> Result<RemoteTemporalLinkedEntities, TemporalError> {
-        let query_string = linked_temporal_retrieval_query(remaining_depth, visited, window);
+        let parameters = linked_temporal_retrieval_parameters(remaining_depth, visited, window);
         let forwarded = self
             .federation
             .forward_temporal_retrieve(ForwardRetrieveRequest {
                 entity_id: id,
                 exclude_registration: None,
-                query_string: &query_string,
+                client_query: ClientQuery::Temporal(&parameters),
                 context,
                 operation: ForwardingOperation::RetrieveTemporalEntity,
                 // A linked retrieval starts at this broker rather than being a
@@ -122,7 +88,7 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
                 // Clause 4.3.6.2: an auxiliary context source only supplements
                 // an entity that already exists, never supplies a missing one.
                 mode_filter: CsrModeFilter::ExcludeAuxiliary,
-                entity_map: None,
+                entity_map: EntityMapInUse::None,
             })
             .await;
 
@@ -130,9 +96,9 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
         // the request (clause 4.5.23): the Relationship keeps its plain URI and
         // the caller is told what is missing.
         match forwarded {
-            Ok(sources) => {
+            Ok(outcome) => {
                 let mut resolved = RemoteTemporalLinkedEntities::default();
-                for source in sources {
+                for source in outcome.results {
                     for warning in source.warnings {
                         warn!("Linked entity {} could not be fully resolved from a context source: {}", id, warning);
                         resolved.failures.push(resolution_failure(id, warning));
@@ -158,12 +124,12 @@ impl RemoteTemporalLinkedSource for ForwardedTemporalLinkedSource {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal_linked_forwarding::linked_temporal_retrieval_query;
+    use crate::temporal_linked_forwarding::linked_temporal_retrieval_parameters;
     use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, temporal_format::TemporalFormat, time_prop::TimeProp, time_rel::TimeRel, uri::Uri};
     use andromeda_ngsi_ld_query::temporal::aggregation_period::AggregationPeriod;
+    use andromeda_ngsi_ld_representation::join_mode::JoinMode;
     use andromeda_temporal::remote_linked::TemporalLinkedWindow;
     use std::num::NonZeroU32;
-    use url::form_urlencoded;
 
     fn uri(value: &str) -> Uri {
         value.parse().expect("valid URI")
@@ -171,12 +137,6 @@ mod tests {
 
     fn depth(value: u32) -> NonZeroU32 {
         NonZeroU32::new(value).expect("positive depth")
-    }
-
-    fn decode(query: &str) -> Vec<(String, String)> {
-        form_urlencoded::parse(query.as_bytes())
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect()
     }
 
     /// The plainest window: an open-ended `after` selection in the normalized
@@ -194,72 +154,11 @@ mod tests {
         }
     }
 
-    /// Three levels left means the fetched entity plus two more hops, so the
-    /// remote broker is asked for `joinLevel=2`, and the already-walked ids
-    /// travel as `containedBy` (the clause 4.5.23 containedBy query parameter) — behind the window the answer
-    /// must be taken over.
+    /// Every member of the window is restated on the forwarded retrieval, so
+    /// the Linked Entity is answered over exactly the slice the requester
+    /// asked for, and the traversal continuation rides beside it.
     #[test]
-    fn the_forwarded_retrieval_joins_one_level_less_than_the_depth_that_remains() {
-        let visited = [uri("urn:ngsi-ld:Building:1"), uri("urn:ngsi-ld:Building:2")];
-
-        let query = linked_temporal_retrieval_query(depth(3), &visited, &window());
-
-        pretty_assertions::assert_eq!(
-            decode(&query),
-            vec![
-                ("timerel".to_owned(), "after".to_owned()),
-                ("timeAt".to_owned(), "2024-01-01T00:00:00Z".to_owned()),
-                ("timeproperty".to_owned(), "observedAt".to_owned()),
-                ("join".to_owned(), "flat".to_owned()),
-                ("joinLevel".to_owned(), "2".to_owned()),
-                ("containedBy".to_owned(), "urn:ngsi-ld:Building:1,urn:ngsi-ld:Building:2".to_owned()),
-            ]
-        );
-    }
-
-    /// The last level asks for the entity alone: the clause 4.5.23 joinLevel
-    /// query parameter has no zero-hop
-    /// join, so the forwarded retrieval carries no `join` parameter — but still
-    /// carries the window, without which the answer would be a different slice
-    /// of history.
-    #[test]
-    fn the_last_level_forwards_a_plain_temporal_retrieval() {
-        let query = linked_temporal_retrieval_query(depth(1), &[uri("urn:ngsi-ld:Building:1")], &window());
-
-        pretty_assertions::assert_eq!(
-            decode(&query),
-            vec![
-                ("timerel".to_owned(), "after".to_owned()),
-                ("timeAt".to_owned(), "2024-01-01T00:00:00Z".to_owned()),
-                ("timeproperty".to_owned(), "observedAt".to_owned()),
-                ("containedBy".to_owned(), "urn:ngsi-ld:Building:1".to_owned()),
-            ]
-        );
-    }
-
-    /// A traversal that has visited nothing yet sends no `containedBy` at all,
-    /// rather than an empty one.
-    #[test]
-    fn an_empty_visited_list_is_omitted() {
-        let query = linked_temporal_retrieval_query(depth(2), &[], &window());
-
-        pretty_assertions::assert_eq!(
-            decode(&query),
-            vec![
-                ("timerel".to_owned(), "after".to_owned()),
-                ("timeAt".to_owned(), "2024-01-01T00:00:00Z".to_owned()),
-                ("timeproperty".to_owned(), "observedAt".to_owned()),
-                ("join".to_owned(), "flat".to_owned()),
-                ("joinLevel".to_owned(), "1".to_owned()),
-            ]
-        );
-    }
-
-    /// Every member of a closed, aggregated, truncated window is restated, so
-    /// the Linked Entity is answered over exactly the slice the requester asked
-    /// for.
-    #[test]
-    fn a_full_window_is_restated_member_for_member() {
+    fn a_full_window_is_restated_member_for_member_beside_the_continuation() {
         let window = TemporalLinkedWindow {
             timerel: Some(TimeRel::Between),
             time_at: Some("2024-01-01T00:00:00Z".parse().expect("valid instant")),
@@ -270,45 +169,35 @@ mod tests {
             aggr_methods: Some(vec![AggrMethod::Avg, AggrMethod::Max]),
             aggr_period_duration: AggregationPeriod::parse("PT1H").expect("valid duration"),
         };
+        let visited = [uri("urn:ngsi-ld:Building:1")];
 
-        let query = linked_temporal_retrieval_query(depth(1), &[], &window);
+        let parameters = linked_temporal_retrieval_parameters(depth(3), &visited, &window);
 
-        pretty_assertions::assert_eq!(
-            decode(&query),
-            vec![
-                ("timerel".to_owned(), "between".to_owned()),
-                ("timeAt".to_owned(), "2024-01-01T00:00:00Z".to_owned()),
-                ("endTimeAt".to_owned(), "2024-02-01T00:00:00Z".to_owned()),
-                ("timeproperty".to_owned(), "modifiedAt".to_owned()),
-                ("lastN".to_owned(), "5".to_owned()),
-                ("format".to_owned(), "aggregatedValues".to_owned()),
-                ("aggrMethods".to_owned(), "avg,max".to_owned()),
-                ("aggrPeriodDuration".to_owned(), "PT1H".to_owned()),
-            ]
-        );
+        pretty_assertions::assert_eq!(parameters.timerel, Some(TimeRel::Between));
+        pretty_assertions::assert_eq!(parameters.time_at, window.time_at);
+        pretty_assertions::assert_eq!(parameters.end_time_at, window.end_time_at);
+        pretty_assertions::assert_eq!(parameters.timeproperty, Some(TimeProp::Modified));
+        pretty_assertions::assert_eq!(parameters.last_n, Some(5));
+        pretty_assertions::assert_eq!(parameters.format, Some(TemporalFormat::AggregatedValues));
+        pretty_assertions::assert_eq!(parameters.aggr_methods, Some(vec![AggrMethod::Avg, AggrMethod::Max]));
+        pretty_assertions::assert_eq!(parameters.aggr_period_duration.map(|period| period.as_iso8601()), Some("PT1H".to_owned()));
+        pretty_assertions::assert_eq!(parameters.join, Some(JoinMode::Flat));
+        pretty_assertions::assert_eq!(parameters.join_level.map(NonZeroU32::get), Some(2));
+        pretty_assertions::assert_eq!(parameters.contained_by.as_deref(), Some(visited.as_slice()));
     }
 
-    /// `normalized` is the absence of a `format`, not a value clause 6.3.12
-    /// accepts, so it is never written onto the forwarded retrieval.
+    /// The last level asks for the entity alone over the requester's window,
+    /// and nothing the window does not hold -- an `attrs` or `datasetId` that
+    /// narrowed the roots -- leaks into the traversal.
     #[test]
-    fn the_normalized_representation_writes_no_format_parameter() {
-        let query = linked_temporal_retrieval_query(depth(1), &[], &window());
+    fn the_last_level_forwards_the_window_alone() {
+        let parameters = linked_temporal_retrieval_parameters(depth(1), &[], &window());
 
-        assert!(!query.contains("format"), "unexpected format parameter: {query}");
-    }
-
-    /// Every reserved character the identifiers carry is percent-encoded by the
-    /// serializer, so the comma-joined `containedBy` list survives the round
-    /// trip as one parameter rather than several.
-    #[test]
-    fn the_visited_identifiers_are_percent_encoded_into_one_parameter() {
-        let visited = [uri("urn:ngsi-ld:Building:1"), uri("urn:ngsi-ld:Building:2")];
-
-        let query = linked_temporal_retrieval_query(depth(2), &visited, &window());
-
-        assert!(
-            query.contains("containedBy=urn%3Angsi-ld%3ABuilding%3A1%2Curn%3Angsi-ld%3ABuilding%3A2"),
-            "unexpected encoding: {query}"
-        );
+        pretty_assertions::assert_eq!(parameters.timerel, Some(TimeRel::After));
+        assert!(parameters.join.is_none());
+        assert!(parameters.join_level.is_none());
+        assert!(parameters.contained_by.is_none());
+        assert!(parameters.attrs.is_none());
+        assert!(parameters.dataset_id.is_none());
     }
 }

@@ -20,6 +20,7 @@ chrono = { version = "0.4.45", features = ["serde"] }
 compact_str = { version = "0.10.0", features = ["serde"] }
 derive_more = { version = "2.1.1", features = ["as_ref", "deref", "deref_mut", "display", "from", "into"] }
 geo = "0.33.1"
+hex = "0.4.3"
 indexmap = { version = "2.14.0", features = ["serde"] }
 iri-rs = { version = "3.4.1", features = ["serde", "static"] }
 iso8601-duration = { version = "0.2.0", features = ["chrono", "serde"] }

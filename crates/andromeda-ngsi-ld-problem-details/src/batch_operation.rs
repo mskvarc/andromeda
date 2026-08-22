@@ -1,7 +1,10 @@
 //! The result of a batch operation, and the per-entity errors in it
 //! (clause 5.2.16).
 
-use crate::error_type::NgsiLdErrorType;
+use crate::{
+    error_type::NgsiLdErrorType,
+    problem_detail::{ProblemClassification, WireProblemClassification},
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use iri_rs::IriRefBuf;
 use serde::{
@@ -43,11 +46,18 @@ pub struct BatchEntityError {
 impl BatchEntityError {
     /// Report `error_type` against `entity_id`, with a human-readable detail.
     pub fn new(entity_id: Uri, error_type: NgsiLdErrorType, detail: &str) -> BatchEntityError {
+        BatchEntityError::from_classification(entity_id, ProblemClassification::Category(error_type), detail)
+    }
+
+    /// Report a binding-specific classification against `entity_id`: the
+    /// clause 6.3.17 statuses a forwarded part of a distributed operation can
+    /// fail with (502, 504, 508) beside the ordinary clause 5.5.2 categories.
+    pub fn from_classification(entity_id: Uri, classification: ProblemClassification, detail: &str) -> BatchEntityError {
         BatchEntityError {
             entity_id,
             registration_id: None,
             error: BatchProblemDetail {
-                error_type: BatchErrorKind::Known(error_type),
+                error_type: BatchErrorKind::Known(classification),
                 detail: detail.to_string(),
             },
         }
@@ -62,14 +72,15 @@ impl BatchEntityError {
 
 /// The `type` of a batch problem detail.
 ///
-/// A known NGSI-LD category carries its title and status; RFC 7807 clause 3
-/// also permits any other type URI — which a peer broker (Scorpio, Orion-LD)
-/// may report on a forwarded batch — so an unrecognised one is kept verbatim
-/// rather than rejected.
+/// A known NGSI-LD classification carries its title and status; RFC 7807
+/// clause 3 also permits any other type URI — which a peer broker (Scorpio,
+/// Orion-LD) may report on a forwarded batch — so an unrecognised one is kept
+/// verbatim rather than rejected.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BatchErrorKind {
-    /// One of the twelve ETSI error categories (clause 5.5.2).
-    Known(NgsiLdErrorType),
+    /// One of the twelve ETSI error categories (clause 5.5.2), or one of the
+    /// clause 6.3.17 distributed-operation statuses layered on a category.
+    Known(ProblemClassification),
     /// Any other RFC 7807 type URI.
     Other(IriRefBuf),
 }
@@ -90,11 +101,12 @@ pub struct BatchProblemDetail {
 impl Serialize for BatchProblemDetail {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match &self.error_type {
-            BatchErrorKind::Known(category) => {
+            BatchErrorKind::Known(classification) => {
+                let category = classification.error_type();
                 let mut state = serializer.serialize_struct("BatchProblemDetail", 4)?;
                 state.serialize_field("type", &category.type_iri())?;
                 state.serialize_field("title", category.title())?;
-                state.serialize_field("status", &category.status_code().as_u16())?;
+                state.serialize_field("status", &classification.status_code().as_u16())?;
                 state.serialize_field("detail", &self.detail)?;
                 state.end()
             }
@@ -120,6 +132,14 @@ impl<'de> Deserialize<'de> for BatchProblemDetail {
 /// The members a batch problem detail is written with.
 const FIELDS: &[&str] = &["type", "title", "status", "detail"];
 
+/// The detail a problem detail without a `detail` member is read with: its
+/// `title` when it has one, else nothing. RFC 7807 clause 3.1 makes both
+/// members optional, and a peer broker that omits `detail` must still have its
+/// error merged into the batch rather than failing the whole response.
+fn detail_or_title(detail: Option<String>, title: Option<String>) -> String {
+    detail.or(title).unwrap_or_default()
+}
+
 /// Reads a problem detail back into its category and message.
 struct BatchProblemDetailVisitor;
 
@@ -132,16 +152,22 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
 
     fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<BatchProblemDetail, M::Error> {
         let mut type_uri: Option<IriRefBuf> = None;
+        let mut title: Option<String> = None;
+        let mut status: Option<u16> = None;
         let mut detail: Option<String> = None;
 
-        while let Some(key) = map.next_key::<&str>()? {
-            match key {
+        // Keys are read owned rather than borrowed so the detail deserialises
+        // from an in-memory `Value` (a forwarded problem detail) as well as
+        // from a byte buffer.
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
                 "type" => type_uri = Some(map.next_value()?),
+                "title" => title = Some(map.next_value()?),
+                "status" => status = Some(map.next_value()?),
                 "detail" => detail = Some(map.next_value()?),
-                // `title` and `status` are derived from a known category on the
-                // way out; every other member is an RFC 7807 clause 3 extension,
-                // which a consumer must ignore rather than reject — so an
-                // extension a peer broker adds cannot poison the batch result.
+                // Every other member is an RFC 7807 clause 3 extension, which a
+                // consumer must ignore rather than reject — so an extension a
+                // peer broker adds cannot poison the batch result.
                 _other => {
                     let _ = map.next_value::<de::IgnoredAny>()?;
                 }
@@ -149,11 +175,13 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
         }
 
         let type_uri = type_uri.ok_or_else(|| de::Error::missing_field("type"))?;
-        let detail = detail.ok_or_else(|| de::Error::missing_field("detail"))?;
-        // A recognised category keeps its typed convenience; any other URI is
-        // accepted verbatim, since RFC 7807 clause 3 permits arbitrary type URIs.
+        let detail = detail_or_title(detail, title);
+        // A recognised category keeps its typed convenience, with the clause
+        // 6.3.17 statuses read back as the distributed classifications they
+        // name; any other URI is accepted verbatim, since RFC 7807 clause 3
+        // permits arbitrary type URIs.
         let error_type = match NgsiLdErrorType::from_type_iri(&type_uri) {
-            Some(category) => BatchErrorKind::Known(category),
+            Some(category) => BatchErrorKind::Known(WireProblemClassification { category, status }.classification().map_err(de::Error::custom)?),
             None => BatchErrorKind::Other(type_uri),
         };
 
@@ -166,6 +194,7 @@ mod tests {
     use crate::{
         batch_operation::{BatchEntityError, BatchErrorKind, BatchOperationResult, BatchProblemDetail},
         error_type::NgsiLdErrorType,
+        problem_detail::ProblemClassification,
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use iri_rs::IriRefBuf;
@@ -247,7 +276,7 @@ mod tests {
     #[test]
     fn a_problem_detail_derives_its_rfc_7807_members_from_its_category() {
         let rendered = serde_json::to_value(BatchProblemDetail {
-            error_type: BatchErrorKind::Known(NgsiLdErrorType::BadRequestData),
+            error_type: BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::BadRequestData)),
             detail: "Invalid payload".to_string(),
         })
         .expect("serialises");
@@ -263,7 +292,7 @@ mod tests {
     fn every_category_survives_a_problem_detail_round_trip() {
         for category in NgsiLdErrorType::iter() {
             let original = BatchProblemDetail {
-                error_type: BatchErrorKind::Known(category),
+                error_type: BatchErrorKind::Known(ProblemClassification::Category(category)),
                 detail: "test".to_string(),
             };
             let rendered = serde_json::to_string(&original).expect("serialises");
@@ -316,8 +345,58 @@ mod tests {
     }
 
     #[test]
-    fn a_problem_detail_missing_a_required_member_is_rejected() {
+    fn a_problem_detail_missing_its_type_is_rejected() {
         assert!(serde_json::from_str::<BatchProblemDetail>(&json!({"detail": "x"}).to_string()).is_err());
-        assert!(serde_json::from_str::<BatchProblemDetail>(&json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict"}).to_string()).is_err());
+    }
+
+    #[test]
+    fn a_problem_detail_without_detail_reads_its_title_and_without_both_reads_nothing() {
+        // RFC 7807 clause 3.1 makes `detail` optional; a peer that reports only
+        // a title must still merge into the batch.
+        let titled =
+            serde_json::from_str::<BatchProblemDetail>(&json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict", "title": "exists"}).to_string())
+                .expect("a title-only problem detail deserialises");
+        pretty_assertions::assert_eq!(titled.detail, "exists");
+        let bare = serde_json::from_str::<BatchProblemDetail>(&json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict"}).to_string())
+            .expect("a type-only problem detail deserialises");
+        pretty_assertions::assert_eq!(bare.detail, "");
+        pretty_assertions::assert_eq!(
+            bare.error_type,
+            BatchErrorKind::Known(ProblemClassification::Category(NgsiLdErrorType::Conflict))
+        );
+    }
+
+    #[test]
+    fn the_clause_6_3_17_statuses_serialise_and_read_back_as_their_distributed_classification() {
+        // A distributed 404 is wire-identical to the ResourceNotFound category
+        // and reads back as it; the gateway statuses have no category of their
+        // own and read back as the distributed classification.
+        for (classification, status, expected) in [
+            (ProblemClassification::LoopDetected, 508, ProblemClassification::LoopDetected),
+            (ProblemClassification::GatewayTimeout, 504, ProblemClassification::GatewayTimeout),
+            (ProblemClassification::BadGateway, 502, ProblemClassification::BadGateway),
+            (
+                ProblemClassification::DistributedResourceNotFound,
+                404,
+                ProblemClassification::Category(NgsiLdErrorType::ResourceNotFound),
+            ),
+        ] {
+            let rendered = serde_json::to_value(BatchEntityError::from_classification(
+                uri("urn:ngsi-ld:Entity:1"),
+                classification,
+                "forwarding failed",
+            ))
+            .expect("serialises");
+            pretty_assertions::assert_eq!(rendered["error"]["status"], status, "{classification:?}");
+            pretty_assertions::assert_eq!(rendered["error"]["type"], classification.error_type().type_iri().as_str());
+            let parsed = serde_json::from_value::<BatchEntityError>(rendered).expect("deserialises");
+            pretty_assertions::assert_eq!(parsed.error.error_type, BatchErrorKind::Known(expected), "{classification:?}");
+        }
+    }
+
+    #[test]
+    fn a_known_type_with_a_disagreeing_status_is_rejected() {
+        let rendered = json!({"type": "https://uri.etsi.org/ngsi-ld/errors/Conflict", "status": 500, "detail": "x"}).to_string();
+        assert!(serde_json::from_str::<BatchProblemDetail>(&rendered).is_err());
     }
 }

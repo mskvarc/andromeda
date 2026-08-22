@@ -217,6 +217,7 @@ async fn update_shorthand_names_expanded() {
     let retrieved = topology
         .front()
         .client()
+        .without_default_context()
         .retrieve_registration(&id, None)
         .await
         .expect("retrieve without context");

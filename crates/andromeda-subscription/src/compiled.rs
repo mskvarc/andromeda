@@ -14,7 +14,13 @@ use andromeda_ngsi_ld_model::{
     notification::NotificationTrigger,
     subscription::{EntitySelector, SubscriptionStatus},
 };
-use andromeda_ngsi_ld_query::{filter::expression::Expr, geo::query::GeoQuery, scope::query::ScopeQuery};
+use andromeda_ngsi_ld_query::{
+    csr::compiled::CompiledCsrTemporalFilter,
+    filter::expression::Expr,
+    geo::query::GeoQuery,
+    projection::compiled::Projection,
+    scope::query::ScopeQuery,
+};
 use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
 use chrono::{DateTime, Utc};
 use mediatype::MediaTypeBuf;
@@ -38,8 +44,21 @@ pub struct CompiledCsrSubscription {
     pub endpoint_notifier_info: Option<Vec<KeyValuePair>>,
     /// Entity selectors applied to context-source information.
     pub selectors: Vec<EntitySelector>,
-    /// Expanded watched attribute names, or every attribute when absent.
-    pub watched_attrs: Option<HashSet<AttributeName>>,
+    /// The expanded attribute names matched against registrations, or every
+    /// attribute when empty.
+    ///
+    /// Clauses 5.11.7 and 5.12: the combination of `watchedAttributes` and
+    /// `notification.attributes`; when neither names an attribute, every
+    /// attribute matches.
+    pub matching_attrs: Vec<AttributeName>,
+    /// The `temporalQ` the registrations' intervals are matched against
+    /// (clause 5.11.2.4); absent means only latest-information registrations
+    /// are considered.
+    pub temporal_q: Option<CompiledCsrTemporalFilter>,
+    /// The `geoQ` matched against the registration's geometry (clause 5.11.2.4).
+    pub geo_q: Option<GeoQuery>,
+    /// The `scopeQ` matched against the registration's `scope` (clause 5.11.2.4).
+    pub scope_q: Option<ScopeQuery>,
     /// Minimum seconds between notifications.
     pub throttling_secs: Option<f64>,
     /// Periodic notification interval in seconds.
@@ -48,7 +67,8 @@ pub struct CompiledCsrSubscription {
     pub jsonld_context: Option<Url>,
     /// Subscription expiration timestamp.
     pub expires_at: Option<DateTime<Utc>>,
-    /// Parsed context-source filter.
+    /// Parsed context-source filter, evaluated against the registration's
+    /// Context Source Properties (clause 4.9).
     pub compiled_csf: Option<Expr>,
 }
 
@@ -83,6 +103,11 @@ pub struct CompiledSubscription {
     pub time_interval_secs: Option<f64>,
     /// Attributes projected into notification data.
     pub notification_attributes: Option<Vec<AttributeName>>,
+    /// The clause 5.2.14 `pick` and `omit` members of the notification,
+    /// compiled to the same projection a query's `pick`/`omit` parameters
+    /// compile to (clause 4.21); empty on both sides when the subscription
+    /// set neither.
+    pub notification_projection: Projection,
     /// Requested notification representation format.
     pub notification_format: Option<ResponseFormat>,
     /// Whether system attributes remain in notification data.

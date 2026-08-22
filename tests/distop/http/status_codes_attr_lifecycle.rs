@@ -5,7 +5,7 @@
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::vehicle,
-    http::forwarding::{context_link, forwarded_attr_path, forwarded_entity_path, provision_source},
+    http::forwarding::{FORWARDED_BATCH_MERGE_PATH, context_link, forwarded_attr_path, provision_source},
     oracle::assert_status,
     topology::DistributedTopology,
 };
@@ -156,7 +156,8 @@ async fn dist_http_replace_attr_local_returns_204() {
 }
 
 /// An attribute replace where a forwarded endpoint fails is a partial failure,
-/// mapped to `207` (clause 6.3.16). Confirms REQ-HTTP-78.
+/// mapped to `207` (clause 6.3.16). The registration advertises `replaceAttrs`,
+/// the Table 4.20-1 name of 5.6.19 Replace Attribute. Confirms REQ-HTTP-78.
 #[tokio::test]
 async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -179,7 +180,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
         &topology
             .front()
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateAttrs"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["replaceAttrs"]))
             .await
             .expect("register source"),
         201,
@@ -286,7 +287,10 @@ async fn dist_http_batch_merge_local_returns_204() {
 }
 
 /// A batch merge where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` with a `BatchOperationResult` (clause 6.3.16). Confirms REQ-HTTP-92.
+/// `207` with a `BatchOperationResult` (clause 6.3.16). The registration
+/// advertises `mergeBatch` (Table 4.20-1, 5.6.20), so the batch itself is
+/// forwarded to `POST /entityOperations/merge` (clause 5.6.20.4). Confirms
+/// REQ-HTTP-92.
 #[tokio::test]
 async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -309,12 +313,12 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
         &topology
             .front()
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeBatch"]))
             .await
             .expect("register source"),
         201,
     );
-    mock.set_stub(Method::PATCH, &forwarded_entity_path(&entity_id), 500).await;
+    mock.set_stub(Method::POST, FORWARDED_BATCH_MERGE_PATH, 500).await;
 
     let body = json!([ { "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 99 }, "@context": context_link() } ]);
     let response = topology.front().client().batch_merge(&body).await.expect("forwarded batch merge");

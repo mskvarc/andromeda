@@ -4,6 +4,7 @@ use crate::error_type::NgsiLdErrorType;
 use http::{StatusCode, Uri};
 use iri_rs::IriRefBuf;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
+use thiserror::Error;
 
 /// A typed NGSI-LD error classification with the status selected by its authoritative HTTP binding.
 ///
@@ -20,6 +21,9 @@ pub enum ProblemClassification {
     DistributedResourceNotFound,
     /// Another distributed gateway failure occurred and returns 502.
     BadGateway,
+    /// The one registered source holding the data cannot serve the requested
+    /// representation and returns 501 (Table 6.4.3.2-3, clause 6.3.7).
+    NotImplemented,
 }
 
 impl ProblemClassification {
@@ -29,6 +33,7 @@ impl ProblemClassification {
             ProblemClassification::Category(error_type) => error_type,
             ProblemClassification::LoopDetected | ProblemClassification::GatewayTimeout | ProblemClassification::BadGateway => NgsiLdErrorType::InternalError,
             ProblemClassification::DistributedResourceNotFound => NgsiLdErrorType::ResourceNotFound,
+            ProblemClassification::NotImplemented => NgsiLdErrorType::OperationNotSupported,
         }
     }
 
@@ -40,6 +45,7 @@ impl ProblemClassification {
             ProblemClassification::GatewayTimeout => StatusCode::GATEWAY_TIMEOUT,
             ProblemClassification::DistributedResourceNotFound => StatusCode::NOT_FOUND,
             ProblemClassification::BadGateway => StatusCode::BAD_GATEWAY,
+            ProblemClassification::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         }
     }
 }
@@ -127,6 +133,53 @@ impl Serialize for ProblemDetail {
     }
 }
 
+/// The `(type, status)` pair a problem detail arrives with on the wire, and
+/// the one rule that turns it back into a classification.
+///
+/// Shared by the single problem detail and the clause 5.2.17 batch error so
+/// the two cannot disagree about which statuses name the clause 6.3.17
+/// distributed classifications.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct WireProblemClassification {
+    /// The category the `type` IRI named.
+    pub(crate) category: NgsiLdErrorType,
+    /// The `status` member, when the wire value carried one.
+    pub(crate) status: Option<u16>,
+}
+
+impl WireProblemClassification {
+    /// The classification the pair names: a clause 6.3.17 status layered on
+    /// its category, the category alone when the status agrees with clause
+    /// 6.3.2 or is absent, and a rejection when it contradicts the category.
+    pub(crate) const fn classification(self) -> Result<ProblemClassification, WireProblemClassificationError> {
+        // A status that is the category's own clause 6.3.2 status names the
+        // category, so a 404 ResourceNotFound reads back as the category it
+        // is wire-identical to rather than as the distributed classification.
+        match (self.category, self.status) {
+            (category, None) => Ok(ProblemClassification::Category(category)),
+            (category, Some(status)) if status == category.status_code().as_u16() => Ok(ProblemClassification::Category(category)),
+            (NgsiLdErrorType::InternalError, Some(508)) => Ok(ProblemClassification::LoopDetected),
+            (NgsiLdErrorType::InternalError, Some(504)) => Ok(ProblemClassification::GatewayTimeout),
+            (NgsiLdErrorType::InternalError, Some(502)) => Ok(ProblemClassification::BadGateway),
+            (category, Some(status)) => Err(WireProblemClassificationError::StatusDisagrees { category, status }),
+        }
+    }
+}
+
+/// A wire `(type, status)` pair that names no classification.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WireProblemClassificationError {
+    /// The status is neither the category's clause 6.3.2 status nor a clause
+    /// 6.3.17 status that category can carry.
+    #[error("problem status {status} disagrees with its NGSI-LD type {category}")]
+    StatusDisagrees {
+        /// The category the type IRI named.
+        category: NgsiLdErrorType,
+        /// The status that contradicted it.
+        status: u16,
+    },
+}
+
 /// Deserializable representation used to validate the invariant-bearing public value.
 #[derive(Deserialize)]
 struct WireProblemDetail {
@@ -147,15 +200,12 @@ impl<'de> Deserialize<'de> for ProblemDetail {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<ProblemDetail, D::Error> {
         let wire = WireProblemDetail::deserialize(deserializer)?;
         let error_type = NgsiLdErrorType::from_type_iri(&wire.type_iri).ok_or_else(|| de::Error::custom("unknown NGSI-LD problem type"))?;
-        let classification = match (error_type, wire.status) {
-            (NgsiLdErrorType::InternalError, Some(508)) => ProblemClassification::LoopDetected,
-            (NgsiLdErrorType::InternalError, Some(504)) => ProblemClassification::GatewayTimeout,
-            (NgsiLdErrorType::InternalError, Some(502)) => ProblemClassification::BadGateway,
-            (NgsiLdErrorType::ResourceNotFound, Some(404)) => ProblemClassification::DistributedResourceNotFound,
-            (category, Some(status)) if status == category.status_code().as_u16() => ProblemClassification::Category(category),
-            (category, None) => ProblemClassification::Category(category),
-            (_category, Some(_status)) => return Err(de::Error::custom("problem status disagrees with its NGSI-LD type")),
-        };
+        let classification = WireProblemClassification {
+            category: error_type,
+            status: wire.status,
+        }
+        .classification()
+        .map_err(de::Error::custom)?;
         if let Some(title) = wire.title
             && title != error_type.title()
         {
@@ -221,6 +271,11 @@ mod tests {
                 StatusCode::NOT_FOUND,
             ),
             (ProblemClassification::BadGateway, NgsiLdErrorType::InternalError, StatusCode::BAD_GATEWAY),
+            (
+                ProblemClassification::NotImplemented,
+                NgsiLdErrorType::OperationNotSupported,
+                StatusCode::NOT_IMPLEMENTED,
+            ),
         ] {
             let problem = ProblemDetail::from_classification(classification, "distributed failure");
             let value = serde_json::to_value(&problem)?;

@@ -8,6 +8,7 @@ use crate::{
         history_reader::{
             AggregationPushdown,
             HistoryVisibility,
+            RecordedValueKind,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -17,7 +18,13 @@ use crate::{
     },
 };
 use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
-use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, instance_family::InstanceFamily, time_prop::TimeProp, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    instance_family::InstanceFamily,
+    time_prop::TimeProp,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::{
     expanded::entity_member::extract_types,
     temporal::{TemporalAggregationRow, TemporalHistoryRow, TemporalValue},
@@ -103,6 +110,14 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
             return Ok(true);
         }
         self.stored.entity_exists(entity_id).await
+    }
+
+    async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+        // The pending queue is indexed by entity, not by attribute, so the
+        // shapes an attribute has been recorded with are read from the durable
+        // history alone; an intent that has not been drained yet contributes
+        // once it lands.
+        self.stored.recorded_value_kinds(attributes).await
     }
 
     async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {

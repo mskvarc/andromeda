@@ -33,6 +33,7 @@ pub mod error;
 pub mod join_traversal;
 pub mod jsonld_context;
 pub mod language_filter;
+pub mod language_tag;
 pub mod linked_retrieval_consistency;
 pub mod linked_retrieval_term;
 pub mod local;

@@ -1,12 +1,16 @@
 //! Reducing a subscription to what one registration matches (clause 5.8.1.4).
 //!
 //! The copy placed at a context source watches only the entities and attributes
-//! the registration declared, notifies this broker rather than the subscriber,
-//! and — when entities may be split — carries none of the filters that can only
-//! be decided on a re-assembled entity: `q`, `geoQ` and `scopeQ` go, and so do
-//! the `attributes`, `pick` and `omit` of the notification member.
+//! the registration declared and notifies this broker rather than the
+//! subscriber. The `attributes`, `pick` and `omit` of the notification member
+//! never travel with it: this broker narrows the entities it re-assembles
+//! before delivering them (clause 5.8.6), and a source that had already
+//! narrowed its part would leave nothing to re-assemble from. The filters
+//! `q`, `geoQ` and `scopeQ` go only when entities may be split, because only
+//! then can they not be decided at one source.
 
 use crate::receiver::ReceiverEndpoint;
+use andromeda_federation::config::SplitEntities;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     registration::{ContextSourceRegistration, RegistrationInfo},
@@ -25,8 +29,11 @@ pub enum FilterCarriage {
 
 impl FilterCarriage {
     /// The carriage clause 5.8.1.4 prescribes for a resolved `splitEntities`.
-    pub const fn for_split(split_entities: bool) -> FilterCarriage {
-        if split_entities { FilterCarriage::Strip } else { FilterCarriage::Keep }
+    pub const fn for_split(split_entities: SplitEntities) -> FilterCarriage {
+        match split_entities {
+            SplitEntities::Split => FilterCarriage::Strip,
+            SplitEntities::Complete => FilterCarriage::Keep,
+        }
     }
 }
 
@@ -38,10 +45,7 @@ fn block_covers_selector(block: &RegistrationInfo, selector: &EntitySelector) ->
         return true;
     };
     entities.iter().any(|registered| {
-        let type_matches = match registered.type_.as_single_type() {
-            Some(registered_type) => selector.type_.matches(&[registered_type.as_str()]),
-            None => true,
-        };
+        let type_matches = selector.type_.matches(registered.type_.names());
         // Clause 5.12: an identifier constraint on one side is matched against
         // the other side's identifier or pattern; two patterns, or no
         // constraint on either side, are taken as matching.
@@ -149,20 +153,12 @@ impl ReducedSubscription {
             document.insert("expiresAt".to_string(), json!(expires_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)));
         }
 
+        // Clause 5.8.1.4: the notification member carries no `attributes`,
+        // `pick` or `omit` whatever the carriage -- the source sends its whole
+        // part and this broker narrows the re-assembled entity.
         let mut notification = Map::new();
         notification.insert("format".to_string(), json!("normalized"));
         notification.insert("endpoint".to_string(), json!({"uri": receiver.url(), "accept": "application/json"}));
-        if carriage == FilterCarriage::Keep {
-            if let Some(attributes) = narrow_names(subscription.notification.attributes.as_deref(), declared.as_deref()) {
-                notification.insert("attributes".to_string(), json!(attributes));
-            }
-            if let Some(pick) = &subscription.notification.pick {
-                notification.insert("pick".to_string(), json!(pick));
-            }
-            if let Some(omit) = &subscription.notification.omit {
-                notification.insert("omit".to_string(), json!(omit));
-            }
-        }
         if let Some(sys_attrs) = subscription.notification.sys_attrs {
             notification.insert("sysAttrs".to_string(), json!(sys_attrs));
         }
@@ -191,6 +187,7 @@ mod tests {
         receiver::ReceiverEndpoint,
         reduced_copy::{FilterCarriage, ReducedSubscription},
     };
+    use andromeda_federation::config::SplitEntities;
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::{registration::ContextSourceRegistration, subscription::Subscription};
     use serde_json::json;
@@ -250,8 +247,6 @@ mod tests {
         pretty_assertions::assert_eq!(document["entities"], json!([{"type": VEHICLE}]));
         pretty_assertions::assert_eq!(document["watchedAttributes"], json!([SPEED]));
         pretty_assertions::assert_eq!(document["q"], json!("speed>10"));
-        pretty_assertions::assert_eq!(document["notification"]["attributes"], json!([SPEED]));
-        pretty_assertions::assert_eq!(document["notification"]["pick"], json!([SPEED]));
         pretty_assertions::assert_eq!(
             document["notification"]["endpoint"]["uri"],
             json!("http://broker-a:1056/ngsi-ld/v1/notifications")
@@ -261,16 +256,61 @@ mod tests {
     }
 
     #[test]
-    fn split_entities_strip_the_filters_and_the_projection_members() {
+    fn split_entities_strip_the_filters() {
         let registration = registration(json!([{"entities": [{"type": VEHICLE}]}]));
         let copy = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Strip);
         let document = copy.document;
         assert!(document.get("q").is_none());
-        assert!(document["notification"].get("attributes").is_none());
-        assert!(document["notification"].get("pick").is_none());
-        assert!(document["notification"].get("omit").is_none());
         // A registration declaring no attribute covers every watched one.
         pretty_assertions::assert_eq!(document["watchedAttributes"], json!([SPEED, COLOUR]));
+    }
+
+    /// Clause 5.8.1.4: `q`, `geoQ` and `scopeQ` travel only when entities are
+    /// complete at every source, while the notification's `attributes`,
+    /// `pick` and `omit` never travel -- whatever the carriage and whichever
+    /// of the three the subscription set.
+    #[test]
+    fn the_reduce_matrix_keeps_filters_by_carriage_and_never_the_projection_members() {
+        let registration = registration(json!([{"entities": [{"type": VEHICLE}], "propertyNames": [SPEED]}]));
+        let projections = [
+            json!({"attributes": [SPEED, COLOUR]}),
+            json!({"pick": [SPEED]}),
+            json!({"omit": [COLOUR]}),
+            json!({"attributes": [SPEED], "pick": [SPEED], "omit": [COLOUR]}),
+            json!({}),
+        ];
+        for carriage in [FilterCarriage::Keep, FilterCarriage::Strip] {
+            for projection in &projections {
+                let mut notification = json!({"endpoint": {"uri": "http://subscriber.example.org/notify"}});
+                if let (Some(target), Some(members)) = (notification.as_object_mut(), projection.as_object()) {
+                    target.extend(members.iter().map(|(key, value)| (key.clone(), value.clone()))); // clone: each case builds its own document
+                }
+                let subscription: Subscription = serde_json::from_value(json!({
+                    "id": "urn:ngsi-ld:Subscription:local",
+                    "type": "Subscription",
+                    "entities": [{"type": VEHICLE}],
+                    "q": "speed>10",
+                    "scopeQ": "/Madrid",
+                    "notification": notification,
+                    "status": "active",
+                    "createdAt": "2024-01-01T00:00:00Z",
+                    "modifiedAt": "2024-01-01T00:00:00Z"
+                }))
+                .expect("valid subscription");
+
+                let document = ReducedSubscription::reduce(&subscription, &registration, &receiver(), &minted(), carriage).document;
+
+                for member in ["attributes", "pick", "omit"] {
+                    assert!(
+                        document["notification"].get(member).is_none(),
+                        "{member} must never travel under {carriage:?} with {projection}: {document}"
+                    );
+                }
+                let filters_travel = carriage == FilterCarriage::Keep;
+                pretty_assertions::assert_eq!(document.get("q").is_some(), filters_travel, "q under {carriage:?}: {document}");
+                pretty_assertions::assert_eq!(document.get("scopeQ").is_some(), filters_travel, "scopeQ under {carriage:?}: {document}");
+            }
+        }
     }
 
     #[test]
@@ -287,7 +327,7 @@ mod tests {
         let registration = registration(json!([{"entities": [{"type": "https://example.org/Sensor"}]}]));
         let document = ReducedSubscription::reduce(&subscription(), &registration, &receiver(), &minted(), FilterCarriage::Keep).document;
         assert!(document.get("entities").is_none());
-        pretty_assertions::assert_eq!(FilterCarriage::for_split(true), FilterCarriage::Strip);
-        pretty_assertions::assert_eq!(FilterCarriage::for_split(false), FilterCarriage::Keep);
+        pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Split), FilterCarriage::Strip);
+        pretty_assertions::assert_eq!(FilterCarriage::for_split(SplitEntities::Complete), FilterCarriage::Keep);
     }
 }

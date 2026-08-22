@@ -1,14 +1,12 @@
 //! NGSI-LD response type for entity collections with pre-rendered payload.
 
-use crate::headers::{CommonHeadersOptions, apply_common_headers};
-use andromeda_http_headers::{
-    ngsild_content_range::NgsiLdContentRange,
-    ngsild_results_count::NgsiLdResultsCount,
-    ngsild_warning::NgsiLdWarning,
-    preference_applied::PreferenceApplied,
+use crate::{
+    headers::{CommonHeadersOptions, apply_common_headers},
+    version_negotiation::apply_version_negotiation,
 };
+use andromeda_http_headers::{ngsild_content_range::NgsiLdContentRange, ngsild_results_count::NgsiLdResultsCount, ngsild_warning::NgsiLdWarning};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_render::{response::RenderedOutput, version::VersionAdaptation};
+use andromeda_ngsi_ld_render::response::RenderedOutput;
 use axum::{
     Json,
     http::{HeaderMap, StatusCode},
@@ -98,15 +96,9 @@ impl NgsiLdCollectionResponse {
 
 impl IntoResponse for NgsiLdCollectionResponse {
     fn into_response(self) -> Response {
-        // 203 Non-Authoritative Information when version adaptation was applied
-        let status = if self.rendered.version_adaptation == VersionAdaptation::Applied {
-            StatusCode::NON_AUTHORITATIVE_INFORMATION
-        } else {
-            self.status
-        };
-
         let mut headers = HeaderMap::new();
         headers.typed_insert(self.rendered.media_type);
+        let status = apply_version_negotiation(self.status, self.rendered.version_adaptation, &mut headers);
 
         if let Some(count) = self.total_count {
             headers.typed_insert(NgsiLdResultsCount::new(count));
@@ -114,10 +106,6 @@ impl IntoResponse for NgsiLdCollectionResponse {
 
         if let Some(ref cr) = self.content_range {
             headers.typed_insert(cr.clone());
-        }
-
-        if self.rendered.version_adaptation == VersionAdaptation::Applied {
-            headers.typed_insert(PreferenceApplied::version_conformance());
         }
 
         apply_common_headers(

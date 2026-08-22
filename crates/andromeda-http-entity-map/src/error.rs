@@ -21,9 +21,10 @@ pub trait EntityMapHttpClassify {
 impl EntityMapHttpClassify for EntityMapError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         match self {
-            EntityMapError::NotFound { .. } | EntityMapError::EntityNotInMap { .. } => {
-                ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string())
-            }
+            EntityMapError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()),
+            // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
+            // the request that created the map are an invalid request.
+            EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
         }
     }
@@ -83,6 +84,7 @@ impl EntityMapHttpClassify for FederationError {
     fn classify_for_entity_map_http(&self) -> ClassifiedReport {
         match self {
             FederationError::Conflict { detail } => ClassifiedReport::public(NgsiLdErrorType::Conflict, detail),
+            FederationError::OperationNotSupported { detail } => ClassifiedReport::public(NgsiLdErrorType::OperationNotSupported, detail),
             FederationError::LoopDetected { .. } => ClassifiedReport::public_binding(ProblemClassification::LoopDetected, self.to_string()),
             FederationError::GatewayTimeout { .. } => ClassifiedReport::public_binding(ProblemClassification::GatewayTimeout, self.to_string()),
             FederationError::RemoteNotFound { .. } => ClassifiedReport::public_binding(ProblemClassification::DistributedResourceNotFound, self.to_string()),
@@ -132,7 +134,6 @@ mod tests {
     #[test]
     fn every_entity_map_variant_has_focused_disclosure() -> Result<(), Box<dyn Error>> {
         let map_identifier = "urn:ngsi-ld:EntityMap:1".parse::<Uri>()?;
-        let entity_identifier = "urn:ngsi-ld:Entity:1".parse::<Uri>()?;
         for (error, expected) in [
             (
                 EntityMapError::NotFound {
@@ -140,13 +141,7 @@ mod tests {
                 },
                 NgsiLdErrorType::ResourceNotFound,
             ),
-            (
-                EntityMapError::EntityNotInMap {
-                    map_identifier,
-                    entity_identifier,
-                },
-                NgsiLdErrorType::ResourceNotFound,
-            ),
+            (EntityMapError::RequestChanged { identifier: map_identifier }, NgsiLdErrorType::InvalidRequest),
             (
                 EntityMapError::Persistence {
                     detail: "database host".to_string(),

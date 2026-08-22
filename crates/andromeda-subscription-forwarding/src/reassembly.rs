@@ -12,54 +12,33 @@ use crate::{error::SubscriptionForwardingError, service::SubscriptionForwardingS
 use andromeda_delivery::{endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{error::EntityError, query::retrieval::RetrievalNarrowing};
 use andromeda_federation::{
+    config::SplitEntities,
     entity_result::merge_retrieve_results,
+    forwarded_query::ClientQuery,
     operation::ForwardingOperation,
     outcome::ForwardedEntities,
-    request::{CsrModeFilter, ForwardRetrieveRequest, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
-use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    uri::{NGSI_LD_URN_NID, Uri},
+use andromeda_jsonld::{
+    context_spec::ContextSpec,
+    engine::options::{CompactOptions, ContextStripping},
 };
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{
     entity::Entity,
     notification::{Notification, NotificationType},
     registration::ForwardingMode,
-    subscription::Subscription,
 };
 use andromeda_ngsi_ld_render::entity::EntityRenderer;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_subscription::{compilation::compile_subscription, matching::matches_entity_filters};
+use andromeda_ngsi_ld_request::entity::GetEntityParams;
+use andromeda_subscription::{compilation::compile_subscription, compiled::CompiledSubscription, matching::matches_entity_filters};
 use chrono::Utc;
+use iri_rs::IriBuf;
 use serde_json::Value;
 use tracing::{debug, warn};
 use urn_rs::UrnBuilder;
 use uuid::Uuid;
-
-/// The members of an entity document that are never attributes.
-const STRUCTURAL_MEMBERS: [&str; 7] = ["@context", "id", "type", "scope", "createdAt", "modifiedAt", "expiresAt"];
-
-/// Narrow a rendered entity to the attributes the local subscription delivers
-/// (clause 5.8.6 `notification.attributes`, `pick` and `omit`).
-fn narrow_rendered(mut rendered: Value, subscription: &Subscription) -> Value {
-    let Some(object) = rendered.as_object_mut() else {
-        return rendered;
-    };
-    let keep_only = |names: &[AttributeName], object: &mut serde_json::Map<String, Value>| {
-        object.retain(|key, _| STRUCTURAL_MEMBERS.contains(&key.as_str()) || names.iter().any(|name| name.as_str() == key));
-    };
-    if let Some(attributes) = subscription.notification.attributes.as_deref() {
-        keep_only(attributes, object);
-    }
-    if let Some(pick) = subscription.notification.pick.as_deref() {
-        keep_only(pick, object);
-    }
-    if let Some(omit) = subscription.notification.omit.as_deref() {
-        object.retain(|key, _| !omit.iter().any(|name| name.as_str() == key));
-    }
-    rendered
-}
 
 /// Mint a notification identifier.
 fn notification_id() -> Result<Uri, SubscriptionForwardingError> {
@@ -84,33 +63,70 @@ impl SubscriptionForwardingService {
             Err(EntityError::NotFound { .. }) => None,
             Err(error) => return Err(error.into()),
         };
+        // The whole entity is wanted from every other holder: no parameter of
+        // a retrieval narrows what the re-assembly completes the part with.
+        let whole_entity = GetEntityParams::default();
         let remote = self
             .federation
             .forward_retrieve(ForwardRetrieveRequest {
                 entity_id: &received.id,
                 exclude_registration: Some(sender),
-                query_string: "",
+                client_query: ClientQuery::EntityRetrieve(&whole_entity),
                 context,
                 operation: ForwardingOperation::RetrieveEntity,
                 triggering: TriggeringRequest::default(),
                 mode_filter: CsrModeFilter::All,
-                entity_map: None,
+                entity_map: EntityMapInUse::None,
             })
             .await?;
         // The received part is the base; the local copy and the other holders
         // are folded in the way a distributed retrieval merges its sources.
-        let mut sources = Vec::with_capacity(remote.len() + 1);
+        let mut sources = Vec::with_capacity(remote.results.len() + 1);
         if let Some(local) = local {
             sources.push(ForwardedEntities {
                 registration_id: None,
                 mode: ForwardingMode::Inclusive,
                 entities: vec![local],
                 warnings: Vec::new(),
+                linked_map: None,
             });
         }
-        sources.extend(remote);
+        sources.extend(remote.results);
         merge_retrieve_results(Some(received), sources)
             .ok_or_else(|| SubscriptionForwardingError::internal("merging a present entity with its other parts produced nothing"))
+    }
+
+    /// One entity of the inbound notification, re-spelled from the sender's
+    /// context (`inbound`) into the local subscription's (`local`).
+    async fn received_under(&self, value: &Value, inbound: &ContextSpec, local: &ContextSpec) -> Result<Entity, SubscriptionForwardingError> {
+        // clone: expansion consumes the value while the notification stays borrowed
+        let expanded = self.engine.expand(value.clone(), inbound).await?;
+        let compacted = self
+            .engine
+            .compact(
+                expanded,
+                local,
+                CompactOptions {
+                    strip_context: ContextStripping::Strip,
+                },
+            )
+            .await?;
+        Ok(serde_json::from_value(compacted)?)
+    }
+
+    /// Narrow one re-assembled entity to what the local subscription delivers
+    /// (clause 5.8.6 `notification.attributes`, `pick` and `omit`) -- the same
+    /// clause 4.21 projection a query applies, so a subscriber sees the entity
+    /// a query under the same selection would show.
+    async fn narrow_entity(&self, entity: &mut Entity, compiled: &CompiledSubscription, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+        if let Some(attributes) = compiled.notification_attributes.as_deref() {
+            // Every stored name is an absolute IRI because creation expanded
+            // it (clause 5.5.7); one that is not names no attribute.
+            let wanted: Vec<IriBuf> = attributes.iter().filter_map(|name| IriBuf::new(name.as_str().to_owned()).ok()).collect();
+            self.entity_query.filter_entity_attrs(entity, &wanted, context).await?;
+        }
+        self.entity_query.project_entity(entity, &compiled.notification_projection, context).await?;
+        Ok(())
     }
 
     /// Handle a notification arriving under a forwarded copy's identifier.
@@ -127,32 +143,39 @@ impl SubscriptionForwardingService {
         let compiled = compile_subscription(&stored);
         let subscription = stored.subscription;
         let split = self.federation.split_entities(subscription.delivery.split_entities);
+        // Clause 5.8.6: the copy is delivered under the local subscription's
+        // `jsonldContext`. The sender spelled its part under the context of the
+        // copy it holds, and the other holders answer under whatever a
+        // retrieval asks for, so every part is read under the local context
+        // before the parts are merged and the result is rendered.
+        let local_context = ContextSpec::for_subscription_context(subscription.delivery.jsonld_context.as_ref());
 
         let mut data = Vec::with_capacity(notification.data.len());
         for value in &notification.data {
-            let received: Entity = match serde_json::from_value(value.clone()) {
-                // clone: deserialisation consumes the value while the notification stays borrowed
+            let received = match self.received_under(value, context, &local_context).await {
                 Ok(entity) => entity,
                 Err(error) => {
                     warn!(subscription = %local, %error, "inbound notification carried an entity that does not parse");
                     continue;
                 }
             };
-            let entity = if split {
-                self.reassemble_entity(received, &sender, context).await?
-            } else {
-                received
+            let mut entity = match split {
+                SplitEntities::Split => self.reassemble_entity(received, &sender, &local_context).await?,
+                SplitEntities::Complete => received,
             };
             // Clause 5.8.6: entities failing the local filters leave the copy.
-            let expanded = self.engine.expand(serde_json::to_value(&entity)?, context).await?;
+            let expanded = self.engine.expand(serde_json::to_value(&entity)?, &local_context).await?;
             if !matches_entity_filters(&compiled, &expanded) {
                 continue;
             }
+            // `id` and `type` stay whatever the projection lists: Table 5.2.4-1
+            // makes both mandatory, so the copy's `data` carries Entities.
+            self.narrow_entity(&mut entity, &compiled, &local_context).await?;
             let rendered = EntityRenderer::new(&entity)
                 .with_mode(subscription.notification.format.unwrap_or_default())
                 .render()
                 .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
-            data.push(narrow_rendered(rendered, &subscription));
+            data.push(rendered);
         }
         if data.is_empty() {
             debug!(subscription = %local, "re-assembled notification carries no entity; nothing delivered");
@@ -187,37 +210,5 @@ impl SubscriptionForwardingService {
             self.subscriptions.mark_failure(&local).await?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::reassembly::narrow_rendered;
-    use andromeda_ngsi_ld_model::subscription::Subscription;
-    use serde_json::json;
-
-    fn subscription(notification: serde_json::Value) -> Subscription {
-        serde_json::from_value(json!({
-            "id": "urn:ngsi-ld:Subscription:local",
-            "type": "Subscription",
-            "entities": [{"type": "Vehicle"}],
-            "notification": notification,
-            "status": "active",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid subscription")
-    }
-
-    #[test]
-    fn attributes_pick_and_omit_narrow_the_delivered_entity_but_never_its_structure() {
-        let rendered =
-            json!({"id": "urn:a", "type": "Vehicle", "speed": {"type": "Property", "value": 1}, "colour": {"type": "Property", "value": "red"}, "scope": "/x"});
-        let attributes = subscription(json!({"attributes": ["speed"], "endpoint": {"uri": "http://s/n"}}));
-        let narrowed = narrow_rendered(rendered.clone(), &attributes); // clone: reused below
-        assert!(narrowed.get("speed").is_some() && narrowed.get("colour").is_none() && narrowed.get("scope").is_some());
-        let omit = subscription(json!({"omit": ["speed"], "endpoint": {"uri": "http://s/n"}}));
-        let narrowed = narrow_rendered(rendered, &omit);
-        assert!(narrowed.get("speed").is_none() && narrowed.get("colour").is_some());
     }
 }

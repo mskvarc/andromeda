@@ -1,8 +1,11 @@
+//! Periodic (`timeInterval`) entity notification evaluation (clause 5.8.6).
+
 use crate::{
     error::NotificationError,
     processor::payload::{
-        context::{context_from_url, normalize_compacted_entity},
         filtering::filter_entity_attributes,
+        projection::apply_notification_projection,
+        representation::{compact_for_notification, render_format},
     },
 };
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
@@ -10,28 +13,21 @@ use andromeda_entity::{
     port::{discovery::EntityDiscoveryStore, reader::EntityReader},
     sys_attrs::inject_sys_attrs,
 };
-use andromeda_http_headers::media_type::APPLICATION_LD_JSON;
-use andromeda_jsonld::{
-    context_spec::ContextSpec,
-    engine::{
-        options::{CompactOptions, ContextStripping},
-        processor::JsonLdEngine,
-    },
-};
+use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{
     entity_type_name::EntityTypeName,
     uri::{NGSI_LD_URN_NID, Uri},
 };
 use andromeda_ngsi_ld_model::{
-    entity::Entity,
     expanded::query_match::{matches_geo_query, matches_scope_query},
     notification::Notification,
     subscription::Subscription,
 };
-use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_ngsi_ld_query::filter::eval;
-use andromeda_ngsi_ld_render::simplify::simplify_entity;
-use andromeda_subscription::{compilation::compile_geo_q, store::SubscriptionStore};
+use andromeda_subscription::{
+    compilation::{compile_geo_q, notification_projection},
+    store::SubscriptionStore,
+};
 use andromeda_tenancy::tenant_ref::TenantRef;
 use chrono::Utc;
 use futures::{StreamExt, stream};
@@ -262,8 +258,15 @@ impl IntervalNotificationOperation {
         }
     }
 
+    /// Render the entities of one periodic notification the way clause 5.8.6
+    /// prescribes: narrowed to `notification.attributes`, reduced by `pick`
+    /// and `omit`, compacted under the subscription's context and rendered
+    /// in its `notification.format`.
     async fn prepare_notification_entities(&self, sub: &Subscription, entities: Vec<Value>) -> Result<Vec<Value>, NotificationError> {
-        let mut results = Vec::new();
+        let projection = notification_projection(&sub.notification, sub.id.as_ref());
+        let context = ContextSpec::for_subscription_context(sub.delivery.jsonld_context.as_ref());
+        let format = sub.notification.format.unwrap_or_default();
+        let mut results = Vec::with_capacity(entities.len());
         for mut entity in entities {
             if sub.notification.sys_attrs.is_some_and(|include| include)
                 && let Some(id) = entity_id_of(&entity)
@@ -272,62 +275,18 @@ impl IntervalNotificationOperation {
                 inject_sys_attrs(&mut entity, sa.created_at, sa.modified_at, sa.expires_at);
             }
 
-            let filtered = if let Some(ref attrs) = sub.notification.attributes {
+            let mut narrowed = if let Some(ref attrs) = sub.notification.attributes {
                 filter_entity_attributes(&entity, attrs)
             } else {
                 entity
             };
+            apply_notification_projection(&mut narrowed, &projection);
 
-            let context = context_from_url(sub.delivery.jsonld_context.as_ref());
-            let include_context = sub
-                .notification
-                .endpoint
-                .accept
-                .as_ref()
-                .is_some_and(|accept| accept.essence() == APPLICATION_LD_JSON);
-            let compacted = match self
-                .engine
-                .compact(
-                    filtered.clone(),
-                    &context,
-                    CompactOptions {
-                        strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
-                    },
-                )
+            let compacted = compact_for_notification(&self.engine, &narrowed, &context, None)
                 .await
-            {
-                Ok(value) => value,
-                Err(e) => {
-                    debug!("Compaction failed with subscription context, falling back to core: {}", e);
-                    self.engine
-                        .compact(
-                            filtered,
-                            &ContextSpec::core_only(),
-                            CompactOptions {
-                                strip_context: if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
-                            },
-                        )
-                        .await
-                        .map_err(NotificationError::from)?
-                }
-            };
+                .map_err(NotificationError::from)?;
 
-            let compacted = normalize_compacted_entity(compacted);
-
-            let formatted = if let Some(fmt) = sub.notification.format {
-                if fmt.is_simplified() {
-                    match deserialize_exact::<Entity>(&compacted) {
-                        Ok(entity) => simplify_entity(&entity),
-                        Err(_) => compacted,
-                    }
-                } else {
-                    compacted
-                }
-            } else {
-                compacted
-            };
-
-            results.push(formatted);
+            results.push(render_format(compacted, format, sub.notification.join));
         }
 
         Ok(results)

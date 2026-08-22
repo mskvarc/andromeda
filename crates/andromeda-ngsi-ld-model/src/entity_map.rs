@@ -1,5 +1,6 @@
 //! The EntityMap resource that pins a distributed query's result set (ETSI GS CIM 009 clauses 4.5.25 and 5.2.39).
 
+use crate::entity_map_fingerprint::RequestFingerprint;
 use andromeda_ngsi_ld_lexicon::{constant_string, rfc3339, uri::Uri};
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
@@ -86,6 +87,12 @@ pub struct EntityMap {
     #[serde(default)]
     #[builder(default = Default::default())]
     pub linked_maps: IndexMap<Uri, Uri>,
+    /// The request that created the map, kept so a follow-up under it can be
+    /// held to the same parameters (clause 5.5.14). Broker-internal: never
+    /// part of the clause 5.2.39 representation.
+    #[serde(skip)]
+    #[builder(default = Default::default())]
+    pub request_fingerprint: Option<RequestFingerprint>,
 }
 
 impl EntityMap {
@@ -138,6 +145,13 @@ impl EntityMap {
         }
     }
 
+    /// Record that this broker holds `entity_ids` (clause 5.2.39 `@none`).
+    pub fn add_local_entities(&mut self, entity_ids: impl IntoIterator<Item = Uri>) {
+        for entity_id in entity_ids {
+            self.add_source(entity_id, EntityMapSource::Local);
+        }
+    }
+
     /// Fold in the entities a registration's context source returned for the
     /// same query, without a map of its own (clause 5.7.2.4 `entityMap=true`).
     pub fn add_remote_entities(&mut self, registration: &Uri, entity_ids: impl IntoIterator<Item = Uri>) {
@@ -146,11 +160,27 @@ impl EntityMap {
         }
     }
 
+    /// Record the EntityMap a registration's context source used for this
+    /// query (Table 5.2.39-2 `linkedMaps`), replacing an earlier link.
+    pub fn link(&mut self, registration: Uri, linked_map: Uri) {
+        self.linked_maps.insert(registration, linked_map);
+    }
+
+    /// Fold in what one registration's context source contributed to a read
+    /// (clauses 5.7.1.4 to 5.7.4.4): the entities it returned are attributed
+    /// to it, and the map it answered with, if any, joins `linkedMaps`.
+    pub fn add_contribution(&mut self, registration: &Uri, entity_ids: impl IntoIterator<Item = Uri>, linked_map: Option<Uri>) {
+        self.add_remote_entities(registration, entity_ids);
+        if let Some(linked_map) = linked_map {
+            self.link(registration.clone(), linked_map); // clone: the link owns the registration identifier
+        }
+    }
+
     /// Fold in the EntityMap a registration's context source created for the
     /// same query (clause 5.14.4.4): its identifier joins `linkedMaps`, and every
     /// entity it lists is attributed to the registration.
     pub fn add_remote(&mut self, registration: &Uri, remote: &EntityMap) {
-        self.linked_maps.insert(registration.clone(), remote.id.clone()); // clone: the link owns both identifiers
+        self.link(registration.clone(), remote.id.clone()); // clone: the link owns both identifiers
         self.add_remote_entities(registration, remote.entity_ids().cloned()); // clone: the entries own their identifiers
     }
 
@@ -162,7 +192,10 @@ impl EntityMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_map::{EntityMap, EntityMapSource};
+    use crate::{
+        entity_map::{EntityMap, EntityMapSource},
+        entity_map_fingerprint::{MapRequestKind, RequestFingerprint},
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -224,6 +257,32 @@ mod tests {
         let registration = uri("urn:ngsi-ld:ContextSourceRegistration:b");
         map.add_remote_entities(&registration, [uri("urn:ngsi-ld:Vehicle:1"), uri("urn:ngsi-ld:Vehicle:1")]);
         pretty_assertions::assert_eq!(map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:1")).map(Vec::len), Some(2));
+    }
+
+    #[test]
+    fn a_contribution_attributes_its_entities_and_links_the_map_it_answered_with() {
+        let mut map = local_map();
+        let registration = uri("urn:ngsi-ld:ContextSourceRegistration:b");
+        map.add_contribution(&registration, [uri("urn:ngsi-ld:Vehicle:3")], Some(uri("urn:ngsi-ld:EntityMap:b")));
+        pretty_assertions::assert_eq!(map.linked_map_for(&registration), Some(&uri("urn:ngsi-ld:EntityMap:b")));
+        pretty_assertions::assert_eq!(
+            map.entity_map.get(&uri("urn:ngsi-ld:Vehicle:3")),
+            Some(&vec![EntityMapSource::Registration(registration.clone())]) // clone: compared below
+        );
+        let other = uri("urn:ngsi-ld:ContextSourceRegistration:c");
+        map.add_contribution(&other, [uri("urn:ngsi-ld:Vehicle:1")], None);
+        assert!(map.linked_map_for(&other).is_none());
+        // Registrations are listed in map order: Vehicle:1 names `c` before Vehicle:3 names `b`.
+        pretty_assertions::assert_eq!(map.registrations().collect::<Vec<_>>(), vec![&other, &registration]);
+    }
+
+    #[test]
+    fn the_request_fingerprint_never_reaches_the_wire() {
+        let mut map = local_map();
+        map.request_fingerprint = Some(RequestFingerprint::new(MapRequestKind::QueryEntities, [7; 32]));
+        let rendered = serde_json::to_value(&map).expect("serialises");
+        assert!(rendered.get("requestFingerprint").is_none());
+        assert!(rendered.get("request_fingerprint").is_none());
     }
 
     #[test]

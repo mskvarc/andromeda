@@ -9,17 +9,18 @@
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_postgresql_codes::value_kind::ValueKind;
 use andromeda_postgresql_query::entity_type_names::type_names_of;
 use andromeda_postgresql_schema::{
     name_dictionary::AttributeNames,
     temporal::{AttributeHistory, TemporalAttributeStreams, TemporalEntities},
 };
 use andromeda_postgresql_seaquery::pg_array::{any, text_array};
-use andromeda_postgresql_temporal_query::alias::{An, S, Te};
+use andromeda_postgresql_temporal_query::alias::{Ah, An, S, Te};
 use sea_query::{Alias, DeleteStatement, Expr, ExprTrait, JoinType, LockType, PostgresQueryBuilder, Query, SelectStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{AssertSqlSafe, Row};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 /// Which dataset instances of one attribute a deletion addresses.
@@ -83,6 +84,38 @@ impl TemporalRepository {
             types_by_entity.insert(entity_id, types);
         }
         Ok(types_by_entity)
+    }
+
+    /// The value shapes each named attribute has been recorded with across
+    /// the whole history, tombstones excepted (they carry no value).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemporalStoreError::Database`] when the statement fails and
+    /// [`TemporalStoreError::Decode`] when a stored name or value-kind code is
+    /// not one the dictionary or the code registry knows.
+    pub(crate) async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<ValueKind>>, TemporalStoreError> {
+        if attributes.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let names: Vec<&str> = attributes.iter().map(AttributeName::as_str).collect();
+        let (sql, values) = recorded_value_kinds_query(&names).build_sqlx(PostgresQueryBuilder);
+        let rows = sqlx::query_with(AssertSqlSafe(sql), values).fetch_all(&self.pool).await?;
+        let mut kinds_by_attribute: HashMap<AttributeName, HashSet<ValueKind>> = HashMap::new();
+        for row in rows {
+            let raw_name: String = row
+                .try_get("name")
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_names.name: {error}")))?;
+            let name = raw_name
+                .parse::<AttributeName>()
+                .map_err(|error| TemporalStoreError::Decode(format!("attribute_names.name '{raw_name}': {error}")))?;
+            let code: i16 = row
+                .try_get("value_kind")
+                .map_err(|error| TemporalStoreError::Decode(format!("invalid attribute_history.value_kind: {error}")))?;
+            let kind = ValueKind::try_from(code).map_err(|error| TemporalStoreError::Decode(error.to_string()))?;
+            kinds_by_attribute.entry(name).or_default().insert(kind);
+        }
+        Ok(kinds_by_attribute)
     }
 
     /// Whether the entity records any stream for the named attribute.
@@ -230,6 +263,31 @@ fn stream_catalog_join(statement: &mut SelectStatement) {
             An,
             Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
         );
+}
+
+/// The distinct `(name, value_kind)` pairs recorded for the named attributes,
+/// tombstone rows excluded.
+fn recorded_value_kinds_query(names: &[&str]) -> SelectStatement {
+    Query::select()
+        .distinct()
+        .column((An, AttributeNames::Name))
+        .column((Ah, AttributeHistory::ValueKind))
+        .from_as(AttributeHistory::Table, Ah)
+        .join_as(
+            JoinType::Join,
+            TemporalAttributeStreams::Table,
+            S,
+            Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((Ah, AttributeHistory::StreamKey)),
+        )
+        .join_as(
+            JoinType::Join,
+            AttributeNames::Table,
+            An,
+            Expr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
+        )
+        .and_where(Expr::col((An, AttributeNames::Name)).eq(any(text_array(names))))
+        .and_where(Expr::col((Ah, AttributeHistory::ValueKind)).ne(ValueKind::Tombstone.code()))
+        .to_owned()
 }
 
 /// Whether the entity has a Temporal Evolution at all.

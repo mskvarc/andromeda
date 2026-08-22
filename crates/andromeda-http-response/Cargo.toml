@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-federation.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
@@ -22,12 +23,13 @@ headers = "0.4.1"
 iri-rs = "3.4.1"
 mediatype = "0.23.0"
 serde = "1.0.229"
+serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 tracing = "0.1.44"
 url = "2.5.8"
 
 [dev-dependencies]
 andromeda-architecture-checks.workspace = true
+andromeda-ngsi-ld-model.workspace = true
 andromeda-ngsi-ld-vocabulary.workspace = true
 pretty_assertions = "1.4.1"
-serde_json = { version = "1.0.151", features = ["arbitrary_precision"] }
 tokio = { version = "1.53.1", features = ["macros", "rt"] }

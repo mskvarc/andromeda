@@ -16,6 +16,7 @@ use crate::entity::{
     OriginalUri,
     OverwritePolicy,
     ProblemResponse,
+    ProvisionResource,
     RequestOverwritePolicy,
     Response,
     StatusCode,
@@ -23,8 +24,10 @@ use crate::entity::{
     Uri,
     ValidatedQuery,
     Value,
+    classify_entity_error,
     collect_proxied_attrs,
     provision_response,
+    reject_unknown_attribute_types,
     strip_attributes_from_value,
 };
 use andromeda_federation::request::TriggeringRequest;
@@ -46,6 +49,7 @@ pub(crate) async fn append_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.entities;
     let context = context.merge(body_context);
+    reject_unknown_attribute_types(&fragment, &uri)?;
     let no_overwrite = params.options == Some(RequestOverwritePolicy::NoOverwrite);
     let overwrite = if no_overwrite {
         OverwritePolicy::Preserve
@@ -60,6 +64,7 @@ pub(crate) async fn append_attrs(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: None,
@@ -101,7 +106,7 @@ pub(crate) async fn append_attrs(
     let local = if local_fragment.as_object().is_some_and(|object| object.is_empty()) {
         LocalOutcome::NothingRemained
     } else {
-        LocalOutcome::Processed(service.append_attrs(&id, local_fragment, overwrite, &context).await.map(|_| ()))
+        LocalOutcome::processed(service.append_attrs(&id, local_fragment, overwrite, &context).await, classify_entity_error)
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

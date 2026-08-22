@@ -1,6 +1,6 @@
 //! Context source registration types (ETSI GS CIM 009 clause 5.2.9).
 
-use crate::{key_value_pair::KeyValuePair, registration_management::RegistrationManagementInfo, subscription::EntitySelector, time_interval::TimeInterval};
+use crate::{entity_info::EntityInfo, key_value_pair::KeyValuePair, registration_management::RegistrationManagementInfo, time_interval::TimeInterval};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     constant_string,
@@ -163,9 +163,9 @@ pub enum CsrStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "RegistrationInfoWire")]
 pub struct RegistrationInfo {
-    /// Entity type/id selectors this registration covers.
+    /// The entities this registration covers (clause 5.2.8).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub entities: Option<Vec<EntitySelector>>,
+    pub entities: Option<Vec<EntityInfo>>,
     /// Property names provided by this context source.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub property_names: Option<Vec<AttributeName>>,
@@ -198,7 +198,7 @@ pub enum RegistrationInfoError {
 #[serde(rename_all = "camelCase")]
 struct RegistrationInfoWire {
     /// The `entities` member.
-    entities: Option<Vec<EntitySelector>>,
+    entities: Option<Vec<EntityInfo>>,
     /// The `propertyNames` member.
     property_names: Option<Vec<AttributeName>>,
     /// The `relationshipNames` member.

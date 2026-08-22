@@ -88,6 +88,13 @@ async fn replace_entity_exclusive_match_forwards_and_strips() {
     let reg_id = topology.id("registration:prov-replace-exclusive");
     let path = format!("/ngsi-ld/v1/entities/{entity_id}");
 
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["replaceEntity", "retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
@@ -96,14 +103,6 @@ async fn replace_entity_exclusive_match_forwards_and_strips() {
         .await
         .expect("seed local entity");
     assert_status(&seeded, 201);
-
-    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
-        .entity_id(&entity_id)
-        .property_names(&["speed"])
-        .operations(&["replaceEntity", "retrieveEntity"])
-        .build();
-    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PUT, &path, 204).await;
 
     let replaced = client
@@ -145,6 +144,13 @@ async fn replace_entity_op_unsupported_returns_409() {
     let reg_id = topology.id("registration:prov-replace-unsup");
     let path = format!("/ngsi-ld/v1/entities/{entity_id}");
 
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
@@ -153,14 +159,6 @@ async fn replace_entity_op_unsupported_returns_409() {
         .await
         .expect("seed local entity");
     assert_status(&seeded, 201);
-
-    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
-        .entity_id(&entity_id)
-        .property_names(&["speed"])
-        .operations(&["retrieveEntity"])
-        .build();
-    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let replaced = client
         .replace_entity(

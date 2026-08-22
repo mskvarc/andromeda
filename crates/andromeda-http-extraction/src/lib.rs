@@ -15,10 +15,12 @@ pub mod jsonld;
 pub mod language;
 pub mod origin;
 pub mod prefer;
+pub mod profile;
 pub mod protocol;
 pub mod query;
 pub mod snapshot;
 pub mod snapshot_purge;
+pub mod snapshot_write_guard;
 pub mod temporal_query;
 pub mod tenant;
 pub mod tenant_state;
@@ -36,7 +38,6 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-number",
         "andromeda-ngsi-ld-problem-details",
         "andromeda-ngsi-ld-query",
-        "andromeda-ngsi-ld-render",
         "andromeda-ngsi-ld-request",
         "andromeda-tenancy",
     ],

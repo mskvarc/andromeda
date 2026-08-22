@@ -51,7 +51,10 @@ async fn query_temporal_reusing_map(topology: &DistributedTopology, map: &str) -
 }
 
 /// A temporal retrieve map fixes the CSR set on reuse and is recreated on a bogus
-/// map (clause 5.5.14). Confirms REQ-CONS-42.
+/// map (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg
+/// mints a replacement and answers `201` (Table 6.4.3.2-3 applies the same
+/// "201 Created (in case an EntityMap has been (re)created)" rule to every
+/// map-bearing read). Confirms REQ-CONS-42.
 #[tokio::test]
 async fn distop_retrieve_temporal_map_reused_or_recreated() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -122,7 +125,7 @@ async fn distop_retrieve_temporal_map_reused_or_recreated() {
     );
 
     let bogus = topology.id("EntityMap:bogus");
-    assert_status(&retrieve_temporal_reusing_map(&topology, &entity_id, &bogus).await, 200);
+    assert_status(&retrieve_temporal_reusing_map(&topology, &entity_id, &bogus).await, 201);
     assert!(
         mock.get_count(Method::GET, &format!("/s2/ngsi-ld/v1/temporal/entities/{entity_id}")).await > 0,
         "a bogus map is recreated by fresh discovery"
@@ -279,7 +282,9 @@ async fn distop_retrieve_temporal_map_linkedmaps_updated() {
 }
 
 /// A temporal query map fixes the CSR set on reuse and is recreated on a bogus map
-/// (clause 5.5.14). Confirms REQ-CONS-58.
+/// (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints
+/// a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an
+/// EntityMap has been (re)created)"). Confirms REQ-CONS-58.
 #[tokio::test]
 async fn distop_query_temporal_map_reused_or_recreated() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -345,7 +350,7 @@ async fn distop_query_temporal_map_reused_or_recreated() {
     );
 
     let bogus = topology.id("EntityMap:bogus");
-    assert_status(&query_temporal_reusing_map(&topology, &bogus).await, 200);
+    assert_status(&query_temporal_reusing_map(&topology, &bogus).await, 201);
     assert!(
         mock.get_count(Method::GET, "/s2/ngsi-ld/v1/temporal/entities").await > 0,
         "a bogus temporal map is recreated by fresh discovery"

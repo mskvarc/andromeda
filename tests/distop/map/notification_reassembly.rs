@@ -39,7 +39,12 @@ async fn register_source(topology: &DistributedTopology, role: BrokerRole, regis
 
 /// Provision the split scene: B holds `speed`, C holds `colour` for the same
 /// `Vehicle`, both sources are registered on A, and a subscription on A delivers
-/// to the receiver. Returns nothing; the caller triggers a change and asserts.
+/// to the receiver. The subscription sets `splitEntities: true`: clause 5.8.6
+/// only re-assembles from every holder "If the splitEntities member of the
+/// local Subscription is explicitly set to true or, if not explicitly set, the
+/// default setting of the deployment allows split entities", and the
+/// deployment default is complete. Returns nothing; the caller triggers a
+/// change and asserts.
 async fn setup_split(topology: &DistributedTopology, receiver: &NotificationAdapter, entity_id: &str, subscription_id: &str) {
     register_source(topology, BrokerRole::B, "registration:split-b").await;
     register_source(topology, BrokerRole::C, "registration:split-c").await;
@@ -67,11 +72,13 @@ async fn setup_split(topology: &DistributedTopology, receiver: &NotificationAdap
             .expect("create C part"),
         201,
     );
+    let mut split_subscription = subscription(subscription_id, &receiver.endpoint_url());
+    split_subscription["splitEntities"] = json!(true);
     assert_status(
         &topology
             .front()
             .client()
-            .create_subscription(&subscription(subscription_id, &receiver.endpoint_url()))
+            .create_subscription(&split_subscription)
             .await
             .expect("create subscription"),
         201,

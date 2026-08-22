@@ -25,7 +25,6 @@ use andromeda_test_harness::{
 use sqlx::PgPool;
 use std::{env, time::Duration};
 use thiserror::Error;
-use url::Url;
 
 /// The suite name embedded in every isolated identifier prefix.
 const SUITE: &str = "distop";
@@ -39,6 +38,10 @@ const READINESS: ReadinessPolicy = ReadinessPolicy::new(Duration::from_secs(45),
 pub enum BrokerRole {
     /// The front / distribution broker under test (host port 1061).
     A,
+    /// A second instance of the broker-a identity (host port 1064): same
+    /// source id, alias and database as [`BrokerRole::A`]. Durable state
+    /// minted through A is visible here and on no other role.
+    AReplica,
     /// The first peer / context source (host port 1062).
     B,
     /// The second peer, for redirect fan-out and A->B->C chains (host port 1063).
@@ -46,21 +49,32 @@ pub enum BrokerRole {
 }
 
 impl BrokerRole {
-    /// The lowercase single-letter token used in this role's environment keys.
+    /// The token used in this role's URL environment keys.
     const fn token(self) -> &'static str {
         match self {
             BrokerRole::A => "A",
+            BrokerRole::AReplica => "A_REPLICA",
             BrokerRole::B => "B",
             BrokerRole::C => "C",
         }
     }
 
-    /// The per-role database name created by `docker/distributed/initdb`.
-    const fn database_name(self) -> &'static str {
+    /// The broker identity this role serves: the role whose alias and store
+    /// it shares. A replica resolves to its primary; every other role to itself.
+    const fn identity(self) -> BrokerRole {
         match self {
-            BrokerRole::A => "broker_a",
-            BrokerRole::B => "broker_b",
-            BrokerRole::C => "broker_c",
+            BrokerRole::A | BrokerRole::AReplica => BrokerRole::A,
+            BrokerRole::B => BrokerRole::B,
+            BrokerRole::C => BrokerRole::C,
+        }
+    }
+
+    /// The per-identity database URL default when the environment does not set one.
+    const fn default_database_url(self) -> &'static str {
+        match self.identity() {
+            BrokerRole::A | BrokerRole::AReplica => "postgres://postgres:postgres@127.0.0.1:5442/broker_a",
+            BrokerRole::B => "postgres://postgres:postgres@127.0.0.1:5443/broker_b",
+            BrokerRole::C => "postgres://postgres:postgres@127.0.0.1:5444/broker_c",
         }
     }
 
@@ -68,6 +82,7 @@ impl BrokerRole {
     const fn default_client_url(self) -> &'static str {
         match self {
             BrokerRole::A => "http://127.0.0.1:1061/ngsi-ld/v1/",
+            BrokerRole::AReplica => "http://127.0.0.1:1064/ngsi-ld/v1/",
             BrokerRole::B => "http://127.0.0.1:1062/ngsi-ld/v1/",
             BrokerRole::C => "http://127.0.0.1:1063/ngsi-ld/v1/",
         }
@@ -80,6 +95,7 @@ impl BrokerRole {
     const fn default_peer_url(self) -> &'static str {
         match self {
             BrokerRole::A => "http://broker-a:1056",
+            BrokerRole::AReplica => "http://broker-a2:1056",
             BrokerRole::B => "http://broker-b:1056",
             BrokerRole::C => "http://broker-c:1056",
         }
@@ -87,8 +103,8 @@ impl BrokerRole {
 
     /// This broker's Context Source alias default when the environment does not set one.
     const fn default_alias(self) -> &'static str {
-        match self {
-            BrokerRole::A => "broker-a",
+        match self.identity() {
+            BrokerRole::A | BrokerRole::AReplica => "broker-a",
             BrokerRole::B => "broker-b",
             BrokerRole::C => "broker-c",
         }
@@ -165,10 +181,16 @@ impl DistributedTopology {
         DistributedTopology::with_roles(&[BrokerRole::A, BrokerRole::B, BrokerRole::C]).await
     }
 
+    /// Materialise the broker-a replica pair plus one peer (A, A2, B): state
+    /// minted through A must be visible on A2 and absent on B.
+    pub async fn replica_pair() -> Result<DistributedTopology, TopologyError> {
+        DistributedTopology::with_roles(&[BrokerRole::A, BrokerRole::AReplica, BrokerRole::B]).await
+    }
+
     async fn with_roles(roles: &[BrokerRole]) -> Result<DistributedTopology, TopologyError> {
         let suite = TestSuiteName::parse(SUITE)?;
         let identifiers = TestIdentifiers::allocate(&suite)?;
-        let mut brokers = Vec::with_capacity(roles.len());
+        let mut brokers: Vec<BrokerHandle> = Vec::with_capacity(roles.len());
         for &role in roles {
             let broker = build_broker(role).await?;
             // Reset each broker's default tenant to empty before the test runs.
@@ -177,10 +199,13 @@ impl DistributedTopology {
             // would poison this one (a stale exclusive registration alone turns
             // every local create into a 409). Resetting on construction makes
             // each test start from a clean broker; it requires the suite to run
-            // single-threaded, which it already does.
-            reset_owned_tenant(broker.pool())
-                .await
-                .map_err(|error| TopologyError::Database(error.to_string()))?;
+            // single-threaded, which it already does. A replica shares its
+            // primary's store, which was reset when the primary was built.
+            if !brokers.iter().any(|built| built.role.identity() == role.identity()) {
+                reset_owned_tenant(broker.pool())
+                    .await
+                    .map_err(|error| TopologyError::Database(error.to_string()))?;
+            }
             brokers.push(broker);
         }
         Ok(DistributedTopology { identifiers, brokers })
@@ -216,10 +241,17 @@ impl DistributedTopology {
     /// cleanup error never hides another's.
     pub async fn finish(self) -> Result<(), TopologyError> {
         let mut failures = Vec::new();
+        let mut cleaned: Vec<BrokerRole> = Vec::with_capacity(self.brokers.len());
         for broker in &self.brokers {
+            // One store per identity: cleaning the primary already reclaimed
+            // every row its replica could see.
+            if cleaned.contains(&broker.role.identity()) {
+                continue;
+            }
             if let Err(error) = cleanup_prefix(broker.pool(), &self.identifiers).await {
                 failures.push(format!("broker {:?}: {error}", broker.role));
             }
+            cleaned.push(broker.role.identity());
         }
         for broker in self.brokers {
             broker.pool.close().await;
@@ -236,7 +268,7 @@ impl DistributedTopology {
 async fn build_broker(role: BrokerRole) -> Result<BrokerHandle, TopologyError> {
     let client_url = env_or(&format!("ANDROMEDA_DIST_{}_URL", role.token()), role.default_client_url());
     let peer_url = env_or(&format!("ANDROMEDA_DIST_{}_PEER_URL", role.token()), role.default_peer_url());
-    let alias = env_or(&format!("ANDROMEDA_DIST_{}_ALIAS", role.token()), role.default_alias());
+    let alias = env_or(&format!("ANDROMEDA_DIST_{}_ALIAS", role.identity().token()), role.default_alias());
     let endpoint = BrokerEndpoint::parse(&client_url).map_err(|error| TopologyError::Endpoint(error.to_string()))?;
     // Every fixture of this suite is expressed in the compound test-suite
     // context; requests that name no context of their own use it as well, so
@@ -259,18 +291,12 @@ async fn build_broker(role: BrokerRole) -> Result<BrokerHandle, TopologyError> {
     })
 }
 
-/// Resolve a broker's database endpoint: an explicit `ANDROMEDA_DIST_<R>_DATABASE_URL`
-/// when set, otherwise the shared `ANDROMEDA_DIST_DATABASE_URL` with its path
-/// swapped to the per-broker database name the compose `initdb` creates.
+/// Resolve a broker's database endpoint: `ANDROMEDA_DIST_<R>_DATABASE_URL` for
+/// the role's identity (a replica reads its primary's variable), falling back
+/// to the compose stack's per-identity server and database.
 fn broker_database(role: BrokerRole) -> Result<DatabaseEndpoint, TopologyError> {
-    let explicit = env::var(format!("ANDROMEDA_DIST_{}_DATABASE_URL", role.token())).ok();
-    if let Some(explicit) = explicit {
-        return DatabaseEndpoint::parse(explicit).map_err(|error| TopologyError::Database(error.to_string()));
-    }
-    let shared = env_or("ANDROMEDA_DIST_DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/postgres");
-    let mut url = Url::parse(&shared).map_err(|error| TopologyError::Database(error.to_string()))?;
-    url.set_path(role.database_name());
-    DatabaseEndpoint::parse(url.as_str()).map_err(|error| TopologyError::Database(error.to_string()))
+    let url = env_or(&format!("ANDROMEDA_DIST_{}_DATABASE_URL", role.identity().token()), role.default_database_url());
+    DatabaseEndpoint::parse(url).map_err(|error| TopologyError::Database(error.to_string()))
 }
 
 /// Read an environment variable, falling back to a default when unset or empty.

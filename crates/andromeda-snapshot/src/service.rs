@@ -1,8 +1,10 @@
 use crate::{
     error::SnapshotError,
+    executor::{SnapshotPreparation, SnapshotPreparationOutcome},
     notification::SnapshotNotificationSink,
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
+    status::{ScopingEligibility, scoping_eligibility},
     store::{SnapshotAttributeInfo, SnapshotStore, SnapshotTypeInfo},
 };
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
@@ -15,18 +17,49 @@ use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;
 use serde_json::Value;
 use std::sync::Arc;
+use tracing::{info, warn};
 
 /// Service for managing NGSI-LD entity snapshots.
 pub struct SnapshotService {
     repo: Arc<dyn SnapshotStore>,
     notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
+    preparation: Option<Arc<SnapshotPreparation>>,
 }
 
 impl SnapshotService {
-    /// Create a new snapshot service backed by the given store.
-    ///
-    pub const fn new(repo: Arc<dyn SnapshotStore>, notification_sink: Option<Arc<dyn SnapshotNotificationSink>>) -> SnapshotService {
-        SnapshotService { repo, notification_sink }
+    /// Create a new snapshot service backed by the given store. `preparation`
+    /// is the bounded executor [`SnapshotService::prepare_now`] kicks so a
+    /// freshly created snapshot does not wait for the next scheduled sweep.
+    pub const fn new(
+        repo: Arc<dyn SnapshotStore>,
+        notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
+        preparation: Option<Arc<SnapshotPreparation>>,
+    ) -> SnapshotService {
+        SnapshotService {
+            repo,
+            notification_sink,
+            preparation,
+        }
+    }
+
+    /// Start one preparation pass in the background. The scheduled sweep
+    /// remains the guarantee that every `preparing` snapshot is executed;
+    /// this only removes the sweep cadence as the floor on how soon a new
+    /// snapshot becomes usable (clause 5.16.1.4 executes the queries on
+    /// creation). A pass racing the sweep is harmless: `update_status` only
+    /// advances a row that is still `preparing`.
+    pub fn prepare_now(&self) {
+        let Some(preparation) = &self.preparation else {
+            return;
+        };
+        let preparation = Arc::clone(preparation);
+        tokio::spawn(async move {
+            match preparation.execute().await {
+                Ok(SnapshotPreparationOutcome::Idle) => {}
+                Ok(SnapshotPreparationOutcome::Prepared { count }) => info!(count, "snapshot preparation completed on create"),
+                Err(error) => warn!(%error, "snapshot preparation on create failed; the scheduled sweep will retry"),
+            }
+        });
     }
 
     /// Create a new snapshot from the given input parameters.
@@ -165,8 +198,10 @@ impl SnapshotService {
 
     /// Validate a snapshot for header-based scoping (ETSI GS CIM 009 clause 5.5.15).
     ///
-    /// The snapshot must exist, not be expired, and have a queryable status
-    /// (`Success` or `Partial`). Touches `last_used_at` on success.
+    /// The snapshot must exist, not be expired, and have a queryable status:
+    /// `Success`, `Partial`, or `Empty` (clause 5.2.40: an empty snapshot is a
+    /// prepared one whose queries matched nothing, so it scopes to an empty
+    /// dataset rather than to "no snapshot"). Touches `last_used_at` on success.
     pub async fn validate_for_scoping(&self, id: &Uri) -> Result<Snapshot, SnapshotError> {
         let snapshot = self.repo.get(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
 
@@ -177,11 +212,9 @@ impl SnapshotService {
             return Err(SnapshotError::not_found(id));
         }
 
-        match snapshot.status {
-            SnapshotStatus::Success | SnapshotStatus::Partial => {}
-            SnapshotStatus::Preparing | SnapshotStatus::Empty | SnapshotStatus::Failure => {
-                return Err(SnapshotError::not_found(id));
-            }
+        match scoping_eligibility(snapshot.status) {
+            ScopingEligibility::Usable => {}
+            ScopingEligibility::NotUsable => return Err(SnapshotError::not_found(id)),
         }
 
         if let Err(e) = self.repo.touch_last_used(id).await {

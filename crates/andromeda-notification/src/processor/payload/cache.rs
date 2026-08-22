@@ -42,7 +42,7 @@ pub(super) struct ResolvedLinkedEntities {
 /// input; at the handful of distinct payloads one change event produces, the
 /// probability is negligible against the cost of keying by the documents.
 #[derive(Default)]
-pub(in crate::processor) struct NotificationCompactionCache {
+pub(crate) struct NotificationCompactionCache {
     entries: DashMap<u64, Value>,
     linked_entities: DashMap<u64, ResolvedLinkedEntities>,
 }

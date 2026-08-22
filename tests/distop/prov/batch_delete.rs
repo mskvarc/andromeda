@@ -33,13 +33,13 @@ async fn batch_delete_per_csr_filtering() {
     let v1_csr = CsrBuilder::new(&reg_v1, &mock.url("/s1"))
         .mode("redirect")
         .entity_id(&v1)
-        .operations(&["deleteEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["deleteBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&v1_csr).await.expect("create v1 registration"), 201);
     let v2_csr = CsrBuilder::new(&reg_v2, &mock.url("/s2"))
         .mode("redirect")
         .entity_id(&v2)
-        .operations(&["deleteEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["deleteBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&v2_csr).await.expect("create v2 registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/delete", 204).await;
@@ -81,7 +81,7 @@ async fn batch_delete_supported_forwards_and_merges() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
         .entity_type("Vehicle")
-        .operations(&["deleteEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["deleteBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let remote_result = json!({
@@ -136,7 +136,9 @@ async fn batch_delete_fallback_per_entity_delete() {
 }
 
 /// A redirect source advertising neither the batch nor the per-entity delete
-/// yields a per-entity `409 Conflict`, with no forwarding. Confirms REQ-PROV-76.
+/// yields a per-entity `409 Conflict`, with no forwarding. The registration
+/// precedes the local seeds (clause 5.9.2.4 redirect restriction). Confirms
+/// REQ-PROV-76.
 #[tokio::test]
 async fn batch_delete_redirect_neither_op_conflict_per_entity() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -145,6 +147,13 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
     let v1 = topology.id("Vehicle:prov-batch-delete-neither-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-neither-v2");
     let reg_id = topology.id("registration:prov-batch-delete-neither");
+
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("redirect")
+        .entity_type("Vehicle")
+        .operations(&["retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     for id in [&v1, &v2] {
         let seeded = client
@@ -156,13 +165,6 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
             .expect("seed local entity");
         assert_status(&seeded, 201);
     }
-
-    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("redirect")
-        .entity_type("Vehicle")
-        .operations(&["retrieveEntity"])
-        .build();
-    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let response = client.batch_delete(&json!([v1, v2])).await.expect("batch delete");
     assert_status(&response, 207);

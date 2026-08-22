@@ -1,13 +1,14 @@
 //! Notification payload building: showChanges, previous values, datasetId
-//! filtering, nullification, and format simplification.
+//! filtering, nullification, projection, and format rendering.
 
 use crate::processor::payload::{
-    cache::{NotificationCompactionCache, compact_entity_with_cache, resolve_linked_cached},
-    context::{context_for_subscription, normalize_compacted_entity, strip_to_structural_keys},
+    cache::{NotificationCompactionCache, resolve_linked_cached},
+    context::{normalize_compacted_entity, strip_to_structural_keys},
     deletion::{fix_null_language_maps, inject_deleted_attributes, nullify_entity_attributes},
     filtering::{filter_entity_attributes, filter_entity_by_dataset_id, inject_previous_values},
+    projection::apply_notification_projection,
+    representation::{compact_for_notification, render_format},
 };
-use andromeda_delivery::request::notification_media_type;
 use andromeda_entity::{
     query::EntityQueryService,
     sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
@@ -22,8 +23,8 @@ use andromeda_jsonld::{
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{entity::Entity, notification::NotificationTrigger};
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
-use andromeda_ngsi_ld_render::{simplify::simplify_entity, snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
-use andromeda_ngsi_ld_representation::{join_mode::JoinMode, response_format::ResponseFormat, sys_attrs::SysAttrsInclusion};
+use andromeda_ngsi_ld_render::{snapshot::SnapshotRenderer, uri_decoding::decode_percent_encoded_uris};
+use andromeda_ngsi_ld_representation::{join_mode::JoinMode, sys_attrs::SysAttrsInclusion};
 use andromeda_ngsi_ld_vocabulary::expanded::properties as expanded_properties;
 use andromeda_subscription::compiled::CompiledSubscription;
 use chrono::{DateTime, Utc};
@@ -111,62 +112,23 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
         filter_entity_by_dataset_id(&mut entity, dataset_ids);
     }
 
-    let entity = if let Some(ref attrs) = sub.notification_attributes {
+    let mut entity = if let Some(ref attrs) = sub.notification_attributes {
         filter_entity_attributes(&entity, attrs)
     } else {
         entity
     };
 
-    let context = context_for_subscription(sub);
-    // The same reading the transport makes: a body carries its own `@context`
-    // only when the notification goes out as `application/ld+json`.
-    let include_context = notification_media_type(sub.endpoint_accept.as_ref()).include_context_in_body();
+    // Clause 5.8.6: `pick` and `omit` reduce every entity in the payload to
+    // the listed members. `id` and `type` are never among what goes: clause
+    // 5.3.1 carries Entities in `data`, and Table 5.2.4-1 makes both mandatory
+    // (cardinality 1), so a notified entity that lost them would not be one.
+    apply_notification_projection(&mut entity, &sub.notification_projection);
 
-    let compacted = match compact_entity_with_cache(
-        engine,
-        &entity,
-        &context,
-        if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
-        compaction_cache,
-    )
-    .await
-    {
-        Ok(value) => value,
-        Err(e) => {
-            debug!("Failed to compact notification entity with subscription context: {}", e);
-            match compact_entity_with_cache(
-                engine,
-                &entity,
-                &ContextSpec::core_only(),
-                if include_context { ContextStripping::Keep } else { ContextStripping::Strip },
-                compaction_cache,
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(e) => {
-                    debug!("Failed to compact notification entity with core context: {}", e);
-                    return vec![];
-                }
-            }
-        }
+    let context = ContextSpec::for_subscription_context(sub.jsonld_context.as_ref());
+    let Ok(compacted) = compact_for_notification(engine, &entity, &context, compaction_cache).await else {
+        return vec![];
     };
-
-    let compacted = if include_context {
-        if let Some(ref ctx_url) = sub.jsonld_context {
-            let mut c = compacted;
-            if let Some(obj) = c.as_object_mut() {
-                obj.insert("@context".to_string(), Value::String(ctx_url.as_str().to_owned()));
-            }
-            c
-        } else {
-            compacted
-        }
-    } else {
-        compacted
-    };
-
-    let mut compacted = normalize_compacted_entity(compacted);
+    let mut compacted = compacted;
 
     if is_entity_deleted && sub.notification_show_changes {
         fix_null_language_maps(&mut compacted);
@@ -264,32 +226,10 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
         }
     }
 
-    let is_simplified = sub.notification_format.is_some_and(ResponseFormat::is_simplified);
-    let has_inline_join = sub.notification_join == Some(JoinMode::Inline);
+    let format = sub.notification_format.unwrap_or_default();
     let mut result = Vec::with_capacity(all_compacted.len());
     for item in all_compacted {
-        let formatted = if is_simplified {
-            if has_inline_join {
-                match SnapshotRenderer::new(item.clone()).with_mode(ResponseFormat::Simplified).render() {
-                    Ok(simplified) => simplified,
-                    Err(error) => {
-                        debug!("Failed to simplify inline-joined notification payload: {}", error);
-                        item
-                    }
-                }
-            } else {
-                match deserialize_exact::<Entity>(&item) {
-                    Ok(entity) => simplify_entity(&entity),
-                    Err(e) => {
-                        debug!("Failed to simplify entity for keyValues: {}", e);
-                        item
-                    }
-                }
-            }
-        } else {
-            item
-        };
-        let mut formatted = formatted;
+        let mut formatted = render_format(item, format, sub.notification_join);
         // The same targeted walk the query response uses (clause 4.5.1): only a
         // Relationship's `object` and a ListRelationship's `objectList` are
         // percent-encoded entity ids to decode, so a Property value carrying a
@@ -309,3 +249,7 @@ pub mod context;
 mod deletion;
 /// Notification filtering and previous-value materialization.
 pub mod filtering;
+/// The `pick`/`omit` projection applied to an expanded entity.
+pub(crate) mod projection;
+/// Compaction and format rendering shared by both notification paths.
+pub(crate) mod representation;

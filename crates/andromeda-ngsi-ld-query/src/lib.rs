@@ -15,7 +15,9 @@
 //!
 //! Term expansion is likewise inverted rather than depended upon: compilation
 //! that needs a term expanded against an `@context` asks a
-//! [`term_expander::TermExpander`], which the JSON-LD engine implements.
+//! [`term_expander::TermExpander`], and a stored filter read back in a
+//! reader's terms asks a [`term_compactor::TermCompactor`]; the JSON-LD engine
+//! implements both.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -34,6 +36,7 @@ pub mod pattern;
 pub mod projection;
 pub mod scope;
 pub mod temporal;
+pub mod term_compactor;
 pub mod term_expander;
 pub mod type_selection;
 

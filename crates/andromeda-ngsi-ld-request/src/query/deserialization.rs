@@ -28,6 +28,15 @@ struct GeoQueryParameters {
     geoproperty: Option<NgsiLdReference>,
 }
 
+/// The rejection of a `georel` sent without `geometry` and `coordinates`:
+/// parameters incompatible with the operation (clause 6.3.20).
+pub const GEOREL_WITHOUT_GEOMETRY: &str = "georel requires geometry and coordinates";
+
+/// The rejection of `geometry` and/or `coordinates` sent without the relation
+/// that would make them a geoquery (clause 4.10), which clauses 5.7.2.4 and
+/// 5.10.2.4 class as a geoquery that is not syntactically valid.
+pub const INCOMPLETE_GEOQUERY: &str = "geometry and coordinates do not form a geoquery without georel";
+
 impl<'de> Deserialize<'de> for OptionalGeoQuery {
     fn deserialize<D>(deserializer: D) -> Result<OptionalGeoQuery, D::Error>
     where
@@ -37,8 +46,15 @@ impl<'de> Deserialize<'de> for OptionalGeoQuery {
         let (georel, geometry_type, coordinates) = match (parameters.georel, parameters.geometry, parameters.coordinates) {
             (None, None, None) => return Ok(OptionalGeoQuery(None)),
             (Some(georel), Some(geometry_type), Some(coordinates)) => (georel, geometry_type, coordinates),
-            (None | Some(_), None | Some(_), None | Some(_)) => {
-                return Err(DeserializeError::custom("georel, geometry, and coordinates must be supplied together"));
+            // A relation with no reference geometry to relate to is a parameter
+            // the operation cannot use at all (clause 6.3.20).
+            (Some(_), None | Some(_), None) | (Some(_), None, Some(_)) => {
+                return Err(DeserializeError::custom(GEOREL_WITHOUT_GEOMETRY));
+            }
+            // A reference geometry with no relation, or half a reference
+            // geometry, is a geoquery that is not valid as per clause 4.10.
+            (None, None | Some(_), None | Some(_)) => {
+                return Err(DeserializeError::custom(INCOMPLETE_GEOQUERY));
             }
         };
         decode_geo_query(georel, geometry_type, coordinates, parameters.geoproperty)
@@ -222,4 +238,44 @@ where
     let raw = Option::<String>::deserialize(deserializer)?;
     raw.map(|value| value.parse().map_err(|error| DeserializeError::custom(format!("{error:?}"))))
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::query::deserialization::{GEOREL_WITHOUT_GEOMETRY, INCOMPLETE_GEOQUERY, OptionalGeoQuery};
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct Carrier {
+        #[serde(flatten)]
+        geo: OptionalGeoQuery,
+    }
+
+    fn rejection(query: &str) -> String {
+        serde_urlencoded::from_str::<Carrier>(query).err().expect("rejected").to_string()
+    }
+
+    /// Clause 6.3.20: a relation alone is a parameter the operation cannot use.
+    #[test]
+    fn a_georel_without_its_reference_geometry_is_reported_as_such() {
+        assert!(rejection("georel=near%3BmaxDistance%3D%3D1000").contains(GEOREL_WITHOUT_GEOMETRY));
+        assert!(rejection("georel=within&geometry=Point").contains(GEOREL_WITHOUT_GEOMETRY));
+        assert!(rejection("georel=within&coordinates=%5B1%2C2%5D").contains(GEOREL_WITHOUT_GEOMETRY));
+    }
+
+    /// Clause 4.10: a reference geometry without a relation is not a geoquery.
+    #[test]
+    fn a_reference_geometry_without_a_georel_is_an_incomplete_geoquery() {
+        assert!(rejection("geometry=Point&coordinates=%5B1%2C2%5D").contains(INCOMPLETE_GEOQUERY));
+        assert!(rejection("geometry=Point").contains(INCOMPLETE_GEOQUERY));
+        assert!(rejection("coordinates=%5B1%2C2%5D").contains(INCOMPLETE_GEOQUERY));
+    }
+
+    #[test]
+    fn no_geo_member_is_no_geoquery_and_the_full_triple_decodes() {
+        let none: Carrier = serde_urlencoded::from_str("").expect("parses");
+        assert!(none.geo.0.is_none());
+        let full: Carrier = serde_urlencoded::from_str("georel=within&geometry=Point&coordinates=%5B1%2C2%5D").expect("parses");
+        assert!(full.geo.0.is_some());
+    }
 }

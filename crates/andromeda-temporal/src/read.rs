@@ -1,6 +1,7 @@
 //! Temporal retrieval and query execution policy.
 
 use crate::{
+    aggregation_eligibility::ensure_aggregation_eligible,
     error::TemporalError,
     linked::candidates::TemporalLinkedCandidate,
     port::history_reader::TemporalHistoryReader,
@@ -8,7 +9,13 @@ use crate::{
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService, has_explicit_context, iri_short_name},
 };
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{
+    aggr_method::AggrMethod,
+    attribute_name::AttributeName,
+    entity_type_name::EntityTypeName,
+    temporal_format::TemporalFormat,
+    uri::Uri,
+};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{
     pagination::{CountPolicy, Pagination},
@@ -28,6 +35,7 @@ impl TemporalService {
 
         let compiled = self.compile_temporal_query(params, context).await?;
         ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
+        self.ensure_requested_attributes_aggregable(&compiled).await?;
 
         if !self.reader.entity_exists(entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
@@ -76,6 +84,7 @@ impl TemporalService {
         let compiled = self.compile_temporal_query(params, context).await?;
 
         ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
+        self.ensure_requested_attributes_aggregable(&compiled).await?;
         let id_outcome = self.reader.query_entity_ids(&compiled).await?;
         let (entity_ids, total_count) = id_outcome
             .complete(compiled.pagination)
@@ -266,6 +275,28 @@ impl TemporalService {
             .complete(unpaged.pagination)
             .map_err(|error| TemporalError::internal(error.to_string()))?;
         Ok(identifiers)
+    }
+}
+
+impl TemporalService {
+    /// Clause 5.7.4.4: an aggregated representation over an attribute that is
+    /// not eligible for one of the requested methods is an InvalidRequest,
+    /// decided from the value shapes the attribute has been recorded with
+    /// before any history is read. Only the attributes the request named can
+    /// be checked ahead of the read; a request over every attribute is not.
+    async fn ensure_requested_attributes_aggregable(&self, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
+        if compiled.representation.format != TemporalFormat::AggregatedValues || compiled.instances.attr_filter.is_empty() {
+            return Ok(());
+        }
+        let attributes = compiled
+            .instances
+            .attr_filter
+            .iter()
+            .map(|iri| iri.as_str().parse::<AttributeName>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| TemporalError::internal(format!("an expanded attribute IRI is not an attribute name: {error}")))?;
+        let recorded = self.reader.recorded_value_kinds(&attributes).await?;
+        ensure_aggregation_eligible(&attributes, &compiled.representation.aggr_methods, &recorded).map_err(TemporalError::from)
     }
 }
 

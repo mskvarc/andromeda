@@ -8,6 +8,7 @@ use andromeda_entity::{
         expiry::EntityExpirySource,
         query::EntityQueryStore,
         reader::EntityReader,
+        registry_types::RegistryTypeSource,
         spatial_snapshot::EntitySpatialSnapshotSource,
     },
     spatial_reconciliation::reconcile_location,
@@ -48,6 +49,7 @@ pub(super) struct TenantStorage {
     pub(super) temporal_repo: Arc<TemporalRepository>,
     pub(super) entity_ports: EntityStoragePorts,
     pub(super) registration_store: Arc<dyn RegistrationStore>,
+    pub(super) registry_type_source: Arc<dyn RegistryTypeSource>,
     pub(super) entity_map_store: Arc<dyn EntityMapStore>,
     pub(super) snapshot_store: Arc<dyn SnapshotStore>,
     pub(super) subscription_cache: Arc<SubscriptionCache>,
@@ -141,7 +143,10 @@ pub(super) async fn initialize_storage(
         spatial_snapshots: entity_repository as Arc<dyn EntitySpatialSnapshotSource>,
     };
     // clone: the routing projection interns registered attribute names through the tenant's one dictionary.
-    let registration_store = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names))) as Arc<dyn RegistrationStore>;
+    let registration_repository = Arc::new(PostgresRegistrationStore::new(&pool, Arc::clone(&attribute_names)));
+    // clone: the registration store and the clause 5.7.11 registry view share one repository and pool.
+    let registry_type_source = Arc::clone(&registration_repository) as Arc<dyn RegistryTypeSource>;
+    let registration_store = registration_repository as Arc<dyn RegistrationStore>;
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
@@ -161,6 +166,7 @@ pub(super) async fn initialize_storage(
         temporal_repo,
         entity_ports,
         registration_store,
+        registry_type_source,
         entity_map_store,
         snapshot_store,
         subscription_cache,

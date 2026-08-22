@@ -1,15 +1,15 @@
-use crate::{csource_processor::matching::filter_csr_for_subscription, error::NotificationError};
-use andromeda_delivery::{
-    dispatch::TransportDispatcher,
-    endpoint::transport::{EndpointTransport, parse_endpoint_transport},
-    request::NotificationDelivery,
-};
-use andromeda_ngsi_ld_lexicon::{
-    attribute_name::AttributeName,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
+//! Change-driven context source notifications (clauses 5.11.2.4 and 5.11.7).
+//!
+//! Keeps the compiled context source subscriptions of one tenant and, on
+//! every subscription or registration change, decides which of them are
+//! notified of which registrations; the delivery itself lives beside it.
+
+use crate::{csource_processor::matching::notified_registration, error::NotificationError};
+use andromeda_delivery::dispatch::TransportDispatcher;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    notification::{CsourceNotification, CsourceNotificationType, CsrChangeEvent, CsrTriggerReason},
+    notification::{CsrChangeEvent, CsrTriggerReason},
+    registration::ContextSourceRegistration,
     subscription::SubscriptionStatus,
 };
 use andromeda_ngsi_ld_query::pagination::{CountPolicy, Pagination};
@@ -19,27 +19,28 @@ use andromeda_subscription::{
     compilation::compile_csource_subscription,
     compiled::CompiledCsrSubscription,
     csource_cache::CsourceSubscriptionCache,
-    matching::matches_csource_subscription,
+    csource_matching::matches_csource_subscription,
     store::SubscriptionStore,
-    throttle::ceiling_for_throttle,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::Utc;
 use futures::{StreamExt, stream};
 use serde_json::Value;
 use std::{collections::HashSet, sync::Arc};
 use tracing::{debug, error};
-use uuid::Uuid;
 
-mod matching;
+mod delivery;
+pub(crate) mod matching;
 
 const CSR_NOTIFICATION_CONCURRENCY: usize = 20;
 
-fn compiled_transport(subscription: &CompiledCsrSubscription) -> Option<EndpointTransport> {
-    match parse_endpoint_transport(&subscription.endpoint_uri, subscription.endpoint_notifier_info.as_deref()) {
-        Ok(transport) => Some(transport),
+/// The registration a change event's snapshot carries, read back into its
+/// typed form so it is matched exactly as a stored registration is.
+fn snapshot_registration(snapshot: &Value, csr_id: &Uri) -> Option<ContextSourceRegistration> {
+    match serde_json::from_value(snapshot.clone()) {
+        // clone: deserialisation consumes the document and the event still owns its snapshot
+        Ok(registration) => Some(registration),
         Err(error) => {
-            debug!(subscription = %subscription.id, %error, "Compiled context-source subscription endpoint is no longer deliverable");
+            error!("CSR {} snapshot is not a registration: {}", csr_id, error);
             None
         }
     }
@@ -63,24 +64,6 @@ impl CsourceNotificationProcessor {
             cache: CsourceSubscriptionCache::new(),
             transport,
             tenant,
-        }
-    }
-
-    /// The delivery one CSR notification becomes.
-    ///
-    /// Three call sites send the same notification for three different
-    /// reasons -- a subscription that just started matching, a registration
-    /// that changed, and a registration that stopped matching -- and every one
-    /// of them addresses the endpoint identically.
-    fn delivery_for<'a>(&'a self, compiled_sub: &'a CompiledCsrSubscription, payload: &'a Value, sub_id: &'a Uri) -> NotificationDelivery<'a> {
-        NotificationDelivery {
-            payload,
-            endpoint_uri: &compiled_sub.endpoint_uri,
-            accept: compiled_sub.endpoint_accept.as_ref(),
-            receiver_info: compiled_sub.endpoint_receiver_info.as_deref(),
-            jsonld_context: compiled_sub.jsonld_context.as_ref(),
-            tenant: self.tenant.tenant_name(),
-            subscription_id: sub_id,
         }
     }
 
@@ -171,14 +154,15 @@ impl CsourceNotificationProcessor {
                 break;
             }
 
-            for csr in page.registrations {
-                let csr_value = match serde_json::to_value(&csr) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if matches_csource_subscription(compiled_sub, &csr_value) {
-                    let filtered = filter_csr_for_subscription(&csr_value, compiled_sub);
-                    matching_csrs.push(filtered);
+            for csr in &page.registrations {
+                if matches_csource_subscription(compiled_sub, csr) {
+                    match notified_registration(csr, compiled_sub) {
+                        Ok(notified) => matching_csrs.push(notified),
+                        Err(error) => {
+                            error!("Failed to serialize CSR {} for subscription {}: {}", csr.id, sub_id, error);
+                            return;
+                        }
+                    }
                 }
             }
 
@@ -191,61 +175,8 @@ impl CsourceNotificationProcessor {
         if matching_csrs.is_empty() {
             return;
         }
-
-        match self
-            .sub_repo
-            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => return,
-            Err(e) => {
-                debug!("Failed to claim notification slot for {}: {}", sub_id, e);
-                return;
-            }
-        }
-
-        let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
-            Ok(u) => u,
-            Err(_) => {
-                error!("Failed to construct notification URN for {}", sub_id);
-                return;
-            }
-        };
-        // clone: the builder takes the id by value and `sub_id` is still needed for delivery
-        let sub_uri = sub_id.clone();
-        let notification = CsourceNotification::builder()
-            .id(notification_id)
-            .type_(CsourceNotificationType)
-            .subscription_id(sub_uri)
-            .notified_at(Utc::now())
-            .data(matching_csrs)
-            .trigger_reason(Some(CsrTriggerReason::NewlyMatching))
-            .build();
-
-        let payload = match serde_json::to_value(&notification) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Failed to serialize CsourceNotification for {}: {}", sub_id, e);
-                return;
-            }
-        };
-
-        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
-            return;
-        };
-        let request = self.delivery_for(compiled_sub, &payload, sub_id).assemble();
-        let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
-
-        if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
-                debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
-            }
-        } else {
-            if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
-                debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
-            }
-        }
+        self.deliver_csr_notification(compiled_sub, matching_csrs, CsrTriggerReason::NewlyMatching)
+            .await;
     }
 
     /// Evaluate and deliver notifications for one committed registration change.
@@ -261,9 +192,9 @@ impl CsourceNotificationProcessor {
 
         // Fetch the CSR data (use snapshot for deletes)
         let csr_data = match event.trigger_reason {
-            CsrTriggerReason::NoLongerMatching => event.csr_snapshot.clone(),
+            CsrTriggerReason::NoLongerMatching => event.csr_snapshot.as_ref().and_then(|snapshot| snapshot_registration(snapshot, &event.csr_id)),
             CsrTriggerReason::NewlyMatching | CsrTriggerReason::Updated => match self.csr_repo.get(&event.csr_id).await {
-                Ok(Some(csr)) => serde_json::to_value(&csr).ok(),
+                Ok(Some(csr)) => Some(csr),
                 Ok(None) => {
                     debug!("CSR {} no longer exists, skipping notification", event.csr_id);
                     return;
@@ -287,68 +218,10 @@ impl CsourceNotificationProcessor {
         }
 
         let trigger_reason = event.trigger_reason;
+        let csr_data = &csr_data;
         let _results: Vec<()> = stream::iter(matching)
-            .map(|compiled_sub| {
-                let csr_data = csr_data.clone();
-                async move {
-                    let sub_id = compiled_sub.id.clone();
-
-                    match self
-                        .sub_repo
-                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => return,
-                        Err(e) => {
-                            debug!("Failed to claim CSR notification slot for {}: {}", sub_id, e);
-                            return;
-                        }
-                    }
-
-                    // Build notification with the CSR data, filtering information to matching entries
-                    let filtered_csr = filter_csr_for_subscription(&csr_data, &compiled_sub);
-
-                    let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
-                        Ok(u) => u,
-                        Err(_) => {
-                            error!("Failed to construct notification URN for {}", sub_id);
-                            return;
-                        }
-                    };
-                    // clone: the builder takes the id by value and `sub_id` is still needed for delivery
-                    let sub_uri = sub_id.clone();
-                    let notification = CsourceNotification::builder()
-                        .id(notification_id)
-                        .type_(CsourceNotificationType)
-                        .subscription_id(sub_uri)
-                        .notified_at(Utc::now())
-                        .data(vec![filtered_csr])
-                        .trigger_reason(Some(trigger_reason))
-                        .build();
-
-                    let payload = match serde_json::to_value(&notification) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            error!("Failed to serialize CsourceNotification for {}: {}", sub_id, e);
-                            return;
-                        }
-                    };
-
-                    let Some(endpoint_transport) = compiled_transport(&compiled_sub) else {
-                        return;
-                    };
-                    let request = self.delivery_for(&compiled_sub, &payload, &sub_id).assemble();
-                    let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
-
-                    if success {
-                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
-                            debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
-                        }
-                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
-                        debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
-                    }
-                }
+            .map(|compiled_sub| async move {
+                self.send_csr_notification(&compiled_sub, csr_data, trigger_reason).await;
             })
             .buffer_unordered(CSR_NOTIFICATION_CONCURRENCY)
             .collect()
@@ -359,21 +232,23 @@ impl CsourceNotificationProcessor {
     /// Sends "updated" to subscriptions that still match, and "noLongerMatching"
     /// to subscriptions that matched the old CSR but not the new one.
     async fn handle_csr_update_with_snapshot(&self, event: &CsrChangeEvent, pre_update: &Value) {
+        let Some(pre_update) = snapshot_registration(pre_update, &event.csr_id) else {
+            return;
+        };
+        let pre_update = &pre_update;
         // Fetch post-update CSR from DB
         let post_update = match self.csr_repo.get(&event.csr_id).await {
-            Ok(Some(csr)) => match serde_json::to_value(&csr) {
-                Ok(v) => v,
-                Err(_) => return,
-            },
+            Ok(Some(csr)) => csr,
             Ok(None) => return,
             Err(e) => {
                 error!("Failed to fetch CSR {} for update notification: {}", event.csr_id, e);
                 return;
             }
         };
+        let post_update = &post_update;
 
         let matched_before = self.cache.find_matching(pre_update);
-        let matched_after = self.cache.find_matching(&post_update);
+        let matched_after = self.cache.find_matching(post_update);
 
         let after_ids: HashSet<&Uri> = matched_after.iter().map(|subscription| &subscription.id).collect();
         let before_ids: HashSet<&Uri> = matched_before.iter().map(|subscription| &subscription.id).collect();
@@ -381,11 +256,8 @@ impl CsourceNotificationProcessor {
         // Subscriptions that still match → "updated"
         let updated_subs: Vec<Arc<CompiledCsrSubscription>> = matched_after.iter().filter(|sub| before_ids.contains(&sub.id)).cloned().collect();
         let _updated: Vec<()> = stream::iter(updated_subs)
-            .map(|sub| {
-                let post_update = post_update.clone();
-                async move {
-                    self.send_csr_notification(&sub, &post_update, CsrTriggerReason::Updated).await;
-                }
+            .map(|sub| async move {
+                self.send_csr_notification(&sub, post_update, CsrTriggerReason::Updated).await;
             })
             .buffer_unordered(CSR_NOTIFICATION_CONCURRENCY)
             .collect()
@@ -404,75 +276,24 @@ impl CsourceNotificationProcessor {
         // Subscriptions that match after but not before → "newlyMatching" (from update)
         let newly_matching_subs: Vec<Arc<CompiledCsrSubscription>> = matched_after.iter().filter(|sub| !before_ids.contains(&sub.id)).cloned().collect();
         let _newly_matching: Vec<()> = stream::iter(newly_matching_subs)
-            .map(|sub| {
-                let post_update = post_update.clone();
-                async move {
-                    self.send_csr_notification(&sub, &post_update, CsrTriggerReason::NewlyMatching).await;
-                }
+            .map(|sub| async move {
+                self.send_csr_notification(&sub, post_update, CsrTriggerReason::NewlyMatching).await;
             })
             .buffer_unordered(CSR_NOTIFICATION_CONCURRENCY)
             .collect()
             .await;
     }
 
-    async fn send_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, csr_data: &Value, trigger_reason: CsrTriggerReason) {
-        let sub_id = &compiled_sub.id;
-
-        match self
-            .sub_repo
-            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => return,
+    /// Notify `compiled_sub` of one registration, trimmed to the information
+    /// it matches (clause 5.11.7).
+    async fn send_csr_notification(&self, compiled_sub: &CompiledCsrSubscription, csr_data: &ContextSourceRegistration, trigger_reason: CsrTriggerReason) {
+        let filtered_csr = match notified_registration(csr_data, compiled_sub) {
+            Ok(filtered) => filtered,
             Err(e) => {
-                debug!("Failed to claim CSR notification slot for {}: {}", sub_id, e);
-                return;
-            }
-        }
-
-        let filtered_csr = filter_csr_for_subscription(csr_data, compiled_sub);
-
-        let notification_id = match format!("urn:{}:Notification:{}", NGSI_LD_URN_NID, Uuid::new_v4()).parse::<Uri>() {
-            Ok(u) => u,
-            Err(_) => {
-                error!("Failed to construct notification URN for {}", sub_id);
+                error!("Failed to serialize CSR for subscription {}: {}", compiled_sub.id, e);
                 return;
             }
         };
-        // clone: the builder takes the id by value and `sub_id` is still needed for delivery
-        let sub_uri = sub_id.clone();
-        let notification = CsourceNotification::builder()
-            .id(notification_id)
-            .type_(CsourceNotificationType)
-            .subscription_id(sub_uri)
-            .notified_at(Utc::now())
-            .data(vec![filtered_csr])
-            .trigger_reason(Some(trigger_reason))
-            .build();
-
-        let payload = match serde_json::to_value(&notification) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("Failed to serialize CsourceNotification for {}: {}", sub_id, e);
-                return;
-            }
-        };
-
-        let Some(endpoint_transport) = compiled_transport(compiled_sub) else {
-            return;
-        };
-        let request = self.delivery_for(compiled_sub, &payload, sub_id).assemble();
-        let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
-
-        if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
-                debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
-            }
-        } else {
-            if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
-                debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
-            }
-        }
+        self.deliver_csr_notification(compiled_sub, vec![filtered_csr], trigger_reason).await;
     }
 }

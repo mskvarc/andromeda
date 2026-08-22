@@ -187,6 +187,7 @@ async fn build_tenant_state(
     let temporal_repo = storage.temporal_repo;
     let entity_ports = storage.entity_ports;
     let registration_store = storage.registration_store;
+    let registry_type_source = storage.registry_type_source;
     let entity_map_store = storage.entity_map_store;
     let snapshot_store = storage.snapshot_store;
     let subscription_cache = storage.subscription_cache;
@@ -262,6 +263,7 @@ async fn build_tenant_state(
             .entity_query_store(&entity_ports.query)
             .entity_discovery_store(&entity_ports.discovery)
             .registration_store(&registration_store)
+            .registry_type_source(&registry_type_source)
             .entity_map_store(&entity_map_store)
             .subscription_router(subscription_router)
             .snapshot_store(&snapshot_store)

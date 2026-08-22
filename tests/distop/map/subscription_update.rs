@@ -104,7 +104,10 @@ async fn sub_update_fragment_violating_data_model_returns_400() {
 }
 
 /// Update expands attribute terms, so a compound-context `watchedAttributes`
-/// term is stored as an IRI (clause 5.8.1). Confirms REQ-MAP-41.
+/// term is stored as an IRI (clause 5.8.1; term expansion per clause 5.5.7).
+/// The read-back deliberately names no context: under the core context alone
+/// the stored IRI cannot compact back to `speed`, which is what proves it was
+/// expanded on update. Confirms REQ-MAP-41.
 #[tokio::test]
 async fn sub_update_expands_attribute_terms() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -116,10 +119,18 @@ async fn sub_update_expands_attribute_terms() {
         .await
         .expect("update subscription");
     assert_status(&response, 204);
-    let watched = stored(&topology, &id).await["watchedAttributes"]
+    let retrieved = topology
+        .front()
+        .client()
+        .without_default_context()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription under the core context");
+    assert_status(&retrieved, 200);
+    let body = json_body(&retrieved);
+    let watched = body["watchedAttributes"]
         .as_array()
-        .unwrap_or_else(|| unreachable!("watchedAttributes present"))
-        .clone();
+        .unwrap_or_else(|| unreachable!("watchedAttributes present"));
     assert!(
         watched.iter().filter_map(Value::as_str).any(|term| term.starts_with("http")),
         "updated watchedAttributes stored expanded: {watched:?}"
@@ -127,10 +138,11 @@ async fn sub_update_expands_attribute_terms() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unreachable notification `@context` in an update is rejected
-/// `503 LdContextNotAvailable` (clause 5.8.1). Confirms REQ-MAP-42.
+/// An unreachable `@context` in an update is rejected `LdContextNotAvailable`,
+/// which the HTTP binding maps to `504` (clause 5.8.1; Table 6.3.2-1 maps
+/// `LdContextNotAvailable` to 504). Confirms REQ-MAP-42.
 #[tokio::test]
-async fn sub_update_unreachable_jsonld_context_returns_503() {
+async fn sub_update_unreachable_jsonld_context_returns_504() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let id = create_baseline(&topology, "Subscription:unreachable-update").await;
     let body = json!({ "watchedAttributes": ["speed"], "@context": "http://127.0.0.1:9/context.jsonld" });
@@ -143,7 +155,7 @@ async fn sub_update_unreachable_jsonld_context_returns_503() {
         .send()
         .await
         .expect("update subscription");
-    assert_status(&response, 503);
+    assert_status(&response, 504);
     assert_problem_details(&response, LD_CONTEXT_NOT_AVAILABLE);
     topology.finish().await.expect("topology cleanup");
 }

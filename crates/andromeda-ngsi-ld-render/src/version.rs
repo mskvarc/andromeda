@@ -8,18 +8,46 @@ use andromeda_ngsi_ld_lexicon::{attribute_type::AttributeType, spec_version::Spe
 use serde_json::Value;
 use std::str::FromStr;
 
-/// Whether version adaptation was applied to a response payload.
+/// What a `Prefer: ngsi-ld=<version>` request did to a response payload.
 ///
-/// Clause 4.3.6.8: a broker that adapts a payload to an older version is no
-/// longer speaking authoritatively about it, so the response carries 203
-/// rather than 200. The flag travels with the rendered output because the
-/// status code is decided after rendering, by whoever writes the response.
+/// Clause 6.3.6 makes the `Preference-Applied` echo unconditional once the
+/// preference was expressed -- it names the version the body conforms to --
+/// while clause 4.3.6.8 makes the status depend on whether the body was
+/// amended: a broker that amends a payload down to an older version is no
+/// longer speaking authoritatively about it, so that response is 203 rather
+/// than 200. Both decisions are taken after rendering by whoever writes the
+/// response, so the outcome travels with the rendered output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionAdaptation {
-    /// The payload was adapted to an older NGSI-LD version.
-    Applied,
-    /// No version adaptation was performed.
+    /// The payload was amended to conform to `version`, an older NGSI-LD
+    /// version than the one this broker conforms to.
+    Applied {
+        /// The version the amended payload conforms to.
+        version: SpecVersion,
+    },
+    /// A version was requested but the payload already conforms to it: the
+    /// requested version is the conformant one or newer, so nothing changed.
+    Unchanged,
+    /// No version preference was expressed.
     None,
+}
+
+impl VersionAdaptation {
+    /// The version to echo in `Preference-Applied` (clause 6.3.6), when a
+    /// preference was expressed at all: the amended version, or the version
+    /// this broker conforms to when the payload needed no amendment.
+    pub const fn applied_version(self) -> Option<SpecVersion> {
+        match self {
+            VersionAdaptation::Applied { version } => Some(version),
+            VersionAdaptation::Unchanged => Some(SpecVersion::CONFORMANT),
+            VersionAdaptation::None => None,
+        }
+    }
+
+    /// Whether the payload was amended, which is what turns a 200 into a 203.
+    pub const fn is_amended(self) -> bool {
+        matches!(self, VersionAdaptation::Applied { .. })
+    }
 }
 
 /// Adapt a serialized NGSI-LD entity payload to conform to an older spec version.
@@ -55,15 +83,16 @@ impl VersionRenderer {
     ///
     /// The [`VersionAdaptation`] the caller receives drives the status code: a
     /// requested version that is the current one or newer needs no adaptation,
-    /// so the payload is returned unchanged with [`VersionAdaptation::None`] and
-    /// the response stays 200. Only a target below the conformant version runs
-    /// the fallback tables, which makes the representation non-authoritative
-    /// (203). Removing members cannot fail, so this answers with a value rather
-    /// than a `Result` no caller could act on.
+    /// so the payload is returned unchanged with
+    /// [`VersionAdaptation::Unchanged`] and the response stays 200. Only a
+    /// target below the conformant version runs the fallback tables, which
+    /// makes the representation non-authoritative (203). Removing members
+    /// cannot fail, so this answers with a value rather than a `Result` no
+    /// caller could act on.
     pub fn render(self) -> (Value, VersionAdaptation) {
         let VersionRenderer { target, mut payload } = self;
         if target >= SpecVersion::CONFORMANT {
-            return (payload, VersionAdaptation::None);
+            return (payload, VersionAdaptation::Unchanged);
         }
 
         match &mut payload {
@@ -75,7 +104,7 @@ impl VersionRenderer {
             }
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
         }
-        (payload, VersionAdaptation::Applied)
+        (payload, VersionAdaptation::Applied { version: target })
     }
 }
 
@@ -91,6 +120,14 @@ fn adapt_entity(entity: &mut Value, target: SpecVersion) {
     }
     if target < SpecVersion::V1_4 {
         obj.remove("scope");
+    }
+    // Table 4.3.6.8-1 note 1: a multi-valued `type` exists from 1.3 onwards;
+    // an older target receives the first value alone.
+    if target < SpecVersion::V1_3
+        && let Some(Value::Array(types)) = obj.get_mut("type")
+    {
+        let first = types.first().cloned().unwrap_or(Value::Null); // clone: the first element outlives the array it is lifted out of
+        obj.insert("type".to_string(), first);
     }
 
     // Collect attribute keys (skip meta-fields)
@@ -111,15 +148,23 @@ fn adapt_entity(entity: &mut Value, target: SpecVersion) {
 fn adapt_attribute(value: &mut Value, target: SpecVersion) {
     match value {
         Value::Array(instances) => {
-            // Note 1-3: target < V1_3 means multi-attribute not supported;
-            // find default instance (first without datasetId) BEFORE adapting removes datasetId
-            if target < SpecVersion::V1_3 && instances.len() > 1 {
+            // Notes 2 and 3 of Table 4.3.6.8-1: multi-instance attributes exist
+            // from 1.3 onwards; an older target receives the default instance
+            // alone, as the bare object a 1.0 attribute is. The default instance
+            // is located before the per-instance fallbacks remove `datasetId`.
+            if target < SpecVersion::V1_3 {
                 let default_idx = instances
                     .iter()
                     .position(|inst| inst.as_object().is_some_and(|o| !o.contains_key("datasetId")))
                     .unwrap_or(0);
-                let default_instance = instances.swap_remove(default_idx);
-                *instances = vec![default_instance];
+                let mut default_instance = if instances.is_empty() {
+                    Value::Null
+                } else {
+                    instances.swap_remove(default_idx)
+                };
+                adapt_attribute_instance(&mut default_instance, target);
+                *value = default_instance;
+                return;
             }
             for instance in instances.iter_mut() {
                 adapt_attribute_instance(instance, target);
@@ -246,14 +291,24 @@ mod tests {
         // 200, not 203. This is what the short-circuit must report.
         let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
         let (_, adaptation) = VersionRenderer::new(SpecVersion::CONFORMANT).with_payload(payload).render();
-        pretty_assertions::assert_eq!(adaptation, VersionAdaptation::None);
+        pretty_assertions::assert_eq!(adaptation, VersionAdaptation::Unchanged);
+        pretty_assertions::assert_eq!(adaptation.applied_version(), Some(SpecVersion::CONFORMANT));
+        assert!(!adaptation.is_amended());
     }
 
     #[test]
-    fn a_target_below_the_conformant_version_reports_adaptation() {
+    fn a_target_below_the_conformant_version_reports_adaptation_to_that_target() {
         let payload = json!({"id": "urn:x", "type": "T", "expiresAt": "2025-01-01T00:00:00Z"});
         let (_, adaptation) = VersionRenderer::new(SpecVersion::V1_4).with_payload(payload).render();
-        pretty_assertions::assert_eq!(adaptation, VersionAdaptation::Applied);
+        pretty_assertions::assert_eq!(adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_4 });
+        pretty_assertions::assert_eq!(adaptation.applied_version(), Some(SpecVersion::V1_4));
+        assert!(adaptation.is_amended());
+    }
+
+    #[test]
+    fn an_absent_preference_echoes_no_version() {
+        pretty_assertions::assert_eq!(VersionAdaptation::None.applied_version(), None);
+        assert!(!VersionAdaptation::None.is_amended());
     }
 
     #[test]
@@ -436,9 +491,45 @@ mod tests {
         });
         let adapted = adapt(SpecVersion::V1_0, value);
         let temp = adapted.get("temperature").unwrap();
-        let arr = temp.as_array().unwrap();
-        pretty_assertions::assert_eq!(arr.len(), 1);
-        pretty_assertions::assert_eq!(arr[0].get("value").and_then(|v| v.as_f64()), Some(30.0));
+        assert!(temp.is_object(), "a 1.0 attribute is a bare instance object, not an array: {temp}");
+        pretty_assertions::assert_eq!(temp.get("value").and_then(|v| v.as_f64()), Some(30.0));
+        assert!(temp.get("datasetId").is_none());
+    }
+
+    /// Table 4.3.6.8-1 note 1: a v1.0 target receives a single `type`, the
+    /// first of the values the entity declared.
+    #[test]
+    fn v1_0_multi_valued_type_collapses_to_its_first_value() {
+        let value = json!({
+            "id": "urn:ngsi-ld:Entity:1",
+            "type": ["Vehicle", "Car"],
+            "speed": {"type": "Property", "value": 10}
+        });
+        let adapted = adapt(SpecVersion::V1_0, value);
+        pretty_assertions::assert_eq!(adapted.get("type"), Some(&json!("Vehicle")));
+
+        let kept = adapt(SpecVersion::V1_3, json!({"id": "urn:ngsi-ld:Entity:1", "type": ["Vehicle", "Car"]}));
+        pretty_assertions::assert_eq!(kept.get("type"), Some(&json!(["Vehicle", "Car"])));
+    }
+
+    /// Notes 2 and 3: a multi-instance attribute whose instances all carry a
+    /// `datasetId` has no default instance, so the first one stands in, and a
+    /// 1.3 target keeps the array untouched.
+    #[test]
+    fn v1_0_multi_instance_without_a_default_collapses_to_the_first_instance_object() {
+        let value = json!({
+            "id": "urn:ngsi-ld:Entity:1",
+            "type": "Vehicle",
+            "speed": [
+                {"type": "Property", "value": 10, "datasetId": "urn:ngsi-ld:ds:1"},
+                {"type": "Property", "value": 20, "datasetId": "urn:ngsi-ld:ds:2"}
+            ]
+        });
+        let adapted = adapt(SpecVersion::V1_0, value.clone());
+        pretty_assertions::assert_eq!(adapted["speed"], json!({"type": "Property", "value": 10}));
+
+        let kept = adapt(SpecVersion::V1_3, value);
+        pretty_assertions::assert_eq!(kept["speed"].as_array().map(Vec::len), Some(2));
     }
 
     #[test]

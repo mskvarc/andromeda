@@ -126,7 +126,11 @@ impl PostgresTemporalHistorySink {
                             metadata: None,
                         });
                     }
-                    TemporalAppendEntry::Scope { observation, instance } => scopes.push(ScopeHistoryEntry {
+                    TemporalAppendEntry::Scope {
+                        observation,
+                        observed_at,
+                        instance,
+                    } => scopes.push(ScopeHistoryEntry {
                         recorded_at,
                         entity_id: intent.entity_id.clone(), // clone: each persisted scope row owns its entity identity.
                         identity,
@@ -138,7 +142,14 @@ impl PostgresTemporalHistorySink {
                             // no path rather than as a sentinel path.
                             ScopeObservation::Deleted => ScopeHistoryValue::Tombstone { deleted_at: recorded_at },
                         },
-                        axes: SemanticTimeAxes::default(),
+                        // Clause 4.5.6: the temporal scope carries `observedAt`,
+                        // `createdAt` and `modifiedAt`; a scope appended by this
+                        // write is created and last modified at the write.
+                        axes: SemanticTimeAxes {
+                            observed_at: *observed_at,
+                            created_at: Some(recorded_at),
+                            modified_at: Some(recorded_at),
+                        },
                         instance: instance.clone(), // clone: each persisted scope row owns its instance identity.
                     }),
                 }

@@ -2,25 +2,10 @@
 
 use crate::error::FederationError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use url::{Url, form_urlencoded};
 
 /// The API base every NGSI-LD resource path hangs below (clause 6.2).
 const API_BASE: [&str; 2] = ["ngsi-ld", "v1"];
-
-pub(crate) fn build_forwarding_query_string(entity_type: Option<&TypeExprRaw>, entity_ids: Option<&[Uri]>) -> String {
-    let mut serializer = form_urlencoded::Serializer::new(String::new());
-    if let Some(ids) = entity_ids
-        && !ids.is_empty()
-    {
-        let ids = ids.iter().map(Uri::as_str).collect::<Vec<_>>().join(",");
-        serializer.append_pair("id", &ids);
-    }
-    if let Some(t) = entity_type {
-        serializer.append_pair("type", &t.to_string());
-    }
-    serializer.finish()
-}
 
 /// Whether a registration endpoint already ends in the API base.
 ///
@@ -67,11 +52,6 @@ pub(crate) fn with_local_scope(mut url: Url) -> Url {
     url
 }
 
-/// Build a forwarding URL for entity creation (POST).
-pub(crate) fn build_create_url(endpoint: &Url) -> Result<Url, FederationError> {
-    forwarding_url(endpoint, &["entities"], "")
-}
-
 /// Build a forwarding URL for entity queries.
 pub(crate) fn build_query_url(endpoint: &Url, query_string: &str) -> Result<Url, FederationError> {
     forwarding_url(endpoint, &["entities"], query_string)
@@ -100,7 +80,7 @@ pub(crate) fn build_temporal_retrieve_url(endpoint: &Url, entity_id: &Uri, query
 
 #[cfg(test)]
 mod tests {
-    use crate::forwarding_url::{build_create_url, build_retrieve_url, forwarding_url, with_local_scope};
+    use crate::forwarding_url::{build_retrieve_url, forwarding_url, with_local_scope};
     use url::Url;
 
     fn url(raw: &str) -> Url {
@@ -111,7 +91,7 @@ mod tests {
     fn an_endpoint_without_the_api_base_gets_it_appended() {
         for endpoint in ["http://peer", "http://peer/"] {
             pretty_assertions::assert_eq!(
-                build_create_url(&url(endpoint)).expect("joins").as_str(),
+                forwarding_url(&url(endpoint), &["entities"], "").expect("joins").as_str(),
                 "http://peer/ngsi-ld/v1/entities",
                 "{endpoint}"
             );
@@ -122,13 +102,15 @@ mod tests {
     fn an_endpoint_already_ending_in_the_api_base_is_not_doubled() {
         for endpoint in ["http://peer/ngsi-ld/v1", "http://peer/ngsi-ld/v1/"] {
             pretty_assertions::assert_eq!(
-                build_create_url(&url(endpoint)).expect("joins").as_str(),
+                forwarding_url(&url(endpoint), &["entities"], "").expect("joins").as_str(),
                 "http://peer/ngsi-ld/v1/entities",
                 "{endpoint}"
             );
         }
         pretty_assertions::assert_eq!(
-            build_create_url(&url("http://peer/prefix/ngsi-ld/v1")).expect("joins").as_str(),
+            forwarding_url(&url("http://peer/prefix/ngsi-ld/v1"), &["entities"], "")
+                .expect("joins")
+                .as_str(),
             "http://peer/prefix/ngsi-ld/v1/entities"
         );
     }
@@ -136,7 +118,7 @@ mod tests {
     #[test]
     fn a_prefixed_endpoint_keeps_its_prefix_below_the_base() {
         pretty_assertions::assert_eq!(
-            build_create_url(&url("http://peer/prefix")).expect("joins").as_str(),
+            forwarding_url(&url("http://peer/prefix"), &["entities"], "").expect("joins").as_str(),
             "http://peer/prefix/ngsi-ld/v1/entities"
         );
     }

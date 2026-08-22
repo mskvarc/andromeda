@@ -3,15 +3,22 @@
 use crate::{
     error::TemporalError,
     outcome::TemporalEntityIdOutcome,
-    port::history_reader::{AggregationPushdown, HistoryVisibility, TemporalHistoryOutcome, TemporalHistoryReader, TemporalReaderCapabilities},
+    port::history_reader::{
+        AggregationPushdown,
+        HistoryVisibility,
+        RecordedValueKind,
+        TemporalHistoryOutcome,
+        TemporalHistoryReader,
+        TemporalReaderCapabilities,
+    },
     read::ensure_aggregation_supported,
 };
-use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
 use async_trait::async_trait;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -51,6 +58,11 @@ impl TemporalHistoryReader for RefusingReader {
     }
 
     async fn query_entity_aggregation(&self, _entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        self.query_calls.fetch_add(1, Ordering::Relaxed);
+        Err(TemporalError::internal("query must not execute"))
+    }
+
+    async fn recorded_value_kinds(&self, _attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
         self.query_calls.fetch_add(1, Ordering::Relaxed);
         Err(TemporalError::internal("query must not execute"))
     }

@@ -32,6 +32,10 @@ pub mod expiry;
 pub mod geo_property_geometry;
 /// Coalescing concurrent writers by entity identifier.
 pub mod id_lock;
+/// The fragment rewrite a merge performs for the target's attribute types.
+pub mod merge_fragment;
+/// The Table 6.5.3.4-1 options of a merge.
+pub mod merge_options;
 /// Whole-entity mutations (clauses 5.6.1 to 5.6.6).
 pub mod mutation;
 /// Durable-match recording tests for the whole-entity merge and replace paths.

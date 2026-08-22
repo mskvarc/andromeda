@@ -5,7 +5,9 @@ use crate::{
     identifiers::TestIdentifiers,
 };
 use sqlx::{Executor, PgPool, Postgres, Transaction};
+use std::time::Duration;
 use thiserror::Error;
+use tokio::time::sleep;
 
 /// Authoritative tenant reset SQL maintained alongside the test harness.
 pub const RESET_TENANT_SQL: &str = include_str!("../sql/reset-tenant.sql");
@@ -24,8 +26,39 @@ pub async fn reset_tenant(lease: &mut SerializedLease) -> Result<(), DatabaseRes
 /// suite's own pool instead of the exclusive lease the shared test database
 /// requires, and preserves exactly the same migration-owned relations.
 pub async fn reset_owned_tenant(pool: &PgPool) -> Result<(), DatabaseResetError> {
-    pool.execute(RESET_TENANT_SQL).await.map_err(DatabaseResetError::Sqlx)?;
-    Ok(())
+    let mut attempt = 0;
+    loop {
+        match pool.execute(RESET_TENANT_SQL).await {
+            Ok(_) => return Ok(()),
+            Err(error) if is_deadlock(&error) && attempt < RESET_DEADLOCK_RETRIES => {
+                // The brokers' background tasks (expiry sweeps, notification
+                // drains) keep short transactions open against the same
+                // tables; a TRUNCATE racing one of them is reported as a
+                // deadlock rather than waiting, so the reset is simply tried
+                // again once that transaction has finished.
+                attempt += 1;
+                sleep(RESET_DEADLOCK_BACKOFF).await;
+            }
+            Err(error) => return Err(DatabaseResetError::Sqlx(error)),
+        }
+    }
+}
+
+/// How many times a reset is retried after PostgreSQL reports a deadlock.
+const RESET_DEADLOCK_RETRIES: u32 = 5;
+
+/// Pause between deadlock retries, long enough for a broker's short
+/// maintenance transaction to complete.
+const RESET_DEADLOCK_BACKOFF: Duration = Duration::from_millis(200);
+
+/// PostgreSQL SQLSTATE for `deadlock_detected`.
+const DEADLOCK_SQLSTATE: &str = "40P01";
+
+/// Whether a database error is PostgreSQL's deadlock report.
+fn is_deadlock(error: &sqlx::Error) -> bool {
+    error
+        .as_database_error()
+        .is_some_and(|database| database.code().is_some_and(|code| code == DEADLOCK_SQLSTATE))
 }
 
 /// Every prefix-scoped delete a cleanup runs, in dependency order.
@@ -96,6 +129,12 @@ pub enum DatabaseResetError {
 
 #[cfg(test)]
 mod tests {
+    use crate::database_reset::is_deadlock;
+
+    #[test]
+    fn a_non_database_error_is_not_treated_as_a_deadlock() {
+        assert!(!is_deadlock(&sqlx::Error::PoolClosed));
+    }
     use crate::database_reset::{PREFIX_DELETES, RESET_TENANT_SQL};
 
     /// The relation list of the reset script's `TRUNCATE`, without the header

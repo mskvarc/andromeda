@@ -36,18 +36,27 @@ use std::iter;
 pub struct PreferenceApplied(Vec<Preference>);
 
 impl PreferenceApplied {
-    /// Create a `Preference-Applied` header indicating the conformant NGSI-LD version.
-    ///
-    /// This is the most common usage: the server responds with the version it conforms to
-    /// when the client requests version conformance (clause 4.3.6.8).
-    pub fn version_conformance() -> PreferenceApplied {
-        PreferenceApplied(vec![Preference::Version(SpecVersion::CONFORMANT)])
+    /// A `Preference-Applied: ngsi-ld=<version>` naming the NGSI-LD version the
+    /// response payload conforms to (clauses 4.3.6.8 and 6.3.6): the version
+    /// the payload was amended down to, or the version the server itself
+    /// conforms to when no amendment was needed.
+    pub fn version(version: SpecVersion) -> PreferenceApplied {
+        PreferenceApplied(vec![Preference::Version(version)])
     }
 
     /// Create a `Preference-Applied: respond-async` header, signalling the
     /// server accepted the client's async processing hint for this request.
     pub fn respond_async() -> PreferenceApplied {
         PreferenceApplied(vec![Preference::Respond(RespondMode::Async)])
+    }
+
+    /// The NGSI-LD version the server says its payload conforms to (clause
+    /// 4.3.6.8), when the header names one.
+    pub fn applied_version(&self) -> Option<SpecVersion> {
+        self.0.iter().find_map(|preference| match preference {
+            Preference::Version(version) => Some(*version),
+            Preference::Body(_) | Preference::Respond(_) => None,
+        })
     }
 }
 
@@ -99,17 +108,17 @@ mod tests {
     }
 
     #[test]
-    fn encode_version_conformance() {
-        let pa = PreferenceApplied::version_conformance();
+    fn encode_version_names_the_given_version() {
+        let pa = PreferenceApplied::version(SpecVersion::V1_8);
         let mut encoded = Vec::new();
         pa.encode(&mut encoded);
         pretty_assertions::assert_eq!(encoded.len(), 1);
-        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.9");
+        pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "ngsi-ld=1.8");
     }
 
     #[test]
     fn encode_roundtrip() {
-        let original = PreferenceApplied::version_conformance();
+        let original = PreferenceApplied::version(SpecVersion::CONFORMANT);
         let mut encoded = Vec::new();
         original.encode(&mut encoded);
         let mut iter = encoded.iter();
@@ -118,8 +127,15 @@ mod tests {
     }
 
     #[test]
-    fn version_conformance_contains_conformant() {
-        let pa = PreferenceApplied::version_conformance();
+    fn the_applied_version_is_read_back_from_a_decoded_header() {
+        pretty_assertions::assert_eq!(decode_preference_applied("ngsi-ld=1.3").applied_version(), Some(SpecVersion::V1_3));
+        pretty_assertions::assert_eq!(PreferenceApplied::respond_async().applied_version(), None);
+    }
+
+    #[test]
+    fn the_version_constructor_reads_back_as_the_applied_version() {
+        let pa = PreferenceApplied::version(SpecVersion::CONFORMANT);
         pretty_assertions::assert_eq!(pa, PreferenceApplied(vec![Preference::Version(SpecVersion::CONFORMANT)]));
+        pretty_assertions::assert_eq!(pa.applied_version(), Some(SpecVersion::CONFORMANT));
     }
 }

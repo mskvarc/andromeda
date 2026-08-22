@@ -326,8 +326,11 @@ async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
 }
 
 /// The Context Source Filter and scope query both gate matching: a registration
-/// satisfying the subscription's csf and scopeQ notifies (clause 5.12). Confirms
-/// REQ-DISC-61, REQ-DISC-62.
+/// satisfying the subscription's csf and scopeQ notifies (clause 5.12). The
+/// `csf` targets a Context Source Property of the registration (clause 4.9:
+/// "target is the name of a Context Source Property member of the
+/// CSourceRegistration"), so the fixture carries `tier` as a top-level member,
+/// not as a `contextSourceInfo` header pair. Confirms REQ-DISC-61, REQ-DISC-62.
 #[tokio::test]
 async fn matching_sub_csf_and_scope_gate_matching() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -341,10 +344,8 @@ async fn matching_sub_csf_and_scope_gate_matching() {
     create_subscription(&topology, &subscription).await;
 
     let registration_id = topology.id("registration:csf-scope");
-    let mut body = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
-        .entity_type(&vtype)
-        .context_source_info("tier", "gold")
-        .build();
+    let mut body = CsrBuilder::new(&registration_id, PEER_ENDPOINT).entity_type(&vtype).build();
+    body["tier"] = json!("gold");
     body["scope"] = json!(["/Madrid/Gardens"]);
     register(&topology, &body).await;
 

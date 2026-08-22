@@ -1,22 +1,44 @@
 # Multi-instance Andromeda topology for distributed-operations conformance testing.
 #
-# Three broker instances share one TimescaleDB/PostGIS Postgres (one database each,
-# created by ./initdb). Each instance has a distinct Context Source identity/alias so
-# loop detection (Via / contextSourceAlias) behaves as in a real federation.
+# Three broker identities, each with its own TimescaleDB/PostGIS Postgres server
+# (one database per server, created by ./initdb/<role>), so a peer can never
+# read another peer's store. Each identity has a distinct Context Source
+# id/alias so loop detection (Via / contextSourceAlias) behaves as in a real
+# federation. broker-a additionally runs as a replica pair: broker-a2 is a
+# second instance of the SAME identity sharing postgres-a, which is what proves
+# durable EntityMaps and platform routing are shared across the instances of
+# one broker (and only across those).
 #
 # Host-facing ports (used by the test client running on the host):
-#   broker-a -> http://127.0.0.1:1061/ngsi-ld/v1/
-#   broker-b -> http://127.0.0.1:1062/ngsi-ld/v1/
-#   broker-c -> http://127.0.0.1:1063/ngsi-ld/v1/
+#   broker-a  -> http://127.0.0.1:1061/ngsi-ld/v1/
+#   broker-b  -> http://127.0.0.1:1062/ngsi-ld/v1/
+#   broker-c  -> http://127.0.0.1:1063/ngsi-ld/v1/
+#   broker-a2 -> http://127.0.0.1:1064/ngsi-ld/v1/   (replica of broker-a)
+#   postgres-a/b/c -> 127.0.0.1:5442/5443/5444
 #
 # Peer-facing URLs (used INSIDE Context Source Registration `endpoint`, because one
 # broker calls another over the compose network, NOT via localhost):
-#   broker-a -> http://broker-a:1056
-#   broker-b -> http://broker-b:1056
-#   broker-c -> http://broker-c:1056
+#   broker-a  -> http://broker-a:1056
+#   broker-b  -> http://broker-b:1056
+#   broker-c  -> http://broker-c:1056
+#   broker-a2 -> http://broker-a2:1056
 #
 # Bring up:  docker compose -f docker/distributed/docker-compose.distributed.yaml up --build
 name: andromeda-distributed
+
+x-postgres-base: &postgres-base
+  build:
+    context: ../postgresql
+  image: andromeda-distributed-postgres:latest
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: postgres
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 40
 
 x-broker-base: &broker-base
   build:
@@ -25,9 +47,6 @@ x-broker-base: &broker-base
   image: andromeda-distributed:latest
   command: ["run"]
   restart: unless-stopped
-  depends_on:
-    postgres:
-      condition: service_healthy
   # Lets each broker reach mock Context Sources / notification receivers that the
   # test process runs on the host (ANDROMEDA_TEST_CALLBACK_HOST=host.docker.internal).
   extra_hosts:
@@ -38,6 +57,17 @@ x-broker-base: &broker-base
     ANDROMEDA_TENANCY_ENABLED: "true"
     ANDROMEDA_NOTIFICATION_DELIVERY_ENABLED: "true"
     ANDROMEDA_OBSERVABILITY_LOG_LEVEL: "info"
+    # Pool sizing: a server hosts at most two instances (the broker-a replica
+    # pair), so 2 x (16 main + 8 per tenant x a few tenants) stays far below
+    # the server's max_connections even with the harness pools on top.
+    ANDROMEDA_DATABASE_MAX_CONNECTIONS: "16"
+    ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS: "8"
+    # Clause 5.2.37: deployment-specific members echoed by /info/sourceIdentity.
+    ANDROMEDA_INFO_SOURCE_EXTRAS: '{"deployment":"distop"}'
+    # Clause 5.9.2.4: the expiresAt sweeps (registrations, subscriptions,
+    # entities, snapshots, entity maps) run every 5 s so a registration
+    # expiring a few seconds ahead is deleted within one short wait.
+    ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS: "5"
   healthcheck:
     # 127.0.0.1, not localhost: the broker listens on IPv4 0.0.0.0, but localhost
     # resolves to IPv6 ::1 first in the image, giving a false "connection refused".
@@ -47,43 +77,77 @@ x-broker-base: &broker-base
     retries: 40
     start_period: 5s
 
+# broker-a and broker-a2 are one identity: same database, same source id and
+# alias, same advertised URL family. Anything persisted by one is visible on the
+# other; nothing is visible on broker-b or broker-c.
+x-broker-a-env: &broker-a-env
+  <<: *broker-env
+  ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres-a:5432/broker_a"
+  ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
+  ANDROMEDA_INFO_SOURCE_ALIAS: "broker-a"
+
 services:
-  postgres:
-    build:
-      context: ../postgresql
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: postgres
+  postgres-a:
+    <<: *postgres-base
     volumes:
-      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ./initdb/a:/docker-entrypoint-initdb.d:ro
+      - postgres-a-data:/var/lib/postgresql/data
     ports:
-      # Host 5442 to avoid colliding with other local Postgres instances on 5432;
-      # brokers reach Postgres over the compose network on 5432 regardless.
+      # Host 544x to avoid colliding with other local Postgres instances on 5432;
+      # brokers reach their server over the compose network on 5432 regardless.
       - "5442:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 2s
-      timeout: 3s
-      retries: 40
+
+  postgres-b:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/b:/docker-entrypoint-initdb.d:ro
+      - postgres-b-data:/var/lib/postgresql/data
+    ports:
+      - "5443:5432"
+
+  postgres-c:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/c:/docker-entrypoint-initdb.d:ro
+      - postgres-c-data:/var/lib/postgresql/data
+    ports:
+      - "5444:5432"
 
   broker-a:
     <<: *broker-base
+    depends_on:
+      postgres-a:
+        condition: service_healthy
     environment:
-      <<: *broker-env
-      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_a"
-      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-a"
-      ANDROMEDA_INFO_SOURCE_ALIAS: "broker-a"
+      <<: *broker-a-env
       # Clauses 5.8.1.4 / 5.8.6: the origin peers notify this broker at.
       ANDROMEDA_INFO_ADVERTISED_URL: "http://broker-a:1056"
     ports:
       - "1061:1056"
 
+  broker-a2:
+    <<: *broker-base
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+      # The replica migrates nothing new, but starting it after the primary
+      # keeps the two from racing on the schema contract at first boot.
+      broker-a:
+        condition: service_healthy
+    environment:
+      <<: *broker-a-env
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://broker-a2:1056"
+    ports:
+      - "1064:1056"
+
   broker-b:
     <<: *broker-base
+    depends_on:
+      postgres-b:
+        condition: service_healthy
     environment:
       <<: *broker-env
-      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_b"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres-b:5432/broker_b"
       ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-b"
       ANDROMEDA_INFO_SOURCE_ALIAS: "broker-b"
       # Clauses 5.8.1.4 / 5.8.6: the origin peers notify this broker at.
@@ -93,12 +157,20 @@ services:
 
   broker-c:
     <<: *broker-base
+    depends_on:
+      postgres-c:
+        condition: service_healthy
     environment:
       <<: *broker-env
-      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/broker_c"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@postgres-c:5432/broker_c"
       ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:broker-c"
       ANDROMEDA_INFO_SOURCE_ALIAS: "broker-c"
       # Clauses 5.8.1.4 / 5.8.6: the origin peers notify this broker at.
       ANDROMEDA_INFO_ADVERTISED_URL: "http://broker-c:1056"
     ports:
       - "1063:1056"
+
+volumes:
+  postgres-a-data:
+  postgres-b-data:
+  postgres-c-data:

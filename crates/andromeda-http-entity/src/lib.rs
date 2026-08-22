@@ -11,7 +11,6 @@ mod entity_operations;
 pub mod entity_type;
 pub mod error;
 mod join;
-pub mod provision_forwarding;
 mod request_projection;
 pub mod routes;
 pub mod snapshot_scope;

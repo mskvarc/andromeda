@@ -14,8 +14,17 @@ use andromeda_tenancy::{database_name::TenantDatabaseName, db_name_prefix::DbNam
 use sea_query::{Alias, Expr, ExprTrait, PostgresQueryBuilder, Query};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{Connection, Executor, PgConnection, postgres::PgPoolOptions};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    time::Duration,
+};
 use url::Url;
+
+/// How long an idle connection is kept before the pool closes it. Tenant
+/// pools outlive their bursts by design (the runtime cache holds them for
+/// minutes), so without this every tenant a broker ever touched would pin
+/// its full pool against the server's `max_connections`.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build a [`PgPoolOptions`] tuned with the broker's connection-level
 /// settings: a per-connection `SET synchronous_commit = '<mode>'`
@@ -28,13 +37,17 @@ use url::Url;
 /// `"on"`, `"off"`, `"local"`). The binary maps its config enum via
 /// `SynchronousCommit::as_postgres_setting()` before calling.
 pub fn configure_pool_options(max_connections: u32, synchronous_commit_setting: &'static str) -> PgPoolOptions {
-    PgPoolOptions::new().max_connections(max_connections).after_connect(move |conn, _meta| {
-        Box::pin(async move {
-            let stmt = set_synchronous_commit(synchronous_commit_setting);
-            conn.execute(sqlx::AssertSqlSafe(stmt)).await?;
-            Ok(())
+    PgPoolOptions::new()
+        .min_connections(0)
+        .max_connections(max_connections)
+        .idle_timeout(POOL_IDLE_TIMEOUT)
+        .after_connect(move |conn, _meta| {
+            Box::pin(async move {
+                let stmt = set_synchronous_commit(synchronous_commit_setting);
+                conn.execute(sqlx::AssertSqlSafe(stmt)).await?;
+                Ok(())
+            })
         })
-    })
 }
 
 /// Parsed database URL wrapper used by tenancy helpers.
@@ -187,9 +200,17 @@ pub async fn migrate_single_tenant_db(
 
 #[cfg(test)]
 mod tests {
-    use crate::tenant_database::{DatabaseUrl, database_exists_statement};
+    use crate::tenant_database::{DatabaseUrl, POOL_IDLE_TIMEOUT, configure_pool_options, database_exists_statement};
     use andromeda_tenancy::database_name::TenantDatabaseName;
     use sea_query::PostgresQueryBuilder;
+
+    #[test]
+    fn pool_options_reclaim_idle_connections_and_keep_none_warm() {
+        let options = configure_pool_options(7, "off");
+        assert_eq!(options.get_max_connections(), 7);
+        assert_eq!(options.get_min_connections(), 0);
+        assert_eq!(options.get_idle_timeout(), Some(POOL_IDLE_TIMEOUT));
+    }
 
     #[test]
     fn the_existence_probe_reads_the_catalog_by_bound_name() {

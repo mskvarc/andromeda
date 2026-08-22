@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL;
 use iri_rs::{Iri, IriBuf, IriRefBuf};
 use serde_json::Value;
 use std::collections::HashSet;
+use url::Url;
 
 /// How the NGSI-LD core context joins the contexts a request supplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,6 +63,20 @@ impl ContextSpec {
             link_contexts: links,
             body_context: None,
             core_policy: CoreContextPolicy::Append,
+        }
+    }
+
+    /// The spec a subscription's `jsonldContext` selects for its notifications
+    /// (clause 5.8.6): that context with the core context appended, or the
+    /// core context alone when the subscription named none.
+    ///
+    /// A [`Url`] is always a well-formed IRI reference, so the conversion
+    /// cannot fail in practice; a URL the IRI parser nonetheless rejects
+    /// falls back to the core context rather than to no context at all.
+    pub fn for_subscription_context(jsonld_context: Option<&Url>) -> ContextSpec {
+        match jsonld_context.and_then(|url| IriRefBuf::new(url.as_str().to_owned()).ok()) {
+            Some(iri) => ContextSpec::from_links(vec![iri]),
+            None => ContextSpec::none(),
         }
     }
 
@@ -201,6 +216,15 @@ mod tests {
     /// A context URL as the [`IriRefBuf`] the `Link` header carries.
     fn iri_ref(url: &str) -> IriRefBuf {
         IriRefBuf::new(url.to_string()).expect("a valid IRI reference")
+    }
+
+    #[test]
+    fn a_subscription_context_is_the_named_context_with_the_core_context_appended() {
+        let url = url::Url::parse("https://example.com/context.jsonld").expect("valid URL");
+        let named = ContextSpec::for_subscription_context(Some(&url));
+        pretty_assertions::assert_eq!(named.link_contexts(), &[iri_ref("https://example.com/context.jsonld")]);
+        pretty_assertions::assert_eq!(named.core_policy(), CoreContextPolicy::Append);
+        pretty_assertions::assert_eq!(ContextSpec::for_subscription_context(None), ContextSpec::none());
     }
 
     #[test]

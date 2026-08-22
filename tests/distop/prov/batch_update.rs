@@ -54,13 +54,13 @@ async fn batch_update_per_csr_filtering_drops_attrless_entities() {
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
         .property_names(&["speed"])
-        .operations(&["updateAttrs", "queryBatch", "retrieveEntity"])
+        .operations(&["updateBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let gear_csr = CsrBuilder::new(&reg_gear, &mock.url("/s2"))
         .mode("redirect")
         .property_names(&["gear"])
-        .operations(&["updateAttrs", "queryBatch", "retrieveEntity"])
+        .operations(&["updateBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&gear_csr).await.expect("create gear registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/update", 204).await;
@@ -100,7 +100,7 @@ async fn batch_update_supported_forwards_and_merges() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .operations(&["updateAttrs", "queryBatch", "retrieveEntity"])
+        .operations(&["updateBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let source_result = json!({
@@ -138,7 +138,7 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .operations(&["updateAttrs", "retrieveEntity"])
+        .operations(&["updateEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PATCH, &format!("/ngsi-ld/v1/entities/{v1}/attrs"), 204).await;
@@ -163,8 +163,10 @@ async fn batch_update_fallback_per_entity_update_overwrite() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// With `noOverwrite`, an append-capable source is driven per entity via Append
-/// Attributes rather than Update. Confirms REQ-PROV-70.
+/// With `options=noOverwrite`, an append-capable source is driven per entity via
+/// Append Attributes with overwrite disabled rather than Update (clause 5.6.9.4:
+/// "if the Append Attributes operation (clause 5.6.3) is supported by CSR and
+/// Attribute overwrite is not permitted"). Confirms REQ-PROV-70.
 #[tokio::test]
 async fn batch_update_fallback_per_entity_append_no_overwrite() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -183,7 +185,10 @@ async fn batch_update_fallback_per_entity_append_no_overwrite() {
     mock.set_stub(Method::POST, &format!("/ngsi-ld/v1/entities/{v2}/attrs"), 204).await;
 
     let _ = client
-        .batch_update(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .raw(Method::POST, "/ngsi-ld/v1/entityOperations/update?options=noOverwrite")
+        .header("content-type", "application/ld+json")
+        .json(&json!([speed_vehicle(&v1, 1), speed_vehicle(&v2, 2)]))
+        .send()
         .await
         .expect("batch update");
     assert_eq!(

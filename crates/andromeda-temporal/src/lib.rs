@@ -4,6 +4,8 @@
 #![deny(clippy::missing_docs_in_private_items)]
 
 /// Typed, durable consequences for deferred temporal append.
+/// Eligibility of attributes for aggregation methods (clause 5.7.4.4).
+pub mod aggregation_eligibility;
 pub mod append_intent;
 mod compilation;
 pub mod config;

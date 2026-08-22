@@ -3,23 +3,21 @@
 use crate::{
     FederationService,
     cache::Cacheability,
+    config::SplitEntities,
     entity_result::parse_forwarded_entities,
     error::FederationError,
-    forwarding_url::{build_forwarding_query_string, build_query_url, build_retrieve_url},
-    outcome::{ForwardGetOutcome, ForwardedEntities},
-    request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest, TriggeringRequest},
+    forwarded_query::ForwardedQuery,
+    forwarding_url::{build_query_url, build_retrieve_url},
+    outcome::{ForwardGetOutcome, ForwardReadOutcome, ForwardedEntities, ForwardedResponse, MatchedSources},
+    read_fan_out::{ReadSelection, read_outcome, registered_type_of},
+    request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest},
 };
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
-use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_model::{
-    entity_map::EntityMap,
-    registration::{ContextSourceRegistration, ForwardingMode},
-};
-use andromeda_ngsi_ld_query::{filter::eval::evaluate as eval_q_expr, type_selection::grammar::TypeExprRaw};
-use futures::{StreamExt, stream};
+use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
+use chrono::Utc;
 use serde_json::Value;
+use std::slice::from_ref;
 use tracing::warn;
-use url::Url;
 
 /// Whether a registration's mode is admitted by a forwarding phase.
 pub(crate) fn mode_admitted(registration: &ContextSourceRegistration, mode_filter: CsrModeFilter) -> bool {
@@ -37,43 +35,64 @@ pub(crate) fn own_loop_warning() -> NgsiLdWarning {
     NgsiLdWarning::MiscellaneousWarning("registration loop detected: the request's Via chain already names this context broker".to_string())
 }
 
-/// How one GET answer is read into forwarded entities.
-#[derive(Debug, Clone, Copy)]
-enum EntityShape {
-    /// A query answers with an array of entities; a single object is tolerated.
-    Collection,
-    /// A retrieve answers with one entity object.
-    Single,
+/// The outcome of a current-entity read whose request already looped back
+/// onto this broker: no registration is selected, only the warning is reported.
+fn own_loop_outcome() -> ForwardReadOutcome<ForwardedEntities> {
+    ForwardReadOutcome {
+        results: vec![ForwardedEntities {
+            registration_id: None,
+            mode: ForwardingMode::Inclusive,
+            entities: Vec::new(),
+            warnings: vec![own_loop_warning()],
+            linked_map: None,
+        }],
+        sources: MatchedSources::default(),
+    }
 }
 
 impl FederationService {
     /// Read a forwarded GET into the entities it carried, with the clause
     /// 6.3.17 warning for every abnormal outcome. A 404 contributes nothing.
-    fn entities_of(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome, shape: EntityShape) -> Option<ForwardedEntities> {
+    ///
+    /// A query answers with an array and a retrieval with one object, but
+    /// either shape is read from either: a retrieval continuing a clause 4.5.23
+    /// flat join answers with the entity and its linked entities side by side.
+    fn entities_of(registration: &ContextSourceRegistration, outcome: ForwardGetOutcome) -> Option<ForwardedEntities> {
         let mode = registration.access.mode.unwrap_or_default();
-        let registration_id = registration.id.clone(); // clone: the result names the registration it came from
-        let with_warnings = |entities, warnings| {
+        let with_warnings = |entities, warnings, linked_map| {
             Some(ForwardedEntities {
-                registration_id: Some(registration_id.clone()), // clone: same
+                registration_id: Some(registration.id.clone()), // clone: the result names the registration it came from
                 mode,
                 entities,
                 warnings,
+                linked_map,
             })
         };
-        match (shape, outcome) {
-            (EntityShape::Collection, ForwardGetOutcome::Success(Value::Array(items), cs_warnings)) => {
-                let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, items);
+        match outcome {
+            ForwardGetOutcome::Success(ForwardedResponse {
+                body: Value::Array(items),
+                warnings: cs_warnings,
+                entity_map,
+            }) => {
+                let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, items, Utc::now());
                 let mut warnings = cs_warnings;
                 warnings.extend(parse_warnings);
-                with_warnings(entities, warnings)
+                with_warnings(entities, warnings, entity_map)
             }
-            (EntityShape::Collection | EntityShape::Single, ForwardGetOutcome::Success(object @ Value::Object(_), cs_warnings)) => {
-                let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, vec![object]);
+            ForwardGetOutcome::Success(ForwardedResponse {
+                body: object @ Value::Object(_),
+                warnings: cs_warnings,
+                entity_map,
+            }) => {
+                let (entities, parse_warnings) = parse_forwarded_entities(&registration.id, vec![object], Utc::now());
                 let mut warnings = cs_warnings;
                 warnings.extend(parse_warnings);
-                with_warnings(entities, warnings)
+                with_warnings(entities, warnings, entity_map)
             }
-            (EntityShape::Collection | EntityShape::Single, ForwardGetOutcome::Success(_other, _)) => {
+            ForwardGetOutcome::Success(ForwardedResponse {
+                body: Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_),
+                ..
+            }) => {
                 warn!("Context source {} returned an unexpected response shape", registration.id);
                 with_warnings(
                     Vec::new(),
@@ -81,53 +100,29 @@ impl FederationService {
                         "Context source {} returned unexpected response type",
                         registration.id
                     ))],
+                    None,
                 )
             }
-            (_, ForwardGetOutcome::NotFound) => None,
-            (_, other) => {
+            // A 404 is not abnormal (clause 6.3.17), but the warnings the
+            // source reported about the sources behind it still travel.
+            ForwardGetOutcome::NotFound(cs_warnings) => (!cs_warnings.is_empty()).then(|| with_warnings(Vec::new(), cs_warnings, None)).flatten(),
+            other @ (ForwardGetOutcome::InvalidPayload(_)
+            | ForwardGetOutcome::ErrorStatus(_)
+            | ForwardGetOutcome::Transport(_)
+            | ForwardGetOutcome::LoopDetected) => {
                 let warning = other.warning(&registration.id)?;
                 warn!("Forwarding to context source {} failed: {}", registration.id, warning);
-                with_warnings(Vec::new(), vec![warning])
+                with_warnings(Vec::new(), vec![warning], None)
             }
         }
     }
 
-    /// Fan a GET out to every selected registration, telling each the linked
-    /// map the referenced EntityMap recorded for it (clause 5.5.14).
-    async fn fan_out_get(
-        &self,
-        registrations: Vec<ContextSourceRegistration>,
-        url_of: impl Fn(&ContextSourceRegistration) -> Result<Url, FederationError> + Sync,
-        context: &ContextSpec,
-        triggering: TriggeringRequest<'_>,
-        cacheability: Cacheability,
-        shape: EntityShape,
-        entity_map: Option<&EntityMap>,
-    ) -> Vec<ForwardedEntities> {
-        let url_of = &url_of;
-        stream::iter(registrations)
-            .map(|registration| async move {
-                let linked_map = entity_map.and_then(|map| map.linked_map_for(&registration.id));
-                let outcome = self
-                    .forward_get(&registration, url_of(&registration), context, triggering, cacheability, linked_map)
-                    .await;
-                FederationService::entities_of(&registration, outcome, shape)
-            })
-            .buffer_unordered(self.csr_concurrency)
-            .filter_map(|entry| async move { entry })
-            .collect()
-            .await
-    }
-
-    /// Forward an entity query to matching context sources.
-    ///
-    /// `entity_type_compact` is the compact entity type from the query (e.g., "Vehicle").
-    /// It will be expanded using the context for CSR matching.
-    /// `entity_ids` are optional entity IDs to filter by (for query-by-id forwarding).
-    pub async fn forward_query(&self, request: ForwardQueryRequest<'_>) -> Result<Vec<ForwardedEntities>, FederationError> {
+    /// Forward an entity query to the matching context sources (clause
+    /// 5.7.2.4), each sent the part of the client's query it is registered for.
+    pub async fn forward_query(&self, request: ForwardQueryRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
         let ForwardQueryRequest {
-            entity_type_compact,
-            entity_ids,
+            client_query,
+            split,
             context,
             operation,
             triggering,
@@ -135,77 +130,53 @@ impl FederationService {
             mode_filter,
             entity_map,
         } = request;
-
         if self.is_loop_detected(triggering.via) {
-            return Ok(vec![ForwardedEntities {
-                registration_id: None,
-                mode: ForwardingMode::Inclusive,
-                entities: Vec::new(),
-                warnings: vec![own_loop_warning()],
-            }]);
+            return Ok(own_loop_outcome());
         }
-
-        // Expand entity type for CSR matching (CSRs store expanded IRIs)
-        let prepared_context = self.engine.prepare_term_context(context);
-        let expanded_type = if let Some(t) = entity_type_compact.and_then(TypeExprRaw::as_single_type) {
-            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
-        } else {
-            None
-        };
-
-        // Clause 5.5.14: a referenced EntityMap fixes the sources; otherwise
-        // clause 5.12 matching selects them.
-        let first_id = entity_ids.and_then(|ids| ids.first());
-        let csrs = match entity_map {
-            Some(map) => self.registrations_of_map(map).await?,
-            None => self.csr_repo.find_matching(expanded_type.as_ref(), first_id).await?,
-        };
-        let matching_csrs: Vec<_> = csrs
+        let registrations = self
+            .select_read_registrations(
+                context,
+                ReadSelection {
+                    entity_type: client_query.entity_type(),
+                    entity_ids: client_query.entity_ids(),
+                    exclude_registration: None,
+                    csf: csf_expr,
+                    operation,
+                    mode_filter,
+                    entity_map,
+                },
+            )
+            .await?;
+        let targets = registrations
             .into_iter()
-            .filter(|csr| operation.matches(csr))
-            .filter(|csr| {
-                // Filter CSRs by csf expression against their additional_properties (S6.4.3.2)
-                match csf_expr {
-                    Some(expr) => match &csr.additional_properties {
-                        Some(props) => eval_q_expr(expr, props),
-                        None => false,
-                    },
-                    None => true,
-                }
-            })
-            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
-            .filter(|csr| mode_admitted(csr, mode_filter))
-            .collect();
-
-        if matching_csrs.is_empty() {
-            return Ok(Vec::new());
+            .filter_map(|registration| ForwardedQuery::for_registration(client_query, &registration, split).map(|query| (registration, query)))
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(ForwardReadOutcome::empty());
         }
-
-        // Build a minimal forwarding query string — only type and id params
-        // Context sources return all attributes; attribute filtering is done locally after merge
-        let forwarding_qs = build_forwarding_query_string(entity_type_compact, entity_ids);
-        let results = self
+        let matched = targets.len();
+        let answers = self
             .fan_out_get(
-                matching_csrs,
-                |csr| build_query_url(&csr.access.endpoint, &forwarding_qs),
+                targets,
+                |registration, query| build_query_url(&registration.access.endpoint, &query.to_query_string()),
                 context,
                 triggering,
                 Cacheability::Cacheable,
-                EntityShape::Collection,
+                FederationService::entities_of,
                 entity_map,
             )
             .await;
-        Ok(results)
+        Ok(read_outcome(answers, matched, None))
     }
 
-    /// Forward an entity retrieval to matching context sources.
-    ///
-    /// Returns entities collected from all matching context sources.
-    pub async fn forward_retrieve(&self, request: ForwardRetrieveRequest<'_>) -> Result<Vec<ForwardedEntities>, FederationError> {
+    /// Forward an entity retrieval to the matching context sources (clause
+    /// 5.7.1.4), each sent the part of the client's parameters it is
+    /// registered for.
+    pub async fn forward_retrieve(&self, request: ForwardRetrieveRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
         let ForwardRetrieveRequest {
             entity_id,
             exclude_registration,
-            query_string,
+            client_query,
             context,
             operation,
             triggering,
@@ -213,41 +184,46 @@ impl FederationService {
             entity_map,
         } = request;
         if self.is_loop_detected(triggering.via) {
-            return Ok(vec![ForwardedEntities {
-                registration_id: None,
-                mode: ForwardingMode::Inclusive,
-                entities: Vec::new(),
-                warnings: vec![own_loop_warning()],
-            }]);
+            return Ok(own_loop_outcome());
         }
-
-        let csrs = match entity_map {
-            Some(map) => self.registrations_of_map(map).await?,
-            None => self.csr_repo.find_matching(None, Some(entity_id)).await?,
-        };
-        let matching_csrs: Vec<_> = csrs
+        let registrations = self
+            .select_read_registrations(
+                context,
+                ReadSelection {
+                    entity_type: None,
+                    entity_ids: Some(from_ref(entity_id)),
+                    exclude_registration,
+                    csf: None,
+                    operation,
+                    mode_filter,
+                    entity_map,
+                },
+            )
+            .await?;
+        let registered_type = registered_type_of(&registrations, entity_id);
+        // A retrieval knows no split entities (clause 5.7.1.4), so every
+        // parameter that is not narrowed travels with the request.
+        let targets = registrations
             .into_iter()
-            .filter(|csr| operation.matches(csr))
-            .filter(|csr| exclude_registration.is_none_or(|excluded| excluded != &csr.id))
-            // Per spec 4.3.6.2: auxiliary CSRs only supplement existing data
-            .filter(|csr| mode_admitted(csr, mode_filter))
-            .collect();
-
-        if matching_csrs.is_empty() {
-            return Ok(Vec::new());
+            .filter_map(|registration| {
+                ForwardedQuery::for_registration(client_query, &registration, SplitEntities::Complete).map(|query| (registration, query))
+            })
+            .collect::<Vec<_>>();
+        if targets.is_empty() {
+            return Ok(ForwardReadOutcome::empty());
         }
-
-        let results = self
+        let matched = targets.len();
+        let answers = self
             .fan_out_get(
-                matching_csrs,
-                |csr| build_retrieve_url(&csr.access.endpoint, entity_id, query_string),
+                targets,
+                |registration, query| build_retrieve_url(&registration.access.endpoint, entity_id, &query.to_query_string()),
                 context,
                 triggering,
                 Cacheability::Cacheable,
-                EntityShape::Single,
+                FederationService::entities_of,
                 entity_map,
             )
             .await;
-        Ok(results)
+        Ok(read_outcome(answers, matched, registered_type))
     }
 }

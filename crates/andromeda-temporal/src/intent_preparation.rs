@@ -29,6 +29,7 @@ use andromeda_ngsi_ld_vocabulary::{
 };
 use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
+use std::slice::from_ref;
 
 /// Prepare one typed intent from the history consequences of an atomic write.
 ///
@@ -92,7 +93,7 @@ fn append_payload_entries(expanded: &Value, recorded_at: DateTime<Utc>, entries:
             continue;
         }
         if attribute_name.as_str() == expanded_properties::SCOPE.as_str() {
-            append_scopes(value, entries);
+            append_scopes(value, recorded_at, entries)?;
             continue;
         }
         let Some(instances) = value.as_array() else {
@@ -197,30 +198,48 @@ fn temporal_values_key(attribute_type: AttributeType) -> &'static str {
 
 /// Append validated scope observations found in the expanded scope member.
 ///
+/// The scope arrives non-reified from the Core API, as bare values, or
+/// reified as the temporal representation of a Property (clause 4.5.6),
+/// whose `hasValue` holds the paths and whose `observedAt` dates them. An
+/// observation the client did not date is dated at the write, which is what
+/// clause 4.5.6 asks for a scope changed through the Core API ("the
+/// observedAt sub-Property should be set as a copy of the modifiedAt").
+///
 /// The scope grammar of clause 4.18 admits `urn:ngsi-ld:null` alongside the
 /// hierarchical paths and reserves it for a deleted scope, so that spelling
 /// records the end of the entity's scope rather than a path named after it.
-fn append_scopes(value: &Value, entries: &mut Vec<TemporalAppendEntry>) {
+fn append_scopes(value: &Value, recorded_at: DateTime<Utc>, entries: &mut Vec<TemporalAppendEntry>) -> Result<(), TemporalError> {
     let Some(scopes) = value.as_array() else {
-        return;
+        return Ok(());
     };
     for scope in scopes {
-        let Some(raw) = scope.as_object().and_then(|object| object.get("@value")).and_then(Value::as_str) else {
+        let Some(object) = scope.as_object() else {
             continue;
         };
-        let observation = if raw == NULL_URI.as_str() {
-            ScopeObservation::Deleted
-        } else {
-            match ScopeBuf::new(raw.to_owned()) {
-                Ok(path) => ScopeObservation::Path(path),
-                Err(_) => continue,
-            }
+        let (paths, observed_at) = match object.get(expanded_properties::VALUE.as_str()).and_then(Value::as_array) {
+            Some(reified) => (reified.as_slice(), extract_observed_at(scope)?.unwrap_or(recorded_at)),
+            None => (from_ref(scope), recorded_at),
         };
-        entries.push(TemporalAppendEntry::Scope {
-            observation,
-            instance: InstanceIdentity::generate(),
-        });
+        for path in paths {
+            let Some(raw) = path.get("@value").and_then(Value::as_str) else {
+                continue;
+            };
+            let observation = if raw == NULL_URI.as_str() {
+                ScopeObservation::Deleted
+            } else {
+                match ScopeBuf::new(raw.to_owned()) {
+                    Ok(path) => ScopeObservation::Path(path),
+                    Err(_) => continue,
+                }
+            };
+            entries.push(TemporalAppendEntry::Scope {
+                observation,
+                observed_at: Some(observed_at),
+                instance: InstanceIdentity::generate(),
+            });
+        }
     }
+    Ok(())
 }
 
 /// Return whether an expanded object declares an NGSI-LD attribute type.
@@ -523,14 +542,14 @@ fn first_member<'a>(instance: &'a Value, key: &str) -> Option<&'a Value> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{append_intent::TemporalAppendEntry, error::TemporalError, intent_preparation::prepare};
+    use crate::{append_intent::TemporalAppendEntry, error::TemporalError, intent_preparation::prepare, scope_observation::ScopeObservation};
     use andromeda_context_commit::{
         history_record::{HistoryRecord, tombstone},
         write_id::WriteId,
         write_ordinal::WriteOrdinal,
         write_record::WriteRecord,
     };
-    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
+    use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, scope::grammar::ScopeBuf, uri::Uri};
     use andromeda_ngsi_ld_model::temporal::{TemporalHistoryRow, TemporalValue};
     use andromeda_ngsi_ld_number::JsonNumber;
     use chrono::{DateTime, TimeZone, Utc};
@@ -540,6 +559,50 @@ mod tests {
     /// Build a restored record so tests can hand `prepare` a fixed identity.
     fn record(recorded_at: DateTime<Utc>) -> WriteRecord {
         WriteRecord::restored(WriteId::mint(), recorded_at)
+    }
+
+    /// Clause 4.5.6: the temporal scope is the reified Property whose
+    /// `observedAt` dates it; a non-reified scope written through the Core
+    /// API is dated at the write ("a copy of the modifiedAt").
+    #[test]
+    fn scopes_are_prepared_with_their_observed_at_or_dated_at_the_write() {
+        let entity_id = "urn:ngsi-ld:Vehicle:1".parse::<Uri>().expect("valid entity identifier");
+        let payload = Arc::new(json!([{
+            "@id": entity_id,
+            "https://uri.etsi.org/ngsi-ld/scope": [
+                {"@value": "/Madrid"},
+                {
+                    "@type": ["https://uri.etsi.org/ngsi-ld/Property"],
+                    "https://uri.etsi.org/ngsi-ld/hasValue": [{"@value": "/Barcelona"}, {"@value": "urn:ngsi-ld:null"}],
+                    "https://uri.etsi.org/ngsi-ld/observedAt": [{"@type": "https://uri.etsi.org/ngsi-ld/DateTime", "@value": "2020-06-01T00:00:00Z"}]
+                }
+            ]
+        }]));
+        let history = [HistoryRecord::Observations(payload)];
+        let recorded_at = Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant");
+        let observed = Utc.with_ymd_and_hms(2020, 6, 1, 0, 0, 0).single().expect("valid instant");
+
+        let intent = prepare(&entity_id, &history, record(recorded_at), WriteOrdinal::at(0))
+            .expect("scopes prepare")
+            .expect("the scopes produce an intent");
+
+        let scopes: Vec<(ScopeObservation, Option<DateTime<Utc>>)> = intent
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                TemporalAppendEntry::Scope { observation, observed_at, .. } => Some((observation.clone(), *observed_at)),
+                TemporalAppendEntry::Observation { .. } | TemporalAppendEntry::Tombstone { .. } => None,
+            })
+            .collect();
+        let path = |raw: &str| ScopeObservation::Path(ScopeBuf::new(raw.to_owned()).expect("a valid scope"));
+        pretty_assertions::assert_eq!(
+            scopes,
+            vec![
+                (path("/Madrid"), Some(recorded_at)),
+                (path("/Barcelona"), Some(observed)),
+                (ScopeObservation::Deleted, Some(observed)),
+            ]
+        );
     }
 
     #[test]

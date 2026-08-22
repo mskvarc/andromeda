@@ -41,6 +41,10 @@ impl SpecVersion {
     pub const V1_9: SpecVersion = SpecVersion::new(1, 9);
     /// The version Andromeda conforms to.
     pub const CONFORMANT: SpecVersion = SpecVersion::V1_9;
+    /// The versions Table 4.3.6.8-1 names, oldest first: the points at which
+    /// the fallback tables change, and so the only versions a payload can be
+    /// said to be shaped for.
+    pub const SUPPORTED: [SpecVersion; 5] = [SpecVersion::V1_0, SpecVersion::V1_3, SpecVersion::V1_4, SpecVersion::V1_8, SpecVersion::V1_9];
 
     /// A version from its two components.
     pub const fn new(major: u16, minor: u16) -> SpecVersion {
@@ -55,6 +59,24 @@ impl SpecVersion {
     /// The minor version component.
     pub const fn minor(self) -> u16 {
         self.minor
+    }
+
+    /// The closest version in [`SpecVersion::SUPPORTED`] that is not newer
+    /// than this one.
+    ///
+    /// A version the fallback tables do not name (`1.5`, say) is served by the
+    /// rules of the nearest named version below it, because clause 4.3.6.8
+    /// introduces each fallback at a version and applies it to everything
+    /// older. Anything newer than [`SpecVersion::CONFORMANT`] snaps to it, and
+    /// anything older than [`SpecVersion::V1_0`] snaps up to `1.0`, the oldest
+    /// version the tables describe.
+    pub fn nearest_supported(self) -> SpecVersion {
+        SpecVersion::SUPPORTED
+            .iter()
+            .rev()
+            .copied()
+            .find(|supported| *supported <= self)
+            .unwrap_or(SpecVersion::V1_0)
     }
 }
 
@@ -108,6 +130,27 @@ mod tests {
     #[test]
     fn a_version_the_tables_do_not_name_still_parses_in_major_dot_minor_form() {
         pretty_assertions::assert_eq!(SpecVersion::from_str("1.5"), Ok(SpecVersion::new(1, 5)));
+    }
+
+    #[test]
+    fn an_unnamed_version_snaps_down_to_the_nearest_supported_one() {
+        pretty_assertions::assert_eq!(SpecVersion::new(1, 5).nearest_supported(), SpecVersion::V1_4);
+        pretty_assertions::assert_eq!(SpecVersion::new(1, 1).nearest_supported(), SpecVersion::V1_0);
+        pretty_assertions::assert_eq!(SpecVersion::new(1, 6).nearest_supported(), SpecVersion::V1_4);
+    }
+
+    #[test]
+    fn a_named_version_is_its_own_nearest_supported_version() {
+        for version in SpecVersion::SUPPORTED {
+            pretty_assertions::assert_eq!(version.nearest_supported(), version);
+        }
+    }
+
+    #[test]
+    fn versions_outside_the_supported_range_snap_to_its_ends() {
+        pretty_assertions::assert_eq!(SpecVersion::new(2, 0).nearest_supported(), SpecVersion::CONFORMANT);
+        pretty_assertions::assert_eq!(SpecVersion::new(1, 12).nearest_supported(), SpecVersion::CONFORMANT);
+        pretty_assertions::assert_eq!(SpecVersion::new(0, 9).nearest_supported(), SpecVersion::V1_0);
     }
 
     #[test]

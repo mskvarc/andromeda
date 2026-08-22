@@ -84,7 +84,9 @@ async fn delete_entity_registration_matches_entity_absent_not_404() {
 }
 
 /// A redirect registration forwards the delete and terminates local processing.
-/// Confirms REQ-PROV-42, 43.
+/// The registration precedes the local seed because clause 5.9.2.4 rejects a
+/// redirect registration when "an existing Entity already matches the Context
+/// Source Registration". Confirms REQ-PROV-42, 43.
 #[tokio::test]
 async fn delete_entity_exclusive_redirect_match_forwards() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -93,14 +95,13 @@ async fn delete_entity_exclusive_redirect_match_forwards() {
     let entity_id = topology.id("Vehicle:prov-delete-redirect");
     let reg_id = topology.id("registration:prov-delete-redirect");
 
-    seed_local(client, &brand_and_speed(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
         .entity_id(&entity_id)
         .operations(&["deleteEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local(client, &brand_and_speed(&entity_id)).await;
     let forward_path = format!("/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::DELETE, &forward_path, 204).await;
 
@@ -119,8 +120,10 @@ async fn delete_entity_exclusive_redirect_match_forwards() {
 }
 
 /// A redirect registration that does not advertise `deleteEntity` rejects the
-/// delete with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-44
-/// (complete-fail).
+/// delete with a bare `409 Conflict` and no forwarding. No local copy is seeded:
+/// clause 5.6.6.4 answers `Conflict` only "in case the complete delete Entity
+/// failed" and a partial success otherwise, so a locally deletable copy would
+/// turn the row into a `207`. Confirms REQ-PROV-44 (complete-fail).
 #[tokio::test]
 async fn delete_entity_op_unsupported_returns_409() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -128,8 +131,6 @@ async fn delete_entity_op_unsupported_returns_409() {
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delete-unsup");
     let reg_id = topology.id("registration:prov-delete-unsup");
-
-    seed_local(client, &brand_and_speed(&entity_id)).await;
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")

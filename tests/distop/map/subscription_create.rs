@@ -81,7 +81,13 @@ async fn sub_create_with_expires_at_stores_expiration() {
     body["expiresAt"] = json!("2999-01-01T00:00:00Z");
     let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .front()
+        .client()
+        .without_default_context()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription under the core context");
     assert_eq!(
         json_body(&retrieved)["expiresAt"].as_str(),
         Some("2999-01-01T00:00:00Z"),
@@ -154,7 +160,9 @@ async fn sub_create_is_active_false_status_paused() {
 }
 
 /// `watchedAttributes` terms are expanded and stored as IRIs (clause 5.8.1).
-/// Retrieving under the core context alone leaves the compound-context term
+/// Retrieving under the core context alone (clause 6.3.5: a GET without a
+/// `Link` header uses the default context, so the read-back must not carry
+/// the topology client's compound `Link`) leaves the compound-context term
 /// uncompacted, so its expanded IRI is visible. Confirms REQ-MAP-11.
 #[tokio::test]
 async fn sub_create_watched_attributes_expanded_and_stored() {
@@ -164,7 +172,14 @@ async fn sub_create_watched_attributes_expanded_and_stored() {
     set_watched_attributes(&mut body, &["speed"]);
     let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .front()
+        .client()
+        .without_default_context()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription");
+
     let watched = json_body(&retrieved)["watchedAttributes"]
         .as_array()
         .unwrap_or_else(|| unreachable!("watchedAttributes round-trips"))
@@ -197,16 +212,16 @@ async fn sub_create_notification_context_resolves_from_jsonld_context() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An unreachable `jsonldContext` is rejected `503 LdContextNotAvailable`
+/// An unreachable `jsonldContext` is rejected `LdContextNotAvailable`, mapped to `504` by Table 6.3.2-1,
 /// (clause 5.8.1). Confirms REQ-MAP-15.
 #[tokio::test]
-async fn sub_create_unreachable_jsonld_context_returns_503() {
+async fn sub_create_unreachable_jsonld_context_returns_504() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:unreachable-context");
     let mut body = subscription(&id, INERT_ENDPOINT);
     body["jsonldContext"] = json!("http://127.0.0.1:9/context.jsonld");
     let response = topology.front().client().create_subscription(&body).await.expect("create subscription");
-    assert_status(&response, 503);
+    assert_status(&response, 504);
     assert_problem_details(&response, LD_CONTEXT_NOT_AVAILABLE);
     topology.finish().await.expect("topology cleanup");
 }

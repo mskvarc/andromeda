@@ -9,6 +9,7 @@ use crate::{
         history_reader::{
             AggregationPushdown,
             HistoryVisibility,
+            RecordedValueKind,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -22,6 +23,7 @@ use crate::{
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
 use andromeda_ngsi_ld_lexicon::{
+    attribute_name::AttributeName,
     attribute_type::AttributeType,
     entity_type_name::EntityTypeName,
     instance_identity::InstanceIdentity,
@@ -38,7 +40,12 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
-use std::{collections::HashMap, num::NonZeroU32, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroU32,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::sync::Mutex;
 
 #[derive(Default)]
@@ -298,6 +305,9 @@ impl TemporalHistoryReader for RecordingSink {
 
     async fn query_entity_aggregation(&self, _entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::operation_not_supported("recording sink has no aggregation"))
+    }
+    async fn recorded_value_kinds(&self, _attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+        Ok(HashMap::new())
     }
 }
 

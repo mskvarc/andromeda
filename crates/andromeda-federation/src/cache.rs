@@ -8,13 +8,13 @@
 //! from entries built under its previous definition, and a deleted one is
 //! never selected at all.
 
+use crate::outcome::ForwardedResponse;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use iri_rs::IriRefBuf;
-use serde_json::Value;
 use std::time::{Duration, Instant};
 use url::Url;
 
@@ -57,10 +57,8 @@ impl CacheKey {
 /// One cached response and when it stops being reusable.
 #[derive(Debug, Clone)]
 struct CachedResponse {
-    /// The parsed body the source answered with.
-    body: Value,
-    /// The warnings that accompanied it.
-    warnings: Vec<NgsiLdWarning>,
+    /// What the source answered with.
+    response: ForwardedResponse,
     /// The instant the `cacheDuration` elapses.
     expires_at: Instant,
 }
@@ -89,23 +87,23 @@ impl ForwardedGetCache {
     }
 
     /// A still-valid cached response, tagged with the 110 warning clause 6.3.17 requires.
-    pub(crate) fn lookup(&self, key: &CacheKey) -> Option<(Value, Vec<NgsiLdWarning>)> {
+    pub(crate) fn lookup(&self, key: &CacheKey) -> Option<ForwardedResponse> {
         let entry = self.entries.get(key)?;
         if entry.expires_at <= Instant::now() {
             drop(entry);
             self.entries.remove(key);
             return None;
         }
-        let mut warnings = entry.warnings.clone(); // clone: the caller owns the warnings it reports
-        warnings.push(NgsiLdWarning::ResponseIsStale(format!(
+        let mut response = entry.response.clone(); // clone: the cache keeps its copy for the next hit
+        response.warnings.push(NgsiLdWarning::ResponseIsStale(format!(
             "cached response of registration {} reused within its cacheDuration",
             key.registration
         )));
-        Some((entry.body.clone(), warnings)) // clone: the cache keeps its copy for the next hit
+        Some(response)
     }
 
     /// Remember a fresh response for `duration`.
-    pub(crate) fn store(&self, key: CacheKey, body: &Value, warnings: &[NgsiLdWarning], duration: Duration) {
+    pub(crate) fn store(&self, key: CacheKey, response: &ForwardedResponse, duration: Duration) {
         if self.entries.len() >= self.max_entries {
             let now = Instant::now();
             self.entries.retain(|_, entry| entry.expires_at > now);
@@ -116,8 +114,7 @@ impl ForwardedGetCache {
         self.entries.insert(
             key,
             CachedResponse {
-                body: body.clone(),          // clone: the cache keeps its own copy beside the response being returned
-                warnings: warnings.to_vec(), // clone: same
+                response: response.clone(), // clone: the cache keeps its own copy beside the response being returned
                 expires_at: Instant::now() + duration,
             },
         );
@@ -126,12 +123,23 @@ impl ForwardedGetCache {
 
 #[cfg(test)]
 mod tests {
-    use crate::cache::{CacheKey, ForwardedGetCache};
+    use crate::{
+        cache::{CacheKey, ForwardedGetCache},
+        outcome::ForwardedResponse,
+    };
     use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
     use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use std::time::Duration;
     use url::Url;
+
+    fn response(body: Value) -> ForwardedResponse {
+        ForwardedResponse {
+            body,
+            warnings: Vec::new(),
+            entity_map: None,
+        }
+    }
 
     fn registration(cache_duration: Option<&str>, modified_at: &str) -> ContextSourceRegistration {
         let mut document = json!({
@@ -159,10 +167,10 @@ mod tests {
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let key = CacheKey::new(&registration, &url(), &[]);
         assert!(cache.lookup(&key).is_none());
-        cache.store(key.clone(), &json!([{"id": "urn:ngsi-ld:Vehicle:1"}]), &[], Duration::from_secs(10)); // clone: looked up below
-        let (body, warnings) = cache.lookup(&key).expect("hit");
-        pretty_assertions::assert_eq!(body, json!([{"id": "urn:ngsi-ld:Vehicle:1"}]));
-        assert!(matches!(warnings.as_slice(), [NgsiLdWarning::ResponseIsStale(_)]));
+        cache.store(key.clone(), &response(json!([{"id": "urn:ngsi-ld:Vehicle:1"}])), Duration::from_secs(10)); // clone: looked up below
+        let hit = cache.lookup(&key).expect("hit");
+        pretty_assertions::assert_eq!(hit.body, json!([{"id": "urn:ngsi-ld:Vehicle:1"}]));
+        assert!(matches!(hit.warnings.as_slice(), [NgsiLdWarning::ResponseIsStale(_)]));
     }
 
     #[test]
@@ -170,7 +178,7 @@ mod tests {
         let cache = ForwardedGetCache::new(8);
         let registration = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let key = CacheKey::new(&registration, &url(), &[]);
-        cache.store(key.clone(), &json!([]), &[], Duration::ZERO); // clone: looked up below
+        cache.store(key.clone(), &response(json!([])), Duration::ZERO); // clone: looked up below
         assert!(cache.lookup(&key).is_none());
         assert!(cache.entries.is_empty());
     }
@@ -180,7 +188,7 @@ mod tests {
         let cache = ForwardedGetCache::new(8);
         let before = registration(Some("PT10S"), "2024-01-01T00:00:00Z");
         let after = registration(Some("PT10S"), "2024-06-01T00:00:00Z");
-        cache.store(CacheKey::new(&before, &url(), &[]), &json!([]), &[], Duration::from_secs(10));
+        cache.store(CacheKey::new(&before, &url(), &[]), &response(json!([])), Duration::from_secs(10));
         assert!(cache.lookup(&CacheKey::new(&after, &url(), &[])).is_none());
     }
 
@@ -194,8 +202,8 @@ mod tests {
             &Url::parse("https://peer.example.org/ngsi-ld/v1/entities?type=Car").expect("valid URL"),
             &[],
         );
-        cache.store(first, &json!([]), &[], Duration::from_secs(10));
-        cache.store(second.clone(), &json!([]), &[], Duration::from_secs(10)); // clone: looked up below
+        cache.store(first, &response(json!([])), Duration::from_secs(10));
+        cache.store(second.clone(), &response(json!([])), Duration::from_secs(10)); // clone: looked up below
         assert!(cache.lookup(&second).is_none());
         pretty_assertions::assert_eq!(cache.entries.len(), 1);
     }

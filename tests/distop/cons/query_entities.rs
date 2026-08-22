@@ -131,8 +131,11 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
 }
 
 /// Exclusive, redirect, and inclusive sources each return an Entity Array, and the
-/// aggregated response contains entities from all three (clause 5.7.2.4). Confirms
-/// REQ-CONS-29.
+/// aggregated response contains entities from all three (clause 5.7.2.4). The
+/// exclusive registration names its entity id and attributes, as clause 4.3.6.3
+/// requires ("An exclusive registration shall always relate to specific
+/// Attributes found on a single Entity. Thus, the registration shall define
+/// both: An entity id ... Attributes."). Confirms REQ-CONS-29.
 #[tokio::test]
 async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -144,10 +147,12 @@ async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
         let source = format!("/{mode}");
         let entity_id = topology.id(&format!("Vehicle:cons29-{mode}"));
         let registration_id = topology.id(&format!("registration:cons29-{mode}"));
-        let registration = CsrBuilder::new(&registration_id, &mock.url(&source))
-            .mode(mode)
-            .operations(&["queryEntity"])
-            .build();
+        let builder = CsrBuilder::new(&registration_id, &mock.url(&source)).mode(mode).operations(&["queryEntity"]);
+        let registration = match mode {
+            "exclusive" => builder.entity_id(&entity_id).property_names(&["speed"]).build(),
+            "redirect" | "inclusive" => builder.build(),
+            other => unreachable!("the mode loop names only the three proxying modes, got {other}"),
+        };
         assert_status(&front.client().create_registration(&registration).await.expect("register"), 201);
         mock.set_stub_with_body(Method::GET, &format!("{source}/ngsi-ld/v1/entities"), 200, &json!([vehicle(&entity_id, 50)]))
             .await;

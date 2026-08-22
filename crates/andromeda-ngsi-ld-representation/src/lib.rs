@@ -16,7 +16,9 @@
 //! [`normalization`] is the one transformation that belongs here rather than
 //! with a renderer: clause 4.5.2.3 lets a *request* abbreviate an attribute, and
 //! rewriting that into the normalized form of clause 4.5.1 happens before any
-//! resource type exists to hold it.
+//! resource type exists to hold it. [`attribute_type_validation`] is its
+//! gatekeeper: a node that declares a `type` outside clause 5.2.4 is rejected
+//! before normalization could mistake it for a value.
 //!
 //! How a client *asks* for one is not here. Media-type negotiation, version
 //! conformance and language ranges arrive as HTTP headers and are spelled by
@@ -27,9 +29,11 @@
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
 
+pub mod attribute_type_validation;
 pub mod entity_members;
 pub mod join_mode;
 pub mod linked_resolution_failure;
+pub mod merge_representation;
 pub mod normalization;
 pub mod response_format;
 pub mod sys_attrs;

@@ -15,13 +15,16 @@ pub mod headers;
 pub mod linked_resolution_warning;
 pub mod pagination;
 pub mod problem_response;
+pub mod provision;
 pub mod render;
 pub mod single;
 pub mod tenant_state_rejection;
+pub mod version_negotiation;
 
 #[cfg(test)]
 andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
+        "andromeda-federation",
         "andromeda-http-headers",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",
@@ -31,6 +34,7 @@ andromeda_architecture_checks::dependency_boundary! {
         "andromeda-ngsi-ld-representation",
     ],
     allow_workspace_dev_dependencies: [
+        "andromeda-ngsi-ld-model",
         "andromeda-ngsi-ld-vocabulary",
     ],
     allow_production_dependencies: ["axum"],

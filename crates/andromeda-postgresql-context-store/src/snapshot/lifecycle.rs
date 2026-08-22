@@ -178,15 +178,28 @@ pub(crate) async fn snapshot_exists(pool: &PgPool, id: &Uri) -> Result<bool, Sna
     Ok(row.is_some())
 }
 
-/// The next snapshot awaiting preparation: highest priority first, oldest
-/// within a priority.
-pub(crate) async fn next_preparing_snapshot(pool: &PgPool) -> Result<Option<Snapshot>, SnapshotError> {
+/// `status = 'preparing'::snapshot_status`: the column is the PostgreSQL enum,
+/// so the literal is cast to it rather than bound as text, which the enum has
+/// no equality operator for.
+fn status_is_preparing() -> SimpleExpr {
+    Expr::col(Snapshots::Status).eq(cast(Expr::val(<&str>::from(SnapshotStatus::Preparing)), PostgresType::SnapshotStatus))
+}
+
+/// The statement selecting the next snapshot awaiting preparation.
+fn next_preparing_sql() -> SelectStatement {
     let mut select = snapshot_select();
     select
-        .and_where(Expr::col(Snapshots::Status).eq("preparing"))
+        .and_where(status_is_preparing())
         .order_by(Snapshots::SnapshotPriority, Order::Desc)
         .order_by(Snapshots::CreatedAt, Order::Asc)
         .limit(1);
+    select
+}
+
+/// The next snapshot awaiting preparation: highest priority first, oldest
+/// within a priority.
+pub(crate) async fn next_preparing_snapshot(pool: &PgPool) -> Result<Option<Snapshot>, SnapshotError> {
+    let select = next_preparing_sql();
     let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .fetch_optional(pool)
@@ -248,7 +261,7 @@ pub(crate) async fn update_status(
         )
         .value(Snapshots::ModifiedAt, now())
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
-        .and_where(Expr::col(Snapshots::Status).eq("preparing"))
+        .and_where(status_is_preparing())
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -321,7 +334,17 @@ pub(crate) async fn touch_last_used(pool: &PgPool, id: &Uri) -> Result<(), Snaps
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::lifecycle::{clone_snapshot_sql, snapshot_create_sql};
+    use crate::snapshot::lifecycle::{clone_snapshot_sql, next_preparing_sql, snapshot_create_sql};
+    use sea_query::PostgresQueryBuilder;
+
+    /// The `snapshot_status` column is a PostgreSQL enum: a text bind has no
+    /// equality operator against it, so the preparing marker is cast.
+    #[test]
+    fn the_preparing_selection_casts_its_status_marker_to_the_enum() {
+        let sql = next_preparing_sql().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"status\" = ('preparing'::snapshot_status)"), "{sql}");
+        assert!(sql.contains("ORDER BY \"snapshot_priority\" DESC, \"created_at\" ASC LIMIT 1"), "{sql}");
+    }
 
     #[test]
     fn the_create_casts_its_status_marker_and_stamps_no_clock() {

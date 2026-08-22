@@ -1,9 +1,9 @@
 //! Compiled context-source-subscription cache.
 
-use crate::{compiled::CompiledCsrSubscription, matching::matches_csource_subscription};
+use crate::{compiled::CompiledCsrSubscription, csource_matching::matches_csource_subscription};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
 use dashmap::DashMap;
-use serde_json::Value;
 use std::sync::Arc;
 
 /// Thread-safe compiled context-source-subscription cache.
@@ -43,8 +43,8 @@ impl CsourceSubscriptionCache {
         self.inner.is_empty()
     }
 
-    /// Find compiled subscriptions matching one context-source registration representation.
-    pub fn find_matching(&self, registration: &Value) -> Vec<Arc<CompiledCsrSubscription>> {
+    /// Find compiled subscriptions matching one context-source registration.
+    pub fn find_matching(&self, registration: &ContextSourceRegistration) -> Vec<Arc<CompiledCsrSubscription>> {
         self.inner
             .iter()
             .filter_map(|entry| matches_csource_subscription(entry.value(), registration).then(|| Arc::clone(entry.value())))

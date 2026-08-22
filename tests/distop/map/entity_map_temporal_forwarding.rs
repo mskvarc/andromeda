@@ -1,8 +1,10 @@
 //! Temporal EntityMap forwarding to supporting temporal Context Sources (clause
-//! 5.14.5): the forwarded createEntityMapQueryTemporalEntity, filter stripping,
-//! and the remote map folded into `linkedMaps` and the `entityMap` element, plus
-//! the local success result. Forwarding rows are `T-MOCK`, seeded `UNKNOWN`; the
-//! stored/success rows are `T-LOCAL`.
+//! 5.14.5): the forwarded createEntityMapQueryTemporal, filter stripping, and
+//! the remote map folded into `linkedMaps` and the `entityMap` element, plus the
+//! local success result. The source advertises `createEntityMapQueryTemporal`
+//! and `queryTemporal` explicitly: Table 4.20-2 lists no temporal operation in
+//! `federationOps`, so that group alone would never match a temporal query.
+//! Forwarding rows are `T-MOCK`; the stored/success rows are `T-LOCAL`.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -46,7 +48,7 @@ async fn temporal_source(topology: &DistributedTopology, registration_local: &st
     let registration = CsrBuilder::new(&topology.id(registration_local), &mock.url(""))
         .mode("inclusive")
         .entity_type("Vehicle")
-        .operations(&["federationOps"])
+        .operations(&["createEntityMapQueryTemporal", "queryTemporal"])
         .build();
     assert_status(
         &topology
@@ -96,15 +98,22 @@ async fn emt_non_local_forwards_to_supporting_temporal_csrs() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A forwarded temporal split query strips the local filters (clause 5.14.5).
-/// Confirms REQ-MAP-151.
+/// A forwarded temporal query under `splitEntities=true` strips the local
+/// filters (clause 5.14.5.4, which applies the clause 5.7.2.4 split-entities
+/// rule: the `q` filter is evaluated after re-assembly, not at the source). The
+/// parameter is sent explicitly because the deployment default is complete
+/// entities. Confirms REQ-MAP-151.
 #[tokio::test]
 async fn emt_split_forward_strips_filters() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
     let remote_entity = topology.id("Vehicle:temporal-strip-remote");
     let mock = temporal_source(&topology, "registration:temporal-strip", &remote_entity).await;
     seed_temporal(topology.front().client(), &topology.id("Vehicle:temporal-strip-local"), 20).await;
-    let created = create_temporal_entity_map(topology.front().client(), &format!("type=Vehicle&q=speed%3E10&{BEFORE_2022}")).await;
+    let created = create_temporal_entity_map(
+        topology.front().client(),
+        &format!("type=Vehicle&q=speed%3E10&splitEntities=true&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&created, 201);
     let forwarded = mock.next_request(FORWARD_TIMEOUT).await;
     assert!(

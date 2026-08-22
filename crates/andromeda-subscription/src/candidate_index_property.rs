@@ -12,6 +12,7 @@ use andromeda_ngsi_ld_model::{
     notification::{ChangeOrigin, NotificationTrigger},
     subscription::{EntitySelector, SubscriptionStatus},
 };
+use andromeda_ngsi_ld_query::projection::compiled::Projection;
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
 use chrono::{DateTime, Utc};
 use proptest::{
@@ -170,6 +171,7 @@ fn build_subscription(ordinal: usize, desc: &SubscriptionDesc) -> Result<Compile
         notification_join_level: NonZeroU32::MIN,
         compiled_csf: None,
         local_only: false,
+        notification_projection: Projection::default(),
     })
 }
 

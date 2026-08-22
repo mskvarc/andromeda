@@ -20,7 +20,8 @@
 //! them: [`context_cache::ContextCache`], the durable cache a broker may
 //! attach, and `andromeda_ngsi_ld_query::term_expander::TermExpander`, which
 //! this crate implements in [`term_expansion`] so the query language never
-//! names JSON-LD.
+//! names JSON-LD. Its inverse, `andromeda_ngsi_ld_query::term_compactor::TermCompactor`,
+//! is implemented in [`term_compaction`] for the same reason.
 
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
@@ -38,6 +39,7 @@ pub mod engine;
 pub mod error;
 pub mod hit_counter;
 pub mod loader;
+pub mod term_compaction;
 pub mod term_expansion;
 
 #[cfg(test)]

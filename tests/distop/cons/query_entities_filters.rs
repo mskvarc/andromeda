@@ -275,7 +275,10 @@ async fn distop_query_entities_datasetid_no_match_omits_attribute() {
 }
 
 /// A `local=true` query with `orderBy` on an attribute member orders the result by
-/// that member, ascending then descending (clause 5.7.2.4). Confirms REQ-CONS-38.
+/// that member, ascending then descending (clause 5.7.2.4). The descending
+/// direction is the `;desc` suffix of the clause 4.23.3 grammar
+/// (`OrderingTerm = AttrName *1(DirectionTerm)`, `DirectionTerm = %x3B
+/// directionOp`), sent percent-encoded. Confirms REQ-CONS-38.
 #[tokio::test]
 async fn distop_query_entities_orderby_local_orders_by_member() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -301,7 +304,7 @@ async fn distop_query_entities_orderby_local_orders_by_member() {
 
     let descending = front
         .client()
-        .query_entities("type=Vehicle&local=true&orderBy=-speed", "application/ld+json", None)
+        .query_entities("type=Vehicle&local=true&orderBy=speed%3Bdesc", "application/ld+json", None)
         .await
         .expect("desc");
     assert_status(&descending, 200);

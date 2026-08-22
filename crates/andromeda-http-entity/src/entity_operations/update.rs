@@ -1,20 +1,15 @@
-//! HTTP handling for the update entity operation.
+//! HTTP handling for the batch update entity operation (clause 5.6.9).
 
 use crate::entity_operations::{
     AcceptFormatNoGeo,
     BatchBody,
     BatchOperationResult,
+    BatchProvisionOperation,
     ContextUrl,
     EntityResultExt,
     EntityTenantState,
-    EntityTypeValue,
-    ForwardBatchProvisionRequest,
-    ForwardingModes,
-    ForwardingOperation,
     IncomingVia,
     IntoResponse,
-    Json,
-    NgsiLdBatchResponse,
     NgsiLdErrorType,
     OriginalUri,
     OverwritePolicy,
@@ -22,20 +17,21 @@ use crate::entity_operations::{
     ProblemResponse,
     RequestOverwritePolicy,
     Response,
-    ResponseMediaType,
-    ResponsePayload,
     StatusCode,
+    TriggeringRequest,
     UpdateParams,
     ValidatedQuery,
     apply_preference_applied,
     async_preference,
     batch_operation_result,
-    internal_error,
+    classify_entity_error,
+    forward_entities,
+    local_remainder,
+    merge_forwarded,
+    multi_status_response,
     parse_batch_entities,
     public_error,
-    start_rendering,
 };
-use andromeda_federation::request::TriggeringRequest;
 use andromeda_http_extraction::tenant_state;
 
 pub(crate) async fn batch_update(
@@ -60,68 +56,38 @@ pub(crate) async fn batch_update(
         ));
     }
 
-    let no_overwrite = params.options == Some(RequestOverwritePolicy::NoOverwrite);
-    let overwrite = if no_overwrite {
-        OverwritePolicy::Preserve
-    } else {
-        OverwritePolicy::Overwrite
+    let overwrite = match params.options {
+        Some(RequestOverwritePolicy::NoOverwrite) => OverwritePolicy::Preserve,
+        Some(RequestOverwritePolicy::Overwrite) | None => OverwritePolicy::Overwrite,
     };
 
-    // Distributed forwarding per spec 5.6.9
-    let entity_type = entities.first().and_then(|entity| match &entity.type_ {
-        EntityTypeValue::Single(name) => Some(name),
-        EntityTypeValue::Multiple(names) => names.first(),
-    });
-    let qs = params.options.map(|option| format!("options={option}"));
-    let forwarded = state
-        .forwarding
-        .forward_batch_provision(ForwardBatchProvisionRequest {
-            entity_type_compact: entity_type,
-            body: &body,
-            context: &context,
-            operation: ForwardingOperation::UpdateBatch,
-            batch_path: "/entityOperations/update",
-            query_string: qs.as_deref(),
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
-            },
-        })
-        .await
-        .with_entity_instance(&uri)?;
+    let query_string = params.options.map(|option| format!("options={option}"));
+    let triggering = TriggeringRequest {
+        via: incoming_via.as_ref(),
+        headers: Some(&headers),
+    };
+    let forwarded = forward_entities(
+        &state,
+        BatchProvisionOperation::Update(overwrite),
+        &entities,
+        &context,
+        query_string.as_deref(),
+        triggering,
+        &uri,
+    )
+    .await?;
 
-    let modes = ForwardingModes::from_results(&forwarded);
-
-    if modes.has_exclusive || modes.has_redirect {
-        // SAFETY: guarded by has_exclusive/has_redirect which require non-empty forwarded
-        let Some(first) = forwarded.first() else {
-            return Err(internal_error(&"Expected forwarded result", &uri));
-        };
-        let status = StatusCode::from_u16(first.status()).unwrap_or(StatusCode::NO_CONTENT);
-        if let Some(resp_body) = first.body() {
-            return Ok((status, Json(resp_body.clone())).into_response());
-        }
-        return Ok(status.into_response());
-    }
-
-    let mode = service.effective_side_effect_mode(async_preference(&prefer), entities.len());
-    let batch = service.batch_update(&entities, &context, overwrite, mode).await.with_entity_instance(&uri)?;
-    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, super::super::entity_error::classify_entity_error);
+    // Clause 5.6.9.4: the local phase updates what proxied registrations left.
+    let remainder = local_remainder(entities, &forwarded);
+    let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
+    let batch = service.batch_update(&remainder, &context, overwrite, mode).await.with_entity_instance(&uri)?;
+    let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut parse_errors);
+    merge_forwarded(&mut result, &forwarded);
 
     if result.errors.is_empty() {
         Ok(apply_preference_applied(StatusCode::NO_CONTENT.into_response(), mode))
     } else {
-        // Clause 6.3.6: the 207 Multi-Status body is always application/json,
-        // regardless of the negotiated Accept, so it carries no JSON-LD @context.
-        let value = serde_json::to_value(&result).with_entity_instance(&uri)?;
-        let rendered = start_rendering(ResponseMediaType::Json, &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Batch(value))
-            .render()
-            .with_entity_instance(&uri)?;
-        Ok(apply_preference_applied(
-            NgsiLdBatchResponse::new(StatusCode::MULTI_STATUS, rendered).into_response(),
-            mode,
-        ))
+        multi_status_response(&result, &context, &uri, mode)
     }
 }

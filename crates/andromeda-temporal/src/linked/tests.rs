@@ -8,6 +8,7 @@ use crate::{
         history_reader::{
             AggregationPushdown,
             HistoryVisibility,
+            RecordedValueKind,
             TemporalHistoryObservation,
             TemporalHistoryOutcome,
             TemporalHistoryReader,
@@ -349,6 +350,9 @@ impl TemporalHistoryReader for StubBroker {
 
     async fn query_entity_aggregation(&self, _entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(unsupported("query_entity_aggregation"))
+    }
+    async fn recorded_value_kinds(&self, _attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+        Ok(HashMap::new())
     }
 }
 

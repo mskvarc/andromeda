@@ -30,7 +30,9 @@ async fn query_reusing_map(topology: &DistributedTopology, query: &str, map: &st
 
 /// A minted query map fixes the CSR set on reuse and is recreated on a bogus map:
 /// a source registered after minting is consulted only after recreation
-/// (clause 5.5.14). Confirms REQ-CONS-23.
+/// (clause 5.5.14). Reusing the live map answers `200`; the bogus-map leg mints
+/// a replacement and answers `201` (Table 6.4.3.2-3: "201 Created (in case an
+/// EntityMap has been (re)created)"). Confirms REQ-CONS-23.
 #[tokio::test]
 async fn distop_query_entities_map_location_reused_or_recreated() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -91,7 +93,7 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
     );
 
     let bogus = topology.id("EntityMap:bogus");
-    assert_status(&query_reusing_map(&topology, "type=Vehicle", &bogus).await, 200);
+    assert_status(&query_reusing_map(&topology, "type=Vehicle", &bogus).await, 201);
     assert!(
         mock.get_count(Method::GET, "/s2/ngsi-ld/v1/entities").await > 0,
         "a bogus map is recreated by fresh discovery, now consulting the new source"

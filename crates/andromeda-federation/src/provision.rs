@@ -1,13 +1,13 @@
-//! Federated current-entity provision operations (clauses 4.3.6, 5.6, 6.3.17).
+//! Federated single-entity provision operations (clauses 4.3.6, 5.6, 6.3.17),
+//! on the current entity or on its temporal evolution.
 
 use crate::{
     FederationService,
     error::FederationError,
-    forwarding_url::{build_create_url, forwarding_url},
+    forwarding_url::forwarding_url,
     outcome::{ForwardedWriteOutcome, ForwardedWriteResult, TransportFailure},
-    registration_loops,
-    registration_selection::{collect_exclusive_attrs, collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
-    request::{ForwardBatchProvisionRequest, ForwardProvisionRequest, TriggeringRequest},
+    registration_selection::{collect_matching_attrs, csr_has_matching_information, filter_fragment_for_registration},
+    request::{ForwardProvisionRequest, TriggeringRequest},
     transport::ForwardedRequest,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -20,21 +20,21 @@ use tracing::{debug, warn};
 use url::Url;
 
 /// One write to forward to one registration, decided before it is sent.
-struct PlannedWrite<'a> {
+pub(crate) struct PlannedWrite<'a> {
     /// The registration to contact.
-    registration: ContextSourceRegistration,
+    pub(crate) registration: ContextSourceRegistration,
     /// The forwarded URL.
-    url: Result<Url, FederationError>,
+    pub(crate) url: Result<Url, FederationError>,
     /// The HTTP method.
-    method: reqwest::Method,
+    pub(crate) method: reqwest::Method,
     /// The body narrowed to what the registration covers.
-    body: Option<Vec<u8>>,
+    pub(crate) body: Option<Vec<u8>>,
     /// The attributes an exclusive registration claims from the payload.
-    proxied_attrs: Vec<AttributeName>,
+    pub(crate) proxied_attrs: Vec<AttributeName>,
     /// The context of the triggering request.
-    context: &'a ContextSpec,
+    pub(crate) context: &'a ContextSpec,
     /// The triggering request.
-    triggering: TriggeringRequest<'a>,
+    pub(crate) triggering: TriggeringRequest<'a>,
 }
 
 impl FederationService {
@@ -86,10 +86,11 @@ impl FederationService {
         let planned: Vec<PlannedWrite<'_>> = matching_csrs
             .into_iter()
             .filter_map(|csr| {
-                let url = if request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none() {
-                    build_create_url(&csr.access.endpoint)
-                } else {
-                    let mut path = vec!["entities", request_ref.entity_id.as_str()];
+                // A POST below the bare resource creates (clauses 6.4.3.1 and
+                // 6.18.3.1); every other write addresses the entity itself.
+                let mut path = request_ref.resource.segments().to_vec();
+                if !(request_ref.method == reqwest::Method::POST && request_ref.path_suffix.is_none()) {
+                    path.push(request_ref.entity_id.as_str());
                     path.extend(
                         request_ref
                             .path_suffix
@@ -97,8 +98,8 @@ impl FederationService {
                             .flat_map(|suffix| suffix.split('/'))
                             .filter(|segment| !segment.is_empty()),
                     );
-                    forwarding_url(&csr.access.endpoint, &path, request_ref.query_string.unwrap_or(""))
-                };
+                }
+                let url = forwarding_url(&csr.access.endpoint, &path, request_ref.query_string.unwrap_or(""));
 
                 let proxied_attrs = if is_proxied(&csr) {
                     collect_matching_attrs(
@@ -136,71 +137,8 @@ impl FederationService {
         Ok(results)
     }
 
-    /// Forward a batch provision operation to matching context sources.
-    ///
-    /// Per spec 5.6.7-5.6.10, 5.6.20: batch operations iterate over CSRs,
-    /// filter the input array per CSR, and forward matching entities.
-    /// `batch_path` is the operation endpoint below the API base, such as
-    /// `/entityOperations/create`.
-    pub async fn forward_batch_provision(&self, request: ForwardBatchProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, FederationError> {
-        if self.is_loop_detected(request.triggering.via) {
-            debug!("Loop detected in Via header chain, skipping batch provision forwarding");
-            return Ok(Vec::new());
-        }
-
-        let prepared_context = self.engine.prepare_term_context(request.context);
-        let expanded_type = if let Some(t) = request.entity_type_compact {
-            Some(self.engine.expand_type(t.as_str(), &prepared_context).await?)
-        } else {
-            None
-        };
-
-        let csrs = self.csr_repo.find_matching(expanded_type.as_ref(), None).await?;
-        // Per spec 4.3.6.2: auxiliary CSRs only supplement retrieval, never receive writes.
-        let mut matching_csrs = Vec::new();
-        let mut results = Vec::new();
-        for csr in csrs.into_iter().filter(|csr| csr.access.mode != Some(ForwardingMode::Auxiliary)) {
-            if request.operation.matches(&csr) {
-                matching_csrs.push(csr);
-            } else if is_proxied(&csr) {
-                // Clauses 5.6.7.4 and following: a proxied registration that
-                // does not support the batch operation still owns its data.
-                let proxied_attrs = collect_exclusive_attrs(&csr);
-                let mode = proxied_mode(&csr);
-                results.push(ForwardedWriteResult {
-                    registration_id: csr.id,
-                    mode,
-                    outcome: ForwardedWriteOutcome::NotAdvertised,
-                    proxied_attrs,
-                });
-            }
-        }
-
-        let request_ref = &request;
-        let planned: Vec<PlannedWrite<'_>> = matching_csrs
-            .into_iter()
-            .map(|csr| {
-                let segments = request_ref.batch_path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
-                let url = forwarding_url(&csr.access.endpoint, &segments, request_ref.query_string.unwrap_or(""));
-                let proxied_attrs = if is_proxied(&csr) { collect_exclusive_attrs(&csr) } else { Vec::new() };
-                PlannedWrite {
-                    registration: csr,
-                    url,
-                    method: reqwest::Method::POST,
-                    body: Some(request_ref.body.to_vec()),
-                    proxied_attrs,
-                    context: request_ref.context,
-                    triggering: request_ref.triggering,
-                }
-            })
-            .collect();
-
-        results.extend(self.execute_writes(planned).await);
-        Ok(results)
-    }
-
     /// Send every planned write, at most `csr_concurrency` at a time.
-    async fn execute_writes(&self, planned: Vec<PlannedWrite<'_>>) -> Vec<ForwardedWriteResult> {
+    pub(crate) async fn execute_writes(&self, planned: Vec<PlannedWrite<'_>>) -> Vec<ForwardedWriteResult> {
         stream::iter(planned)
             .map(|write| self.execute_write(write))
             .buffer_unordered(self.csr_concurrency)
@@ -209,7 +147,7 @@ impl FederationService {
     }
 
     /// Send one planned write and classify what came back.
-    async fn execute_write(&self, write: PlannedWrite<'_>) -> ForwardedWriteResult {
+    pub(crate) async fn execute_write(&self, write: PlannedWrite<'_>) -> ForwardedWriteResult {
         let PlannedWrite {
             registration,
             url,
@@ -233,7 +171,7 @@ impl FederationService {
     }
 
     /// Make a write request (POST/PUT/PATCH/DELETE) to a context source endpoint.
-    async fn forward_write(
+    pub(crate) async fn forward_write(
         &self,
         registration: &ContextSourceRegistration,
         url: Result<Url, FederationError>,
@@ -242,7 +180,7 @@ impl FederationService {
         context: &ContextSpec,
         triggering: TriggeringRequest<'_>,
     ) -> ForwardedWriteOutcome {
-        if registration_loops(registration, triggering.via) {
+        if self.registration_loops(registration, triggering.via) {
             return ForwardedWriteOutcome::LoopDetected;
         }
         let unreachable = |detail: String| ForwardedWriteOutcome::Transport(TransportFailure::Unreachable { detail });
@@ -316,6 +254,9 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
         ForwardedWriteOutcome::NotAdvertised => Some(FederationError::conflict(format!(
             "registration {registration} covers the data but does not advertise the requested operation"
         ))),
+        ForwardedWriteOutcome::UpsertFollowUpNotAdvertised => Some(FederationError::OperationNotSupported {
+            detail: format!("registration {registration} reported the entity exists and advertises no operation to update it"),
+        }),
         ForwardedWriteOutcome::LoopDetected => Some(FederationError::LoopDetected { registration }),
         ForwardedWriteOutcome::Transport(TransportFailure::Timeout { detail }) => Some(FederationError::GatewayTimeout {
             registration,
@@ -327,6 +268,13 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
             detail: detail.clone(), // clone: same
         }),
         ForwardedWriteOutcome::RemoteHttpFailure { status: 404, .. } => Some(FederationError::RemoteNotFound { registration }),
+        // Clause 6.3.17 asks for the most informative error response; a
+        // source that refused the operation itself (409, 422) is reported as
+        // that refusal rather than folded into 502 Bad Gateway.
+        ForwardedWriteOutcome::RemoteHttpFailure { status: status @ 409, body } => Some(FederationError::conflict(remote_detail(*status, body.as_ref()))),
+        ForwardedWriteOutcome::RemoteHttpFailure { status: status @ 422, body } => Some(FederationError::OperationNotSupported {
+            detail: remote_detail(*status, body.as_ref()),
+        }),
         ForwardedWriteOutcome::RemoteHttpFailure { status, body } => Some(FederationError::BadGateway {
             registration,
             status: Some(*status),
@@ -337,14 +285,14 @@ pub fn single_source_failure(results: &[ForwardedWriteResult]) -> Option<Federat
 
 /// Whether a registration is proxied (clause 4.3.6.3): its data is held
 /// outside this broker, so the attributes it covers never stay local.
-const fn is_proxied(csr: &ContextSourceRegistration) -> bool {
+pub(crate) const fn is_proxied(csr: &ContextSourceRegistration) -> bool {
     matches!(csr.access.mode, Some(ForwardingMode::Exclusive | ForwardingMode::Redirect))
 }
 
 /// The mode of a proxied registration; inclusive is the clause 5.2.9 default
 /// and never proxied, so it is only reached for a registration `is_proxied`
 /// already accepted.
-fn proxied_mode(csr: &ContextSourceRegistration) -> ForwardingMode {
+pub(crate) fn proxied_mode(csr: &ContextSourceRegistration) -> ForwardingMode {
     csr.access.mode.unwrap_or_default()
 }
 
@@ -406,6 +354,15 @@ mod tests {
             ),
             (ForwardedWriteOutcome::RemoteHttpFailure { status: 404, body: None }, "not found"),
             (ForwardedWriteOutcome::NotAdvertised, "not advertised"),
+            (ForwardedWriteOutcome::UpsertFollowUpNotAdvertised, "no follow-up"),
+            (
+                ForwardedWriteOutcome::RemoteHttpFailure {
+                    status: 409,
+                    body: Some(json!({"detail": "exists"})),
+                },
+                "remote conflict",
+            ),
+            (ForwardedWriteOutcome::RemoteHttpFailure { status: 422, body: None }, "remote unsupported"),
             (
                 ForwardedWriteOutcome::RemoteHttpFailure {
                     status: 403,
@@ -426,9 +383,15 @@ mod tests {
                     "unreachable" => assert!(matches!(escalated, Some(FederationError::BadGateway { status: None, .. })), "{mode:?} {label}"),
                     "not found" => assert!(matches!(escalated, Some(FederationError::RemoteNotFound { .. })), "{mode:?} {label}"),
                     "not advertised" => assert!(matches!(escalated, Some(FederationError::Conflict { .. })), "{mode:?} {label}"),
-                    _ => assert!(
-                        matches!(escalated, Some(FederationError::BadGateway { status: Some(403), ref detail, .. }) if detail.contains("no access")),
+                    "no follow-up" => assert!(matches!(escalated, Some(FederationError::OperationNotSupported { .. })), "{mode:?} {label}"),
+                    "remote conflict" => assert!(
+                        matches!(escalated, Some(FederationError::Conflict { ref detail }) if detail.contains("exists")),
                         "{mode:?} {label}"
+                    ),
+                    "remote unsupported" => assert!(matches!(escalated, Some(FederationError::OperationNotSupported { .. })), "{mode:?} {label}"),
+                    other => assert!(
+                        matches!(escalated, Some(FederationError::BadGateway { status: Some(403), ref detail, .. }) if detail.contains("no access")),
+                        "{mode:?} {other}"
                     ),
                 }
             }

@@ -77,8 +77,8 @@
 //! registration so one indexed row carries every dimension a preselect tests.
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
-use andromeda_ngsi_ld_model::{registration::RegistrationInfo, subscription::EntitySelector};
-use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+use andromeda_ngsi_ld_model::{entity_info::EntityInfo, registration::RegistrationInfo};
+use andromeda_ngsi_ld_query::pattern::Pattern;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
 use std::collections::HashMap;
 
@@ -97,12 +97,8 @@ const ANY_ATTRIBUTE_KEY: i32 = 0;
 pub enum TypeRouting<'info> {
     /// The selector admits every type; stored as `{'*'}`.
     Any,
-    /// The type names the selector's clause 4.17 expression mentions.
-    ///
-    /// A conjunction such as `(Building;Tower)`, which requires both, is
-    /// flattened into a row matched by either -- permitted, because
-    /// preselection may only over-approximate, and the typed expression itself
-    /// still decides. Never empty.
+    /// The type names the `EntityInfo` registers (Table 5.2.8-1: one name or
+    /// an array of them). Never empty.
     Named(Vec<&'info EntityTypeName>),
 }
 
@@ -287,11 +283,10 @@ fn entry_rows<'info>(entry: &'info RegistrationInfo, ids: &HashMap<AttributeName
                 .iter()
                 .map(|selector| selector_row(selector, attributes.clone())) // clone: each row owns its own copy of the entry-wide key set.
                 .collect();
-            // A selector always carries a `type` (clause 5.2.33), so a row built
-            // from one constrains at least the type axis unless that type is the
-            // clause 4.17 wildcard. The selectors of an entry are alternatives,
-            // so one of them constraining nothing makes the whole entry -- and
-            // with it the registration -- unconstrained.
+            // An `EntityInfo` always carries a `type` (Table 5.2.8-1), so a row
+            // built from one constrains at least the type axis; the guard is
+            // kept so a row that somehow constrains nothing still widens the
+            // whole registration rather than hiding behind selective siblings.
             if rows.iter().any(|row| !row.is_selective()) { None } else { Some(rows) }
         }
         None => {
@@ -306,10 +301,10 @@ fn entry_rows<'info>(entry: &'info RegistrationInfo, ids: &HashMap<AttributeName
     }
 }
 
-/// One row for one entity selector, carrying its entry's attribute constraints.
-fn selector_row<'info>(selector: &'info EntitySelector, attributes: AttributeRouting) -> RegistrationInformationRow<'info> {
+/// One row for one `EntityInfo`, carrying its entry's attribute constraints.
+fn selector_row<'info>(selector: &'info EntityInfo, attributes: AttributeRouting) -> RegistrationInformationRow<'info> {
     RegistrationInformationRow {
-        types: selected_type_names(&selector.type_),
+        types: TypeRouting::Named(selector.type_.names().iter().collect()),
         identifier: selector.id.as_ref().map_or(IdentifierRouting::Any, IdentifierRouting::Exact),
         identifier_pattern: selector.id_pattern.as_ref(),
         attributes,
@@ -360,34 +355,6 @@ fn interned_names(names: Option<&[AttributeName]>, ids: &HashMap<AttributeName, 
     }
 }
 
-/// The type routing of a clause 4.17 expression.
-///
-/// A wildcard anywhere in the expression widens the whole row to unconstrained.
-/// For a disjunction that is exact; for a conjunction it is wider than the
-/// expression, which preselection permits.
-fn selected_type_names(expression: &TypeExprRaw) -> TypeRouting<'_> {
-    match mentioned_type_names(expression) {
-        Some(names) if !names.is_empty() => TypeRouting::Named(names),
-        Some(_) | None => TypeRouting::Any,
-    }
-}
-
-/// The type names an expression mentions, or `None` where a wildcard admits
-/// every type.
-fn mentioned_type_names(expression: &TypeExprRaw) -> Option<Vec<&EntityTypeName>> {
-    match expression {
-        TypeExprRaw::Wildcard => None,
-        TypeExprRaw::Type(name) => Some(vec![name]),
-        TypeExprRaw::And(children) | TypeExprRaw::Or(children) => {
-            let mut names = Vec::new();
-            for child in children {
-                names.extend(mentioned_type_names(child)?);
-            }
-            Some(names)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::csource_registration::information_projection::{
@@ -400,8 +367,11 @@ mod tests {
         projected_attribute_names,
     };
     use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
-    use andromeda_ngsi_ld_model::{registration::RegistrationInfo, subscription::EntitySelector};
-    use andromeda_ngsi_ld_query::{pattern::Pattern, type_selection::grammar::TypeExprRaw};
+    use andromeda_ngsi_ld_model::{
+        entity_info::{EntityInfo, EntityTypeSelection},
+        registration::RegistrationInfo,
+    };
+    use andromeda_ngsi_ld_query::pattern::Pattern;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -419,19 +389,19 @@ mod tests {
         HashMap::from([(name(SPEED), AttributeNameId::from(11)), (name(DRIVER), AttributeNameId::from(12))])
     }
 
-    fn type_expression(raw: &str) -> TypeExprRaw {
-        raw.parse().expect("valid type expression")
+    fn single_type(raw_type: &str) -> EntityTypeSelection {
+        EntityTypeSelection::Single(raw_type.parse().expect("valid type name"))
     }
 
-    fn selector(raw_type: &str) -> EntitySelector {
-        EntitySelector {
+    fn selector(raw_type: &str) -> EntityInfo {
+        EntityInfo {
             id: None,
             id_pattern: None,
-            type_: type_expression(raw_type),
+            type_: single_type(raw_type),
         }
     }
 
-    fn entry(entities: Option<Vec<EntitySelector>>, properties: Option<Vec<&str>>, relationships: Option<Vec<&str>>) -> RegistrationInfo {
+    fn entry(entities: Option<Vec<EntityInfo>>, properties: Option<Vec<&str>>, relationships: Option<Vec<&str>>) -> RegistrationInfo {
         RegistrationInfo {
             entities,
             property_names: properties.map(|iris| iris.into_iter().map(name).collect()),
@@ -477,10 +447,10 @@ mod tests {
     fn an_exact_identifier_selector_projects_the_identifier_alongside_its_type() {
         let identifier: Uri = "urn:ngsi-ld:Vehicle:A1".parse().expect("valid URI");
         let information = vec![entry(
-            Some(vec![EntitySelector {
+            Some(vec![EntityInfo {
                 id: Some(identifier),
                 id_pattern: None,
-                type_: type_expression("Vehicle"),
+                type_: single_type("Vehicle"),
             }]),
             None,
             None,
@@ -496,10 +466,10 @@ mod tests {
     #[test]
     fn an_identifier_pattern_selector_projects_the_pattern_as_written() {
         let information = vec![entry(
-            Some(vec![EntitySelector {
+            Some(vec![EntityInfo {
                 id: None,
                 id_pattern: Some(Pattern::parse("^urn:ngsi-ld:Vehicle:.*$").expect("valid pattern")),
-                type_: type_expression("Vehicle"),
+                type_: single_type("Vehicle"),
             }]),
             None,
             None,
@@ -569,37 +539,18 @@ mod tests {
         );
     }
 
-    /// Clause 4.17: an alternation selects any of its members, so the row lists
-    /// them all and a request for either type preselects the registration.
+    /// Table 5.2.8-1: an `EntityInfo` may name several types; the row lists
+    /// them all and a request for any of them preselects the registration.
     #[test]
-    fn a_type_alternation_projects_every_name_it_mentions() {
-        let information = vec![entry(Some(vec![selector("(Building,Tower)")]), None, None)];
+    fn a_type_array_projects_every_name_it_carries() {
+        let several = EntityInfo {
+            id: None,
+            id_pattern: None,
+            type_: EntityTypeSelection::Several(vec!["Building".parse().expect("valid type name"), "Tower".parse().expect("valid type name")]),
+        };
+        let information = vec![entry(Some(vec![several]), None, None)];
         let rows = rows_of(&information, &dictionary());
         assert_eq!(type_names(&rows[0]), vec!["Building", "Tower"]);
-    }
-
-    /// The clause 4.17 wildcard admits every type, so the type axis carries the
-    /// sentinel and the row keeps only what the rest of the entry declares.
-    #[test]
-    fn a_wildcard_type_leaves_the_type_axis_unconstrained() {
-        let information = vec![entry(Some(vec![selector("*")]), Some(vec![SPEED]), None)];
-        let rows = rows_of(&information, &dictionary());
-        assert_eq!(rows[0].types, TypeRouting::Any);
-        assert_eq!(
-            rows[0].attributes,
-            AttributeRouting::Declared {
-                properties: keys(&[11]),
-                relationships: Vec::new()
-            }
-        );
-    }
-
-    /// A wildcard selector with nothing else to constrain leaves the entry, and
-    /// with it the registration, matching everything.
-    #[test]
-    fn a_wildcard_selector_alone_makes_the_registration_unconstrained() {
-        let information = vec![entry(Some(vec![selector("*")]), None, None)];
-        assert!(unconstrained(&derive_routing(&information, &dictionary())));
     }
 
     /// Entries are disjunctive: one entry that constrains nothing makes the
@@ -667,31 +618,6 @@ mod tests {
         )];
         let rows = rows_of(&information, &dictionary());
         assert_eq!(rows[0].attributes, AttributeRouting::Any);
-    }
-
-    /// The selectors of one entry are alternatives, so a wildcard among them
-    /// admits every type whatever its siblings name.
-    #[test]
-    fn a_wildcard_selector_beside_a_named_one_makes_the_registration_unconstrained() {
-        let information = vec![entry(Some(vec![selector("*"), selector("Vehicle")]), None, None)];
-        assert!(unconstrained(&derive_routing(&information, &dictionary())));
-    }
-
-    /// The same entry with declared names constrains the attribute axis on every
-    /// one of its rows, so the wildcard selector still projects a selective row.
-    #[test]
-    fn a_wildcard_selector_beside_declared_names_projects_a_row_constrained_by_the_names() {
-        let information = vec![entry(Some(vec![selector("*"), selector("Vehicle")]), Some(vec![SPEED]), None)];
-        let rows = rows_of(&information, &dictionary());
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].types, TypeRouting::Any);
-        assert_eq!(
-            rows[0].attributes,
-            AttributeRouting::Declared {
-                properties: keys(&[11]),
-                relationships: Vec::new()
-            }
-        );
     }
 
     /// The same widening, applied to an entry whose only constraint was the

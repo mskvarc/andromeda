@@ -43,7 +43,11 @@ async fn delete_speed(client: &TestClient, id: &str) -> TestResponse {
 }
 
 /// An exclusive registration forwards the owned attribute delete and terminates:
-/// the local copy is left in place. Confirms REQ-PROV-34, 35, 37.
+/// the local copy is left in place. The registration precedes the local seed
+/// because clause 5.9.2.4 rejects an exclusive registration when "an Entity
+/// already exists for the supplied Entity ID (URI) and the existing Entity
+/// contains any of the Attributes defined in the registration". Confirms
+/// REQ-PROV-34, 35, 37.
 #[tokio::test]
 async fn delete_attr_exclusive_match_forwards_and_terminates() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -53,7 +57,6 @@ async fn delete_attr_exclusive_match_forwards_and_terminates() {
     let reg_id = topology.id("registration:prov-delattr-exclusive");
     let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
 
-    seed_local(client, &entity_id, &[("speed", property(json!(42)))]).await;
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
@@ -61,6 +64,7 @@ async fn delete_attr_exclusive_match_forwards_and_terminates() {
         .operations(&["deleteAttrs", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local(client, &entity_id, &[("speed", property(json!(42)))]).await;
     mock.set_stub(Method::DELETE, &path, 204).await;
 
     let response = delete_speed(client, &entity_id).await;
@@ -96,7 +100,6 @@ async fn delete_attr_exclusive_op_unsupported_returns_409() {
     let reg_id = topology.id("registration:prov-delattr-unsup");
     let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
 
-    seed_local(client, &entity_id, &[("speed", property(json!(42)))]).await;
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
@@ -104,6 +107,7 @@ async fn delete_attr_exclusive_op_unsupported_returns_409() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local(client, &entity_id, &[("speed", property(json!(42)))]).await;
 
     let response = delete_speed(client, &entity_id).await;
     assert_status(&response, 409);
@@ -116,8 +120,12 @@ async fn delete_attr_exclusive_op_unsupported_returns_409() {
 
 /// With two matching registrations — one advertising the operation, one not — the
 /// delete is `207 Multi-Status`: the supporting source is forwarded to, the other
-/// yields a `409` keyed by its `registrationId`. Confirms REQ-PROV-36 (partial),
-/// 39.
+/// yields a `409` keyed by its `registrationId`. Both are redirect registrations
+/// (clause 4.3.6.3: "In the case that multiple overlapping redirect
+/// registrations are defined, operations are distributed to all registered
+/// Context Sources"; a second exclusive on the same entity and attribute is a
+/// clause 5.9.2.4 Conflict), registered before the local copy is seeded.
+/// Confirms REQ-PROV-36 (partial), 39.
 #[tokio::test]
 async fn delete_attr_op_unsupported_multi_returns_207() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -129,21 +137,21 @@ async fn delete_attr_op_unsupported_multi_returns_207() {
     let path_supported = format!("/s1/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
     let path_unsupported = format!("/s2/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
 
-    seed_local(client, &entity_id, &[("speed", property(json!(42)))]).await;
     let supported = CsrBuilder::new(&reg_supported, &mock.url("/s1"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .operations(&["deleteAttrs", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&supported).await.expect("create supported registration"), 201);
     let unsupported = CsrBuilder::new(&reg_unsupported, &mock.url("/s2"))
-        .mode("exclusive")
+        .mode("redirect")
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&unsupported).await.expect("create unsupported registration"), 201);
+    seed_local(client, &entity_id, &[("speed", property(json!(42)))]).await;
     mock.set_stub(Method::DELETE, &path_supported, 204).await;
 
     let response = delete_speed(client, &entity_id).await;

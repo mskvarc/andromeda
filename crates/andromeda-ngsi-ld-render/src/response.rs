@@ -437,7 +437,7 @@ mod tests {
             ))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::None);
+        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Unchanged);
     }
 
     #[test]
@@ -460,7 +460,7 @@ mod tests {
             .with_payload(ResponsePayload::Single(json!({"id": "urn:x", "type": "T"})))
             .render()
             .expect("render");
-        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied);
+        pretty_assertions::assert_eq!(rendered.version_adaptation, VersionAdaptation::Applied { version: SpecVersion::V1_4 });
     }
 
     #[test]

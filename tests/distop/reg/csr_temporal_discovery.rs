@@ -1,8 +1,11 @@
 //! Latest-vs-temporal purpose split and interval overlap matching in
-//! registration discovery (clause 5.9.1). A registration's `managementInterval`
-//! is matched by `createdAt`/`modifiedAt`-scoped queries and its
-//! `observationInterval` by `observedAt`-scoped queries; a `between` window
-//! matches when the interval overlaps it. All `T-LOCAL`.
+//! registration discovery (clause 5.9.1, matched per clause 5.10.2.4). A
+//! registration's `managementInterval` is matched by `createdAt`/`modifiedAt`-
+//! scoped queries and its `observationInterval` by `observedAt`-scoped queries;
+//! a `between` window matches when the interval overlaps it. Every discovery
+//! query names `type=Vehicle`: clause 5.10.2.4 requires at least one of a type
+//! selector, attribute list, query or geoquery, and rejects a query with only
+//! entity identifiers as too wide. All `T-LOCAL`.
 
 use crate::{
     oracle::{assert_status, json_body},
@@ -25,7 +28,12 @@ fn registration_ids(body: &Value) -> Vec<String> {
 /// A registration-discovery query for entity `entity_id` over a `between` window,
 /// optionally scoped to a specific time property.
 fn temporal_query(entity_id: &str, from: &str, to: &str, timeproperty: Option<&str>) -> String {
-    let mut query = format!("id={}&timerel=between&timeAt={}&endTimeAt={}", encode(entity_id), encode(from), encode(to));
+    let mut query = format!(
+        "type=Vehicle&id={}&timerel=between&timeAt={}&endTimeAt={}",
+        encode(entity_id),
+        encode(from),
+        encode(to)
+    );
     if let Some(timeproperty) = timeproperty {
         query.push_str(&format!("&timeproperty={timeproperty}"));
     }
@@ -143,7 +151,7 @@ async fn reg_no_temporal_query_returns_only_latest_csrs() {
     let result = topology
         .front()
         .client()
-        .query_registrations(&format!("id={}", encode(&entity_id)), None)
+        .query_registrations(&format!("type=Vehicle&id={}", encode(&entity_id)), None)
         .await
         .expect("non-temporal discovery");
     assert_status(&result, 200);
@@ -207,7 +215,7 @@ async fn reg_csr_combining_latest_and_temporal_single_purpose() {
     let non_temporal = topology
         .front()
         .client()
-        .query_registrations(&format!("id={}", encode(&entity_id)), None)
+        .query_registrations(&format!("type=Vehicle&id={}", encode(&entity_id)), None)
         .await
         .expect("non-temporal discovery");
     assert_status(&non_temporal, 200);

@@ -4,7 +4,8 @@ use crate::{error::TemporalResultExt, join::apply_temporal_join, state::Temporal
 use andromeda_federation::{
     entity_result::collect_temporal_warnings,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, ForwardTemporalQueryRequest, TriggeringRequest},
+    outcome::ForwardReadOutcome,
+    request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
 use andromeda_http_extraction::{
@@ -89,27 +90,27 @@ pub async fn query(
     let (mut entities, forwarding_warnings) = if is_local {
         (local_entities, Vec::new())
     } else {
-        let entity_type = params.entity_type.as_ref();
-        let entity_ids = params.id.clone();
-        let entity_ids_ref = entity_ids.as_deref();
-
         let forwarded = state
             .forwarding
             .forward_temporal_query(ForwardTemporalQueryRequest {
-                entity_type_compact: entity_type,
-                entity_ids: entity_ids_ref,
-                query_string: "",
+                client_query: &params,
+                split: state.forwarding.split_entities(params.split_entities),
                 context: &context,
                 operation: ForwardingOperation::QueryTemporalEntity,
                 triggering: TriggeringRequest {
                     via: incoming_via.as_ref(),
                     headers: Some(&headers),
                 },
+                csf_expr: None,
                 mode_filter: CsrModeFilter::All,
-                entity_map: None,
+                entity_map: EntityMapInUse::None,
             })
             .await
-            .unwrap_or_default();
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "Context source forwarding failed during the temporal batch query");
+                ForwardReadOutcome::empty()
+            })
+            .results;
         let warnings = collect_temporal_warnings(&forwarded);
 
         let merged = merge_temporal_query_results(local_entities, forwarded);

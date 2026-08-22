@@ -14,14 +14,17 @@ use crate::entity::{
     OriginalUri,
     PartialUpdateAttrParams,
     ProblemResponse,
+    ProvisionResource,
     Response,
     StatusCode,
     TypedPath,
     Uri,
     ValidatedQuery,
     Value,
+    classify_entity_error,
     collect_proxied_attrs,
     provision_response,
+    reject_unknown_attribute_node_type,
     selected_dataset_uri,
 };
 use andromeda_federation::request::TriggeringRequest;
@@ -44,6 +47,7 @@ pub(crate) async fn partial_update_attr(
     let service = &state.entities;
     let dataset_id = selected_dataset_uri(params.dataset_id.as_ref());
     let context = context.merge(body_context);
+    reject_unknown_attribute_node_type(&attr_id, &fragment, &uri)?;
 
     // Forward to matching context sources
     let fragment_body = serde_json::to_vec(&fragment).with_entity_instance(&uri)?;
@@ -53,6 +57,7 @@ pub(crate) async fn partial_update_attr(
     let forwarded = state
         .forwarding
         .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::Entities,
             entity_id: &id,
             entity_type_compact: None,
             attribute_name: Some(&attr_id),
@@ -84,7 +89,10 @@ pub(crate) async fn partial_update_attr(
     let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
         LocalOutcome::NothingRemained
     } else {
-        LocalOutcome::Processed(service.partial_update_attr(&id, &attr_id, dataset_id, fragment, &context).await.map(|_| ()))
+        LocalOutcome::processed(
+            service.partial_update_attr(&id, &attr_id, dataset_id, fragment, &context).await,
+            classify_entity_error,
+        )
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

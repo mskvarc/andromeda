@@ -1,11 +1,12 @@
-//! Replace Attribute forwarding — REQ-PROV-119..124 (clause 5.6.20.4).
+//! Replace Attribute forwarding — REQ-PROV-119..124 (clause 5.6.19.4).
 //!
 //! `PUT /entities/{id}/attrs/{attr}` replaces a single attribute. An exclusive
 //! registration that owns the attribute forwards the replacement and terminates
-//! without touching the local copy; an unadvertised `replaceEntity` yields a
-//! bare `409 Conflict`; an inclusive registration forwards a copy and replaces
-//! the attribute locally. Whole module UNKNOWN (no prior replace-attribute
-//! forwarding coverage).
+//! without touching the local copy; an unadvertised `replaceAttrs` (the Table
+//! 4.20-1 name of 5.6.19 Replace Attribute) yields a bare `409 Conflict`; an
+//! inclusive registration forwards a copy and replaces the attribute locally.
+//! Exclusive rows register before seeding the local copy, since clause 5.9.2.4
+//! rejects an exclusive registration over an attribute the entity already holds.
 
 use crate::{
     context_source_adapter::ContextSourceAdapter,
@@ -70,7 +71,7 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
-        .operations(&["replaceEntity", "retrieveEntity"])
+        .operations(&["replaceAttrs", "retrieveEntity"])
         .build();
     assert_status(
         &topology.front().client().create_registration(&registration).await.expect("create registration"),
@@ -90,9 +91,9 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// An exclusive registration that does not advertise `replaceEntity` rejects the
-/// owned attribute replacement with a bare `409 Conflict` and no forwarding.
-/// Confirms REQ-PROV-121.
+/// An exclusive registration that does not advertise `replaceAttrs` (the Table
+/// 4.20-1 name of 5.6.19) rejects the owned attribute replacement with a bare
+/// `409 Conflict` and no forwarding. Confirms REQ-PROV-121.
 #[tokio::test]
 async fn replace_attr_op_unsupported_returns_409() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -102,6 +103,13 @@ async fn replace_attr_op_unsupported_returns_409() {
     let reg_id = topology.id("registration:prov-replaceattr-unsup");
     let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
 
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
@@ -110,14 +118,6 @@ async fn replace_attr_op_unsupported_returns_409() {
         .await
         .expect("seed local entity");
     assert_status(&seeded, 201);
-
-    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
-        .entity_id(&entity_id)
-        .property_names(&["speed"])
-        .operations(&["retrieveEntity"])
-        .build();
-    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let replaced = replace_speed(&topology, &entity_id, 99).await;
     assert_status(&replaced, 409);
@@ -139,6 +139,13 @@ async fn replace_attr_exclusive_match_terminates_after_forwarding() {
     let reg_id = topology.id("registration:prov-replaceattr-terminate");
     let path = format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed");
 
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("exclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["replaceAttrs", "retrieveEntity"])
+        .build();
+    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let seeded = client
         .raw(Method::POST, "/ngsi-ld/v1/entities?local=true")
         .header("content-type", "application/ld+json")
@@ -147,14 +154,6 @@ async fn replace_attr_exclusive_match_terminates_after_forwarding() {
         .await
         .expect("seed local entity");
     assert_status(&seeded, 201);
-
-    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
-        .mode("exclusive")
-        .entity_id(&entity_id)
-        .property_names(&["speed"])
-        .operations(&["replaceEntity", "retrieveEntity"])
-        .build();
-    assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PUT, &path, 204).await;
 
     let replaced = replace_speed(&topology, &entity_id, 99).await;
@@ -209,7 +208,7 @@ async fn replace_attr_inclusive_forwards_remainder() {
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("inclusive")
         .entity_id(&entity_id)
-        .operations(&["replaceEntity", "retrieveEntity"])
+        .operations(&["replaceAttrs", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     mock.set_stub(Method::PUT, &path, 204).await;

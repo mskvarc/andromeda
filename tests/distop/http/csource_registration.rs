@@ -95,8 +95,9 @@ async fn dist_http_create_csource_registration_auxiliary_write_operations_return
     topology.finish().await.expect("topology cleanup");
 }
 
-/// A registration query returns `200` with an array body (clause 6.9.3.2).
-/// Confirms REQ-HTTP-82.
+/// A registration query returns `200` with an array body (clause 6.9.3.2). The
+/// query names a type: clause 5.10.2.4 rejects a discovery query that carries
+/// none of type, attrs, q or georel as too wide. Confirms REQ-HTTP-82.
 #[tokio::test]
 async fn dist_http_query_csource_registrations_returns_200_array() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -111,7 +112,12 @@ async fn dist_http_query_csource_registrations_returns_200_array() {
         201,
     );
 
-    let response = topology.front().client().query_registrations("", None).await.expect("registration query");
+    let response = topology
+        .front()
+        .client()
+        .query_registrations("type=Vehicle", None)
+        .await
+        .expect("registration query");
     assert_status(&response, 200);
     assert!(json_body(&response).is_array(), "a registration query returns an array");
     topology.finish().await.expect("topology cleanup");

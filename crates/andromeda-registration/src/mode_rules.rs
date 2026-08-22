@@ -14,8 +14,8 @@ use crate::{
 };
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
+    entity_info::EntityInfo,
     registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
-    subscription::EntitySelector,
 };
 use iri_rs::IriBuf;
 
@@ -65,22 +65,13 @@ fn declared_attributes(entry: &RegistrationInfo) -> Vec<IriBuf> {
     entry.attribute_names().filter_map(|name| IriBuf::new(name.as_str().to_string()).ok()).collect()
 }
 
-/// Whether `selector` covers the concrete identifier `entity_id` (clause 5.10.2).
-fn selector_covers_id(selector: &EntitySelector, entity_id: &Uri) -> bool {
-    match (&selector.id, &selector.id_pattern) {
-        (Some(id), _) => id == entity_id,
-        (None, Some(pattern)) => pattern.is_match(entity_id.as_str()),
-        (None, None) => true,
-    }
-}
-
 /// Whether a block covers `entity_id`: a block without entity selectors
 /// constrains the entity axis not at all.
 fn entry_covers_id(entry: &RegistrationInfo, entity_id: &Uri) -> bool {
     entry
         .entities
         .as_deref()
-        .is_none_or(|selectors| selectors.iter().any(|selector| selector_covers_id(selector, entity_id)))
+        .is_none_or(|selectors| selectors.iter().any(|selector| selector.covers_id(entity_id)))
 }
 
 /// Whether a block's attribute footprint meets `attributes`: a registration
@@ -176,7 +167,7 @@ async fn check_redirect(
 }
 
 /// Reject the footprint when a local entity already matches it.
-async fn reject_matching_entity(probe: &dyn RegisteredEntityProbe, selector: Option<&EntitySelector>, attributes: &[IriBuf]) -> Result<(), RegistrationError> {
+async fn reject_matching_entity(probe: &dyn RegisteredEntityProbe, selector: Option<&EntityInfo>, attributes: &[IriBuf]) -> Result<(), RegistrationError> {
     match probe.any_entity_matching(selector, attributes).await? {
         EntityPresence::Present => Err(RegistrationError::conflict(
             "a local entity already matches the redirect registration's entity and attribute footprint",
@@ -204,236 +195,19 @@ pub(super) async fn check_conflicts(
 #[cfg(test)]
 mod tests {
     use crate::{
-        entity_probe::{EntityPresence, RegisteredEntityProbe},
+        entity_probe::EntityPresence,
         error::RegistrationError,
+        fixed_probe::FixedProbe,
+        fixed_store::{FixedStore, registration},
         mode_rules::{check_conflicts, validate_structure},
-        resolved_update::ResolvedCsrUpdate,
-        store::{CreateCsrParams, ForwardingOutcome, RegistrationMutation, RegistrationPage, RegistrationStore},
     };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
-    use andromeda_ngsi_ld_model::{
-        registration::{ContextSourceRegistration, CsrOperation, ForwardingMode, RegistrationInfo},
-        subscription::EntitySelector,
-    };
-    use andromeda_ngsi_ld_query::{csr::compiled::CompiledCsrQuery, pagination::Pagination};
-    use chrono::{DateTime, Utc};
-    use futures::future::BoxFuture;
-    use iri_rs::IriBuf;
+    use andromeda_ngsi_ld_model::registration::{CsrOperation, ForwardingMode, RegistrationInfo};
     use serde_json::json;
-    use std::{slice, sync::Mutex};
-
-    /// A store holding a fixed registration list; `find_overlapping` returns
-    /// every one, as a superset preselect is allowed to.
-    struct FixedStore(Vec<ContextSourceRegistration>);
-
-    impl RegistrationStore for FixedStore {
-        fn delete_expired<'life0, 'async_trait>(
-            &'life0 self,
-            _cutoff: DateTime<Utc>,
-        ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
-        where
-            'life0: 'async_trait,
-        {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-
-        fn exists<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<bool, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-        {
-            Box::pin(async { Ok(false) })
-        }
-
-        fn create<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            _id: &'life1 Uri,
-            _params: &'life2 CreateCsrParams,
-        ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-        {
-            Box::pin(async { Ok(()) })
-        }
-
-        fn get<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            _id: &'life1 Uri,
-        ) -> BoxFuture<'async_trait, Result<Option<ContextSourceRegistration>, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-        {
-            Box::pin(async { Ok(None) })
-        }
-
-        fn list<'life0, 'async_trait>(&'life0 self, _pagination: Pagination) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
-        where
-            'life0: 'async_trait,
-        {
-            Box::pin(async {
-                Ok(RegistrationPage {
-                    registrations: Vec::new(),
-                    total: 0,
-                })
-            })
-        }
-
-        fn query_compiled<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            _compiled: &'life1 CompiledCsrQuery,
-        ) -> BoxFuture<'async_trait, Result<RegistrationPage, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-        {
-            Box::pin(async {
-                Ok(RegistrationPage {
-                    registrations: Vec::new(),
-                    total: 0,
-                })
-            })
-        }
-
-        fn update<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            _id: &'life1 Uri,
-            _values: &'life2 ResolvedCsrUpdate,
-        ) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-        {
-            Box::pin(async { Ok(RegistrationMutation::Applied) })
-        }
-
-        fn find_matching<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            _entity_type: Option<&'life1 IriBuf>,
-            _entity_id: Option<&'life2 Uri>,
-        ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-        {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-
-        fn find_overlapping<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            _entity_id: Option<&'life1 Uri>,
-            _attributes: &'life2 [IriBuf],
-        ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-        {
-            Box::pin(async { Ok(self.0.clone()) }) // clone: the fake hands out owned registrations like the port requires
-        }
-
-        fn find_all_active<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            _after: Option<&'life1 Uri>,
-            _limit: u32,
-        ) -> BoxFuture<'async_trait, Result<Vec<ContextSourceRegistration>, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-        {
-            Box::pin(async { Ok(Vec::new()) })
-        }
-
-        fn delete<'life0, 'life1, 'async_trait>(&'life0 self, _id: &'life1 Uri) -> BoxFuture<'async_trait, Result<RegistrationMutation, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-        {
-            Box::pin(async { Ok(RegistrationMutation::Applied) })
-        }
-
-        fn record_forwarding_outcome<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            _id: &'life1 Uri,
-            _outcome: ForwardingOutcome,
-            _at: DateTime<Utc>,
-        ) -> BoxFuture<'async_trait, Result<(), RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-        {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    /// A probe answering a fixed presence and recording what it was asked.
-    struct FixedProbe {
-        holds: EntityPresence,
-        matches: EntityPresence,
-        asked: Mutex<Vec<String>>,
-    }
-
-    impl FixedProbe {
-        fn new(holds: EntityPresence, matches: EntityPresence) -> FixedProbe {
-            FixedProbe {
-                holds,
-                matches,
-                asked: Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    impl RegisteredEntityProbe for FixedProbe {
-        fn holds_any_attribute<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            entity_id: &'life1 Uri,
-            _attributes: &'life2 [IriBuf],
-        ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-        {
-            self.asked.lock().expect("probe log").push(format!("holds:{entity_id}"));
-            Box::pin(async { Ok(self.holds) })
-        }
-
-        fn any_entity_matching<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            selector: Option<&'life1 EntitySelector>,
-            _attributes: &'life2 [IriBuf],
-        ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-        {
-            let description = selector.map_or_else(|| "matches:<none>".to_string(), |selector| format!("matches:{}", selector.type_));
-            self.asked.lock().expect("probe log").push(description);
-            Box::pin(async { Ok(self.matches) })
-        }
-    }
+    use std::slice;
 
     fn info(value: serde_json::Value) -> RegistrationInfo {
         serde_json::from_value(value).expect("valid RegistrationInfo")
-    }
-
-    fn registration(id: &str, mode: &str, information: serde_json::Value) -> ContextSourceRegistration {
-        serde_json::from_value(json!({
-            "id": id,
-            "type": "ContextSourceRegistration",
-            "endpoint": "https://peer.example.org",
-            "information": information,
-            "mode": mode,
-            "status": "ok",
-            "createdAt": "2024-01-01T00:00:00Z",
-            "modifiedAt": "2024-01-01T00:00:00Z"
-        }))
-        .expect("valid registration")
     }
 
     const VEHICLE: &str = "https://example.org/Vehicle";
@@ -485,7 +259,7 @@ mod tests {
     #[tokio::test]
     async fn an_exclusive_registration_over_an_existing_exclusive_or_redirect_footprint_is_a_conflict() {
         for existing_mode in ["exclusive", "redirect"] {
-            let store = FixedStore(vec![registration(
+            let store = FixedStore::new(vec![registration(
                 "urn:ngsi-ld:csr:existing",
                 existing_mode,
                 json!([exclusive_info(V1, &[SPEED])]),
@@ -498,7 +272,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_disjoint_attribute_or_entity_footprint_does_not_conflict() {
-        let store = FixedStore(vec![registration(
+        let store = FixedStore::new(vec![registration(
             "urn:ngsi-ld:csr:existing",
             "exclusive",
             json!([exclusive_info(V1, &[SPEED])]),
@@ -525,7 +299,7 @@ mod tests {
     #[tokio::test]
     async fn a_redirect_registering_the_whole_entity_overlaps_every_attribute() {
         let whole_entity = registration("urn:ngsi-ld:csr:redirect", "redirect", json!([{"entities": [{"type": VEHICLE, "id": V1}]}]));
-        let store = FixedStore(vec![whole_entity]);
+        let store = FixedStore::new(vec![whole_entity]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[FUEL]))], None).await;
         assert!(matches!(result, Err(RegistrationError::Conflict { .. })));
@@ -538,7 +312,7 @@ mod tests {
             "redirect",
             json!([{"entities": [{"type": VEHICLE, "idPattern": "urn:ngsi-ld:Vehicle:V.*"}], "propertyNames": [SPEED]}]),
         );
-        let store = FixedStore(vec![pattern]);
+        let store = FixedStore::new(vec![pattern]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         assert!(matches!(
             check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await,
@@ -560,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn the_registration_being_updated_never_conflicts_with_itself() {
         let self_id: Uri = "urn:ngsi-ld:csr:self".parse().expect("valid URI");
-        let store = FixedStore(vec![registration(self_id.as_str(), "exclusive", json!([exclusive_info(V1, &[SPEED])]))]);
+        let store = FixedStore::new(vec![registration(self_id.as_str(), "exclusive", json!([exclusive_info(V1, &[SPEED])]))]);
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Absent);
         assert!(
             check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], Some(&self_id))
@@ -571,16 +345,16 @@ mod tests {
 
     #[tokio::test]
     async fn an_exclusive_registration_over_a_local_entity_holding_the_attribute_is_a_conflict() {
-        let store = FixedStore(Vec::new());
+        let store = FixedStore::new(Vec::new());
         let probe = FixedProbe::new(EntityPresence::Present, EntityPresence::Absent);
         let result = check_conflicts(&store, &probe, ForwardingMode::Exclusive, &[info(exclusive_info(V1, &[SPEED]))], None).await;
         assert!(matches!(result, Err(RegistrationError::Conflict { .. })));
-        pretty_assertions::assert_eq!(probe.asked.lock().expect("probe log").as_slice(), [format!("holds:{V1}")]);
+        pretty_assertions::assert_eq!(probe.asked(), [format!("holds:{V1}")]);
     }
 
     #[tokio::test]
     async fn a_redirect_registration_over_a_matching_local_entity_is_a_conflict() {
-        let store = FixedStore(Vec::new());
+        let store = FixedStore::new(Vec::new());
         let probe = FixedProbe::new(EntityPresence::Absent, EntityPresence::Present);
         let by_type = info(json!({"entities": [{"type": VEHICLE}]}));
         assert!(matches!(
@@ -592,12 +366,12 @@ mod tests {
             check_conflicts(&store, &probe, ForwardingMode::Redirect, &[attributes_only], None).await,
             Err(RegistrationError::Conflict { .. })
         ));
-        assert!(probe.asked.lock().expect("probe log").contains(&"matches:<none>".to_string()));
+        assert!(probe.asked().contains(&"matches:<none>".to_string()));
     }
 
     #[tokio::test]
     async fn a_redirect_registration_over_an_exclusive_footprint_is_a_conflict() {
-        let store = FixedStore(vec![registration(
+        let store = FixedStore::new(vec![registration(
             "urn:ngsi-ld:csr:exclusive",
             "exclusive",
             json!([exclusive_info(V1, &[SPEED])]),
@@ -612,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn inclusive_and_auxiliary_registrations_consult_neither_store_nor_entities() {
-        let store = FixedStore(vec![registration(
+        let store = FixedStore::new(vec![registration(
             "urn:ngsi-ld:csr:existing",
             "exclusive",
             json!([exclusive_info(V1, &[SPEED])]),
@@ -625,6 +399,6 @@ mod tests {
                 .is_ok()
         );
         assert!(check_conflicts(&store, &probe, ForwardingMode::Auxiliary, &[entry], None).await.is_ok());
-        assert!(probe.asked.lock().expect("probe log").is_empty());
+        assert!(probe.asked().is_empty());
     }
 }

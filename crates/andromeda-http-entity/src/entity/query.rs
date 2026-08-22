@@ -5,15 +5,12 @@ use crate::entity::{
     ContextSpec,
     ContextUrl,
     ContextualExpander,
-    CsrModeFilter,
     DeferredSplitFilters,
     EntityQuery,
     EntityQueryService,
     EntityRenderer,
     EntityResultExt,
     EntityTenantState,
-    ForwardQueryRequest,
-    ForwardingOperation,
     IntoResponse,
     JoinRequest,
     NgsiLdCollectionResponse,
@@ -26,23 +23,30 @@ use crate::entity::{
     ResponsePayload,
     RetrievingJoin,
     SnapshotRenderer,
+    SourceContribution,
     StatusCode,
-    Uri,
     Value,
-    collect_warnings,
     compile_geo_query,
     evaluate,
     expand_q_expr,
     matches_geo_query,
     matches_scope_query,
-    remote_sources_of,
+    query_forwarding::{ForwardedQueryResults, QueryForwarding},
     render_flat_join,
     start_rendering,
     with_linked_resolution_warnings,
 };
-use andromeda_entity_map::service::{EntityMapService, ReferencedEntityMap};
-use andromeda_federation::request::TriggeringRequest;
+use andromeda_entity_map::{
+    fingerprint::{FingerprintedRequest, fingerprint_of},
+    reuse::{EntityMapFlag, EntityMapUse},
+    service::EntityMapService,
+};
+use andromeda_federation::{
+    config::SplitEntities,
+    request::{EntityMapInUse, TriggeringRequest},
+};
 use andromeda_http_extraction::tenant_state;
+use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::pagination::{PageExtent, PaginationStyle, append_pagination_links};
 use andromeda_ngsi_ld_request::query::SharedQueryParams;
 use axum::http::HeaderMap;
@@ -109,27 +113,52 @@ pub(crate) async fn query(
         }
 
         // Clause 5.5.14: a referenced live EntityMap fixes the entities the
-        // query considers and the sources it contacts; an expired or unknown
-        // one yields no inference, so a fresh map is created instead.
-        let mut entity_map_requested = query.entity_map.unwrap_or(false);
-        let referenced_map = match &entity_map_header {
-            Some(map_id) => match state.entity_maps.referenced(map_id.as_inner()).await.with_entity_instance(&uri)? {
-                ReferencedEntityMap::Live(map) => Some(*map),
-                ReferencedEntityMap::Unavailable => {
-                    entity_map_requested = true;
-                    None
-                }
-            },
-            None => None,
-        };
-        if let Some(map) = &referenced_map {
-            let scoped_input = query.id.clone();
-            query.id = Some(EntityMapService::scope_query_ids(map, scoped_input.as_deref()));
+        // query considers and the sources it contacts, and holds the query to
+        // the creating request's filters; an expired or unknown one yields no
+        // inference, so a fresh map is created instead. The fingerprint is
+        // taken before the query is narrowed below.
+        let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(&query)).with_entity_instance(&uri)?;
+        let map_use = state
+            .entity_maps
+            .resolve_use(
+                entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner),
+                EntityMapFlag::from_parameter(query.entity_map),
+                &fingerprint,
+                query.entity_map_lifetime.as_ref(),
+            )
+            .await
+            .with_entity_instance(&uri)?;
+        if let Some(map) = map_use.reused() {
+            query.id = Some(EntityMapService::scope_query_ids(map, query.id.as_deref()));
         }
 
         let opts = query.parse_options();
         let is_local = query.is_local();
-        let split_entities = state.forwarding.split_entities(query.split_entities) && !is_local;
+        let split = state.forwarding.split_entities(query.split_entities);
+        let split_entities = !is_local && split == SplitEntities::Split;
+
+        // Distributed forwarding: query matching context sources unless
+        // local=true. Forwarding reads the query as the client wrote it, so it
+        // runs before the split-entities filters are held back from the local
+        // query below.
+        let forwarded = if is_local {
+            None
+        } else {
+            let forwarding = QueryForwarding {
+                forwarding: &state.forwarding,
+                engine: service.engine(),
+                uri: &uri,
+                query: &query,
+                split,
+                context: &context,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
+                entity_map: EntityMapInUse::from(&map_use),
+            };
+            Some(forwarding.run().await?)
+        };
 
         // splitEntities (spec 5.7.2.4): defer q/geoQ/scopeQ filtering to post-merge
         let deferred = if split_entities {
@@ -142,80 +171,36 @@ pub(crate) async fn query(
             DeferredSplitFilters::default()
         };
 
-        let (local_entities, total_count) = service.query(&query, &context).await.with_entity_instance(&uri)?;
+        // Clause 5.5.9: once sources contribute entities, the page is cut from
+        // the merged collection rather than from the local rows, so the local
+        // query runs unpaged and the requested page is applied after the merge.
+        let page_limit = query.effective_limit();
+        let page_offset = query.effective_offset();
+        let paginate_after_merge = forwarded.as_ref().is_some_and(ForwardedQueryResults::holds_remote_entities);
+        if paginate_after_merge {
+            query.limit = Some(u32::MAX);
+            query.offset = Some(0);
+        }
 
-        // Distributed forwarding: query matching context sources unless local=true
-        let mut remote_sources: Vec<(Uri, Vec<Uri>)> = Vec::new();
-        let (mut entities, warnings) = if is_local {
-            (local_entities, Vec::new())
-        } else {
-            let entity_type = query.entity_type.as_ref();
-            let entity_ids = query.id.clone();
-            let entity_ids_ref = entity_ids.as_deref();
+        let (local_entities, local_total) = service.query(&query, &context).await.with_entity_instance(&uri)?;
 
-            // The CSR filter was parsed while extracting the request.
-            let prepared_context = state.entity_query.engine().prepare_term_context(&context);
-            let csf_expander = ContextualExpander::new(state.entity_query.engine(), &prepared_context);
-            let csf_expr = match query.csf.take() {
-                Some(expr) => Some(expand_q_expr(expr, &csf_expander).await.with_entity_instance(&uri)?),
-                None => None,
-            };
-
-            // Phase 1: forward to primary (non-auxiliary) CSRs
-            let forwarded = state
-                .forwarding
-                .forward_query(ForwardQueryRequest {
-                    entity_type_compact: entity_type,
-                    entity_ids: entity_ids_ref,
-                    context: &context,
-                    operation: ForwardingOperation::QueryEntity,
-                    triggering: TriggeringRequest {
-                        via: incoming_via.as_ref(),
-                        headers: Some(&headers),
-                    },
-                    csf_expr: csf_expr.as_ref(),
-                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
-                    entity_map: referenced_map.as_ref(),
-                })
-                .await
-                .unwrap_or_default();
-            let mut warnings = collect_warnings(&forwarded);
-
-            // Capture which registration returned which entity before the
-            // merge, for the `entityMap` member (clauses 5.2.39 and 5.5.14).
-            remote_sources.extend(remote_sources_of(&forwarded));
-
-            let merged = if forwarded.is_empty() {
-                local_entities
-            } else {
-                EntityQueryService::merge_with_forwarded(local_entities, forwarded, query.attrs.as_deref())
-            };
-
-            // Phase 2: forward to auxiliary CSRs and merge their entities/attributes.
-            let aux_forwarded = state
-                .forwarding
-                .forward_query(ForwardQueryRequest {
-                    entity_type_compact: entity_type,
-                    entity_ids: entity_ids_ref,
-                    context: &context,
-                    operation: ForwardingOperation::QueryEntity,
-                    triggering: TriggeringRequest {
-                        via: incoming_via.as_ref(),
-                        headers: Some(&headers),
-                    },
-                    csf_expr: csf_expr.as_ref(),
-                    mode_filter: CsrModeFilter::AuxiliaryOnly,
-                    entity_map: referenced_map.as_ref(),
-                })
-                .await
-                .unwrap_or_default();
-            if !aux_forwarded.is_empty() {
-                warnings.extend(collect_warnings(&aux_forwarded));
-                remote_sources.extend(remote_sources_of(&aux_forwarded));
-                let merged = EntityQueryService::merge_with_forwarded(merged, aux_forwarded, query.attrs.as_deref());
-                (merged, warnings)
-            } else {
-                (merged, warnings)
+        let mut contributions: Vec<SourceContribution> = Vec::new();
+        let (mut entities, warnings) = match forwarded {
+            None => (local_entities, Vec::new()),
+            Some(results) => {
+                contributions = results.contributions;
+                let merged = if results.primary.is_empty() {
+                    local_entities
+                } else {
+                    EntityQueryService::merge_with_forwarded(local_entities, results.primary, query.attrs.as_deref())
+                };
+                // Phase 2: auxiliary sources only supplement what is present already.
+                let merged = if results.auxiliary.is_empty() {
+                    merged
+                } else {
+                    EntityQueryService::merge_with_forwarded(merged, results.auxiliary, query.attrs.as_deref())
+                };
+                (merged, results.warnings)
             }
         };
 
@@ -255,6 +240,19 @@ pub(crate) async fn query(
             entities = filtered;
         }
 
+        // Clause 5.5.9: the page of the merged, filtered collection.
+        let total_count = if paginate_after_merge {
+            let total = query.count.unwrap_or(false).then_some(entities.len() as i64);
+            entities = entities
+                .into_iter()
+                .skip(usize::try_from(page_offset).unwrap_or(usize::MAX))
+                .take(usize::try_from(page_limit).unwrap_or(usize::MAX))
+                .collect();
+            total
+        } else {
+            local_total
+        };
+
         // Join mode (clause 4.5.23) is parsed at the query boundary. `@none`
         // and an absent `join` retrieve no linked entity at all, so neither
         // reaches the traversal. The join resolves before EntityMap creation
@@ -288,36 +286,44 @@ pub(crate) async fn query(
             None => warnings,
         };
 
-        // Clause 5.7.2.4 with `entityMap=true`: the map covers every matching
-        // entity, not only the page, with each entity attributed to the sources
-        // that hold it (clause 5.2.39).
-        let entity_map_uri = if entity_map_requested {
-            let compiled = service.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;
-            let mut local_ids = service.query_ids(&compiled).await.with_entity_instance(&uri)?;
-            // Linked entities the join resolved belong to the unitary request too (clause 5.5.14).
-            if let Some(resolved) = &resolved {
-                local_ids.extend(resolved.linked.keys().cloned());
+        // Clause 5.5.14: a reused map records the maps its sources answered
+        // with; a minted one (clause 5.7.2.4 `entityMap=true`) covers every
+        // matching entity, not only the page, with each entity attributed to
+        // the sources that hold it (clause 5.2.39).
+        let map_created = map_use.mints();
+        let entity_map_uri = match map_use {
+            EntityMapUse::Reuse(map) => {
+                let links = contributions
+                    .iter()
+                    .filter_map(|contribution| contribution.linked_map.as_ref().map(|linked| (&contribution.registration, linked)));
+                state.entity_maps.record_linked_maps(&map.id, links).await.with_entity_instance(&uri)?;
+                Some(map.id)
             }
-            local_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
-            local_ids.dedup();
-            let lifetime = query.entity_map_lifetime.as_ref();
-            let mut map = state.entity_maps.local_map(local_ids, lifetime).with_entity_instance(&uri)?;
-            for (registration, ids) in remote_sources {
-                map.add_remote_entities(&registration, ids);
+            EntityMapUse::Mint(mut map) => {
+                let compiled = service.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;
+                let mut local_ids = service.query_ids(&compiled).await.with_entity_instance(&uri)?;
+                // Linked entities the join resolved belong to the unitary request too (clause 5.5.14).
+                if let Some(resolved) = &resolved {
+                    local_ids.extend(resolved.linked.keys().cloned());
+                }
+                local_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
+                local_ids.dedup();
+                map.add_local_entities(local_ids);
+                for contribution in contributions {
+                    map.add_contribution(&contribution.registration, contribution.entity_ids, contribution.linked_map);
+                }
+                state.entity_maps.store(&map).await.with_entity_instance(&uri)?;
+                Some(map.id)
             }
-            state.entity_maps.store(&map).await.with_entity_instance(&uri)?;
-            Some(map.id)
-        } else {
-            // Echo the referenced live map back in the response header.
-            referenced_map.map(|map| map.id)
+            EntityMapUse::None => None,
         };
 
-        // Clause 6.3.10 / 4.12: pagination Link headers over the local page. A
+        // Clause 6.3.10 / 4.12: pagination Link headers over the page. A
         // query that asked for a count knows its total and drives `next` from it;
         // one that did not carries no total (the broker does not count on every
         // query) and signals a following page by the page coming back full.
-        let page_limit = i64::from(query.effective_limit());
-        let page_offset = i64::from(query.effective_offset());
+        let page_limit = i64::from(page_limit);
+        let page_offset = i64::from(page_offset);
         let page_extent = match total_count {
             Some(count) => PageExtent::Total(count),
             None => PageExtent::PageFullness {
@@ -325,7 +331,8 @@ pub(crate) async fn query(
             },
         };
 
-        let status = if entity_map_requested { StatusCode::CREATED } else { StatusCode::OK };
+        // Table 6.4.3.2-3: 201 when an EntityMap has been (re)created.
+        let status = if map_created { StatusCode::CREATED } else { StatusCode::OK };
 
         if let (Some(join), Some(resolved)) = (join, resolved) {
             let payload = match join {

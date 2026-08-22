@@ -58,6 +58,10 @@ impl EntityQueryParameters {
         if self.drop.is_some() && self.keep.is_some() {
             return Err(ParameterError::DropKeepExclusive);
         }
+        // Clause 5.7.2.4: ordering is defined over the local result only.
+        if !self.ordering.order_by.is_empty() && !self.is_local() {
+            return Err(ParameterError::OrderingRequiresLocalScope);
+        }
         // Clause 4.21: pick and omit select opposite ends of the same
         // projection, so a request naming both is contradictory rather than
         // a request the broker can merge.

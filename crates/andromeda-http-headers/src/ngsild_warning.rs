@@ -38,6 +38,11 @@ impl NgsiLdWarningHeader {
     pub const fn new(warnings: Vec<NgsiLdWarning>) -> NgsiLdWarningHeader {
         NgsiLdWarningHeader(warnings)
     }
+
+    /// The warnings the header carries, in wire order.
+    pub fn into_warnings(self) -> Vec<NgsiLdWarning> {
+        self.0
+    }
 }
 
 /// Parse a single warning value like `199 - "timeout"` into an `NgsiLdWarning`.
@@ -125,6 +130,20 @@ mod tests {
         pretty_assertions::assert_eq!(encoded.len(), 2);
         pretty_assertions::assert_eq!(encoded[0].to_str().expect("valid str"), "110 - \"cached\"");
         pretty_assertions::assert_eq!(encoded[1].to_str().expect("valid str"), "299 - \"forbidden\"");
+    }
+
+    #[test]
+    fn a_decoded_header_hands_back_its_warnings_in_wire_order() {
+        let val = HeaderValue::from_str("199 - \"first\", 299 - \"second\"").expect("valid");
+        let mut iter = iter::once(&val);
+        let warnings = NgsiLdWarningHeader::decode(&mut iter).expect("should decode").into_warnings();
+        pretty_assertions::assert_eq!(
+            warnings,
+            vec![
+                NgsiLdWarning::MiscellaneousWarning("first".to_string()),
+                NgsiLdWarning::MiscellaneousPersistentWarning("second".to_string())
+            ]
+        );
     }
 
     #[test]

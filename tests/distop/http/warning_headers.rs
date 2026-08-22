@@ -7,13 +7,24 @@ use crate::{
     context_source_adapter::ContextSourceAdapter,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, retrieval_source},
     oracle::{assert_status, has_warning, json_body, warning_codes},
+    registration::CsrBuilder,
     topology::DistributedTopology,
 };
 use reqwest::Method;
+use serde_json::json;
 
-/// A stale cached result carries warning `110`. Caching and `cacheDuration`
-/// enforcement is not implemented, so this is a tracked gap. Confirms REQ-HTTP-16,
-/// REQ-HTTP-17, REQ-HTTP-19.
+/// A second query inside the registration's `cacheDuration` reuses the cached
+/// source response and carries warning `110` (clause 6.3.17: "where a Context
+/// Source Registration matches the request and a previous forwarded response
+/// has been cached and a subsequent request occurs before the Context Source
+/// Registration cacheDuration (as defined in Table 5.2.34-1) has been reached,
+/// the result may incorporate data cached from a previous response. To indicate
+/// that data from a cache has been included in the response, the HTTP header
+/// "NGSILD-Warning" shall be included. The value shall match the IANA Warning
+/// Code [32] 110 - Response is Stale"). The registration therefore sets
+/// `management.cacheDuration`, the source answers a valid empty array so there
+/// is a response to cache, and the warning is asserted on the second query
+/// only. Confirms REQ-HTTP-16, REQ-HTTP-17, REQ-HTTP-19.
 #[tokio::test]
 async fn dist_http_query_cached_result_returns_warning_110() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -21,7 +32,13 @@ async fn dist_http_query_cached_result_returns_warning_110() {
     let reg_id = topology.id("registration:warn-110");
     let mock = ContextSourceAdapter::start().await;
 
-    let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
+    let registration = CsrBuilder::new(&reg_id, &mock.url(""))
+        .mode("inclusive")
+        .entity_id(&entity_id)
+        .property_names(&["speed"])
+        .operations(&["retrieveEntity", "queryEntity", "queryBatch"])
+        .management(json!({ "cacheDuration": "PT10S" }))
+        .build();
     assert_status(
         &topology
             .front()
@@ -31,20 +48,34 @@ async fn dist_http_query_cached_result_returns_warning_110() {
             .expect("register mock source"),
         201,
     );
-    mock.set_stub(Method::GET, FORWARDED_ENTITIES_PATH, 200).await;
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
+
+    let first = topology
+        .front()
+        .client()
+        .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
+        .await
+        .expect("first forwarded query");
+    assert_status(&first, 200);
+    assert!(
+        !has_warning(&first, 110),
+        "the first query contacts the source and carries no stale warning, got {:?}",
+        warning_codes(&first)
+    );
 
     let response = topology
         .front()
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
-        .expect("forwarded query");
+        .expect("second forwarded query");
     assert_status(&response, 200);
     assert!(
         has_warning(&response, 110),
-        "a stale cached result must carry warning 110, got {:?}",
+        "a result served from the cache within cacheDuration must carry warning 110, got {:?}",
         warning_codes(&response)
     );
+    assert_eq!(mock.get_total_count().await, 1, "the second query is served from the cache");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

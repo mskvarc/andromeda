@@ -26,7 +26,13 @@ use andromeda_entity::{
     change_sink::EntityChangeSink,
     config::EntityConfig,
     discovery::EntityDiscoveryService,
-    port::{attribute_history::AttributeDatasetHistory, discovery::EntityDiscoveryStore, query::EntityQueryStore, reader::EntityReader},
+    port::{
+        attribute_history::AttributeDatasetHistory,
+        discovery::EntityDiscoveryStore,
+        query::EntityQueryStore,
+        reader::EntityReader,
+        registry_types::RegistryTypeSource,
+    },
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
 use andromeda_entity_map::{service::EntityMapService, store::EntityMapStore};
@@ -100,6 +106,7 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) entity_query_store: &'a Arc<dyn EntityQueryStore>,
     pub(super) entity_discovery_store: &'a Arc<dyn EntityDiscoveryStore>,
     pub(super) registration_store: &'a Arc<dyn RegistrationStore>,
+    pub(super) registry_type_source: &'a Arc<dyn RegistryTypeSource>,
     pub(super) entity_map_store: &'a Arc<dyn EntityMapStore>,
     pub(super) subscription_router: &'a Arc<dyn ForwardedSubscriptionRouter>,
     pub(super) snapshot_store: &'a Arc<dyn SnapshotStore>,
@@ -139,6 +146,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         entity_query_store,
         entity_discovery_store,
         registration_store,
+        registry_type_source,
         entity_map_store,
         subscription_router,
         snapshot_store,
@@ -213,15 +221,20 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
     let snapshot_notifications: Arc<dyn SnapshotNotificationSink> = Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transports.dispatcher)));
-    let snapshots = Arc::new(SnapshotService::new(Arc::clone(snapshot_store), Some(Arc::clone(&snapshot_notifications))));
     let snapshot_preparation = Arc::new(SnapshotPreparation::new(
         Arc::clone(snapshot_store),
         Arc::clone(&entity_query),
         Arc::clone(&temporal),
         Arc::clone(&forwarding),
-        Some(snapshot_notifications),
+        Some(Arc::clone(&snapshot_notifications)),
         snapshot_config.preparation_concurrency,
     ));
+    let snapshots = Arc::new(SnapshotService::new(
+        Arc::clone(snapshot_store),
+        Some(snapshot_notifications),
+        Some(Arc::clone(&snapshot_preparation)),
+    ));
+
     let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
     let csr_subscriptions = Arc::new(SubscriptionService::new(
         Arc::new(CsourceSubscriptionRepository::new(pool)),
@@ -267,7 +280,11 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     let state = AndromedaState {
         entities,
         entity_query,
-        entity_discovery: Arc::new(EntityDiscoveryService::new(Arc::clone(entity_discovery_store), engine.clone())),
+        entity_discovery: Arc::new(EntityDiscoveryService::new(
+            Arc::clone(entity_discovery_store),
+            Arc::clone(registry_type_source),
+            engine.clone(),
+        )),
         temporal,
         subscriptions: Arc::new(subscriptions),
         contexts,

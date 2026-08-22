@@ -6,13 +6,17 @@
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::vehicle,
-    oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
+    oracle::{assert_problem_details, assert_status, entity_map_header, forwarded_header, json_body},
     registration::CsrBuilder,
     topology::{BrokerRole, DistributedTopology},
 };
 use andromeda_test_fixtures::problem_detail::INVALID_REQUEST;
 use axum::http::Method;
 use serde_json::json;
+use std::time::Duration;
+
+/// How long to wait for the forwarded request a map reuse issues to its source.
+const FORWARD_WAIT: Duration = Duration::from_secs(5);
 
 /// The path a broker appends to a registration `endpoint` for an entity query.
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
@@ -280,8 +284,11 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Cross-instance reuse of an entity map created on another broker is not yet
-/// durable (clause 5.7.2). Confirms REQ-FW-49, REQ-FW-51.
+/// A map minted on broker A is unknown to peer B, which therefore (re)creates
+/// one and answers `201` with a fresh map id (Table 6.4.3.2-3: "201 Created (in
+/// case an EntityMap has been (re)created)"; clause 5.7.2.4: "If the resource
+/// cannot be found, or the data has expired, a new EntityMap shall be created").
+/// Confirms REQ-FW-49, REQ-FW-51.
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
     let topology = DistributedTopology::pair().await.expect("two-broker topology");
@@ -315,13 +322,21 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
         .send()
         .await
         .expect("cross-instance reuse");
-    assert_status(&reused, 200);
+    assert_status(&reused, 201);
+    let recreated = entity_map_header(&reused).expect("the peer returns the map it created");
+    assert_ne!(recreated, map_id, "a map unknown to the peer is recreated under a fresh id");
 
     topology.finish().await.expect("topology cleanup");
 }
 
-/// Passing the map field back reuses the existing map with no fresh broad
-/// request to the source (clause 5.7.2). Confirms REQ-FW-51, REQ-FW-75.
+/// Passing the map field back reuses the existing map: no new map is minted
+/// (`200`, same id) and the mapped source is still consulted under the map, the
+/// forwarded request carrying the linked map id (clause 4.3.6.7: "Only the
+/// Entities whose identifiers are contained in the Entity map are considered
+/// when rendering the result pages"; clause 5.7.2.4: "If an EntityMap is in use
+/// for this operation, and an EntityMap entry linked to a Context Source
+/// Registration is found, the location of the linked EntityMap shall be passed
+/// as part of any forwarded request"). Confirms REQ-FW-51, REQ-FW-75.
 #[tokio::test]
 async fn distop_entity_map_reused_when_field_passed_back() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -341,6 +356,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
         .expect("map query");
     assert_status(&created, 201);
     let map_id = entity_map_header(&created).expect("map id returned");
+    let _broad = mock.next_request(FORWARD_WAIT).await;
     let count_after_create = mock.get_total_count().await;
 
     let reused = topology
@@ -353,10 +369,15 @@ async fn distop_entity_map_reused_when_field_passed_back() {
         .await
         .expect("reuse");
     assert_status(&reused, 200);
-    assert_eq!(
-        mock.get_total_count().await,
-        count_after_create,
-        "reusing the map issues no fresh broad request"
+    assert_eq!(entity_map_header(&reused).as_deref(), Some(map_id.as_str()), "reusing the map mints no new map");
+    assert!(
+        mock.get_total_count().await > count_after_create,
+        "the mapped source is consulted under the map"
+    );
+    let forwarded = mock.next_request(FORWARD_WAIT).await;
+    assert!(
+        forwarded_header(&forwarded, "ngsild-entitymap").is_some(),
+        "the forwarded request carries the linked map id"
     );
 
     mock.shutdown().await;

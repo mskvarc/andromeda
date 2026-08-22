@@ -41,7 +41,10 @@ async fn dist_http_append_attrs_local_returns_204() {
 }
 
 /// An append where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` with an `UpdateResult` (clause 6.3.16). Confirms REQ-HTTP-74.
+/// `207` with an `UpdateResult` (clause 6.3.16). The appended attribute is the
+/// registered `speed`: only attributes the registration covers are forwarded
+/// (clause 5.6.3.4), so appending an uncovered attribute would never reach the
+/// failing endpoint. Confirms REQ-HTTP-74.
 #[tokio::test]
 async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -71,7 +74,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     );
     mock.set_stub(Method::POST, &forwarded_attrs_path(&entity_id), 500).await;
 
-    let fragment = attribute_fragment(&[("fuel", property(json!("diesel")))]);
+    let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
         .front()
         .client()
@@ -160,7 +163,9 @@ async fn dist_http_update_attrs_local_returns_204() {
 }
 
 /// An update where a forwarded endpoint fails is a partial failure, mapped to
-/// `207` with an `UpdateResult` (clause 6.3.16). Confirms REQ-HTTP-75.
+/// `207` with an `UpdateResult` (clause 6.3.16). The registration advertises
+/// `updateEntity`, the Table 4.20-1 name of 5.6.2 Update Attributes.
+/// Confirms REQ-HTTP-75.
 #[tokio::test]
 async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -183,7 +188,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
         &topology
             .front()
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateAttrs"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateEntity"]))
             .await
             .expect("register source"),
         201,

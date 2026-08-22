@@ -12,7 +12,9 @@ use andromeda_http_extraction::{
     query::ValidatedQuery,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
+    via::IncomingVia,
 };
+use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
@@ -77,13 +79,21 @@ pub(crate) async fn query(
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
+    IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
 ) -> Result<Response, ProblemResponse> {
     let context: ContextSpec = context.into_inner();
     let options = params.parse_options();
     let limit = i64::from(params.effective_limit());
     let offset = i64::from(params.effective_offset());
-    let (registrations, total) = state.registrations.query(&params, &context).await.with_registration_instance(&uri)?;
+    // Clause 4.3.6.4: the `Via` chain lists the context sources the request
+    // already passed through; clause 5.12 excludes their registrations.
+    let encountered_sources: Vec<_> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect(); // clone: the discovery owns the listing across the store await
+    let (registrations, total) = state
+        .registrations
+        .query(&params, &encountered_sources, &context)
+        .await
+        .with_registration_instance(&uri)?;
     let registrations = registrations
         .into_iter()
         .map(|registration| RegistrationRenderer::new(registration).with_sys_attrs(options.sys_attrs).render())

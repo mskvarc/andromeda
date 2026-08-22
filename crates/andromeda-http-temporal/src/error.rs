@@ -2,9 +2,10 @@
 
 use crate::snapshot_scope::TemporalSnapshotError;
 use andromeda_entity_map::error::EntityMapError;
+use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
-use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse};
-use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, provision::classify_forwarding_error};
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
 use andromeda_ngsi_ld_query::error::QueryError;
 use andromeda_ngsi_ld_render::{error::RenderError, temporal::simplify::TemporalSimplifyError};
 use andromeda_ngsi_ld_request::error::ParameterError;
@@ -44,6 +45,17 @@ pub(crate) fn temporal_problem(error: &TemporalError, instance: &Uri) -> Problem
     classify_temporal_error(error).with_instance(instance.clone())
 }
 
+/// The response a temporal read gives when the one exclusive or redirect
+/// source holding all of its data declined the representation with `status`
+/// (Table 6.4.3.2-3, clause 6.3.7): the source's 501 is the operation's answer.
+pub(crate) fn single_source_declined(status: u16, instance: &Uri) -> ProblemResponse {
+    ClassifiedReport::public_binding(
+        ProblemClassification::NotImplemented,
+        format!("the registered context source holding the requested data answered HTTP {status}: it does not support the requested representation"),
+    )
+    .with_instance(instance.clone())
+}
+
 impl TemporalHttpClassify for TemporalSnapshotError {
     fn classify_for_temporal_http(&self) -> ClassifiedReport {
         match self {
@@ -59,14 +71,30 @@ impl TemporalHttpClassify for EntityMapError {
             EntityMapError::NotFound { identifier } => {
                 ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, format!("Entity Map {identifier} not found"))
             }
-            EntityMapError::EntityNotInMap {
-                entity_identifier,
-                map_identifier,
-            } => ClassifiedReport::public(
-                NgsiLdErrorType::ResourceNotFound,
-                format!("Entity {entity_identifier} is not present in Entity Map {map_identifier}"),
-            ),
+            // Clause 5.5.14 with clause 6.3.20: parameters incompatible with
+            // the request that created the map are an invalid request.
+            EntityMapError::RequestChanged { .. } => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, self.to_string()),
             EntityMapError::Persistence { .. } | EntityMapError::Invariant { .. } => ClassifiedReport::internal(self),
+        }
+    }
+}
+
+impl TemporalHttpClassify for FederationError {
+    fn classify_for_temporal_http(&self) -> ClassifiedReport {
+        match self {
+            FederationError::JsonLd(source) => classify_jsonld_error(source),
+            FederationError::Query(source) => classify_query_error(source),
+            // Clause 6.3.17: the failures of a forwarded request carry their
+            // own status and the most informative detail available.
+            FederationError::Conflict { .. }
+            | FederationError::OperationNotSupported { .. }
+            | FederationError::LoopDetected { .. }
+            | FederationError::GatewayTimeout { .. }
+            | FederationError::RemoteNotFound { .. }
+            | FederationError::BadGateway { .. }
+            | FederationError::Registration(_)
+            | FederationError::Representation(_)
+            | FederationError::Internal { .. } => classify_forwarding_error(self),
         }
     }
 }
@@ -118,10 +146,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::error::classify_temporal_error;
+    use crate::error::{classify_temporal_error, single_source_declined};
     use andromeda_context_commit::error::CommitError;
     use andromeda_jsonld::error::JsonLdError;
-    use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
+    use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
     use andromeda_ngsi_ld_query::error::QueryError;
     use andromeda_ngsi_ld_request::error::ParameterError;
     use andromeda_temporal::error::TemporalError;
@@ -178,6 +206,15 @@ mod tests {
         let report = classify_temporal_error(&error);
         pretty_assertions::assert_eq!(report.error_type(), NgsiLdErrorType::BadRequestData);
         pretty_assertions::assert_eq!(report.detail(), "'QQQ' is not a UN/CEFACT common code");
+    }
+
+    /// Table 6.4.3.2-3: the 501 of the one registered source holding the data
+    /// is answered as a 501 carrying the OperationNotSupported category.
+    #[test]
+    fn a_lone_source_declining_the_representation_is_a_501() {
+        let response = single_source_declined(501, &"/ngsi-ld/v1/temporal/entities".parse().expect("valid URI"));
+        pretty_assertions::assert_eq!(response.problem().classification(), ProblemClassification::NotImplemented);
+        pretty_assertions::assert_eq!(response.problem().status_code().as_u16(), 501);
     }
 
     #[test]

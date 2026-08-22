@@ -10,8 +10,9 @@ use crate::{
 };
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
+    forwarded_query::ClientQuery,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, ForwardQueryRequest, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, TriggeringRequest},
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -37,23 +38,21 @@ impl SnapshotExecutor {
                 return failure_detail(error.to_string());
             }
         };
-        let entity_ids = params.id.clone();
-        let entity_type = params.entity_type.as_ref();
         let forwarded_result = self
             .forwarding
             .forward_query(ForwardQueryRequest {
-                entity_type_compact: entity_type,
-                entity_ids: entity_ids.as_deref(),
+                client_query: ClientQuery::EntityQuery(&params),
+                split: self.forwarding.split_entities(params.split_entities),
                 context: &context,
                 operation: ForwardingOperation::QueryBatch,
                 triggering: TriggeringRequest::default(),
                 csf_expr: None,
                 mode_filter: CsrModeFilter::All,
-                entity_map: None,
+                entity_map: EntityMapInUse::None,
             })
             .await;
         let forwarded = match forwarded_result {
-            Ok(forwarded) => forwarded,
+            Ok(forwarded) => forwarded.results,
             Err(error) => {
                 warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
                 Vec::new()

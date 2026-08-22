@@ -4,6 +4,7 @@ use crate::{
     error::{EntityResultExt, public_error},
     state::EntityTenantState,
 };
+use andromeda_entity::discovery::DiscoveryScope;
 use andromeda_federation::{
     discovery_result::{collect_discovery_warnings, merge_type_info_results, merge_types_results},
     operation::ForwardingOperation,
@@ -63,9 +64,10 @@ pub async fn query(
     }
 
     let is_local = params.local.unwrap_or(false);
+    let scope = DiscoveryScope::for_local_request(params.local);
 
     if params.details {
-        let local_result = service.type_details(&context).await.with_entity_instance(&uri)?;
+        let local_result = service.type_details(scope, &context).await.with_entity_instance(&uri)?;
 
         let (result, warnings) = if is_local {
             (local_result, Vec::new())
@@ -95,7 +97,7 @@ pub async fn query(
             .with_entity_instance(&uri)?;
         Ok(NgsiLdResponse::ok(rendered).with_warnings(warnings).into_response())
     } else {
-        let types = service.types(&context).await.with_entity_instance(&uri)?;
+        let types = service.types(scope, &context).await.with_entity_instance(&uri)?;
         let local_result = serde_json::to_value(&types).with_entity_instance(&uri)?;
 
         let (result, warnings) = if is_local {
@@ -169,7 +171,10 @@ pub async fn get(
 
     let is_local = params.local.unwrap_or(false);
 
-    let local_result = service.type_info(&type_, &context).await.with_entity_instance(&uri)?;
+    let local_result = service
+        .type_info(&type_, DiscoveryScope::for_local_request(params.local), &context)
+        .await
+        .with_entity_instance(&uri)?;
 
     let (result, warnings) = if is_local {
         (local_result, Vec::new())

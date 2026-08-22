@@ -1,26 +1,46 @@
-//! HTTP handling for temporal add attributes.
+//! HTTP handling for temporal add attributes (clause 5.6.12).
 
 use crate::temporal::{
     ContextUrl,
+    ForwardProvisionRequest,
+    ForwardingOperation,
+    HeaderMap,
+    IncomingVia,
     IntoResponse,
     JsonLd,
+    LocalOnlyParams,
+    LocalOutcome,
+    Method,
     OriginalUri,
     ProblemResponse,
+    ProvisionResource,
     Response,
     ResultInstanceExt,
     StatusCode,
     TenantState,
+    TriggeringRequest,
     TypedPath,
     Uri,
+    ValidatedQuery,
     Value,
+    collect_proxied_attrs,
+    has_attributes,
+    local_temporal_outcome,
+    payload_entity_type,
+    provision_response,
+    strip_attributes_from_value,
 };
 use andromeda_http_extraction::tenant_state;
+use andromeda_http_response::classified_report::ClassifiedReport;
 
 pub async fn add_attrs(
     tenant_state::ExistingTenantState(state): TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
+    ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
+    IncomingVia(incoming_via): IncomingVia,
+    headers: HeaderMap,
     JsonLd {
         value: payload,
         context: body_context,
@@ -28,6 +48,43 @@ pub async fn add_attrs(
 ) -> Result<Response, ProblemResponse> {
     let service = &state.temporal;
     let context = context.merge(body_context);
-    service.add_attrs(&id, payload, &context).await.with_instance(&uri)?;
-    Ok(StatusCode::NO_CONTENT.into_response())
+
+    if params.local.unwrap_or(false) {
+        service.add_attrs(&id, payload, &context).await.with_instance(&uri)?;
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
+    let entity_type = payload_entity_type(&payload);
+    let body = serde_json::to_vec(&payload).map_err(|error| ClassifiedReport::internal(&error).with_instance(uri.clone()))?;
+    let forwarded = state
+        .forwarding
+        .forward_provision(ForwardProvisionRequest {
+            resource: ProvisionResource::TemporalEntities,
+            entity_id: &id,
+            entity_type_compact: entity_type.as_ref(),
+            attribute_name: None,
+            method: Method::POST,
+            body: Some(&body),
+            context: &context,
+            operation: ForwardingOperation::AppendTemporalAttributes,
+            path_suffix: Some("/attrs"),
+            query_string: None,
+            triggering: TriggeringRequest {
+                via: incoming_via.as_ref(),
+                headers: Some(&headers),
+            },
+        })
+        .await
+        .with_instance(&uri)?;
+
+    // Clause 5.6.12.4: the attributes proxied registrations cover leave the
+    // fragment; whatever remains is added here.
+    let mut payload = payload;
+    strip_attributes_from_value(&mut payload, &collect_proxied_attrs(&forwarded));
+    let local = if forwarded.is_empty() || has_attributes(&payload) {
+        local_temporal_outcome(service.add_attrs(&id, payload, &context).await, &forwarded)
+    } else {
+        LocalOutcome::NothingRemained
+    };
+    provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

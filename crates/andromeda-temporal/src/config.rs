@@ -85,7 +85,13 @@ pub struct TemporalConfig {
     /// System default `lastN` cap from clause 5.2.21.
     #[config(env = "ANDROMEDA_TEMPORAL_DEFAULT_LAST_N", default = 19)]
     pub default_last_n: u32,
-    /// Interval used by temporal-related expiry reconciliation while retention remains in composition.
+    /// Cadence, in seconds, of every `expiresAt` sweep the broker schedules
+    /// per tenant: entities (clause 5.2.4), subscriptions (clause 5.8.1.4),
+    /// context source registrations (clause 5.9.2.4), snapshots and entity
+    /// maps. Each sweep deletes what has expired at the moment it runs, so a
+    /// resource may outlive its `expiresAt` in storage by up to one cadence;
+    /// the read paths hide an expired registration in the meantime, so the
+    /// API never serves one. The conformance stacks run this at 5 s.
     #[config(env = "ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS", default = 30)]
     pub expiration_check_interval_secs: u64,
     /// Fallback poll cadence for committed temporal intents.

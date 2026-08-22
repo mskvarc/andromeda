@@ -32,7 +32,13 @@ pub fn classify_request_origin_error(error: &RequestOriginError) -> ClassifiedRe
 pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
     match error {
         ParameterError::Query(source) => classify_query_error(source),
-        ParameterError::OptionsInvalid(_) | ParameterError::FormatInvalid(_) => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
+        // Clause 5.7.4.4 names the ineligible-aggregation failure an
+        // InvalidRequest, beside the clause 6.3.20 parameter incompatibilities,
+        // of which `type=*` contradicted by `local=false` is one.
+        ParameterError::OptionsInvalid(_)
+        | ParameterError::FormatInvalid(_)
+        | ParameterError::AggregationIneligible { .. }
+        | ParameterError::WildcardTypeWithLocalFalse => ClassifiedReport::public(NgsiLdErrorType::InvalidRequest, error.to_string()),
         ParameterError::IdPatternEmpty
         | ParameterError::OrderByDirectionInvalid(_)
         | ParameterError::OrderGeometryInvalid(_)
@@ -58,8 +64,9 @@ pub fn classify_parameter_error(error: &ParameterError) -> ClassifiedReport {
         | ParameterError::RequestTypeInvalid(_)
         | ParameterError::EntityQueryTemporalMembers
         | ParameterError::TemporalQueryMissing
-        | ParameterError::WildcardTypeWithLocalFalse
-        | ParameterError::TemporalAggregationConflict => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
+        | ParameterError::TemporalAggregationConflict
+        | ParameterError::OrderingRequiresLocalScope
+        | ParameterError::TemporalOrderingNotById(_) => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, error.to_string()),
     }
 }
 

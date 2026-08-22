@@ -8,6 +8,7 @@
 use crate::{
     context_source_adapter::ContextSourceAdapter,
     entity::vehicle,
+    fw::snapshots::create_prepared_snapshot,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, provision_source, retrieval_source},
     oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
     topology::DistributedTopology,
@@ -160,23 +161,70 @@ async fn dist_http_registry_api_operations_always_local() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The snapshot operation ignores `local=false` and always runs locally. Snapshot
-/// implicit-local handling is not yet implemented. Confirms REQ-HTTP-36.
-#[ignore = "UNKNOWN REQ-HTTP-36: snapshot implicit-local handling pending"]
+/// A batch query scoped to a snapshot runs locally even with `local=false`:
+/// snapshot operations are implicitly local (clause 6.3.18), so the scoped
+/// query itself never contacts the registered source and still succeeds.
+/// Preparing the snapshot legitimately does contact it (clause 5.16.1.4 runs
+/// `snapshotQueries` as ordinary clause 5.7.2.4 distributed queries), so the
+/// assertion measures the requests the scoped query adds, not the total.
+/// Confirms REQ-HTTP-36.
 #[tokio::test]
 async fn dist_http_snapshot_op_ignores_local_false() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let entity_id = topology.id("Vehicle:snapshot-local");
+    let reg_id = topology.id("registration:snapshot-local");
+    let mock = ContextSourceAdapter::start().await;
+
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .post_entity(&vehicle(&entity_id, 5))
+            .with_ld_json()
+            .send()
+            .await
+            .expect("local create"),
+        201,
+    );
+    assert_status(
+        &topology
+            .front()
+            .client()
+            .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
+            .await
+            .expect("register source"),
+        201,
+    );
+    mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
+
+    let snapshot = json!({
+        "type": "Snapshot",
+        "snapshotLifetime": "PT1H",
+        "snapshotQueries": [ { "type": "Query", "entities": [ { "type": "Vehicle" } ] } ],
+        "@context": context_link()
+    });
+    let snapshot_id = create_prepared_snapshot(topology.front().client(), &snapshot).await;
+    let forwarded_during_preparation = mock.get_total_count().await;
+
     let response = topology
         .front()
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/entityOperations/query?local=false")
         .header("content-type", "application/ld+json")
         .header("accept", "application/ld+json")
+        .header("ngsild-snapshot", snapshot_id.as_str())
         .json(&json!({ "type": "Query", "entities": [ { "type": "Vehicle" } ], "@context": context_link() }))
         .send()
         .await
         .expect("snapshot query");
     assert_status(&response, 200);
+    assert_eq!(
+        mock.get_total_count().await,
+        forwarded_during_preparation,
+        "a snapshot-scoped query is implicitly local"
+    );
+
+    mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
 }
 
@@ -419,7 +467,9 @@ async fn dist_http_query_contained_by_param_honoured() {
 }
 
 /// `entityMap=true` returns an `NGSILD-EntityMap` header whose lifetime is set by
-/// `entityMapLifetime` (clause 6.3.15). Confirms REQ-HTTP-51 (entityMap).
+/// `entityMapLifetime` (clause 6.3.15). With no map referenced in the request a
+/// new map is minted, so the query answers `201` (Table 6.4.3.2-3: "201 Created"
+/// when an EntityMap is "(re)created"). Confirms REQ-HTTP-51 (entityMap).
 #[tokio::test]
 async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -448,7 +498,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
         )
         .await
         .expect("entity-map query");
-    assert_status(&response, 200);
+    assert_status(&response, 201);
     assert!(
         entity_map_header(&response).is_some(),
         "an entityMap query must return an NGSILD-EntityMap header"
@@ -482,7 +532,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
         &topology
             .front()
             .client()
-            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteEntity"]))
+            .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
             .await
             .expect("register source"),
         201,
@@ -536,7 +586,9 @@ async fn dist_http_retrieve_entity_supports_table_params() {
 }
 
 /// Merge supports its format/lang/observedAt/options/type parameters
-/// (clause 6.4.3.3). Confirms REQ-HTTP-71.
+/// (clause 6.5.3.4). The `application/ld+json` body carries its own `@context`
+/// and no `Link`, since clause 6.3.5 rejects a JSON-LD Link alongside that
+/// media type. Confirms REQ-HTTP-71.
 #[tokio::test]
 async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_params() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -564,7 +616,6 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
             ),
         )
         .header("content-type", "application/ld+json")
-        .header("link", context_link_header())
         .json(&json!({ "speed": { "type": "Property", "value": 99 }, "@context": context_link() }))
         .send()
         .await

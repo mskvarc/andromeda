@@ -7,6 +7,10 @@
 pub mod error;
 /// Bounded expiry of Entity Maps past their `expiresAt`.
 pub mod expiry;
+/// The canonical digest of a map-creating request's filter parameters.
+pub mod fingerprint;
+/// What a read does about Entity Maps: reuse, mint, or neither.
+pub mod reuse;
 /// Entity Map lifecycle and intersection semantics.
 pub mod service;
 /// The replaceable Entity Map storage capability.
@@ -17,6 +21,8 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-ngsi-ld-lexicon",
         "andromeda-ngsi-ld-model",
+        "andromeda-ngsi-ld-query",
+        "andromeda-ngsi-ld-request",
     ],
     allow_workspace_dev_dependencies: [],
     allow_production_dependencies: [],

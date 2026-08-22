@@ -282,7 +282,9 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
 }
 
 /// The temporal `entityMaps` collection GET creates a map and returns its id in
-/// the header (clause 6.34). Confirms REQ-HTTP-102.
+/// the header (clause 6.34). The request carries a temporal query because
+/// clause 5.14.5.4 opens with "If a temporal query is not provided then an error
+/// of type BadRequestData shall be raised". Confirms REQ-HTTP-102.
 #[tokio::test]
 async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -303,7 +305,10 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
     let response = topology
         .front()
         .client()
-        .raw(Method::GET, "/ngsi-ld/v1/temporal/entityMaps?type=Vehicle")
+        .raw(
+            Method::GET,
+            "/ngsi-ld/v1/temporal/entityMaps?type=Vehicle&timerel=before&timeAt=2022-01-01T00:00:00Z",
+        )
         .header("accept", "application/ld+json")
         .header("link", context_link_header())
         .send()
@@ -321,7 +326,9 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
 }
 
 /// The temporal `entityMaps` collection POST with a Query body creates a map and
-/// returns its id in the header (clause 6.34). Confirms REQ-HTTP-103.
+/// returns its id in the header (clause 6.34). The Query carries a `temporalQ`
+/// because clause 5.14.5.4 opens with "If a temporal query is not provided then
+/// an error of type BadRequestData shall be raised". Confirms REQ-HTTP-103.
 #[tokio::test]
 async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_header() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -345,7 +352,12 @@ async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_head
         .raw(Method::POST, "/ngsi-ld/v1/temporal/entityMaps")
         .header("content-type", "application/ld+json")
         .header("accept", "application/ld+json")
-        .json(&json!({ "type": "Query", "entities": [ { "type": "Vehicle" } ], "@context": context_link() }))
+        .json(&json!({
+            "type": "Query",
+            "entities": [ { "type": "Vehicle" } ],
+            "temporalQ": { "timerel": "before", "timeAt": "2022-01-01T00:00:00Z" },
+            "@context": context_link()
+        }))
         .send()
         .await
         .expect("temporal entityMaps collection post");

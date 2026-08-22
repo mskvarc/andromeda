@@ -104,8 +104,6 @@ async fn merge_entity_exclusive_match_forwards_and_strips() {
     let entity_id = topology.id("Vehicle:prov-merge-exclusive");
     let reg_id = topology.id("registration:prov-merge-exclusive");
 
-    seed_local(client, &brand_and_speed(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
@@ -113,6 +111,7 @@ async fn merge_entity_exclusive_match_forwards_and_strips() {
         .operations(&["mergeEntity", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local(client, &brand_and_speed(&entity_id)).await;
     let forward_path = format!("/ngsi-ld/v1/entities/{entity_id}");
     mock.set_stub(Method::PATCH, &forward_path, 204).await;
 
@@ -138,7 +137,11 @@ async fn merge_entity_exclusive_match_forwards_and_strips() {
         Some("BMW"),
         "the unowned attribute is merged locally: {local_body}"
     );
-    assert!(local_body.get("speed").is_none(), "the owned attribute is stripped locally: {local_body}");
+    assert_eq!(
+        local_body["speed"]["value"].as_i64(),
+        Some(42),
+        "the owned attribute is removed from the fragment and the local copy is left untouched: {local_body}"
+    );
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -155,8 +158,6 @@ async fn merge_entity_op_unsupported_returns_409() {
     let entity_id = topology.id("Vehicle:prov-merge-unsup");
     let reg_id = topology.id("registration:prov-merge-unsup");
 
-    seed_local(client, &brand_and_speed(&entity_id)).await;
-
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("exclusive")
         .entity_id(&entity_id)
@@ -164,6 +165,7 @@ async fn merge_entity_op_unsupported_returns_409() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
+    seed_local(client, &brand_and_speed(&entity_id)).await;
     let forward_path = format!("/ngsi-ld/v1/entities/{entity_id}");
 
     let merged = client

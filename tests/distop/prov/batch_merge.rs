@@ -1,4 +1,4 @@
-//! Batch Merge forwarding — REQ-PROV-125..129 (clause 5.6.10.4).
+//! Batch Merge forwarding — REQ-PROV-125..129 (clause 5.6.20.4).
 //!
 //! Merge forwards each registration only the entities carrying an attribute it
 //! owns (attribute-less entities are dropped); a source advertising the batch
@@ -21,13 +21,6 @@ use serde_json::{Value, json};
 /// A `Vehicle` carrying only `speed`.
 fn speed_vehicle(id: &str, speed: i64) -> Value {
     entity(id, "Vehicle", &[("speed", property(json!(speed)))])
-}
-
-/// Whether a `BatchOperationResult` reports `id` under `success`.
-fn success_contains(body: &Value, id: &str) -> bool {
-    body["success"]
-        .as_array()
-        .is_some_and(|entries| entries.iter().any(|entry| entry.as_str() == Some(id) || entry["entityId"].as_str() == Some(id)))
 }
 
 /// Whether a `BatchOperationResult` carries an error keyed by `registration` with the given status.
@@ -54,13 +47,13 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
     let speed_csr = CsrBuilder::new(&reg_speed, &mock.url("/s1"))
         .mode("redirect")
         .property_names(&["speed"])
-        .operations(&["mergeEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["mergeBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&speed_csr).await.expect("create speed registration"), 201);
     let gear_csr = CsrBuilder::new(&reg_gear, &mock.url("/s2"))
         .mode("redirect")
         .property_names(&["gear"])
-        .operations(&["mergeEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["mergeBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&gear_csr).await.expect("create gear registration"), 201);
     mock.set_stub(Method::POST, "/s1/ngsi-ld/v1/entityOperations/merge", 204).await;
@@ -99,7 +92,7 @@ async fn batch_merge_supported_forwards_and_merges() {
 
     let registration = CsrBuilder::new(&reg_id, &mock.url(""))
         .mode("redirect")
-        .operations(&["mergeEntity", "queryBatch", "retrieveEntity"])
+        .operations(&["mergeBatch", "retrieveEntity"])
         .build();
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
     let source_result = json!({
@@ -199,9 +192,10 @@ async fn batch_merge_redirect_neither_op_conflict_per_entity() {
     topology.finish().await.expect("topology cleanup");
 }
 
-/// The local phase merges into a locally held entity and reports it under
-/// `success`, while an auxiliary registration suppresses forwarding.
-/// Confirms REQ-PROV-129.
+/// The local phase merges into a locally held entity and, since every entity
+/// existed and was merged, answers with no content (clause 5.6.20.5: "none (if
+/// all Entities already existed and are successfully merged)"), while an
+/// auxiliary registration suppresses forwarding. Confirms REQ-PROV-129.
 #[tokio::test]
 async fn batch_merge_local_phase_populates_results() {
     let topology = DistributedTopology::single().await.expect("single-broker topology");
@@ -226,12 +220,7 @@ async fn batch_merge_local_phase_populates_results() {
     assert_status(&client.create_registration(&registration).await.expect("create registration"), 201);
 
     let merged = client.batch_merge(&json!([speed_vehicle(&v1, 99)])).await.expect("batch merge");
-    assert_status(&merged, 207);
-    assert!(
-        success_contains(&json_body(&merged), &v1),
-        "the locally merged entity is reported: {}",
-        json_body(&merged)
-    );
+    assert_status(&merged, 204);
 
     let local = client
         .get_entity(&v1, "local=true", "application/ld+json", None)

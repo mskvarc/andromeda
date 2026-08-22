@@ -1,10 +1,13 @@
+//! Entity event notification evaluation: which compiled subscriptions a
+//! committed change reaches, and the delivery of one notification to each.
+
+/// The entity document a change event is notified with.
+mod change_payload;
+/// Delivery of a durably queued event through the processor.
+mod durable_delivery;
 pub(crate) mod payload;
 
-use crate::{
-    delivery_drain::{DeliveryDisposition, NotificationDeliveryTransport},
-    delivery_entry::DeliveryEntry,
-    error::NotificationError,
-};
+use crate::{error::NotificationError, processor::change_payload::entity_data_for};
 use andromeda_context_commit::change_event::ChangeEvent;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
@@ -13,14 +16,9 @@ use andromeda_delivery::{
 };
 use andromeda_entity::{port::reader::EntityReader, query::EntityQueryService, sys_attrs::inject_sys_attrs};
 use andromeda_jsonld::engine::processor::JsonLdEngine;
-use andromeda_ngsi_ld_lexicon::{
-    entity_type_name::EntityTypeName,
-    rfc3339::whole_seconds,
-    uri::{NGSI_LD_URN_NID, Uri},
-};
-use andromeda_ngsi_ld_model::notification::{ChangeOrigin, Notification, NotificationTrigger, NotificationType, SysAttrsSnapshot};
+use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_model::notification::{Notification, NotificationTrigger, NotificationType};
 use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
-use andromeda_ngsi_ld_vocabulary::expanded::{classes as expanded_classes, properties as expanded_properties};
 use andromeda_subscription::{
     cache::SubscriptionCache,
     change::SubscriptionChange,
@@ -31,10 +29,9 @@ use andromeda_subscription::{
     throttle::ceiling_for_throttle,
 };
 use andromeda_tenancy::tenant_ref::TenantRef;
-use chrono::{DateTime, Utc};
-use futures::{StreamExt, future::BoxFuture, stream};
+use chrono::Utc;
+use futures::{StreamExt, stream};
 use payload::{NotificationBuildParams, build_notification_data, cache::NotificationCompactionCache};
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error};
 use uuid::Uuid;
@@ -145,6 +142,16 @@ impl NotificationProcessor {
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
             event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
         );
+        // A durably queued delivery may be drained by another instance of this
+        // broker, which shares the store but not the in-memory cache the
+        // subscription's own lifecycle changes refreshed. The subscription it
+        // names is therefore re-read before matching, so a stale cache neither
+        // drops a subscription created elsewhere nor notifies one deleted there.
+        if let Some(subscription_id) = subscription_id {
+            self.cache
+                .handle_change(&SubscriptionChange::Upserted(subscription_id.clone()), self.sub_repo.as_ref()) // clone: the change names the identifier the delivery carries
+                .await;
+        }
         let outcome = self.cache.find_matching(&event);
         debug!(
             entity = %event.entity_id,
@@ -169,81 +176,7 @@ impl NotificationProcessor {
         debug!("Found {} matching subscriptions for event {}", matching.len(), event.entity_id);
 
         // Fetch entity data once for all matching subscriptions
-        let entity_data = if !matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
-            match event.current_payload.as_deref() {
-                Some(payload) => Some(payload.clone()),
-                None => match self.entity_reader.get(&event.entity_id).await {
-                    Ok(Some(data)) => Some(data),
-                    Ok(None) => {
-                        debug!("Entity {} no longer exists, skipping notification", event.entity_id);
-                        None
-                    }
-                    Err(e) => {
-                        error!("Failed to fetch entity {} for notification: {}", event.entity_id, e);
-                        None
-                    }
-                },
-            }
-        } else if matches!(event.trigger_reason, NotificationTrigger::AttributeDeleted) {
-            if let Some(payload) = event.current_payload.as_deref().or(event.entity_snapshot.as_deref()) {
-                Some(payload.clone())
-            } else {
-                match self.entity_reader.get(&event.entity_id).await {
-                    Ok(Some(data)) => Some(data),
-                    _ => {
-                        if let Some(ref snapshot) = event.entity_snapshot {
-                            let mut bare = payload::context::strip_to_structural_keys(
-                                &match snapshot.as_ref() {
-                                    Value::Array(values) => match values.first() {
-                                        Some(value) => value.clone(),
-                                        None => snapshot.as_ref().clone(),
-                                    },
-                                    other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
-                                },
-                                SysAttrsInclusion::Strip,
-                            );
-                            if let Some(obj) = bare.as_object_mut() {
-                                obj.insert(
-                                    expanded_properties::DELETED_AT.as_str().to_string(),
-                                    serde_json::json!([{
-                                        "@type": expanded_classes::DATE_TIME.as_str(),
-                                        "@value": whole_seconds(event.occurred_at)
-                                    }]),
-                                );
-                            }
-                            Some(serde_json::json!([bare]))
-                        } else {
-                            None
-                        }
-                    }
-                }
-            }
-        } else if let Some(snapshot) = event.entity_snapshot.as_deref() {
-            let deleted_at_value = serde_json::json!([{
-                "@type": expanded_classes::DATE_TIME.as_str(),
-                "@value": whole_seconds(event.occurred_at)
-            }]);
-            let mut data = match snapshot {
-                Value::Array(values) => match values.first() {
-                    Some(value) => value.clone(),
-                    None => snapshot.clone(),
-                },
-                other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Object(_)) => other.clone(),
-            };
-            if let Some(obj) = data.as_object_mut() {
-                obj.insert(expanded_properties::DELETED_AT.as_str().to_string(), deleted_at_value);
-            }
-            Some(serde_json::json!([data]))
-        } else {
-            Some(serde_json::json!([{
-                "@id": event.entity_id,
-                "@type": event.entity_types,
-                (expanded_properties::DELETED_AT.as_str()): [{
-                    "@type": expanded_classes::DATE_TIME.as_str(),
-                    "@value": whole_seconds(event.occurred_at)
-                }]
-            }]))
-        };
+        let entity_data = entity_data_for(self.entity_reader.as_ref(), &event).await;
 
         let filter_data = if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
             event.previous_attributes.as_ref().or(event.entity_snapshot.as_ref()).map(AsRef::as_ref)
@@ -403,101 +336,6 @@ impl NotificationProcessor {
     }
 }
 
-impl NotificationDeliveryTransport for NotificationProcessor {
-    fn deliver<'a>(&'a self, entry: &'a DeliveryEntry) -> BoxFuture<'a, Result<DeliveryDisposition, NotificationError>> {
-        Box::pin(async move {
-            let stored = &entry.event;
-            let is_deletion = matches!(stored.trigger, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted);
-            let snapshot = stored.entity_snapshot.clone(); // clone: the change event owns the durable payload while the leased delivery remains available for acknowledgement.
-            // The deleted row is gone, so its system attributes are read back
-            // from the snapshot the delete write embedded them into, restoring
-            // the typed carrier the in-process path would have supplied.
-            let sys_attrs_snapshot = is_deletion.then(|| sys_attrs_from_snapshot(snapshot.as_ref())).flatten();
-            let event = ChangeEvent::builder()
-                .entity_id(stored.entity_id.clone()) // clone: the change event and the stored event independently own the identifier.
-                .entity_types(entity_types_from_snapshot(snapshot.as_ref()))
-                .trigger_reason(stored.trigger)
-                .changed_attributes(stored.changed_attributes.clone()) // clone: the change event owns its attribute names through delivery.
-                .changed_dataset_id(stored.changed_dataset_id.clone()) // clone: the event owns the instance discriminator.
-                .occurred_at(stored.created_at)
-                .entity_snapshot(is_deletion.then(|| snapshot.clone()).flatten()) // clone: deletion evaluation consumes its own snapshot value.
-                .previous_attributes(stored.previous_snapshot.clone()) // clone: showChanges evaluation owns the prior representation.
-                .sys_attrs_snapshot(sys_attrs_snapshot)
-                .origin(ChangeOrigin::Local)
-                .current_payload((!is_deletion).then(|| snapshot.map(Arc::new)).flatten())
-                .build();
-            let outcome = self.apply_entity_change_for(event, Some(&entry.subscription_id)).await;
-            if outcome.delivered > 0 {
-                Ok(DeliveryDisposition::Delivered)
-            } else if outcome.retryable_failures > 0 {
-                Ok(DeliveryDisposition::RetryableFailure {
-                    detail: format!("{} endpoint attempt(s) failed transiently", outcome.retryable_failures),
-                })
-            } else if outcome.terminal_failures > 0 {
-                Ok(DeliveryDisposition::TerminalFailure {
-                    detail: format!("{} endpoint attempt(s) failed permanently", outcome.terminal_failures),
-                })
-            } else {
-                Ok(DeliveryDisposition::Obsolete)
-            }
-        })
-    }
-}
-
-/// Reconstruct the clause-4.8 system attributes from a persisted deletion
-/// snapshot.
-///
-/// A durable delete notification cannot re-read `createdAt`/`modifiedAt` from
-/// the store — the row is gone — so the delete write embeds them into the
-/// stored `entity_snapshot`. Reading them back here restores the typed
-/// [`SysAttrsSnapshot`] the in-process path carries, so the same injection runs
-/// for both the entity-level and the attribute-level deletion notification.
-/// Returns `None` when the snapshot carries no `createdAt` member (a non-deletion
-/// snapshot, whose sys attributes are re-read from the live entity instead).
-fn sys_attrs_from_snapshot(snapshot: Option<&Value>) -> Option<SysAttrsSnapshot> {
-    let object = match snapshot? {
-        Value::Array(values) => values.first().and_then(Value::as_object),
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    }?;
-    let read = |iri: &str| -> Option<DateTime<Utc>> {
-        object
-            .get(iri)
-            .and_then(Value::as_array)
-            .and_then(|values| values.first())
-            .and_then(|entry| entry.get("@value"))
-            .and_then(Value::as_str)
-            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-            .map(|value| value.with_timezone(&Utc))
-    };
-    let created_at = read(expanded_properties::CREATED_AT.as_str())?;
-    Some(SysAttrsSnapshot {
-        created_at,
-        modified_at: read(expanded_properties::MODIFIED_AT.as_str()).unwrap_or(created_at),
-        expires_at: read(expanded_properties::EXPIRES_AT.as_str()),
-    })
-}
-
-/// Read expanded entity types from a persisted event snapshot.
-fn entity_types_from_snapshot(snapshot: Option<&Value>) -> Vec<EntityTypeName> {
-    let Some(snapshot) = snapshot else {
-        return Vec::new();
-    };
-    let object = match snapshot {
-        Value::Array(values) => values.first().and_then(Value::as_object),
-        Value::Object(object) => Some(object),
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => None,
-    };
-    object
-        .and_then(|object| object.get("@type"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter_map(|value| value.parse::<EntityTypeName>().ok())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,9 +345,10 @@ mod tests {
         notification::ChangeOrigin,
         subscription::{EntitySelector, SubscriptionStatus},
     };
-    use andromeda_ngsi_ld_query::{filter::parser, scope::query::ScopeQuery};
+    use andromeda_ngsi_ld_query::{filter::parser, projection::compiled::Projection, scope::query::ScopeQuery};
     use andromeda_subscription::{compilation::compile_geo_q, matching::matches_subscription};
     use chrono::DateTime;
+    use serde_json::Value;
     use std::num::NonZeroU32;
     use url::Url;
 
@@ -558,6 +397,7 @@ mod tests {
             notification_join_level: NonZeroU32::MIN,
             compiled_csf: None,
             local_only: false,
+            notification_projection: Projection::default(),
         }
     }
 

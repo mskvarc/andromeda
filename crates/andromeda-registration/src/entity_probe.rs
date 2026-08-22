@@ -10,7 +10,7 @@
 
 use crate::error::RegistrationError;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::subscription::EntitySelector;
+use andromeda_ngsi_ld_model::entity_info::EntityInfo;
 use futures::future::BoxFuture;
 use iri_rs::IriBuf;
 
@@ -48,7 +48,7 @@ pub trait RegisteredEntityProbe: Send + Sync + 'static {
     /// which is how a registration that names attributes only reads.
     fn any_entity_matching<'life0, 'life1, 'life2, 'async_trait>(
         &'life0 self,
-        selector: Option<&'life1 EntitySelector>,
+        selector: Option<&'life1 EntityInfo>,
         attributes: &'life2 [IriBuf],
     ) -> BoxFuture<'async_trait, Result<EntityPresence, RegistrationError>>
     where

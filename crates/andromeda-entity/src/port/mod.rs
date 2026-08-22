@@ -12,6 +12,8 @@ pub mod expiry;
 pub mod query;
 /// Entity payload and snapshot reads.
 pub mod reader;
+/// The Context Registry's view of possibly available types and attributes.
+pub mod registry_types;
 /// Runtime-neutral waiting between contended write attempts.
 pub mod retry_delay;
 /// Typed spatial-index rebuild snapshots.

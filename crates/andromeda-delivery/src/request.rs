@@ -88,14 +88,28 @@ impl NotificationDelivery<'_> {
     /// Resolve everything a transport reads, carrying the notification body
     /// through as a shared [`Value`] for each transport to serialise once.
     ///
+    /// Clauses 5.2.13 and 6.3.5: an `application/ld+json` body is a JSON-LD
+    /// document and carries its `@context` itself, once, at the top level of
+    /// the notification; the entities in `data` are plain members of that
+    /// document and carry none of their own. The other media types carry the
+    /// context in the `Link` header [`DeliveryRequest::context_link`] builds.
+    ///
     /// Infallible: serialisation, the only step that could fail, now happens in
     /// each transport against the body shape it sends.
     pub fn assemble(&self) -> DeliveryRequest {
+        let content_type = notification_media_type(self.accept);
+        // clone: the request owns the notification body the borrow points at, and the `Arc` lets each transport read it without another copy
+        let mut payload = self.payload.clone();
+        if content_type.include_context_in_body()
+            && let Some(document) = payload.as_object_mut()
+        {
+            let context = self.jsonld_context.map_or(NGSI_LD_CORE_CONTEXT_URL.as_str(), Url::as_str);
+            document.insert("@context".to_owned(), Value::String(context.to_owned()));
+        }
         DeliveryRequest {
-            // clone: the request owns the notification body the borrow points at, and the `Arc` lets each transport read it without another copy
-            payload: Arc::new(self.payload.clone()),
+            payload: Arc::new(payload),
             endpoint_uri: self.endpoint_uri.clone(), // clone: the request outlives this borrow of the subscription
-            content_type: notification_media_type(self.accept),
+            content_type,
             context_url: self.jsonld_context.cloned(), // clone: same
             // clone: `NgsiLdTenant` owns its name and the request outlives this borrow
             tenant: self.tenant.map(|name| NgsiLdTenant::new(name.clone())),
@@ -191,6 +205,34 @@ mod tests {
     #[test]
     fn a_json_ld_notification_carries_no_link_because_the_context_is_in_the_body() {
         assert!(assemble(Some(&media("application/ld+json")), None).context_link().is_none());
+    }
+
+    /// Clauses 5.2.13 and 6.3.5: the JSON-LD body carries one top-level
+    /// `@context`, the subscription's own when it named one and the core
+    /// context otherwise.
+    #[test]
+    fn a_json_ld_notification_carries_one_top_level_context_in_the_body() {
+        let core = assemble(Some(&media("application/ld+json")), None);
+        pretty_assertions::assert_eq!(core.payload["@context"], json!(NGSI_LD_CORE_CONTEXT_URL.as_str()));
+        pretty_assertions::assert_eq!(core.payload["id"], json!("urn:ngsi-ld:Notification:1"));
+
+        let named = assemble(Some(&media("application/ld+json")), Some("https://example.com/ctx.jsonld"));
+        pretty_assertions::assert_eq!(named.payload["@context"], json!("https://example.com/ctx.jsonld"));
+    }
+
+    /// The other media types carry the context in the `Link` header and never
+    /// in the body.
+    #[test]
+    fn a_json_or_geo_json_notification_body_carries_no_context_member() {
+        for accept in ["application/json", "application/geo+json"] {
+            let request = assemble(Some(&media(accept)), Some("https://example.com/ctx.jsonld"));
+            assert!(
+                request.payload.get("@context").is_none(),
+                "{accept} must not embed a context: {}",
+                request.payload
+            );
+        }
+        assert!(assemble(None, None).payload.get("@context").is_none());
     }
 
     #[test]

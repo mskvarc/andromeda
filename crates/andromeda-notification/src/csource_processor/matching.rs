@@ -1,66 +1,76 @@
-//! Projection of context-source registration information for notification delivery.
+//! The registration a context source notification carries (clause 5.11.7).
+//!
+//! A notification should carry only the `RegistrationInfo` elements the
+//! subscription matches rather than the whole registration, so the
+//! registration is serialised with its `information` trimmed to them.
 
-use crate::csource_processor::{AttributeName, CompiledCsrSubscription, Value};
+use crate::error::NotificationError;
+use andromeda_ngsi_ld_model::registration::ContextSourceRegistration;
+use andromeda_subscription::{compiled::CompiledCsrSubscription, csource_matching::matching_information};
+use serde_json::Value;
 
-/// Filter CSR information array to only include RegistrationInfo elements
-/// that match the subscription's selectors and watched attributes.
-pub(super) fn filter_csr_for_subscription(csr_data: &Value, sub: &CompiledCsrSubscription) -> Value {
-    let mut filtered = csr_data.clone();
-
-    if sub.selectors.is_empty() && sub.watched_attrs.is_none() {
-        return filtered;
+/// The registration as the notification carries it: its `information`
+/// trimmed to the elements `sub` matches (clause 5.11.7).
+pub(crate) fn notified_registration(registration: &ContextSourceRegistration, sub: &CompiledCsrSubscription) -> Result<Value, NotificationError> {
+    let mut value = serde_json::to_value(registration).map_err(|error| NotificationError::representation(error.to_string()))?;
+    let information = matching_information(sub, registration)
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| NotificationError::representation(error.to_string()))?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("information".to_string(), Value::Array(information));
     }
+    Ok(value)
+}
 
-    if let Some(information) = filtered.get_mut("information")
-        && let Some(info_arr) = information.as_array()
-    {
-        let filtered_info: Vec<Value> = info_arr
-            .iter()
-            .filter(|info| {
-                // Check entity selector match
-                if !sub.selectors.is_empty() {
-                    let entities = info.get("entities").and_then(|v| v.as_array());
-                    let matches = match entities {
-                        Some(ents) => sub.selectors.iter().any(|sel| {
-                            ents.iter().any(|ent| {
-                                let ent_type = ent.get("type").and_then(|value| value.as_str()).map_or("", |value| value);
-                                sel.type_.matches(&[ent_type])
-                            })
-                        }),
-                        None => false,
-                    };
-                    if !matches {
-                        return false;
-                    }
-                }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
+    use serde_json::json;
+    use url::Url;
 
-                // Check watched attributes match
-                if let Some(ref watched) = sub.watched_attrs {
-                    let prop_names: Vec<AttributeName> = info
-                        .get("propertyNames")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
-                        .unwrap_or_default();
-                    let rel_names: Vec<AttributeName> = info
-                        .get("relationshipNames")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(Value::as_str).filter_map(|raw| raw.parse().ok()).collect())
-                        .unwrap_or_default();
-
-                    if !prop_names.iter().any(|name| watched.contains(name)) && !rel_names.iter().any(|name| watched.contains(name)) {
-                        return false;
-                    }
-                }
-
-                true
-            })
-            .cloned()
-            .collect();
-
-        if let Some(obj) = filtered.as_object_mut() {
-            obj.insert("information".to_string(), Value::Array(filtered_info));
+    fn subscription(raw_type: &str) -> CompiledCsrSubscription {
+        CompiledCsrSubscription {
+            id: "urn:ngsi-ld:Subscription:csource".parse().expect("valid URI"),
+            status: SubscriptionStatus::Active,
+            endpoint_uri: Url::parse("http://example.com/notify").expect("valid URL"),
+            endpoint_accept: None,
+            endpoint_receiver_info: None,
+            endpoint_notifier_info: None,
+            selectors: vec![serde_json::from_value(json!({"type": raw_type})).expect("selector parses")],
+            matching_attrs: Vec::new(),
+            temporal_q: None,
+            geo_q: None,
+            scope_q: None,
+            throttling_secs: None,
+            time_interval_secs: None,
+            jsonld_context: None,
+            expires_at: None,
+            compiled_csf: None,
         }
     }
 
-    filtered
+    /// Clause 5.11.7: the notification carries only the matching
+    /// `RegistrationInfo` elements.
+    #[test]
+    fn the_notified_registration_keeps_only_the_matching_information() {
+        let registration: ContextSourceRegistration = serde_json::from_value(json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:1",
+            "type": "ContextSourceRegistration",
+            "information": [
+                {"entities": [{"type": "https://example.com/Vehicle"}]},
+                {"entities": [{"type": "https://example.com/Building"}]}
+            ],
+            "endpoint": "https://source.example.com/",
+            "status": "ok",
+            "createdAt": "2024-01-01T00:00:00Z",
+            "modifiedAt": "2024-01-02T00:00:00Z"
+        }))
+        .expect("registration parses");
+        let value = notified_registration(&registration, &subscription("https://example.com/Vehicle")).expect("serialises");
+        pretty_assertions::assert_eq!(value["information"], json!([{"entities": [{"type": "https://example.com/Vehicle"}]}]));
+        pretty_assertions::assert_eq!(value["id"], json!("urn:ngsi-ld:ContextSourceRegistration:1"));
+    }
 }
