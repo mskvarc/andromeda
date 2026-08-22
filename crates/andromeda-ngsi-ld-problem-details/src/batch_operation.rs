@@ -102,10 +102,9 @@ impl Serialize for BatchProblemDetail {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match &self.error_type {
             BatchErrorKind::Known(classification) => {
-                let category = classification.error_type();
                 let mut state = serializer.serialize_struct("BatchProblemDetail", 4)?;
-                state.serialize_field("type", &category.type_iri())?;
-                state.serialize_field("title", category.title())?;
+                state.serialize_field("type", &classification.type_iri())?;
+                state.serialize_field("title", classification.title())?;
                 state.serialize_field("status", &classification.status_code().as_u16())?;
                 state.serialize_field("detail", &self.detail)?;
                 state.end()
@@ -180,9 +179,18 @@ impl<'de> Visitor<'de> for BatchProblemDetailVisitor {
         // 6.3.17 statuses read back as the distributed classifications they
         // name; any other URI is accepted verbatim, since RFC 7807 clause 3
         // permits arbitrary type URIs.
-        let error_type = match NgsiLdErrorType::from_type_iri(&type_uri) {
-            Some(category) => BatchErrorKind::Known(WireProblemClassification { category, status }.classification().map_err(de::Error::custom)?),
-            None => BatchErrorKind::Other(type_uri),
+        let error_type = if let Some(distributed) = ProblemClassification::from_distributed_type_iri(&type_uri) {
+            if let Some(status) = status
+                && status != distributed.status_code().as_u16()
+            {
+                return Err(de::Error::custom("problem status disagrees with its distributed NGSI-LD type"));
+            }
+            BatchErrorKind::Known(distributed)
+        } else {
+            match NgsiLdErrorType::from_type_iri(&type_uri) {
+                Some(category) => BatchErrorKind::Known(WireProblemClassification { category, status }.classification().map_err(de::Error::custom)?),
+                None => BatchErrorKind::Other(type_uri),
+            }
         };
 
         Ok(BatchProblemDetail { error_type, detail })
@@ -388,7 +396,7 @@ mod tests {
             ))
             .expect("serialises");
             pretty_assertions::assert_eq!(rendered["error"]["status"], status, "{classification:?}");
-            pretty_assertions::assert_eq!(rendered["error"]["type"], classification.error_type().type_iri().as_str());
+            pretty_assertions::assert_eq!(rendered["error"]["type"], classification.type_iri().as_str());
             let parsed = serde_json::from_value::<BatchEntityError>(rendered).expect("deserialises");
             pretty_assertions::assert_eq!(parsed.error.error_type, BatchErrorKind::Known(expected), "{classification:?}");
         }

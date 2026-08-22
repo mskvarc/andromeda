@@ -10,7 +10,7 @@
 //! runs on `T-SPLIT` (A -> B -> C, B and C each holding part of the same
 //! entity). Concrete designs are in `docs/distributed-tests/map.md`.
 
-mod csr_subscription;
+pub mod csr_subscription;
 mod data_shapes;
 mod entity_map_crud;
 mod entity_map_query;

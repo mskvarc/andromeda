@@ -19,7 +19,7 @@ use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresTyp
 use andromeda_snapshot::{error::SnapshotError, store::InsertSnapshotParams};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
-use sea_query::{Expr, ExprTrait, Func, Keyword, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr};
+use sea_query::{Expr, ExprTrait, Func, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sea_query_sqlx::SqlxBinder;
 use sqlx::{PgPool, Row};
 use url::Url;
@@ -185,27 +185,59 @@ fn status_is_preparing() -> SimpleExpr {
     Expr::col(Snapshots::Status).eq(cast(Expr::val(<&str>::from(SnapshotStatus::Preparing)), PostgresType::SnapshotStatus))
 }
 
-/// The statement selecting the next snapshot awaiting preparation.
+/// The statement selecting and row-locking the next snapshot to prepare.
+///
+/// `FOR UPDATE SKIP LOCKED` steps over a candidate another preparer already
+/// holds, and `claimed_at IS NULL` excludes one already claimed, so two
+/// preparers racing for work never settle on the same control record.
 fn next_preparing_sql() -> SelectStatement {
     let mut select = snapshot_select();
     select
         .and_where(status_is_preparing())
+        .and_where(Expr::col(Snapshots::ClaimedAt).is_null())
         .order_by(Snapshots::SnapshotPriority, Order::Desc)
         .order_by(Snapshots::CreatedAt, Order::Asc)
-        .limit(1);
+        .limit(1)
+        .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked);
     select
 }
 
-/// The next snapshot awaiting preparation: highest priority first, oldest
+/// Stamp the durable preparation claim on one snapshot.
+fn claim_snapshot_sql(id: &Uri) -> UpdateStatement {
+    Query::update()
+        .table(Snapshots::Table)
+        .value(Snapshots::ClaimedAt, now())
+        .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
+        .to_owned()
+}
+
+/// Claim the next snapshot awaiting preparation: highest priority first, oldest
 /// within a priority.
+///
+/// The select-and-claim runs in one transaction so the `FOR UPDATE SKIP LOCKED`
+/// row lock is still held when the durable `claimed_at` stamp lands: the
+/// on-create kick (`SnapshotService::prepare_now`) and the scheduled sweep can
+/// both look for work at the same instant, and this is what stops them
+/// executing the same snapshot's queries twice.
 pub(crate) async fn next_preparing_snapshot(pool: &PgPool) -> Result<Option<Snapshot>, SnapshotError> {
-    let select = next_preparing_sql();
-    let (sql, values) = select.build_sqlx(PostgresQueryBuilder);
+    let mut tx = pool.begin().await.map_err(persistence_error)?;
+    let (sql, values) = next_preparing_sql().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(persistence_error)?;
-    row.as_ref().map(row_to_snapshot).transpose().map_err(persistence_error)
+    let Some(row) = row else {
+        tx.rollback().await.map_err(persistence_error)?;
+        return Ok(None);
+    };
+    let snapshot = row_to_snapshot(&row).map_err(persistence_error)?;
+    let (claim_sql, claim_values) = claim_snapshot_sql(&snapshot.id).build_sqlx(PostgresQueryBuilder);
+    sqlx::query_with(sqlx::AssertSqlSafe(claim_sql.as_str()), claim_values)
+        .execute(&mut *tx)
+        .await
+        .map_err(persistence_error)?;
+    tx.commit().await.map_err(persistence_error)?;
+    Ok(Some(snapshot))
 }
 
 /// Update the lifetime, priority and expiry of one snapshot, keeping whatever
@@ -334,7 +366,8 @@ pub(crate) async fn touch_last_used(pool: &PgPool, id: &Uri) -> Result<(), Snaps
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::lifecycle::{clone_snapshot_sql, next_preparing_sql, snapshot_create_sql};
+    use crate::snapshot::lifecycle::{claim_snapshot_sql, clone_snapshot_sql, next_preparing_sql, snapshot_create_sql};
+    use andromeda_ngsi_ld_lexicon::uri::Uri;
     use sea_query::PostgresQueryBuilder;
 
     /// The `snapshot_status` column is a PostgreSQL enum: a text bind has no
@@ -344,6 +377,25 @@ mod tests {
         let sql = next_preparing_sql().to_string(PostgresQueryBuilder);
         assert!(sql.contains("\"status\" = ('preparing'::snapshot_status)"), "{sql}");
         assert!(sql.contains("ORDER BY \"snapshot_priority\" DESC, \"created_at\" ASC LIMIT 1"), "{sql}");
+    }
+
+    /// Two preparers must never settle on the same control record: the
+    /// selection excludes an already-claimed row and locks its candidate with
+    /// `FOR UPDATE SKIP LOCKED` so a concurrent preparer skips it.
+    #[test]
+    fn the_preparing_selection_skips_claimed_and_locked_rows() {
+        let sql = next_preparing_sql().to_string(PostgresQueryBuilder);
+        assert!(sql.contains("\"claimed_at\" IS NULL"), "{sql}");
+        assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
+    }
+
+    /// The durable claim stamps `claimed_at` on exactly the selected row.
+    #[test]
+    fn the_claim_stamps_claimed_at_on_the_selected_snapshot() {
+        let id: Uri = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot URI");
+        let sql = claim_snapshot_sql(&id).to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with("UPDATE \"snapshots\" SET \"claimed_at\" ="), "{sql}");
+        assert!(sql.contains("WHERE \"id\" = 'urn:ngsi-ld:Snapshot:1'"), "{sql}");
     }
 
     #[test]

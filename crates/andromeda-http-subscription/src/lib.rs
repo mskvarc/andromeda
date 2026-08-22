@@ -17,6 +17,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-delivery",
         "andromeda-http-extraction",
+        "andromeda-http-headers",
         "andromeda-http-response",
         "andromeda-jsonld",
         "andromeda-ngsi-ld-lexicon",

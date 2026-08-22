@@ -23,6 +23,7 @@ mod csr_notification_periodic;
 mod csr_notification_trigger;
 mod csr_subscription;
 mod csr_subscription_lifecycle;
+mod discovery_projection;
 mod discovery_query_entity;
 mod discovery_query_geo_scope;
 mod discovery_query_temporal;

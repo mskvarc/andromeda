@@ -18,7 +18,10 @@ use andromeda_jsonld::{
     context_validation::{validate_context_spec, validate_jsonld_context_value},
     engine::processor::JsonLdEngine,
 };
-use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
+use andromeda_ngsi_ld_lexicon::{
+    context_source_pseudonym::ContextSourcePseudonym,
+    uri::{NGSI_LD_URN_NID, Uri},
+};
 use andromeda_ngsi_ld_model::{
     key_value_pair::KeyValuePair,
     subscription::{Subscription, SubscriptionStatus},
@@ -196,7 +199,19 @@ where
     }
 
     /// Create a new subscription from the given JSON payload.
-    pub async fn create(&self, mut payload: Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<Uri, SubscriptionError> {
+    ///
+    /// `encountered_sources` carries the pseudonyms named in the request's
+    /// `Via` chain (Table 6.3.18-2): a forwarded subscription must not spawn a
+    /// companion copy back to a context source it already passed through, so the
+    /// forwarding hook excludes their registrations. A local request supplies an
+    /// empty slice.
+    pub async fn create(
+        &self,
+        mut payload: Value,
+        context: &ContextSpec,
+        base_url: Option<&Url>,
+        encountered_sources: &[ContextSourcePseudonym],
+    ) -> Result<Uri, SubscriptionError> {
         validation::validate_create_payload(&payload)?;
 
         validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
@@ -236,7 +251,7 @@ where
         self.emit_change(self.variant.make_upserted(id.clone())); // clone: the caller and change event each own the identifier.
         if self.forwarding_hook.is_some() {
             let created = self.get(&id).await?;
-            self.run_hook(&id, |hook| hook.created(&created, context)).await;
+            self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
         }
         Ok(id)
     }

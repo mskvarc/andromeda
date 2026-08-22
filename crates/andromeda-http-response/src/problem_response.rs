@@ -111,25 +111,33 @@ mod tests {
 
     #[tokio::test]
     async fn each_distributed_classification_uses_its_binding_status_and_fixed_payload_type() -> Result<(), serde_json::Error> {
-        for (classification, expected_status, expected_type) in [
-            (ProblemClassification::LoopDetected, StatusCode::LOOP_DETECTED, NgsiLdErrorType::InternalError),
+        for (classification, expected_status, expected_type_iri) in [
+            (
+                ProblemClassification::LoopDetected,
+                StatusCode::LOOP_DETECTED,
+                "https://uri.etsi.org/ngsi-ld/errors/LoopDetected",
+            ),
             (
                 ProblemClassification::GatewayTimeout,
                 StatusCode::GATEWAY_TIMEOUT,
-                NgsiLdErrorType::InternalError,
+                "https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout",
             ),
             (
                 ProblemClassification::DistributedResourceNotFound,
                 StatusCode::NOT_FOUND,
-                NgsiLdErrorType::ResourceNotFound,
+                "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound",
             ),
-            (ProblemClassification::BadGateway, StatusCode::BAD_GATEWAY, NgsiLdErrorType::InternalError),
+            (
+                ProblemClassification::BadGateway,
+                StatusCode::BAD_GATEWAY,
+                "https://uri.etsi.org/ngsi-ld/errors/BadGateway",
+            ),
         ] {
             let response = ClassifiedReport::public_binding(classification, "forwarding failed").with_instance(Uri::from_static("/ngsi-ld/v1/entities/x"));
             let (response, value) = body(response).await?;
             pretty_assertions::assert_eq!(response.status(), expected_status);
             pretty_assertions::assert_eq!(value["status"], expected_status.as_u16());
-            pretty_assertions::assert_eq!(value["type"], expected_type.type_iri().as_str());
+            pretty_assertions::assert_eq!(value["type"], expected_type_iri);
         }
         Ok(())
     }

@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 andromeda-delivery.workspace = true
 andromeda-http-extraction.workspace = true
+andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true

@@ -49,6 +49,13 @@ async fn dist_http_single_source_loop_back_returns_508() {
         .await
         .expect("looping create");
     assert_status(&response, 508);
+    let body = json_body(&response);
+    assert_eq!(
+        body["type"].as_str(),
+        Some("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
+        "a 508 carries the dedicated LoopDetected type, not InternalError: {body}"
+    );
+    assert_eq!(body["title"].as_str(), Some("Loop detected"), "the title matches the dedicated type: {body}");
 
     topology.finish().await.expect("topology cleanup");
 }
@@ -88,6 +95,13 @@ async fn dist_http_single_source_timeout_returns_504() {
         .await
         .expect("forwarded create");
     assert_status(&response, 504);
+    let body = json_body(&response);
+    assert_eq!(
+        body["type"].as_str(),
+        Some("https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout"),
+        "a 504 carries the dedicated GatewayTimeout type, not InternalError: {body}"
+    );
+    assert_eq!(body["title"].as_str(), Some("Gateway timeout"), "the title matches the dedicated type: {body}");
 
     topology.finish().await.expect("topology cleanup");
 }
@@ -147,6 +161,13 @@ async fn dist_http_single_source_other_failure_returns_502() {
         .await
         .expect("forwarded create");
     assert_status(&response, 502);
+    let body = json_body(&response);
+    assert_eq!(
+        body["type"].as_str(),
+        Some("https://uri.etsi.org/ngsi-ld/errors/BadGateway"),
+        "a 502 carries the dedicated BadGateway type, not InternalError: {body}"
+    );
+    assert_eq!(body["title"].as_str(), Some("Bad gateway"), "the title matches the dedicated type: {body}");
 
     mock.shutdown().await;
     topology.finish().await.expect("topology cleanup");

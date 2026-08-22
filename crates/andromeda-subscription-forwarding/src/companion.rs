@@ -15,7 +15,7 @@ use crate::{
 };
 use andromeda_federation::subscription::SubscriptionForward;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_model::{notification::CsrTriggerReason, registration::ContextSourceRegistration, subscription::Subscription};
 use andromeda_subscription::{
     compilation::compile_csource_subscription,
@@ -69,13 +69,20 @@ impl SubscriptionForwardingService {
     /// a second copy at a source whose first one is not yet recorded; one
     /// that arrives before the route exists is refused and carries nothing
     /// the synchronous placement has not already done.
-    async fn create_companion(&self, subscription: &Subscription, context: &ContextSpec) -> Result<Uri, SubscriptionForwardingError> {
+    async fn create_companion(
+        &self,
+        subscription: &Subscription,
+        context: &ContextSpec,
+        encountered_sources: &[ContextSourcePseudonym],
+    ) -> Result<Uri, SubscriptionForwardingError> {
         let minted = self
             .mint_subscription_id()
             .map_err(|error| SubscriptionForwardingError::internal(error.to_string()))?;
         let document = companion_document(subscription, &minted, self.receiver.url());
-        let companion = self.csource_subscriptions.create(document, &ContextSpec::core_only(), None).await?;
-        self.place_initial_copies(subscription, &companion, context).await?;
+        // The companion is a local resource; its own creation passes through no
+        // context source, so it carries no `Via` chain of its own.
+        let companion = self.csource_subscriptions.create(document, &ContextSpec::core_only(), None, &[]).await?;
+        self.place_initial_copies(subscription, &companion, context, encountered_sources).await?;
         self.mappings.link_companion(&subscription.id, &companion).await?;
         self.router.register(&companion, &self.tenant).await?;
         debug!(subscription = %subscription.id, %companion, "companion context source registration subscription created");
@@ -94,7 +101,13 @@ impl SubscriptionForwardingService {
     /// sources, but it is delivered after the creation has been answered, and
     /// a change a source sees in between would reach no copy. A source the
     /// notification names again already holds its copy and is left alone.
-    async fn place_initial_copies(&self, subscription: &Subscription, companion: &Uri, context: &ContextSpec) -> Result<(), SubscriptionForwardingError> {
+    async fn place_initial_copies(
+        &self,
+        subscription: &Subscription,
+        companion: &Uri,
+        context: &ContextSpec,
+        encountered_sources: &[ContextSourcePseudonym],
+    ) -> Result<(), SubscriptionForwardingError> {
         let compiled = self.compiled_companion(companion).await?;
         let store = self.federation.registration_store();
         let mut after: Option<Uri> = None;
@@ -106,6 +119,16 @@ impl SubscriptionForwardingService {
             let exhausted = page.len() < REGISTRATION_PAGE as usize;
             for registration in page {
                 after = Some(registration.id.clone()); // clone: the cursor outlives the page
+                // Table 6.3.18-2 / clause 5.12: never forward back to a context
+                // source the creating request already passed through.
+                if registration
+                    .access
+                    .context_source_alias
+                    .as_ref()
+                    .is_some_and(|alias| encountered_sources.contains(alias))
+                {
+                    continue;
+                }
                 if !csource_subscription_selects_registration(&compiled, &registration) {
                     continue;
                 }
@@ -210,7 +233,10 @@ impl SubscriptionForwardingService {
                 companion
             }
             None => {
-                self.create_companion(subscription, context).await?;
+                // An update that first provisions the companion carries no
+                // creation-time `Via` chain here; the update path forwards to
+                // every selected source as before.
+                self.create_companion(subscription, context, &[]).await?;
                 return Ok(());
             }
         };
@@ -226,22 +252,26 @@ impl SubscriptionForwardingService {
 }
 
 impl SubscriptionForwardingHook for SubscriptionForwardingService {
-    fn created<'life0, 'life1, 'life2, 'async_trait>(
+    fn created<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
         context: &'life2 ContextSpec,
+        encountered_sources: &'life3 [ContextSourcePseudonym],
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        'life3: 'async_trait,
         Self: 'async_trait,
     {
         Box::pin(async move {
             if is_local_only(subscription) {
                 return Ok(());
             }
-            self.create_companion(subscription, context).await.map_err(into_subscription_error)?;
+            self.create_companion(subscription, context, encountered_sources)
+                .await
+                .map_err(into_subscription_error)?;
             Ok(())
         })
     }

@@ -780,6 +780,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-delivery",
  "andromeda-http-extraction",
+ "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",

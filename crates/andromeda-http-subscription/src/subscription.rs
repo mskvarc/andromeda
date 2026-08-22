@@ -13,7 +13,9 @@ use andromeda_http_extraction::{
     query::ValidatedQuery,
     tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
+    via::IncomingVia,
 };
+use andromeda_http_headers::via::Via;
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     headers::with_location,
@@ -23,7 +25,7 @@ use andromeda_http_response::{
     single::NgsiLdResponse,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_query::pagination::CountPolicy;
 use andromeda_ngsi_ld_render::{
     response::ResponsePayload,
@@ -43,6 +45,7 @@ pub async fn create(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
+    IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(_params): ValidatedQuery<EmptyParams>,
     JsonLd {
         value: payload,
@@ -52,8 +55,14 @@ pub async fn create(
     let service = &state.subscriptions;
     let base_url = request_origin(&headers).map_err(|error| origin_problem(&error, &uri))?;
     let context = context.merge(body_context);
+    // Table 6.3.18-2: the created subscription must not forward a companion copy
+    // back to any context source its request already passed through.
+    let encountered_sources: Vec<ContextSourcePseudonym> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect();
 
-    let id = service.create(payload, &context, base_url.as_ref()).await.with_subscription_instance(&uri)?;
+    let id = service
+        .create(payload, &context, base_url.as_ref(), &encountered_sources)
+        .await
+        .with_subscription_instance(&uri)?;
 
     Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/subscriptions/{}", id)))
 }

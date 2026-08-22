@@ -2,7 +2,7 @@
 
 use crate::error_type::NgsiLdErrorType;
 use http::{StatusCode, Uri};
-use iri_rs::IriRefBuf;
+use iri_rs::{Iri, IriRefBuf, iri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::SerializeStruct};
 use thiserror::Error;
 
@@ -47,6 +47,52 @@ impl ProblemClassification {
             ProblemClassification::BadGateway => StatusCode::BAD_GATEWAY,
             ProblemClassification::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         }
+    }
+
+    /// The problem `type` IRI this classification serialises with.
+    ///
+    /// Clause 6.3.17 names no IRI for the 508/504/502 distributed failures, so
+    /// the broker publishes dedicated IRIs under the ETSI errors namespace
+    /// rather than collapsing all three onto `InternalError`, which would leave
+    /// the `type` disagreeing with the status. The remaining classifications
+    /// carry their clause 5.5.2 category's canonical IRI.
+    pub const fn type_iri(self) -> Iri<&'static str> {
+        match self {
+            ProblemClassification::LoopDetected => iri!("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
+            ProblemClassification::GatewayTimeout => iri!("https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout"),
+            ProblemClassification::BadGateway => iri!("https://uri.etsi.org/ngsi-ld/errors/BadGateway"),
+            ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
+                self.error_type().type_iri()
+            }
+        }
+    }
+
+    /// The problem `title` this classification serialises with, paired with
+    /// [`type_iri`](Self::type_iri).
+    pub fn title(self) -> &'static str {
+        match self {
+            ProblemClassification::LoopDetected => "Loop detected",
+            ProblemClassification::GatewayTimeout => "Gateway timeout",
+            ProblemClassification::BadGateway => "Bad gateway",
+            ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
+                self.error_type().title()
+            }
+        }
+    }
+
+    /// The dedicated distributed classification a `type` IRI names, if any.
+    ///
+    /// Recognises the three IRIs [`type_iri`](Self::type_iri) publishes for the
+    /// clause 6.3.17 gateway failures, so a peer broker's document round-trips
+    /// back into its classification.
+    pub fn from_distributed_type_iri(iri: &IriRefBuf) -> Option<ProblemClassification> {
+        [
+            ProblemClassification::LoopDetected,
+            ProblemClassification::GatewayTimeout,
+            ProblemClassification::BadGateway,
+        ]
+        .into_iter()
+        .find(|classification| classification.type_iri().as_str() == iri.as_str())
     }
 }
 
@@ -120,10 +166,10 @@ impl Serialize for ProblemDetail {
             Some(_) => 5,
             None => 4,
         };
-        let error_type = self.error_type();
+        let classification = self.classification;
         let mut state = serializer.serialize_struct("ProblemDetail", field_count)?;
-        state.serialize_field("type", &error_type.type_iri())?;
-        state.serialize_field("title", error_type.title())?;
+        state.serialize_field("type", &classification.type_iri())?;
+        state.serialize_field("title", classification.title())?;
         state.serialize_field("status", &self.status_code().as_u16())?;
         state.serialize_field("detail", &self.detail)?;
         if let Some(instance) = &self.instance {
@@ -199,15 +245,33 @@ struct WireProblemDetail {
 impl<'de> Deserialize<'de> for ProblemDetail {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<ProblemDetail, D::Error> {
         let wire = WireProblemDetail::deserialize(deserializer)?;
-        let error_type = NgsiLdErrorType::from_type_iri(&wire.type_iri).ok_or_else(|| de::Error::custom("unknown NGSI-LD problem type"))?;
-        let classification = WireProblemClassification {
-            category: error_type,
-            status: wire.status,
-        }
-        .classification()
-        .map_err(de::Error::custom)?;
+        // A dedicated distributed IRI is recognised before the category scan so
+        // a peer broker's 508/504/502 document round-trips into its own
+        // classification rather than the InternalError category.
+        // `expected_title` is the title of the type IRI actually named on the
+        // wire, not of the resolved classification: a legacy peer stamps a
+        // distributed failure as `InternalError` plus the clause 6.3.17 status,
+        // and its "Internal error" title must still be accepted even though the
+        // pair resolves to a distinct distributed classification.
+        let (classification, expected_title) = if let Some(distributed) = ProblemClassification::from_distributed_type_iri(&wire.type_iri) {
+            if let Some(status) = wire.status
+                && status != distributed.status_code().as_u16()
+            {
+                return Err(de::Error::custom("problem status disagrees with its distributed NGSI-LD type"));
+            }
+            (distributed, distributed.title())
+        } else {
+            let error_type = NgsiLdErrorType::from_type_iri(&wire.type_iri).ok_or_else(|| de::Error::custom("unknown NGSI-LD problem type"))?;
+            let classification = WireProblemClassification {
+                category: error_type,
+                status: wire.status,
+            }
+            .classification()
+            .map_err(de::Error::custom)?;
+            (classification, error_type.title())
+        };
         if let Some(title) = wire.title
-            && title != error_type.title()
+            && title != expected_title
         {
             return Err(de::Error::custom("problem title disagrees with its NGSI-LD type"));
         }
@@ -257,33 +321,92 @@ mod tests {
     }
 
     #[test]
-    fn distributed_classifications_fix_their_payload_categories_and_statuses() -> Result<(), serde_json::Error> {
-        for (classification, expected_type, expected_status) in [
-            (ProblemClassification::LoopDetected, NgsiLdErrorType::InternalError, StatusCode::LOOP_DETECTED),
+    fn distributed_classifications_fix_their_payload_types_titles_and_statuses() -> Result<(), serde_json::Error> {
+        for (classification, expected_type_iri, expected_title, expected_status) in [
+            (
+                ProblemClassification::LoopDetected,
+                "https://uri.etsi.org/ngsi-ld/errors/LoopDetected",
+                "Loop detected",
+                StatusCode::LOOP_DETECTED,
+            ),
             (
                 ProblemClassification::GatewayTimeout,
-                NgsiLdErrorType::InternalError,
+                "https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout",
+                "Gateway timeout",
                 StatusCode::GATEWAY_TIMEOUT,
             ),
             (
                 ProblemClassification::DistributedResourceNotFound,
-                NgsiLdErrorType::ResourceNotFound,
+                "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound",
+                "Resource not found",
                 StatusCode::NOT_FOUND,
             ),
-            (ProblemClassification::BadGateway, NgsiLdErrorType::InternalError, StatusCode::BAD_GATEWAY),
+            (
+                ProblemClassification::BadGateway,
+                "https://uri.etsi.org/ngsi-ld/errors/BadGateway",
+                "Bad gateway",
+                StatusCode::BAD_GATEWAY,
+            ),
             (
                 ProblemClassification::NotImplemented,
-                NgsiLdErrorType::OperationNotSupported,
+                "https://uri.etsi.org/ngsi-ld/errors/OperationNotSupported",
+                "Operation not supported",
                 StatusCode::NOT_IMPLEMENTED,
             ),
         ] {
             let problem = ProblemDetail::from_classification(classification, "distributed failure");
             let value = serde_json::to_value(&problem)?;
             pretty_assertions::assert_eq!(problem.status_code(), expected_status);
-            pretty_assertions::assert_eq!(value["type"], expected_type.type_iri().as_str());
+            pretty_assertions::assert_eq!(value["type"], expected_type_iri);
+            pretty_assertions::assert_eq!(value["title"], expected_title);
             pretty_assertions::assert_eq!(value["status"], expected_status.as_u16());
         }
         Ok(())
+    }
+
+    #[test]
+    fn dedicated_distributed_types_round_trip_through_their_own_iris() -> Result<(), serde_json::Error> {
+        for classification in [
+            ProblemClassification::LoopDetected,
+            ProblemClassification::GatewayTimeout,
+            ProblemClassification::BadGateway,
+        ] {
+            let rendered = serde_json::to_string(&ProblemDetail::from_classification(classification, "distributed failure"))?;
+            let parsed = serde_json::from_str::<ProblemDetail>(&rendered)?;
+            pretty_assertions::assert_eq!(parsed.classification(), classification);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_legacy_internal_error_with_a_distributed_status_is_still_tolerated_inbound() -> Result<(), serde_json::Error> {
+        // Older peers stamp the gateway failures as InternalError plus the
+        // clause 6.3.17 status; the broker keeps reading that pairing.
+        for (status, expected) in [
+            (508, ProblemClassification::LoopDetected),
+            (504, ProblemClassification::GatewayTimeout),
+            (502, ProblemClassification::BadGateway),
+        ] {
+            let value = json!({
+                "type": "https://uri.etsi.org/ngsi-ld/errors/InternalError",
+                "title": "Internal error",
+                "status": status,
+                "detail": "distributed failure"
+            });
+            let parsed = serde_json::from_value::<ProblemDetail>(value)?;
+            pretty_assertions::assert_eq!(parsed.classification(), expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_dedicated_distributed_type_with_a_disagreeing_status_is_rejected() {
+        let value = json!({
+            "type": "https://uri.etsi.org/ngsi-ld/errors/LoopDetected",
+            "status": 500,
+            "detail": "x"
+        });
+        assert!(serde_json::from_value::<ProblemDetail>(value).is_err());
     }
 
     #[test]

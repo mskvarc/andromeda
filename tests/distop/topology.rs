@@ -280,6 +280,13 @@ async fn build_broker(role: BrokerRole) -> Result<BrokerHandle, TopologyError> {
         detail: error.to_string(),
     })?;
     let database = broker_database(role)?;
+    // One pool per broker per topology, never a process-global pool: sqlx binds
+    // a pool's connections and background tasks to the reactor that created
+    // them, and this suite runs single-threaded with a fresh current-thread
+    // runtime per `#[tokio::test]`. A shared `OnceLock<PgPool>` would strand
+    // dead connections once the first test's runtime is dropped. Per-topology
+    // pools stay within `max_connections` via the 2-connection cap and 5s
+    // acquire timeout in `database_isolation::connect_pool`.
     let pool = connect_pool(&database).await.map_err(|error| TopologyError::Database(error.to_string()))?;
     Ok(BrokerHandle {
         role,

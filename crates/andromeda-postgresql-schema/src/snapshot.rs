@@ -32,6 +32,8 @@ pub enum Snapshots {
     ReceiverInfo,
     /// The snapshot's lifecycle status enum.
     Status,
+    /// Instant a preparer claimed this control record; `NULL` while unclaimed.
+    ClaimedAt,
     /// Per-query execution details for the entity queries.
     QueriesDetails,
     /// Per-query execution details for the temporal queries.
@@ -83,6 +85,7 @@ mod tests {
         assert_eq!(Snapshots::Table.to_string(), "snapshots");
         assert_eq!(Snapshots::SnapshotKey.to_string(), "snapshot_key");
         assert_eq!(Snapshots::LastUsedAt.to_string(), "last_used_at");
+        assert_eq!(Snapshots::ClaimedAt.to_string(), "claimed_at");
         assert_eq!(SnapshotEntities::Table.to_string(), "snapshot_entities");
         assert_eq!(SnapshotEntities::SnapshotKey.to_string(), "snapshot_key");
         assert_eq!(SnapshotTemporalEntities::SnapshotKey.to_string(), "snapshot_key");

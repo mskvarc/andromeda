@@ -5,7 +5,7 @@ use crate::{
     state::{RegistrationTenantState, RegistrationTenantStateOrCreate},
 };
 use andromeda_http_extraction::{
-    accept::AcceptFormatNoGeo,
+    accept::AcceptFormat,
     context::ContextUrl,
     jsonld::JsonLd,
     prefer::PreferHeader,
@@ -57,7 +57,7 @@ pub(crate) async fn create(
 pub(crate) async fn get(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormatNoGeo,
+    accept: AcceptFormat,
     context: ContextUrl,
     TypedPath(registration_id): TypedPath<Uri>,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
@@ -66,8 +66,12 @@ pub(crate) async fn get(
     let registration = state.registrations.get(&registration_id, &context).await.with_registration_instance(&uri)?;
     let payload = RegistrationRenderer::new(registration)
         .with_sys_attrs(params.parse_options().sys_attrs)
+        .with_pick(params.pick.as_deref())
+        .with_omit(params.omit.as_deref())
+        .with_language_filter(params.lang.as_ref())
         .render();
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+        .with_geometry_property(params.geometry_property.as_ref())
         .with_payload(ResponsePayload::Single(payload))
         .render()
         .with_registration_instance(&uri)?;
@@ -77,7 +81,7 @@ pub(crate) async fn get(
 pub(crate) async fn query(
     ExistingTenantState(state): RegistrationTenantState,
     OriginalUri(uri): OriginalUri,
-    accept: AcceptFormatNoGeo,
+    accept: AcceptFormat,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     ValidatedQuery(params): ValidatedQuery<CsrQueryParameters>,
@@ -96,9 +100,17 @@ pub(crate) async fn query(
         .with_registration_instance(&uri)?;
     let registrations = registrations
         .into_iter()
-        .map(|registration| RegistrationRenderer::new(registration).with_sys_attrs(options.sys_attrs).render())
+        .map(|registration| {
+            RegistrationRenderer::new(registration)
+                .with_sys_attrs(options.sys_attrs)
+                .with_pick(params.pick.as_deref())
+                .with_omit(params.omit.as_deref())
+                .with_language_filter(params.lang.as_ref())
+                .render()
+        })
         .collect::<Vec<_>>();
     let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
+        .with_geometry_property(params.geometry_property.as_ref())
         .with_payload(ResponsePayload::Collection(registrations))
         .render()
         .with_registration_instance(&uri)?;

@@ -8,7 +8,7 @@
 
 use crate::error::SubscriptionError;
 use andromeda_jsonld::context_spec::ContextSpec;
-use andromeda_ngsi_ld_lexicon::uri::Uri;
+use andromeda_ngsi_ld_lexicon::{context_source_pseudonym::ContextSourcePseudonym, uri::Uri};
 use andromeda_ngsi_ld_model::subscription::Subscription;
 use futures::future::BoxFuture;
 
@@ -16,15 +16,21 @@ use futures::future::BoxFuture;
 /// distributed counterparts.
 pub trait SubscriptionForwardingHook: Send + Sync + 'static {
     /// A subscription was created and stored.
-    fn created<'life0, 'life1, 'life2, 'async_trait>(
+    ///
+    /// `encountered_sources` are the `Via`-listed context source pseudonyms the
+    /// creating request already passed through (Table 6.3.18-2); the hook must
+    /// not forward a companion copy back to any of them.
+    fn created<'life0, 'life1, 'life2, 'life3, 'async_trait>(
         &'life0 self,
         subscription: &'life1 Subscription,
         context: &'life2 ContextSpec,
+        encountered_sources: &'life3 [ContextSourcePseudonym],
     ) -> BoxFuture<'async_trait, Result<(), SubscriptionError>>
     where
         'life0: 'async_trait,
         'life1: 'async_trait,
         'life2: 'async_trait,
+        'life3: 'async_trait,
         Self: 'async_trait;
 
     /// A subscription was updated; `subscription` is its merged state.
