@@ -6,7 +6,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status},
     reg::PEER_ENDPOINT,
     registration::csr_basic,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND};
 
@@ -14,8 +14,13 @@ use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOU
 /// method/format error rather than succeeding (clause 5.9.4). Confirms REQ-REG-80.
 #[tokio::test]
 async fn delete_missing_id_returns_400_or_405() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = topology.front().client().delete_registration("").await.expect("delete without id");
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_registration("")
+        .await
+        .expect("delete without id");
     let status = response.status.as_u16();
     assert!(matches!(status, 400 | 405), "deleting without an id is rejected, got {status}");
 
@@ -26,8 +31,13 @@ async fn delete_missing_id_returns_400_or_405() {
 /// Confirms REQ-REG-80.
 #[tokio::test]
 async fn delete_invalid_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = topology.front().client().delete_registration("not a uri").await.expect("delete invalid id");
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_registration("not a uri")
+        .await
+        .expect("delete invalid id");
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
 
@@ -38,10 +48,10 @@ async fn delete_invalid_id_returns_400() {
 /// 5.9.4). Confirms REQ-REG-81.
 #[tokio::test]
 async fn delete_unknown_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let unknown = topology.id("registration:delete-unknown");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_registration(&unknown)
         .await
@@ -56,22 +66,27 @@ async fn delete_unknown_registration_returns_404() {
 /// 5.9.4). Confirms REQ-REG-79, REQ-REG-82, REQ-REG-83.
 #[tokio::test]
 async fn delete_known_registration_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:delete-known");
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&csr_basic(&id, PEER_ENDPOINT))
         .await
         .expect("create registration");
     assert_status(&created, 201);
 
-    let deleted = topology.front().client().delete_registration(&id).await.expect("delete registration");
+    let deleted = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_registration(&id)
+        .await
+        .expect("delete registration");
     assert_status(&deleted, 204);
     assert!(deleted.body.is_empty(), "a successful delete returns an empty body");
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&id, None)
         .await

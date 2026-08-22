@@ -11,7 +11,7 @@ use crate::{
     fw::snapshots::create_prepared_snapshot,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, provision_source, retrieval_source},
     oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::INVALID_REQUEST;
 use reqwest::Method;
@@ -22,14 +22,14 @@ use std::time::Duration;
 /// so the registered source is never contacted (clause 6.3.9). Confirms REQ-HTTP-33.
 #[tokio::test]
 async fn dist_http_local_param_honoured_on_all_listed_resources() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:local-honoured");
     let reg_id = topology.id("registration:local-honoured");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -40,14 +40,19 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     );
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("register source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register source"),
         201,
     );
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .query_entities("type=Vehicle&local=true", "application/ld+json", Some(context_link()))
             .await
@@ -56,7 +61,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .get_entity(&entity_id, "local=true", "application/ld+json", Some(context_link()))
             .await
@@ -73,7 +78,7 @@ async fn dist_http_local_param_honoured_on_all_listed_resources() {
 /// (clause 6.3.9). Confirms REQ-HTTP-34.
 #[tokio::test]
 async fn dist_http_local_true_bypasses_all_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:local-all");
     let first_reg = topology.id("registration:local-all-1");
     let second_reg = topology.id("registration:local-all-2");
@@ -82,7 +87,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -93,7 +98,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, "inclusive"))
             .await
@@ -102,7 +107,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, "inclusive"))
             .await
@@ -112,7 +117,7 @@ async fn dist_http_local_true_bypasses_all_csrs() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .query_entities("type=Vehicle&local=true", "application/ld+json", Some(context_link()))
             .await
@@ -131,14 +136,14 @@ async fn dist_http_local_true_bypasses_all_csrs() {
 /// source (clause 6.3.9). Confirms REQ-HTTP-35.
 #[tokio::test]
 async fn dist_http_registry_api_operations_always_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:registry-local");
     let reg_id = topology.id("registration:registry-local");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -148,7 +153,7 @@ async fn dist_http_registry_api_operations_always_local() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .query_registrations("type=Vehicle", None)
             .await
@@ -170,14 +175,14 @@ async fn dist_http_registry_api_operations_always_local() {
 /// Confirms REQ-HTTP-36.
 #[tokio::test]
 async fn dist_http_snapshot_op_ignores_local_false() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:snapshot-local");
     let reg_id = topology.id("registration:snapshot-local");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -188,7 +193,7 @@ async fn dist_http_snapshot_op_ignores_local_false() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -203,11 +208,11 @@ async fn dist_http_snapshot_op_ignores_local_false() {
         "snapshotQueries": [ { "type": "Query", "entities": [ { "type": "Vehicle" } ] } ],
         "@context": context_link()
     });
-    let snapshot_id = create_prepared_snapshot(topology.front().client(), &snapshot).await;
+    let snapshot_id = create_prepared_snapshot(topology.broker(BrokerRole::A).client(), &snapshot).await;
     let forwarded_during_preparation = mock.get_total_count().await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/entityOperations/query?local=false")
         .header("content-type", "application/ld+json")
@@ -232,9 +237,9 @@ async fn dist_http_snapshot_op_ignores_local_false() {
 /// with `InvalidRequest` (clause 6.3.10). Confirms REQ-HTTP-44.
 #[tokio::test]
 async fn dist_http_incompatible_params_return_invalid_request() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&georel=near%3BmaxDistance%3D%3D1000", "application/ld+json", Some(context_link()))
         .await
@@ -248,12 +253,12 @@ async fn dist_http_incompatible_params_return_invalid_request() {
 /// the result set (clause 6.4.3.2). Confirms REQ-HTTP-51.
 #[tokio::test]
 async fn dist_http_query_entities_supports_query_url_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let fast = topology.id("Vehicle:fast");
     let slow = topology.id("Vehicle:slow");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&fast, 80))
             .with_ld_json()
@@ -264,7 +269,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&slow, 20))
             .with_ld_json()
@@ -275,7 +280,7 @@ async fn dist_http_query_entities_supports_query_url_params() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&q=speed%3E50", "application/ld+json", Some(context_link()))
         .await
@@ -297,14 +302,14 @@ async fn dist_http_query_entities_supports_query_url_params() {
 /// `local=false` is rejected as `InvalidRequest` (clause 6.3.9). Confirms REQ-HTTP-52.
 #[tokio::test]
 async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:type-star");
     let reg_id = topology.id("registration:type-star");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -315,7 +320,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -325,7 +330,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .query_entities("type=*", "application/ld+json", Some(context_link()))
             .await
@@ -335,7 +340,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
     assert_eq!(mock.get_total_count().await, 0, "type=* implies local, so no source is contacted");
 
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=*&local=false", "application/ld+json", Some(context_link()))
         .await
@@ -351,7 +356,7 @@ async fn dist_http_query_type_star_implies_local_and_rejects_local_false() {
 /// to the reassembled entities (clause 6.3.13). Confirms REQ-HTTP-51 (splitEntities).
 #[tokio::test]
 async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:split");
     let first_reg = topology.id("registration:split-1");
     let second_reg = topology.id("registration:split-2");
@@ -360,7 +365,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&first_reg, &first.url(""), &entity_id, "inclusive"))
             .await
@@ -369,7 +374,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&second_reg, &second.url(""), &entity_id, "inclusive"))
             .await
@@ -384,7 +389,7 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
         .await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&splitEntities=true", "application/ld+json", Some(context_link()))
         .await
@@ -402,14 +407,14 @@ async fn dist_http_query_split_entities_param_forwards_and_reapplies_filters() {
 /// (clause 6.3.12). Confirms REQ-HTTP-51 (csf).
 #[tokio::test]
 async fn dist_http_query_csf_param_forwarded_unchanged() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:csf");
     let reg_id = topology.id("registration:csf");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -419,7 +424,7 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&csf=mode%3D%3Dinclusive", "application/ld+json", Some(context_link()))
         .await
@@ -440,11 +445,11 @@ async fn dist_http_query_csf_param_forwarded_unchanged() {
 /// (clause 6.3.14). Confirms REQ-HTTP-51 (containedBy).
 #[tokio::test]
 async fn dist_http_query_contained_by_param_honoured() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:contained");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -456,7 +461,7 @@ async fn dist_http_query_contained_by_param_honoured() {
 
     let query = format!("type=Vehicle&containedBy={}", urlencoding::encode(&entity_id));
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -472,14 +477,14 @@ async fn dist_http_query_contained_by_param_honoured() {
 /// when an EntityMap is "(re)created"). Confirms REQ-HTTP-51 (entityMap).
 #[tokio::test]
 async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:map-lifetime");
     let reg_id = topology.id("registration:map-lifetime");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -489,7 +494,7 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(
             "type=Vehicle&entityMap=true&entityMapLifetime=PT5M",
@@ -512,14 +517,14 @@ async fn dist_http_query_entity_map_lifetime_param_sets_expiry() {
 /// a registered source is not contacted (clause 6.3.9). Confirms REQ-HTTP-59.
 #[tokio::test]
 async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:purge-star");
     let reg_id = topology.id("registration:purge-star");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -530,7 +535,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["purgeEntity"]))
             .await
@@ -539,7 +544,7 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_entities_by_query("type=*", Some(context_link()))
         .await
@@ -555,11 +560,11 @@ async fn dist_http_purge_entities_supports_table_params_and_type_star_local() {
 /// (clause 6.4.3.2). Confirms REQ-HTTP-62.
 #[tokio::test]
 async fn dist_http_retrieve_entity_supports_table_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:retrieve-params");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 42))
             .with_ld_json()
@@ -570,7 +575,7 @@ async fn dist_http_retrieve_entity_supports_table_params() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "attrs=speed&options=keyValues", "application/ld+json", Some(context_link()))
         .await
@@ -591,11 +596,11 @@ async fn dist_http_retrieve_entity_supports_table_params() {
 /// media type. Confirms REQ-HTTP-71.
 #[tokio::test]
 async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:merge-params");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -606,7 +611,7 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(
             Method::PATCH,
@@ -629,13 +634,13 @@ async fn dist_http_merge_entity_supports_format_lang_observedat_options_type_par
 /// Confirms REQ-HTTP-81.
 #[tokio::test]
 async fn dist_http_query_csource_registrations_supports_table_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:reg-params");
     let reg_id = topology.id("registration:reg-params");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -644,7 +649,7 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations("type=Vehicle&limit=5", None)
         .await
@@ -660,13 +665,13 @@ async fn dist_http_query_csource_registrations_supports_table_params() {
 /// Confirms REQ-HTTP-97.
 #[tokio::test]
 async fn dist_http_get_entity_maps_supports_query_url_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:maps-params");
     let reg_id = topology.id("registration:maps-params");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -676,7 +681,7 @@ async fn dist_http_get_entity_maps_supports_query_url_params() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle&limit=5")
         .header("accept", "application/ld+json")

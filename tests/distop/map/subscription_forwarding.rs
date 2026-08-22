@@ -10,7 +10,7 @@ use crate::{
         subscription_document::subscription,
     },
     oracle::assert_status,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -19,12 +19,12 @@ use serde_json::{Value, json};
 /// supporting source (clause 5.8.5). Confirms REQ-MAP-17.
 #[tokio::test]
 async fn sub_create_provisions_csr_subscription() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:provision").await;
     let id = topology.id("Subscription:provision");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -48,12 +48,12 @@ async fn sub_create_provisions_csr_subscription() {
 /// subscription (clause 5.8.5). Confirms REQ-MAP-18.
 #[tokio::test]
 async fn sub_create_stores_local_to_csr_subscription_mapping() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:mapping").await;
     let id = topology.id("Subscription:mapping");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -63,7 +63,15 @@ async fn sub_create_stores_local_to_csr_subscription_mapping() {
     let created = mock.next_request(FORWARD_TIMEOUT).await;
     assert_eq!(created.method, Method::POST, "the CSR subscription is created first");
 
-    assert_status(&topology.front().client().delete_subscription(&id).await.expect("delete subscription"), 204);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .delete_subscription(&id)
+            .await
+            .expect("delete subscription"),
+        204,
+    );
     let torn_down = mock.next_request(FORWARD_TIMEOUT).await;
     assert_eq!(
         torn_down.method,
@@ -84,12 +92,12 @@ async fn sub_create_stores_local_to_csr_subscription_mapping() {
 /// a change (clause 5.8.5). Confirms REQ-MAP-21.
 #[tokio::test]
 async fn sub_local_only_false_triggers_per_csr_handling_on_csource_notification() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:local-only-false").await;
     let id = topology.id("Subscription:local-only-false");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -108,12 +116,12 @@ async fn sub_local_only_false_triggers_per_csr_handling_on_csource_notification(
 /// (clause 5.8.5). Confirms REQ-MAP-22.
 #[tokio::test]
 async fn sub_csource_notification_branches_on_trigger_reason_per_mode() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:trigger-branch").await;
     let id = topology.id("Subscription:trigger-branch");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -137,12 +145,12 @@ async fn sub_csource_notification_branches_on_trigger_reason_per_mode() {
 /// (clause 5.8.5). Confirms REQ-MAP-23.
 #[tokio::test]
 async fn sub_newly_matching_supporting_source_builds_reduced_copy() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:reduced-copy").await;
     let id = topology.id("Subscription:reduced-copy");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -168,14 +176,22 @@ async fn sub_newly_matching_supporting_source_builds_reduced_copy() {
 /// entities. Confirms REQ-MAP-24.
 #[tokio::test]
 async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:strip-filters").await;
     let id = topology.id("Subscription:strip-filters");
     let mut body = subscription(&id, "http://127.0.0.1:9/notify");
     body["q"] = json!("speed>10");
     body["scopeQ"] = json!("/Madrid");
     body["splitEntities"] = json!(true);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
 
     let captured = mock.next_request(FORWARD_TIMEOUT).await;
     let forwarded = forwarded_subscription(&captured);
@@ -194,12 +210,20 @@ async fn sub_newly_matching_split_forward_strips_q_geoq_scopeq() {
 /// (clause 5.8.5). Confirms REQ-MAP-25.
 #[tokio::test]
 async fn sub_newly_matching_forward_strips_notification_attributes_pick_omit() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:strip-attrs").await;
     let id = topology.id("Subscription:strip-attrs");
     let mut body = subscription(&id, "http://127.0.0.1:9/notify");
     body["notification"]["attributes"] = json!(["speed"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
 
     let captured = mock.next_request(FORWARD_TIMEOUT).await;
     let forwarded = forwarded_subscription(&captured);
@@ -216,12 +240,12 @@ async fn sub_newly_matching_forward_strips_notification_attributes_pick_omit() {
 /// it for re-assembly (clause 5.8.5). Confirms REQ-MAP-26.
 #[tokio::test]
 async fn sub_newly_matching_forward_endpoint_is_local_broker() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:local-endpoint").await;
     let id = topology.id("Subscription:local-endpoint");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -246,12 +270,12 @@ async fn sub_newly_matching_forward_endpoint_is_local_broker() {
 /// subscription (clause 5.8.5). Confirms REQ-MAP-27.
 #[tokio::test]
 async fn sub_newly_matching_forward_stores_remote_to_local_subscription_mapping() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:remote-local-map").await;
     let id = topology.id("Subscription:remote-local-map");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -274,12 +298,12 @@ async fn sub_newly_matching_forward_stores_remote_to_local_subscription_mapping(
 /// remote subscription id (clause 5.8.5). Confirms REQ-MAP-28.
 #[tokio::test]
 async fn sub_newly_matching_forward_stores_csr_to_remote_subscription_mapping() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = source(&topology, "registration:csr-remote-map").await;
     let id = topology.id("Subscription:csr-remote-map");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, "http://127.0.0.1:9/notify"))
             .await
@@ -288,7 +312,15 @@ async fn sub_newly_matching_forward_stores_csr_to_remote_subscription_mapping() 
     );
     assert_eq!(mock.next_request(FORWARD_TIMEOUT).await.method, Method::POST, "the CSR subscription is created");
 
-    assert_status(&topology.front().client().delete_subscription(&id).await.expect("delete subscription"), 204);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .delete_subscription(&id)
+            .await
+            .expect("delete subscription"),
+        204,
+    );
     assert_eq!(
         mock.next_request(FORWARD_TIMEOUT).await.method,
         Method::DELETE,

@@ -12,7 +12,7 @@ use crate::{
     entity::vehicle,
     oracle::{assert_status, json_body, location},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::{tenant_name::TenantName, test_client::TestClient};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
@@ -67,14 +67,19 @@ pub async fn create_prepared_snapshot(client: &TestClient, body: &Value) -> Stri
 }
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive_query(topology: &DistributedTopology, endpoint: &str, name: &str) {
+async fn register_inclusive_query(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
     let registration = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
         .entity_type("Vehicle")
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 }
@@ -83,8 +88,13 @@ async fn register_inclusive_query(topology: &DistributedTopology, endpoint: &str
 /// Confirms REQ-FW-84.
 #[tokio::test]
 async fn distop_entity_snapshot_creation_returns_identifier() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let created = topology.front().client().create_snapshot(&snapshot_body()).await.expect("create snapshot");
+    let topology = topology::single().await.expect("single-broker topology");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_snapshot(&snapshot_body())
+        .await
+        .expect("create snapshot");
     assert_status(&created, 201);
     assert!(json_body(&created)["id"].as_str().is_some(), "snapshot creation returns an identifier");
     assert!(location(&created).contains("/snapshots/"), "snapshot creation returns a location");
@@ -95,11 +105,11 @@ async fn distop_entity_snapshot_creation_returns_identifier() {
 /// later mutation (clause 5.16). Confirms REQ-FW-80.
 #[tokio::test]
 async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:snapshot-scoped");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 10))
             .with_ld_json()
@@ -109,10 +119,10 @@ async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
         201,
     );
 
-    let snapshot_id = create_snapshot(topology.front().client()).await;
+    let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .replace_entity(&entity_id, &vehicle(&entity_id, 99), "application/ld+json", None)
             .await
@@ -121,7 +131,7 @@ async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
     );
 
     let scoped = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type=Vehicle&id={entity_id}"))
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -144,11 +154,11 @@ async fn distop_entity_snapshot_op_scoped_to_snapshot_information() {
 /// rejected (clause 5.16). Confirms REQ-FW-81.
 #[tokio::test]
 async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let snapshot_id = create_snapshot(topology.front().client()).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
 
     let query = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -159,7 +169,7 @@ async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
     assert_status(&query, 200);
 
     let write = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/entities")
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -177,14 +187,14 @@ async fn distop_entity_snapshot_permitted_ops_core_plus_temporal() {
 /// a `local` parameter (clause 5.16). Confirms REQ-FW-82.
 #[tokio::test]
 async fn distop_entity_snapshot_ops_implicitly_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-local").await;
-    let snapshot_id = create_snapshot(topology.front().client()).await;
+    let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -203,15 +213,15 @@ async fn distop_entity_snapshot_ops_implicitly_local() {
 /// 5.16). Confirms REQ-FW-83.
 #[tokio::test]
 async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-skip-a").await;
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-skip-b").await;
-    let snapshot_id = create_snapshot(topology.front().client()).await;
+    let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -230,14 +240,14 @@ async fn distop_entity_snapshot_implicit_local_skips_registry_csrs() {
 /// forwarding (clause 5.16). Confirms REQ-FW-70.
 #[tokio::test]
 async fn distop_entity_snapshot_local_false_ignored() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let endpoint = mock.url("");
     register_inclusive_query(&topology, &endpoint, "registration:snapshot-localfalse").await;
-    let snapshot_id = create_snapshot(topology.front().client()).await;
+    let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&local=false")
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -263,9 +273,9 @@ async fn distop_entity_snapshot_local_false_ignored() {
 /// REQ-FW-85.
 #[tokio::test]
 async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantSnapshot").expect("valid tenant name");
-    let tenant_client = topology.front().tenant_client(tenant);
+    let tenant_client = topology.broker(BrokerRole::A).tenant_client(tenant);
     assert_status(
         &tenant_client
             .post_entity(&vehicle(&topology.id("Vehicle:snapshot-tenant"), 10))
@@ -287,7 +297,7 @@ async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
     assert_status(&under_tenant, 200);
 
     let under_default = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-Snapshot", snapshot_id.as_str())
@@ -306,10 +316,10 @@ async fn distop_entity_snapshot_orthogonal_to_tenant_requires_both() {
 #[ignore = "non-deterministic REQ-FW-86: requires induced resource pressure with no deterministic trigger"]
 #[tokio::test]
 async fn distop_entity_snapshot_low_resources_may_delete() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let snapshot_id = create_snapshot(topology.front().client()).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let snapshot_id = create_snapshot(topology.broker(BrokerRole::A).client()).await;
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_snapshot(&snapshot_id, None)
         .await
@@ -323,12 +333,28 @@ async fn distop_entity_snapshot_low_resources_may_delete() {
 #[ignore = "non-deterministic REQ-FW-87: eviction trigger is non-deterministic"]
 #[tokio::test]
 async fn distop_entity_snapshot_deletion_order_by_priority() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mut low_priority = snapshot_body();
     low_priority["snapshotPriority"] = json!(1);
     let mut high_priority = snapshot_body();
     high_priority["snapshotPriority"] = json!(10);
-    assert_status(&topology.front().client().create_snapshot(&low_priority).await.expect("low priority"), 201);
-    assert_status(&topology.front().client().create_snapshot(&high_priority).await.expect("high priority"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_snapshot(&low_priority)
+            .await
+            .expect("low priority"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_snapshot(&high_priority)
+            .await
+            .expect("high priority"),
+        201,
+    );
     topology.finish().await.expect("topology cleanup");
 }

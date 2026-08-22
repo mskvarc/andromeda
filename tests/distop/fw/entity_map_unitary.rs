@@ -8,7 +8,7 @@ use crate::{
     entity::vehicle,
     oracle::{assert_problem_details, assert_status, entity_map_header, forwarded_header, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::INVALID_REQUEST;
 use axum::http::Method;
@@ -22,14 +22,19 @@ const FORWARD_WAIT: Duration = Duration::from_secs(5);
 const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive_query(topology: &DistributedTopology, endpoint: &str, name: &str) {
+async fn register_inclusive_query(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, endpoint: &str, name: &str) {
     let registration = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
         .entity_type("Vehicle")
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 }
@@ -38,7 +43,7 @@ async fn register_inclusive_query(topology: &DistributedTopology, endpoint: &str
 /// source (clause 5.7.2). Confirms REQ-FW-46.
 #[tokio::test]
 async fn distop_entity_map_broad_request_to_each_matching_source() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
     first_mock
@@ -54,7 +59,7 @@ async fn distop_entity_map_broad_request_to_each_matching_source() {
     register_inclusive_query(&topology, &second_endpoint, "registration:map-broad-2").await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -81,12 +86,12 @@ async fn distop_entity_map_broad_request_to_each_matching_source() {
 /// ids from the mapped set are returned (clause 5.5.9.3). Confirms REQ-FW-47.
 #[tokio::test]
 async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let first_id = topology.id("Vehicle:map-pin-1");
     let second_id = topology.id("Vehicle:map-pin-2");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&first_id, 10))
             .with_ld_json()
@@ -97,7 +102,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&second_id, 20))
             .with_ld_json()
@@ -108,7 +113,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -117,7 +122,7 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
     let map_id = entity_map_header(&created).expect("map id returned");
 
     let page = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&limit=1")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -138,12 +143,12 @@ async fn distop_entity_map_query_pins_ids_only_mapped_paginated() {
 /// set (clause 5.5.9.3, 5.14). Confirms REQ-FW-48, REQ-FW-55, REQ-FW-78.
 #[tokio::test]
 async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let matching = topology.id("Vehicle:map-filter-match");
     let non_matching = topology.id("Vehicle:map-filter-nomatch");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&matching, 60))
             .with_ld_json()
@@ -154,7 +159,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&non_matching, 40))
             .with_ld_json()
@@ -165,7 +170,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&q=speed%3E50&entityMap=true", "application/ld+json", None)
         .await
@@ -174,7 +179,7 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
     let map_id = entity_map_header(&created).expect("map id returned");
 
     let reused = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E50")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -203,11 +208,11 @@ async fn distop_entity_map_filters_remove_non_matching_ids_during_pagination() {
 /// REQ-FW-72.
 #[tokio::test]
 async fn distop_entity_map_location_returned_when_requested() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:map-location");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 15))
             .with_ld_json()
@@ -218,7 +223,7 @@ async fn distop_entity_map_location_returned_when_requested() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -226,7 +231,12 @@ async fn distop_entity_map_location_returned_when_requested() {
     assert_status(&created, 201);
     let map_id = entity_map_header(&created).expect("map id returned");
 
-    let retrieved = topology.front().client().retrieve_entity_map(&map_id).await.expect("retrieve map");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_entity_map(&map_id)
+        .await
+        .expect("retrieve map");
     assert_status(&retrieved, 200);
 
     topology.finish().await.expect("topology cleanup");
@@ -236,7 +246,7 @@ async fn distop_entity_map_location_returned_when_requested() {
 /// the entity, not every source (clause 5.7.2). Confirms REQ-FW-49.
 #[tokio::test]
 async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let holding_mock = ContextSourceAdapter::start().await;
     let other_mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-holding");
@@ -254,7 +264,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
     register_inclusive_query(&topology, &other_endpoint, "registration:map-other").await;
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}&entityMap=true"), "application/ld+json", None)
         .await
@@ -264,7 +274,7 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
     let other_after_create = other_mock.get_total_count().await;
 
     let reused = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities?type=Vehicle&id={entity_id}"))
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -291,8 +301,8 @@ async fn distop_entity_map_retrieve_records_holding_sources_single_instance() {
 /// Confirms REQ-FW-49, REQ-FW-51.
 #[tokio::test]
 async fn distop_entity_map_retrieve_cross_instance_reuse() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:map-cross");
     assert_status(
@@ -339,7 +349,7 @@ async fn distop_entity_map_retrieve_cross_instance_reuse() {
 /// as part of any forwarded request"). Confirms REQ-FW-51, REQ-FW-75.
 #[tokio::test]
 async fn distop_entity_map_reused_when_field_passed_back() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-reuse");
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 25)]))
@@ -349,7 +359,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
     register_inclusive_query(&topology, &endpoint, "registration:map-reuse").await;
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -360,7 +370,7 @@ async fn distop_entity_map_reused_when_field_passed_back() {
     let count_after_create = mock.get_total_count().await;
 
     let reused = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -389,12 +399,12 @@ async fn distop_entity_map_reused_when_field_passed_back() {
 /// REQ-FW-75.
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mapped = topology.id("Vehicle:map-listed");
     let added_later = topology.id("Vehicle:map-added");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&mapped, 10))
             .with_ld_json()
@@ -405,7 +415,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -415,7 +425,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&added_later, 20))
             .with_ld_json()
@@ -426,7 +436,7 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
     );
 
     let reused = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -451,11 +461,11 @@ async fn distop_entity_map_subsequent_request_filters_to_listed_entities() {
 /// is rejected with 400 InvalidRequest (clause 5.5.9.3). Confirms REQ-FW-76.
 #[tokio::test]
 async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:map-changed-filter");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 60))
             .with_ld_json()
@@ -466,7 +476,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -475,7 +485,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
     let map_id = entity_map_header(&created).expect("map id returned");
 
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle&q=speed%3E99")
         .header("NGSILD-EntityMap", map_id.as_str())
@@ -493,7 +503,7 @@ async fn distop_entity_map_subsequent_request_rejects_changed_filter_params() {
 /// the broad request (clause 5.7.2). Confirms REQ-FW-77.
 #[tokio::test]
 async fn distop_entity_map_expired_or_inaccessible_creates_new() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-expired");
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 25)]))
@@ -504,7 +514,7 @@ async fn distop_entity_map_expired_or_inaccessible_creates_new() {
 
     let unknown_map = topology.id("EntityMap:does-not-exist");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("NGSILD-EntityMap", unknown_map.as_str())
@@ -528,11 +538,11 @@ async fn distop_entity_map_expired_or_inaccessible_creates_new() {
 /// REQ-FW-79.
 #[tokio::test]
 async fn distop_entity_map_only_expiry_updatable_by_other_components() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:map-expiry-update");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 15))
             .with_ld_json()
@@ -543,7 +553,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await
@@ -552,7 +562,7 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
     let map_id = entity_map_header(&created).expect("map id returned");
 
     let patched = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{map_id}"))
         .json(&json!({ "expiresAt": "2099-01-01T00:00:00Z" }))
@@ -561,7 +571,12 @@ async fn distop_entity_map_only_expiry_updatable_by_other_components() {
         .expect("update expiry");
     assert_status(&patched, 204);
 
-    let retrieved = topology.front().client().retrieve_entity_map(&map_id).await.expect("retrieve map");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_entity_map(&map_id)
+        .await
+        .expect("retrieve map");
     assert_status(&retrieved, 200);
 
     topology.finish().await.expect("topology cleanup");

@@ -6,7 +6,7 @@ use crate::{
     disc::{PEER_ENDPOINT, csr_discovery::matched_ids},
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::{context::COMPOUND_CONTEXT, problem_detail::BAD_REQUEST_DATA};
 use reqwest::Method;
@@ -16,9 +16,9 @@ use urlencoding::encode;
 /// BadRequestData` (clauses 5.10.2, 6.3.5). Confirms REQ-DISC-17.
 #[tokio::test]
 async fn query_csr_applies_jsonld_validation() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/csourceRegistrations?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -36,8 +36,13 @@ async fn query_csr_applies_jsonld_validation() {
 /// REQ-DISC-18, REQ-DISC-98.
 #[tokio::test]
 async fn query_csr_without_type_attrs_q_geoq_returns_400_too_wide() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = topology.front().client().query_registrations("limit=5", None).await.expect("too-wide query");
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .query_registrations("limit=5", None)
+        .await
+        .expect("too-wide query");
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -48,10 +53,10 @@ async fn query_csr_without_type_attrs_q_geoq_returns_400_too_wide() {
 /// REQ-DISC-40.
 #[tokio::test]
 async fn query_csr_ids_only_without_type_attrs_q_geoq_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Vehicle:only");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("id={}", encode(&id)), None)
         .await
@@ -65,9 +70,9 @@ async fn query_csr_ids_only_without_type_attrs_q_geoq_returns_400() {
 /// Confirms REQ-DISC-20.
 #[tokio::test]
 async fn query_csr_invalid_entity_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations("type=Vehicle&id=not-a-uri", Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -81,7 +86,7 @@ async fn query_csr_invalid_entity_id_returns_400() {
 /// `400 BadRequestData` (clause 5.10.2). Confirms REQ-DISC-21.
 #[tokio::test]
 async fn query_csr_malformed_q_geoq_temporalq_return_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let malformed = [
         "type=Vehicle&q=speed%3E%3E10",
         "type=Vehicle&geometry=Point&coordinates=%5B1%2C2%5D",
@@ -89,7 +94,7 @@ async fn query_csr_malformed_q_geoq_temporalq_return_400() {
     ];
     for query in malformed {
         let response = topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .query_registrations(query, Some(COMPOUND_CONTEXT.as_str()))
             .await
@@ -105,18 +110,23 @@ async fn query_csr_malformed_q_geoq_temporalq_return_400() {
 /// 5.5.9). Confirms REQ-DISC-39.
 #[tokio::test]
 async fn query_csr_pagination_limit_offset() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("PagedType");
     for index in 0..3 {
         let id = topology.id(&format!("registration:page:{index}"));
         let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build();
-        let created = topology.front().client().create_registration(&body).await.expect("create registration");
+        let created = topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&body)
+            .await
+            .expect("create registration");
         assert_status(&created, 201);
     }
     let type_filter = format!("type={}", encode(&vtype));
 
     let full = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&type_filter, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -129,7 +139,7 @@ async fn query_csr_pagination_limit_offset() {
     );
 
     let page = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("{type_filter}&limit=2"), Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -143,15 +153,20 @@ async fn query_csr_pagination_limit_offset() {
 /// (clauses 5.10.2, 5.2.9). Confirms REQ-DISC-42, REQ-DISC-93.
 #[tokio::test]
 async fn query_csr_returns_jsonld_array_of_matching_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("ArrayType");
     let id = topology.id("registration:array");
     let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build();
-    let created = topology.front().client().create_registration(&body).await.expect("create registration");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&body)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("type={}", encode(&vtype)), Some(COMPOUND_CONTEXT.as_str()))
         .await

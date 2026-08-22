@@ -12,7 +12,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use std::time::Duration;
 use urlencoding::encode;
@@ -25,7 +25,7 @@ const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Confirms REQ-DISC-107.
 #[tokio::test]
 async fn matching_attribute_no_names_specified_all_match() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("NoNamesType");
     let id = topology.id("registration:no-names");
     register(
@@ -46,7 +46,7 @@ async fn matching_attribute_no_names_specified_all_match() {
 /// matches any requested attribute name (clause 5.12). Confirms REQ-DISC-108.
 #[tokio::test]
 async fn matching_attribute_empty_registered_combination_entity_only_match() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("EntityOnlyType");
     let id = topology.id("registration:entity-only");
     register(&topology, &CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build()).await;
@@ -61,7 +61,7 @@ async fn matching_attribute_empty_registered_combination_entity_only_match() {
 /// REQ-DISC-109.
 #[tokio::test]
 async fn matching_attribute_at_least_one_name_matches_registered() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("OneNameType");
     let id = topology.id("registration:one-name");
     register(
@@ -83,12 +83,12 @@ async fn matching_attribute_at_least_one_name_matches_registered() {
 /// Confirms REQ-DISC-96, REQ-DISC-49, REQ-DISC-81.
 #[tokio::test]
 async fn matching_subscription_empty_notification_attributes_all_match() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("EmptyAttrsSubType");
     let subscription_id = topology.id("subscription:empty-attrs");
     let subscription = CsrSubscriptionBuilder::new(&subscription_id, &adapter.endpoint_url(), &vtype).build();
-    let created = csr_subscription::create(topology.front().client(), &subscription).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription).await;
     assert_status(&created, 201);
 
     let registration_id = topology.id("registration:empty-attrs");
@@ -117,7 +117,7 @@ async fn matching_subscription_empty_notification_attributes_all_match() {
 /// REQ-DISC-48, REQ-DISC-95.
 #[tokio::test]
 async fn matching_subscription_union_of_watched_and_notification_attributes() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("UnionSubType");
     let watched = topology.id("attr:watched");
@@ -127,7 +127,7 @@ async fn matching_subscription_union_of_watched_and_notification_attributes() {
         .watched_attributes(&[watched.as_str()])
         .notification_attributes(&[notified.as_str()])
         .build();
-    let created = csr_subscription::create(topology.front().client(), &subscription).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription).await;
     assert_status(&created, 201);
 
     let registration_id = topology.id("registration:union");

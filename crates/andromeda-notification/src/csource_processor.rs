@@ -181,6 +181,18 @@ impl CsourceNotificationProcessor {
 
     /// Evaluate and deliver notifications for one committed registration change.
     pub async fn apply_registration_change(&self, event: CsrChangeEvent) {
+        // A subscription and a subsequent CSR mutation may be committed by
+        // different request tasks before the subscription-change broadcast is
+        // observed here. Reconcile from the authoritative store before
+        // matching the CSR so a late registration cannot outrun the compiled
+        // companion subscription cache (clause 5.11.2.4).
+        if let Err(error) = self.reload_cache().await {
+            error!(
+                "Failed to reload context-source subscriptions before CSR {} evaluation: {}",
+                event.csr_id, error
+            );
+            return;
+        }
         // For Updated events with a pre-update snapshot, detect subscriptions that
         // no longer match and send noLongerMatching notifications.
         if event.trigger_reason == CsrTriggerReason::Updated

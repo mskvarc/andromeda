@@ -54,3 +54,11 @@ pub enum RequestError {
     #[error(transparent)]
     Transport(#[from] TransportError),
 }
+
+/// Failure while constructing a test HTTP client with custom DNS mappings.
+#[derive(Debug, Error)]
+pub enum ClientBuildError {
+    /// Reqwest rejected the client configuration.
+    #[error("failed to build test HTTP client: {0}")]
+    Reqwest(#[source] reqwest::Error),
+}

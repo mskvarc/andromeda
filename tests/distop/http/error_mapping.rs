@@ -13,7 +13,7 @@ use crate::{
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, forwarded_entity_path, provision_source, retrieval_source},
     oracle::{assert_status, has_warning, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::json;
@@ -27,8 +27,8 @@ const BLACKHOLE_ENDPOINT: &str = "http://10.255.255.1:9";
 /// Confirms REQ-HTTP-25.
 #[tokio::test]
 async fn dist_http_single_source_loop_back_returns_508() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let entity_id = topology.id("Vehicle:loop");
     let reg_id = topology.id("registration:loop");
 
@@ -65,7 +65,7 @@ async fn dist_http_single_source_loop_back_returns_508() {
 /// Confirms REQ-HTTP-26.
 #[tokio::test]
 async fn dist_http_single_source_timeout_returns_504() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:timeout");
     let reg_id = topology.id("registration:timeout");
 
@@ -78,7 +78,7 @@ async fn dist_http_single_source_timeout_returns_504() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -87,7 +87,7 @@ async fn dist_http_single_source_timeout_returns_504() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -110,20 +110,25 @@ async fn dist_http_single_source_timeout_returns_504() {
 /// an unsafe method (clause 6.3.17). Confirms REQ-HTTP-27.
 #[tokio::test]
 async fn dist_http_single_source_resource_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:absent");
     let reg_id = topology.id("registration:absent");
     let mock = ContextSourceAdapter::start().await;
 
     let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("register source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register source"),
         201,
     );
     mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 404).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -140,20 +145,25 @@ async fn dist_http_single_source_resource_absent_returns_404() {
 /// `502 Bad Gateway` for an unsafe method (clause 6.3.17). Confirms REQ-HTTP-28.
 #[tokio::test]
 async fn dist_http_single_source_other_failure_returns_502() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:badgateway");
     let reg_id = topology.id("registration:badgateway");
     let mock = ContextSourceAdapter::start().await;
 
     let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("register source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register source"),
         201,
     );
     mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 5))
         .with_ld_json()
@@ -178,8 +188,8 @@ async fn dist_http_single_source_other_failure_returns_502() {
 /// response. Confirms REQ-HTTP-25 for the safe method.
 #[tokio::test]
 async fn dist_http_get_loop_back_returns_199_warning_not_508() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let entity_id = topology.id("Vehicle:get-loop");
     let reg_id = topology.id("registration:get-loop");
 
@@ -212,7 +222,7 @@ async fn dist_http_get_loop_back_returns_199_warning_not_508() {
 /// Confirms REQ-HTTP-26 for the safe method.
 #[tokio::test]
 async fn dist_http_get_timeout_returns_199_warning_not_504() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:get-timeout");
     let reg_id = topology.id("registration:get-timeout");
 
@@ -225,7 +235,7 @@ async fn dist_http_get_timeout_returns_199_warning_not_504() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -234,7 +244,7 @@ async fn dist_http_get_timeout_returns_199_warning_not_504() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -253,7 +263,7 @@ async fn dist_http_get_timeout_returns_199_warning_not_504() {
 /// mapped to `207` (clause 6.3.17). Confirms REQ-HTTP-29.
 #[tokio::test]
 async fn dist_http_multi_endpoint_source_error_returns_207() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:multi-207");
     let ok_reg = topology.id("registration:multi-207-ok");
     let fail_reg = topology.id("registration:multi-207-fail");
@@ -261,17 +271,30 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
     let fail_source = ContextSourceAdapter::start().await;
 
     let ok = provision_source(&ok_reg, &ok_source.url(""), &entity_id, "inclusive", &["createEntity"]);
-    assert_status(&topology.front().client().create_registration(&ok).await.expect("register ok source"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&ok)
+            .await
+            .expect("register ok source"),
+        201,
+    );
     let fail = provision_source(&fail_reg, &fail_source.url(""), &entity_id, "inclusive", &["createEntity"]);
     assert_status(
-        &topology.front().client().create_registration(&fail).await.expect("register failing source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&fail)
+            .await
+            .expect("register failing source"),
         201,
     );
     ok_source.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 201).await;
     fail_source.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 7))
         .with_ld_json()
@@ -289,7 +312,7 @@ async fn dist_http_multi_endpoint_source_error_returns_207() {
 /// forwarded to it and is handled locally (clause 4.3.6.2). Confirms REQ-HTTP-30.
 #[tokio::test]
 async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:aux-unsafe");
     let reg_id = topology.id("registration:aux-unsafe");
     let mock = ContextSourceAdapter::start().await;
@@ -297,7 +320,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "auxiliary", &["retrieveEntity", "queryEntity"]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -307,7 +330,7 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
     mock.set_stub(Method::POST, FORWARDED_ENTITIES_PATH, 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 11))
         .with_ld_json()
@@ -329,21 +352,26 @@ async fn dist_http_auxiliary_registration_rejects_unsafe_method() {
 /// response body rather than a silent success (clause 6.3.17). Confirms REQ-HTTP-32.
 #[tokio::test]
 async fn dist_http_unsafe_method_source_error_is_informative() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:unsafe-error");
     let reg_id = topology.id("registration:unsafe-error");
     let mock = ContextSourceAdapter::start().await;
 
     let registration = provision_source(&reg_id, &mock.url(""), &entity_id, "exclusive", &["createEntity"]);
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("register source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register source"),
         201,
     );
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES_PATH, 403, &json!({"detail": "no access"}))
         .await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 13))
         .with_ld_json()
@@ -367,7 +395,7 @@ async fn dist_http_unsafe_method_source_error_is_informative() {
 /// 5.2.34 and 6.3.17). Confirms REQ-HTTP-31.
 #[tokio::test]
 async fn dist_http_failed_endpoint_skipped_until_cooldown() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cooldown");
     let reg_id = topology.id("registration:cooldown");
     let mock = ContextSourceAdapter::start().await;
@@ -375,20 +403,25 @@ async fn dist_http_failed_endpoint_skipped_until_cooldown() {
     let mut registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     registration["management"] = json!({"cooldown": 60_000});
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("register source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register source"),
         201,
     );
     mock.set_stub(Method::GET, &forwarded_entity_path(&entity_id), 500).await;
 
     let first = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
         .expect("first retrieve marks the endpoint failed");
     assert!(has_warning(&first, 299), "the failing source is reported as NGSILD-Warning 299");
     let second = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await

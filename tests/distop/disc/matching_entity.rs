@@ -8,7 +8,7 @@ use crate::{
         csr_discovery::{contains, query, register},
     },
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology,
 };
 use serde_json::json;
 use urlencoding::encode;
@@ -17,7 +17,7 @@ use urlencoding::encode;
 /// the matched registrations independently (clause 5.12). Confirms REQ-DISC-94.
 #[tokio::test]
 async fn matching_query_relevant_spec_uses_type_ids_idpattern_attrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("SpecType");
     let covered = topology.id("Vehicle:covered");
     let other = topology.id("Vehicle:other");
@@ -47,7 +47,7 @@ async fn matching_query_relevant_spec_uses_type_ids_idpattern_attrs() {
 /// matches (clause 5.12). Confirms REQ-DISC-99.
 #[tokio::test]
 async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let first_type = topology.id("AnyInfoFirst");
     let second_type = topology.id("AnyInfoSecond");
     let id = topology.id("registration:any-info");
@@ -70,7 +70,7 @@ async fn matching_spec_matches_csr_if_any_registrationinfo_matches() {
 /// part match (clause 5.12). Confirms REQ-DISC-100.
 #[tokio::test]
 async fn matching_registrationinfo_requires_both_entity_and_attribute_parts() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("BothPartsType");
     let other_type = topology.id("BothPartsOther");
     let id = topology.id("registration:both-parts");
@@ -95,7 +95,7 @@ async fn matching_registrationinfo_requires_both_entity_and_attribute_parts() {
 /// (clause 5.12). Confirms REQ-DISC-101.
 #[tokio::test]
 async fn matching_entity_requires_type_selector_and_id_condition() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("EntityPartType");
     let other_type = topology.id("EntityPartOther");
     let covered = topology.id("Vehicle:entity-part");
@@ -118,7 +118,7 @@ async fn matching_entity_requires_type_selector_and_id_condition() {
 /// (clause 5.12). Confirms REQ-DISC-102.
 #[tokio::test]
 async fn matching_id_subcase_entityinfo_without_id_or_idpattern_matches() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("NoIdType");
     let id = topology.id("registration:no-id");
     register(&topology, &CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build()).await;
@@ -132,7 +132,7 @@ async fn matching_id_subcase_entityinfo_without_id_or_idpattern_matches() {
 /// does not (clause 5.12). Confirms REQ-DISC-103.
 #[tokio::test]
 async fn matching_id_subcase_specified_id_equals_entityinfo_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("IdEqType");
     let covered = topology.id("Vehicle:id-eq");
     let other = topology.id("Vehicle:id-eq-other");
@@ -151,7 +151,7 @@ async fn matching_id_subcase_specified_id_equals_entityinfo_id() {
 /// outside it does not (clause 5.12). Confirms REQ-DISC-104.
 #[tokio::test]
 async fn matching_id_subcase_specified_id_matches_entityinfo_idpattern() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("IdPatType");
     let covered = topology.id("Fleet:1");
     let outside = topology.id("Other:1");
@@ -177,7 +177,7 @@ async fn matching_id_subcase_specified_id_matches_entityinfo_idpattern() {
 /// disjoint pattern does not (clause 5.12). Confirms REQ-DISC-105.
 #[tokio::test]
 async fn matching_id_subcase_specified_idpattern_matches_entityinfo_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("QueryPatType");
     let covered = topology.id("Fleet:covered");
     let id = topology.id("registration:query-pattern");
@@ -204,7 +204,7 @@ async fn matching_id_subcase_specified_idpattern_matches_entityinfo_id() {
 /// REQ-DISC-106.
 #[tokio::test]
 async fn matching_id_subcase_both_patterns_present_conservative_match() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("BothPatType");
     let id = topology.id("registration:both-patterns");
     register(

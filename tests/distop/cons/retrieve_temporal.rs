@@ -10,7 +10,7 @@ use crate::{
     entity::entity,
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::RESOURCE_NOT_FOUND;
 use axum::http::Method;
@@ -29,9 +29,9 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 /// REQ-CONS-39.
 #[tokio::test]
 async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons39");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
 
     let no_registration = front.client().get_temporal_entity(&entity_id, BEFORE_2030, None).await.expect("retrieve");
     assert_status(&no_registration, 404);
@@ -68,9 +68,9 @@ async fn distop_retrieve_temporal_no_local_no_registration_returns_404() {
 /// evolution is merged (clause 5.7.3.4). Confirms REQ-CONS-40.
 #[tokio::test]
 async fn distop_retrieve_temporal_local_evolution_is_base_s() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons40");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let local = entity(
@@ -116,9 +116,9 @@ async fn distop_retrieve_temporal_local_evolution_is_base_s() {
 /// (clause 5.7.3.4). Confirms REQ-CONS-41.
 #[tokio::test]
 async fn distop_retrieve_temporal_local_temporal_filtering_produces_s1() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons41");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
 
     let local = entity(
         &entity_id,
@@ -157,9 +157,9 @@ async fn distop_retrieve_temporal_local_temporal_filtering_produces_s1() {
 /// REQ-CONS-44.
 #[tokio::test]
 async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons44");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [("/s1", &["retrieveTemporal"][..]), ("/s2", &["queryTemporal"][..])] {
@@ -199,9 +199,9 @@ async fn distop_retrieve_temporal_forwards_only_retrievetemporal_capable() {
 /// REQ-CONS-46.
 #[tokio::test]
 async fn distop_retrieve_temporal_merges_modes_into_s1() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons46");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 

@@ -5,7 +5,7 @@ use crate::{
     disc::PEER_ENDPOINT,
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
@@ -16,9 +16,9 @@ use andromeda_test_fixtures::{
 /// lookup (clause 5.10.1). Confirms REQ-DISC-13.
 #[tokio::test]
 async fn retrieve_csr_invalid_uri_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration("not a uri", None)
         .await
@@ -32,10 +32,10 @@ async fn retrieve_csr_invalid_uri_id_returns_400() {
 /// (clause 5.10.1). Confirms REQ-DISC-14.
 #[tokio::test]
 async fn retrieve_csr_unknown_id_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let unknown = topology.id("registration:absent");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&unknown, None)
         .await
@@ -50,14 +50,19 @@ async fn retrieve_csr_unknown_id_returns_404() {
 /// 5.5.7). Confirms REQ-DISC-15.
 #[tokio::test]
 async fn retrieve_csr_expands_shorthand_terms_in_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:expansion");
     let body = CsrBuilder::new(&id, PEER_ENDPOINT).entity_type("Vehicle").property_names(&["speed"]).build();
-    let created = topology.front().client().create_registration(&body).await.expect("create registration");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&body)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
 
     let expanded = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .without_default_context()
         .retrieve_registration(&id, None)
@@ -74,7 +79,7 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
     );
 
     let compacted = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&id, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -94,14 +99,19 @@ async fn retrieve_csr_expands_shorthand_terms_in_result() {
 /// REQ-DISC-16.
 #[tokio::test]
 async fn retrieve_csr_existing_returns_200_jsonld_object() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:existing");
     let body = CsrBuilder::new(&id, PEER_ENDPOINT).build();
-    let created = topology.front().client().create_registration(&body).await.expect("create registration");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&body)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&id, Some(COMPOUND_CONTEXT.as_str()))
         .await

@@ -1,6 +1,11 @@
 //! Runtime-local HTTP client bound to a broker endpoint and optional tenant.
 
-use crate::{broker_endpoint::BrokerEndpoint, response::TestResponse, tenant_name::TenantName, transport_error::TransportError};
+use crate::{
+    broker_endpoint::{BrokerDnsOverride, BrokerEndpoint},
+    response::TestResponse,
+    tenant_name::TenantName,
+    transport_error::{ClientBuildError, TransportError},
+};
 use http::{
     HeaderValue,
     Method,
@@ -33,6 +38,28 @@ impl TestClient {
             tenant,
             default_context: None,
         }
+    }
+
+    /// Construct a client whose DNS resolution is fixed for the supplied
+    /// broker hostnames. This keeps the endpoint URL returned by discovery
+    /// unchanged while allowing a host-side test process to contact a
+    /// compose-network hostname through its published port.
+    pub fn new_with_dns_overrides(
+        endpoint: BrokerEndpoint,
+        tenant: Option<TenantName>,
+        overrides: &[BrokerDnsOverride],
+    ) -> Result<TestClient, ClientBuildError> {
+        TestClient::new(endpoint, tenant).with_dns_overrides(overrides)
+    }
+
+    /// Return this client with deterministic reqwest DNS mappings installed.
+    pub fn with_dns_overrides(self, overrides: &[BrokerDnsOverride]) -> Result<TestClient, ClientBuildError> {
+        let mut builder = Client::builder();
+        for override_entry in overrides {
+            builder = builder.resolve(override_entry.hostname(), override_entry.address());
+        }
+        let http = builder.build().map_err(ClientBuildError::Reqwest)?;
+        Ok(TestClient { http, ..self })
     }
 
     /// Attach the JSON-LD context `Link` sent with every request that neither

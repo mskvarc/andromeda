@@ -13,7 +13,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, attr_present},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{CONFLICT, RESOURCE_NOT_FOUND};
 use axum::http::Method;
@@ -28,8 +28,8 @@ fn brand_only(id: &str) -> Value {
 /// ResourceNotFound`. Confirms REQ-PROV-20 (positive).
 #[tokio::test]
 async fn append_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-append-absent");
 
     let fragment = attribute_fragment(&[("speed", property(json!(99)))]);
@@ -44,8 +44,8 @@ async fn append_absent_and_no_registration_returns_404() {
 /// the append forwards once. Confirms REQ-PROV-20 (negative).
 #[tokio::test]
 async fn append_registration_matches_entity_absent_not_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-append-match-absent");
     let reg_id = topology.id("registration:prov-append-match-absent");
@@ -77,8 +77,8 @@ async fn append_registration_matches_entity_absent_not_404() {
 /// fragment, and appends the remainder locally. Confirms REQ-PROV-21, 22, 24.
 #[tokio::test]
 async fn append_exclusive_match_forwards_and_strips() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-append-exclusive");
     let reg_id = topology.id("registration:prov-append-exclusive");
@@ -136,8 +136,8 @@ async fn append_exclusive_match_forwards_and_strips() {
 /// (complete-fail).
 #[tokio::test]
 async fn append_exclusive_op_unsupported_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-append-unsup");
     let reg_id = topology.id("registration:prov-append-unsup");
@@ -175,8 +175,8 @@ async fn append_exclusive_op_unsupported_returns_409() {
 /// remainder is appended locally. Confirms REQ-PROV-23 (partial), 26.
 #[tokio::test]
 async fn append_op_unsupported_with_remainder_returns_207() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-append-remainder");
     let reg_id = topology.id("registration:prov-append-remainder");
@@ -223,8 +223,8 @@ async fn append_op_unsupported_with_remainder_returns_207() {
 /// Confirms REQ-PROV-25, 26.
 #[tokio::test]
 async fn append_inclusive_forwards_remainder_and_appends_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-append-inclusive");
     let reg_id = topology.id("registration:prov-append-inclusive");
@@ -278,8 +278,8 @@ async fn append_inclusive_forwards_remainder_and_appends_local() {
 /// broker A copy and the peer broker B. Confirms REQ-PROV-25, 26.
 #[tokio::test]
 async fn append_pair_inclusive_end_to_end() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:prov-append-pair");
     let reg_id = topology.id("registration:prov-append-pair");

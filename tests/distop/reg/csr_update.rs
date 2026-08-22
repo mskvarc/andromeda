@@ -7,7 +7,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
     reg::PEER_ENDPOINT,
     registration::csr_basic,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
@@ -18,9 +18,9 @@ use serde_json::{Value, json};
 use urlencoding::encode;
 
 /// Create the baseline registration under the given id.
-async fn create_baseline(topology: &DistributedTopology, id: &str) {
+async fn create_baseline(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) {
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&csr_basic(id, PEER_ENDPOINT))
         .await
@@ -32,13 +32,13 @@ async fn create_baseline(topology: &DistributedTopology, id: &str) {
 /// (clauses 5.9.3, 5.5.8). Confirms REQ-REG-66, REQ-REG-77, REQ-REG-78.
 #[tokio::test]
 async fn update_valid_fragment_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:update-valid");
     create_baseline(&topology, &id).await;
 
     let fragment = json!({ "description": "updated telemetry source" });
     let updated = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&id, &fragment, None)
         .await
@@ -46,7 +46,12 @@ async fn update_valid_fragment_returns_204() {
     assert_status(&updated, 204);
     assert!(updated.body.is_empty(), "a successful update returns an empty body");
 
-    let retrieved = topology.front().client().retrieve_registration(&id, None).await.expect("retrieve registration");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_registration(&id, None)
+        .await
+        .expect("retrieve registration");
     assert_status(&retrieved, 200);
     assert_eq!(
         json_body(&retrieved)["description"].as_str(),
@@ -62,21 +67,21 @@ async fn update_valid_fragment_returns_204() {
 /// REQ-REG-7.
 #[tokio::test]
 async fn update_cannot_change_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id_a = topology.id("registration:update-id-a");
     let id_b = topology.id("registration:update-id-b");
     create_baseline(&topology, &id_a).await;
 
     let fragment = json!({ "id": id_b });
     let _patched = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&id_a, &fragment, None)
         .await
         .expect("patch with a new id");
 
     let under_a = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&id_a, None)
         .await
@@ -84,7 +89,7 @@ async fn update_cannot_change_id() {
     assert_status(&under_a, 200);
     assert_eq!(json_body(&under_a)["id"].as_str(), Some(id_a.as_str()), "the original id is unmodified");
     let under_b = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&id_b, None)
         .await
@@ -98,10 +103,10 @@ async fn update_cannot_change_id() {
 /// 5.9.3). Confirms REQ-REG-67.
 #[tokio::test]
 async fn update_invalid_target_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let fragment = json!({ "description": "irrelevant" });
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration("not-a-uri", &fragment, None)
         .await
@@ -116,11 +121,11 @@ async fn update_invalid_target_id_returns_400() {
 /// 5.9.3). Confirms REQ-REG-69.
 #[tokio::test]
 async fn update_unknown_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let unknown = topology.id("registration:update-unknown");
     let fragment = json!({ "description": "irrelevant" });
     let not_found = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&unknown, &fragment, None)
         .await
@@ -135,13 +140,13 @@ async fn update_unknown_registration_returns_404() {
 /// is rejected (clause 5.9.3). Confirms REQ-REG-68.
 #[tokio::test]
 async fn update_bad_contextsourceinfo_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:update-bad-csi");
     create_baseline(&topology, &id).await;
 
     let fragment = json!({ "contextSourceInfo": [ { "key": "accept", "value": "text/plain" } ] });
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&id, &fragment, None)
         .await
@@ -156,13 +161,13 @@ async fn update_bad_contextsourceinfo_returns_400() {
 /// is rejected (clauses 5.9.3, 5.5.4). Confirms REQ-REG-70.
 #[tokio::test]
 async fn update_invalid_jsonld_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:update-bad-jsonld");
     create_baseline(&topology, &id).await;
 
     let path = format!("/ngsi-ld/v1/csourceRegistrations/{}", encode(&id));
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PATCH, &path)
         .header("content-type", "application/ld+json")
@@ -180,13 +185,13 @@ async fn update_invalid_jsonld_returns_400() {
 /// 5.9.3). Confirms REQ-REG-71.
 #[tokio::test]
 async fn update_fragment_violates_529_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:update-violates-529");
     create_baseline(&topology, &id).await;
 
     let fragment = json!({ "mode": "foo" });
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&id, &fragment, None)
         .await
@@ -201,13 +206,13 @@ async fn update_fragment_violates_529_returns_400() {
 /// and stored as IRIs (clauses 5.9.3, 5.5.7). Confirms REQ-REG-72.
 #[tokio::test]
 async fn update_shorthand_names_expanded() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:update-shorthand");
     create_baseline(&topology, &id).await;
 
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle" } ], "propertyNames": ["speed"] } ] });
     let updated = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -215,7 +220,7 @@ async fn update_shorthand_names_expanded() {
     assert_status(&updated, 204);
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .without_default_context()
         .retrieve_registration(&id, None)

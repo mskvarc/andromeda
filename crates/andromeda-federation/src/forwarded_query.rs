@@ -32,6 +32,9 @@ use url::form_urlencoded;
 /// The `options` token asking a source for its system-generated attributes
 /// (clause 4.8; Table 6.3.11-1).
 const SYS_ATTRS_OPTION: &str = "sysAttrs";
+/// The maximum source page the Core API accepts before the hub applies its
+/// own post-merge page window.
+const SOURCE_PAGE_LIMIT: &str = "1000";
 
 /// The query a client sent, as the typed parameters of the operation it is.
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +65,16 @@ impl ClientQuery<'_> {
             ClientQuery::EntityRetrieve(_) => None,
         }
     }
+
+    /// The scope query used to preselect registrations by their declared
+    /// coverage footprint.
+    pub const fn scope_q(&self) -> Option<&andromeda_ngsi_ld_query::scope::query::ScopeQuery> {
+        match self {
+            ClientQuery::EntityQuery(params) => params.scope_q.as_ref(),
+            ClientQuery::Temporal(params) => params.scope_q.as_ref(),
+            ClientQuery::EntityRetrieve(_) => None,
+        }
+    }
 }
 
 /// The query string one registration is sent: the client's parameters,
@@ -83,6 +96,7 @@ impl ForwardedQuery {
             ClientQuery::EntityQuery(params) => {
                 query.push_selection(params.id.as_deref(), params.entity_type.as_ref(), registration)?;
                 query.push_optional(ForwardedParameter::IdPattern, params.id_pattern.as_ref().map(ToString::to_string));
+                query.push(ForwardedParameter::Limit, SOURCE_PAGE_LIMIT.to_owned());
                 match split {
                     SplitEntities::Complete => {
                         query.push_attrs(params.attrs.as_deref(), registration)?;
@@ -109,6 +123,7 @@ impl ForwardedQuery {
             ClientQuery::Temporal(params) => {
                 query.push_selection(params.id.as_deref(), params.entity_type.as_ref(), registration)?;
                 query.push_optional(ForwardedParameter::IdPattern, params.id_pattern.as_ref().map(ToString::to_string));
+                query.push(ForwardedParameter::Limit, SOURCE_PAGE_LIMIT.to_owned());
                 match split {
                     SplitEntities::Complete => {
                         query.push_attrs(params.attrs.as_deref(), registration)?;
@@ -456,7 +471,10 @@ mod tests {
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &by_id, SplitEntities::Complete).expect("covered");
         pretty_assertions::assert_eq!(forwarded.value_of(ForwardedParameter::Id), Some("urn:ngsi-ld:Vehicle:A1"));
         pretty_assertions::assert_eq!(forwarded.value_of(ForwardedParameter::Attrs), Some("speed"));
-        pretty_assertions::assert_eq!(forwarded.to_query_string(), "id=urn%3Angsi-ld%3AVehicle%3AA1&type=Vehicle&attrs=speed");
+        pretty_assertions::assert_eq!(
+            forwarded.to_query_string(),
+            "id=urn%3Angsi-ld%3AVehicle%3AA1&type=Vehicle&limit=1000&attrs=speed"
+        );
     }
 
     /// A registration covering none of the requested types, ids or attributes
@@ -536,7 +554,7 @@ mod tests {
         let unrestricted = registration(json!([{"entities": [{"type": VEHICLE}]}]));
         let query = entity_query("type=Vehicle&format=keyValues&options=concise");
         let forwarded = ForwardedQuery::for_registration(ClientQuery::EntityQuery(&query), &unrestricted, SplitEntities::Complete).expect("covered");
-        pretty_assertions::assert_eq!(forwarded.to_query_string(), "type=Vehicle");
+        pretty_assertions::assert_eq!(forwarded.to_query_string(), "type=Vehicle&limit=1000");
     }
 
     /// Clause 5.7.4.4: a split temporal query keeps its temporal window, and a

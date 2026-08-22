@@ -12,7 +12,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use serde_json::json;
@@ -33,7 +33,7 @@ fn subscription(id: &str, endpoint: &str, entity_type: &str) -> serde_json::Valu
 /// REQ-DISC-6, REQ-DISC-86.
 #[tokio::test]
 async fn csr_notification_has_required_csource_notification_structure() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("StructureType");
     let subscription_id = topology.id("subscription:structure");
@@ -73,7 +73,7 @@ async fn csr_notification_has_required_csource_notification_structure() {
 /// context source is `newlyMatching` (clause 5.11.7). Confirms REQ-DISC-7.
 #[tokio::test]
 async fn csr_notification_initial_notification_is_newly_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("InitialType");
     register(
@@ -98,7 +98,7 @@ async fn csr_notification_initial_notification_is_newly_matching() {
 /// notification (clause 5.11.7). Confirms REQ-DISC-8, REQ-DISC-83, REQ-DISC-84.
 #[tokio::test]
 async fn csr_notification_new_matching_csr_registration_is_newly_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("NewMatchType");
     let subscription_id = topology.id("subscription:new-match");
@@ -125,7 +125,7 @@ async fn csr_notification_new_matching_csr_registration_is_newly_matching() {
 /// `newlyMatching` notification (clause 5.11.7). Confirms REQ-DISC-9.
 #[tokio::test]
 async fn csr_notification_non_matching_csr_updated_to_match_is_newly_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("BecomeMatchType");
     let other_type = topology.id("BecomeMatchOther");
@@ -138,7 +138,7 @@ async fn csr_notification_non_matching_csr_updated_to_match_is_newly_matching() 
 
     let fragment = json!({ "information": [ { "entities": [ { "type": vtype } ] } ] });
     let updated = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -158,7 +158,7 @@ async fn csr_notification_non_matching_csr_updated_to_match_is_newly_matching() 
 /// notification (clause 5.11.7). Confirms REQ-DISC-10, REQ-DISC-83.
 #[tokio::test]
 async fn csr_notification_matching_csr_updated_still_matching_is_updated() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("StillMatchType");
     let subscription_id = topology.id("subscription:still-match");
@@ -170,7 +170,7 @@ async fn csr_notification_matching_csr_updated_still_matching_is_updated() {
 
     let fragment = json!({ "endpoint": "http://broker-b:1056/updated" });
     let updated = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -190,7 +190,7 @@ async fn csr_notification_matching_csr_updated_still_matching_is_updated() {
 /// `noLongerMatching` notification (clause 5.11.7). Confirms REQ-DISC-11.
 #[tokio::test]
 async fn csr_notification_update_makes_csr_no_longer_match_is_no_longer_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("NoLongerType");
     let other_type = topology.id("NoLongerOther");
@@ -203,7 +203,7 @@ async fn csr_notification_update_makes_csr_no_longer_match_is_no_longer_matching
 
     let fragment = json!({ "information": [ { "entities": [ { "type": other_type } ] } ] });
     let updated = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -223,7 +223,7 @@ async fn csr_notification_update_makes_csr_no_longer_match_is_no_longer_matching
 /// (clause 5.11.7). Confirms REQ-DISC-12, REQ-DISC-83.
 #[tokio::test]
 async fn csr_notification_matching_csr_deletion_is_no_longer_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("DeletionType");
     let subscription_id = topology.id("subscription:deletion");
@@ -234,7 +234,7 @@ async fn csr_notification_matching_csr_deletion_is_no_longer_matching() {
     let _initial = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
 
     let deleted = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_registration(&registration_id)
         .await

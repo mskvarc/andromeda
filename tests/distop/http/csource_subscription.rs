@@ -7,7 +7,7 @@
 use crate::{
     http::forwarding::{PLACEHOLDER_ENDPOINT, context_link, context_link_header},
     oracle::{assert_status, json_body, location},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
 use reqwest::Method;
@@ -26,9 +26,9 @@ fn subscription_body(id: &str) -> Value {
 }
 
 /// POST a csource subscription body to the front broker.
-async fn create_sub(topology: &DistributedTopology, body: &Value) -> TestResponse {
+async fn create_sub(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &Value) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/csourceSubscriptions")
         .header("content-type", "application/ld+json")
@@ -39,9 +39,9 @@ async fn create_sub(topology: &DistributedTopology, body: &Value) -> TestRespons
 }
 
 /// GET one csource subscription by id.
-async fn get_sub(topology: &DistributedTopology, id: &str) -> TestResponse {
+async fn get_sub(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/csourceSubscriptions/{}", urlencoding::encode(id)))
         .header("accept", "application/ld+json")
@@ -52,9 +52,9 @@ async fn get_sub(topology: &DistributedTopology, id: &str) -> TestResponse {
 }
 
 /// PATCH one csource subscription by id.
-async fn patch_sub(topology: &DistributedTopology, id: &str, fragment: &Value) -> TestResponse {
+async fn patch_sub(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str, fragment: &Value) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/csourceSubscriptions/{}", urlencoding::encode(id)))
         .header("content-type", "application/json")
@@ -66,9 +66,9 @@ async fn patch_sub(topology: &DistributedTopology, id: &str, fragment: &Value) -
 }
 
 /// DELETE one csource subscription by id.
-async fn delete_sub(topology: &DistributedTopology, id: &str) -> TestResponse {
+async fn delete_sub(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::DELETE, &format!("/ngsi-ld/v1/csourceSubscriptions/{}", urlencoding::encode(id)))
         .send()
@@ -80,7 +80,7 @@ async fn delete_sub(topology: &DistributedTopology, id: &str) -> TestResponse {
 /// (clause 6.11.3.1). Confirms REQ-HTTP-86.
 #[tokio::test]
 async fn dist_http_create_csource_subscription_returns_201_location() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sub_id = topology.id("Subscription:cssub-201");
     let response = create_sub(&topology, &subscription_body(&sub_id)).await;
     assert_status(&response, 201);
@@ -93,7 +93,7 @@ async fn dist_http_create_csource_subscription_returns_201_location() {
 /// Confirms REQ-HTTP-87.
 #[tokio::test]
 async fn dist_http_create_csource_subscription_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = create_sub(&topology, &json!({ "type": "Subscription", "@context": context_link() })).await;
     assert_status(&response, 400);
     topology.finish().await.expect("topology cleanup");
@@ -103,7 +103,7 @@ async fn dist_http_create_csource_subscription_invalid_returns_400() {
 /// (clause 6.11.3.1). Confirms REQ-HTTP-87.
 #[tokio::test]
 async fn dist_http_create_csource_subscription_duplicate_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sub_id = topology.id("Subscription:cssub-409");
     assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
     assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 409);
@@ -115,12 +115,12 @@ async fn dist_http_create_csource_subscription_duplicate_returns_409() {
 /// 6.11.3.2). Confirms REQ-HTTP-88.
 #[tokio::test]
 async fn dist_http_query_csource_subscriptions_returns_200_array() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sub_id = topology.id("Subscription:cssub-array");
     assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/csourceSubscriptions")
         .header("accept", "application/ld+json")
@@ -138,7 +138,7 @@ async fn dist_http_query_csource_subscriptions_returns_200_array() {
 /// Confirms REQ-HTTP-89.
 #[tokio::test]
 async fn dist_http_retrieve_csource_subscription_returns_200_400_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sub_id = topology.id("Subscription:cssub-retrieve");
     assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
 
@@ -153,7 +153,7 @@ async fn dist_http_retrieve_csource_subscription_returns_200_400_404() {
 /// Confirms REQ-HTTP-90.
 #[tokio::test]
 async fn dist_http_update_csource_subscription_returns_204_400_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sub_id = topology.id("Subscription:cssub-update");
     assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
 
@@ -171,7 +171,7 @@ async fn dist_http_update_csource_subscription_returns_204_400_404() {
 /// Confirms REQ-HTTP-91.
 #[tokio::test]
 async fn dist_http_delete_csource_subscription_returns_204_400_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sub_id = topology.id("Subscription:cssub-delete");
     assert_status(&create_sub(&topology, &subscription_body(&sub_id)).await, 201);
 
@@ -186,9 +186,9 @@ async fn dist_http_delete_csource_subscription_returns_204_400_404() {
 /// Confirms REQ-HTTP-96.
 #[tokio::test]
 async fn dist_http_source_identity_returns_200_or_501() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await

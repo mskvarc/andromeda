@@ -8,7 +8,7 @@
 //! Subscription. Notifications it produces are captured through
 //! [`crate::notification_adapter::NotificationAdapter`].
 
-use crate::{oracle::assert_status, topology::DistributedTopology};
+use crate::{oracle::assert_status, topology::BrokerRole};
 use andromeda_test_client::{response::TestResponse, test_client::TestClient};
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use reqwest::Method;
@@ -41,8 +41,8 @@ pub async fn create(client: &TestClient, body: &Value) -> TestResponse {
 
 /// Create a Context Source Subscription on the front broker and assert the
 /// `201 Created` acknowledgement.
-pub async fn create_and_assert(topology: &DistributedTopology, body: &Value) {
-    let created = create(topology.front().client(), body).await;
+pub async fn create_and_assert(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &Value) {
+    let created = create(topology.broker(BrokerRole::A).client(), body).await;
     assert_status(&created, 201);
 }
 

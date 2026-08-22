@@ -11,7 +11,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use serde_json::json;
 use std::time::Duration;
@@ -26,8 +26,8 @@ const INTERVAL_START: &str = "2020-01-01T00:00:00Z";
 const INTERVAL_END: &str = "2021-01-01T00:00:00Z";
 
 /// Create a Context Source Subscription and assert the `201` acknowledgement.
-async fn create_subscription(topology: &DistributedTopology, body: &serde_json::Value) {
-    let created = csr_subscription::create(topology.front().client(), body).await;
+async fn create_subscription(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &serde_json::Value) {
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), body).await;
     assert_status(&created, 201);
 }
 
@@ -36,7 +36,7 @@ async fn create_subscription(topology: &DistributedTopology, body: &serde_json::
 /// (clause 5.12). Confirms REQ-DISC-52, REQ-DISC-43.
 #[tokio::test]
 async fn matching_sub_no_temporaliq_matches_latest_info_only() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("NoTemporalSubType");
     let subscription_id = topology.id("subscription:no-temporal");
@@ -79,7 +79,7 @@ async fn matching_sub_no_temporaliq_matches_latest_info_only() {
 /// 5.12). Confirms REQ-DISC-53, REQ-DISC-44.
 #[tokio::test]
 async fn matching_sub_temporaliq_matches_interval_csrs_only() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("TemporalSubType");
     let subscription_id = topology.id("subscription:temporal");
@@ -125,7 +125,7 @@ async fn matching_sub_temporaliq_matches_interval_csrs_only() {
 /// REQ-DISC-54.
 #[tokio::test]
 async fn matching_sub_observedat_matches_observation_interval() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("ObsSubType");
     let subscription_id = topology.id("subscription:observed");
@@ -161,7 +161,7 @@ async fn matching_sub_observedat_matches_observation_interval() {
 /// (clause 5.12). Confirms REQ-DISC-55.
 #[tokio::test]
 async fn matching_sub_management_timeproperties_match_management_interval() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("MgmtSubType");
     let subscription_id = topology.id("subscription:management");
@@ -198,7 +198,7 @@ async fn matching_sub_management_timeproperties_match_management_interval() {
 /// observation-only registration is silent (clause 5.12). Confirms REQ-DISC-56.
 #[tokio::test]
 async fn matching_sub_relevant_interval_absent_no_match() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("AbsentSubType");
     let subscription_id = topology.id("subscription:absent");
@@ -229,7 +229,7 @@ async fn matching_sub_relevant_interval_absent_no_match() {
 /// endpoint (clause 5.12). Confirms REQ-DISC-57.
 #[tokio::test]
 async fn matching_sub_before_after_within_or_at_endpoint() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("BeforeSubType");
     let subscription_id = topology.id("subscription:before");
@@ -265,7 +265,7 @@ async fn matching_sub_before_after_within_or_at_endpoint() {
 /// (clause 5.12). Confirms REQ-DISC-58.
 #[tokio::test]
 async fn matching_sub_between_matches_on_overlap() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("BetweenSubType");
     let subscription_id = topology.id("subscription:between");
@@ -301,7 +301,7 @@ async fn matching_sub_between_matches_on_overlap() {
 /// (clause 5.12). Confirms REQ-DISC-50, REQ-DISC-51.
 #[tokio::test]
 async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("GeoSubType");
     let subscription_id = topology.id("subscription:geo");
@@ -333,7 +333,7 @@ async fn matching_sub_geoq_matches_geoproperty_and_default_location() {
 /// not as a `contextSourceInfo` header pair. Confirms REQ-DISC-61, REQ-DISC-62.
 #[tokio::test]
 async fn matching_sub_csf_and_scope_gate_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("CsfScopeSubType");
     let subscription_id = topology.id("subscription:csf-scope");

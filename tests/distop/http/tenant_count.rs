@@ -8,7 +8,7 @@ use crate::{
     http::forwarding::context_link,
     notification_adapter::NotificationAdapter,
     oracle::{assert_status, json_body, results_count_header},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::{response::TestResponse, tenant_name::TenantName};
 use serde_json::json;
@@ -21,7 +21,7 @@ fn tenant_header(response: &TestResponse) -> Option<String> {
 
 /// A regex that isolates this run's entities by their shared id prefix, so a
 /// `type=Vehicle` query counts only what the test created.
-fn prefix_pattern(topology: &DistributedTopology) -> String {
+fn prefix_pattern(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>) -> String {
     urlencoding::encode(topology.id_prefix()).into_owned()
 }
 
@@ -29,9 +29,9 @@ fn prefix_pattern(topology: &DistributedTopology) -> String {
 /// (clause 6.3.4). Confirms REQ-HTTP-12.
 #[tokio::test]
 async fn dist_http_non_default_tenant_response_carries_tenant_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantA").expect("valid tenant name");
-    let client = topology.front().tenant_client(tenant);
+    let client = topology.broker(BrokerRole::A).tenant_client(tenant);
     let entity_id = topology.id("Vehicle:tenant-header");
 
     assert_status(
@@ -57,11 +57,11 @@ async fn dist_http_non_default_tenant_response_carries_tenant_header() {
 /// (clause 6.3.4). Confirms REQ-HTTP-13.
 #[tokio::test]
 async fn dist_http_default_tenant_response_omits_tenant_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:default-tenant");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -72,7 +72,7 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -87,9 +87,9 @@ async fn dist_http_default_tenant_response_omits_tenant_header() {
 /// (clause 6.3.4). Confirms REQ-HTTP-14.
 #[tokio::test]
 async fn dist_http_tenant_header_echoed_in_response() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantEcho").expect("valid tenant name");
-    let client = topology.front().tenant_client(tenant);
+    let client = topology.broker(BrokerRole::A).tenant_client(tenant);
     let entity_id = topology.id("Vehicle:tenant-echo");
 
     let created = client.post_entity(&vehicle(&entity_id, 5)).with_ld_json().send().await.expect("tenant create");
@@ -108,9 +108,9 @@ async fn dist_http_tenant_header_echoed_in_response() {
 /// `NGSILD-Tenant` header (clause 6.3.4). Confirms REQ-HTTP-15.
 #[tokio::test]
 async fn dist_http_tenant_scoped_notification_carries_tenant_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let tenant = TenantName::parse("distopTenantNotify").expect("valid tenant name");
-    let client = topology.front().tenant_client(tenant);
+    let client = topology.broker(BrokerRole::A).tenant_client(tenant);
     let receiver = NotificationAdapter::start().await;
     let sub_id = topology.id("Subscription:tenant-notify");
     let entity_id = topology.id("Vehicle:tenant-notify");
@@ -147,12 +147,12 @@ async fn dist_http_tenant_scoped_notification_carries_tenant_header() {
 /// (clause 6.3.13). Confirms REQ-HTTP-8.
 #[tokio::test]
 async fn dist_http_count_param_honoured_on_query() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     for index in 0..3 {
         let id = topology.id(&format!("Vehicle:count-{index}"));
         assert_status(
             &topology
-                .front()
+                .broker(BrokerRole::A)
                 .client()
                 .post_entity(&vehicle(&id, 5))
                 .with_ld_json()
@@ -165,7 +165,7 @@ async fn dist_http_count_param_honoured_on_query() {
 
     let query = format!("type=Vehicle&idPattern={}&count=true", prefix_pattern(&topology));
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -180,12 +180,12 @@ async fn dist_http_count_param_honoured_on_query() {
 /// 6.3.13). Confirms REQ-HTTP-9.
 #[tokio::test]
 async fn dist_http_count_true_returns_results_count_header_total() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     for index in 0..3 {
         let id = topology.id(&format!("Vehicle:total-{index}"));
         assert_status(
             &topology
-                .front()
+                .broker(BrokerRole::A)
                 .client()
                 .post_entity(&vehicle(&id, 5))
                 .with_ld_json()
@@ -198,7 +198,7 @@ async fn dist_http_count_true_returns_results_count_header_total() {
 
     let query = format!("type=Vehicle&idPattern={}&count=true&limit=1", prefix_pattern(&topology));
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -214,12 +214,12 @@ async fn dist_http_count_true_returns_results_count_header_total() {
 /// (clause 6.3.13). Confirms REQ-HTTP-10.
 #[tokio::test]
 async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     for index in 0..3 {
         let id = topology.id(&format!("Vehicle:zero-{index}"));
         assert_status(
             &topology
-                .front()
+                .broker(BrokerRole::A)
                 .client()
                 .post_entity(&vehicle(&id, 5))
                 .with_ld_json()
@@ -232,7 +232,7 @@ async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
 
     let query = format!("type=Vehicle&idPattern={}&count=true&limit=0", prefix_pattern(&topology));
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&query, "application/ld+json", Some(context_link()))
         .await
@@ -248,9 +248,9 @@ async fn dist_http_limit_zero_with_count_returns_empty_array_and_count() {
 /// Confirms REQ-HTTP-11.
 #[tokio::test]
 async fn dist_http_limit_zero_without_count_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&limit=0", "application/ld+json", Some(context_link()))
         .await

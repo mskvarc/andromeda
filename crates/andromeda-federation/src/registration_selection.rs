@@ -2,6 +2,7 @@
 
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, RegistrationInfo};
+use andromeda_ngsi_ld_query::scope::query::ScopeQuery;
 use iri_rs::IriBuf;
 use serde_json::{Map, Value};
 
@@ -175,6 +176,18 @@ pub(crate) fn csr_has_matching_information(
         .information
         .iter()
         .any(|information| information_matches_entity(information, entity_type, entity_id) && information_covers_attribute(information, attribute))
+}
+
+/// Whether a registration's declared scope can answer a scoped read.
+pub(crate) fn registration_scope_admits(registration: &ContextSourceRegistration, scope_q: Option<&ScopeQuery>) -> bool {
+    let Some(scope_q) = scope_q else {
+        return true;
+    };
+    registration
+        .coverage
+        .scope
+        .as_ref()
+        .is_none_or(|scopes| scope_q.matches(&scopes.iter().map(|scope| scope.as_str()).collect::<Vec<_>>()))
 }
 
 /// Whether the entity selector axis of one information entry matches.

@@ -7,7 +7,7 @@ use crate::{
     entity::entity,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -48,10 +48,10 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 /// attribute (clause 5.7.4.4). Confirms REQ-CONS-67.
 #[tokio::test]
 async fn distop_query_temporal_datasetid_filters_s7_empty_removed() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons67");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder = topology.broker(BrokerRole::C);
 
     assert_status(
@@ -129,10 +129,10 @@ async fn distop_query_temporal_datasetid_filters_s7_empty_removed() {
 /// REQ-CONS-68.
 #[tokio::test]
 async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons68");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder = topology.broker(BrokerRole::C);
 
     assert_status(
@@ -185,8 +185,8 @@ async fn distop_query_temporal_no_datasetid_s8_equals_s7() {
 /// duplicate and no page exceeding the limit (clause 5.5.9). Confirms REQ-CONS-71.
 #[tokio::test]
 async fn distop_query_temporal_pagination_over_candidates() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let candidates: Vec<String> = (0..5).map(|index| topology.id(&format!("Vehicle:cons71-{index}"))).collect();
@@ -232,8 +232,8 @@ async fn distop_query_temporal_pagination_over_candidates() {
 /// REQ-CONS-72.
 #[tokio::test]
 async fn distop_query_temporal_csf_forwarded_unchanged() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
-    let front = topology.front();
+    let topology = topology::chain().await.expect("three-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let middle = topology.broker(BrokerRole::B);
     let mock = ContextSourceAdapter::start().await;
 
@@ -277,8 +277,8 @@ async fn distop_query_temporal_csf_forwarded_unchanged() {
 /// (clause 5.7.4.5). Confirms REQ-CONS-73.
 #[tokio::test]
 async fn distop_query_temporal_orderby_id_local_orders_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let first = topology.id("Vehicle:cons73-a");
     let second = topology.id("Vehicle:cons73-b");
     let third = topology.id("Vehicle:cons73-c");

@@ -9,7 +9,7 @@ use crate::{
     entity::{entity, property},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
@@ -35,9 +35,9 @@ fn contains_named(list: &Value, name: &str) -> bool {
 }
 
 /// A GET against a details resource on the front broker, carrying the context.
-async fn get_detail(topology: &DistributedTopology, path: &str) -> TestResponse {
+async fn get_detail(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, path: &str) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, path)
         .header("accept", "application/ld+json")
@@ -52,8 +52,8 @@ async fn get_detail(topology: &DistributedTopology, path: &str) -> TestResponse 
 /// REQ-CONS-81.
 #[tokio::test]
 async fn distop_available_types_reflects_registrations_system_wide() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let registration_id = topology.id("registration:cons74");
@@ -88,8 +88,8 @@ async fn distop_available_types_reflects_registrations_system_wide() {
 /// 5.7.6). Confirms REQ-CONS-75, REQ-CONS-82.
 #[tokio::test]
 async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let registration_id = topology.id("registration:cons75");
@@ -124,8 +124,8 @@ async fn distop_entity_type_details_system_wide_attribute_details_may_be_empty()
 /// distributed sources (clauses 5.7.7). Confirms REQ-CONS-76, REQ-CONS-83.
 #[tokio::test]
 async fn distop_entity_type_info_count_may_be_estimate() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     for index in 0..2 {
@@ -168,8 +168,8 @@ async fn distop_entity_type_info_count_may_be_estimate() {
 /// REQ-CONS-81.
 #[tokio::test]
 async fn distop_available_attributes_system_wide() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let registration_id = topology.id("registration:cons77");
@@ -205,8 +205,8 @@ async fn distop_available_attributes_system_wide() {
 /// REQ-CONS-82.
 #[tokio::test]
 async fn distop_attribute_details_system_wide_may_be_empty() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let registration_id = topology.id("registration:cons78");
@@ -242,8 +242,8 @@ async fn distop_attribute_details_system_wide_may_be_empty() {
 /// Confirms REQ-CONS-79, REQ-CONS-83.
 #[tokio::test]
 async fn distop_attribute_info_count_may_be_estimate() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let aircraft = entity(&topology.id("Aircraft:cons79"), "Aircraft", &[("thrust", property(json!(1000)))]);
@@ -285,8 +285,8 @@ async fn distop_attribute_info_count_may_be_estimate() {
 /// observation (clauses 5.7.5). Confirms REQ-CONS-80.
 #[tokio::test]
 async fn distop_available_types_answered_from_local_and_registry_without_contacting_sources() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons80");
@@ -329,8 +329,8 @@ async fn distop_available_types_answered_from_local_and_registry_without_contact
 /// Confirms REQ-CONS-81.
 #[tokio::test]
 async fn distop_available_types_possibly_available_semantics() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let registration_id = topology.id("registration:cons81");
@@ -365,8 +365,8 @@ async fn distop_available_types_possibly_available_semantics() {
 /// Confirms REQ-CONS-82.
 #[tokio::test]
 async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_detail() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let registration_id = topology.id("registration:cons82");
@@ -401,8 +401,8 @@ async fn distop_available_types_empty_arrays_permitted_when_registration_lacks_d
 /// REQ-CONS-83.
 #[tokio::test]
 async fn distop_available_counts_estimate_permitted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for (source, count) in [("/s1", 3), ("/s2", 4)] {

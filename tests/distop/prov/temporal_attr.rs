@@ -14,7 +14,7 @@ use crate::{
         temporal_payloads::{speed_instance, temporal_vehicle},
     },
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::{
@@ -55,8 +55,8 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 /// registration is `404 ResourceNotFound`. Confirms REQ-PROV-89 (positive).
 #[tokio::test]
 async fn temporal_delete_attr_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-tdelattr-absent");
 
     let response = client
@@ -75,8 +75,8 @@ async fn temporal_delete_attr_absent_and_no_registration_returns_404() {
 /// (negative), 90, 91.
 #[tokio::test]
 async fn temporal_delete_attr_exclusive_match_forwards_and_terminates() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelattr-excl");
     let reg_id = topology.id("registration:prov-tdelattr-excl");
@@ -121,8 +121,8 @@ async fn temporal_delete_attr_exclusive_match_forwards_and_terminates() {
 /// locally. Confirms REQ-PROV-92.
 #[tokio::test]
 async fn temporal_delete_attr_inclusive_forwards_input() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelattr-incl");
     let reg_id = topology.id("registration:prov-tdelattr-incl");
@@ -158,8 +158,8 @@ async fn temporal_delete_attr_inclusive_forwards_input() {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-93.
 #[tokio::test]
 async fn temporal_delete_attr_local_present_attr_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-tdelattr-missing");
 
     seed_local_temporal(client, &temporal_brand_only(&entity_id)).await;
@@ -178,8 +178,8 @@ async fn temporal_delete_attr_local_present_attr_absent_returns_404() {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-94 (positive).
 #[tokio::test]
 async fn temporal_modify_instance_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-tmod-absent");
     let instance_id = topology.id("instance:1");
 
@@ -200,8 +200,8 @@ async fn temporal_modify_instance_absent_and_no_registration_returns_404() {
 /// processing. Confirms REQ-PROV-94 (negative), 95, 97.
 #[tokio::test]
 async fn temporal_modify_instance_exclusive_supported_forwards_and_terminates() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tmod-excl");
     let reg_id = topology.id("registration:prov-tmod-excl");
@@ -246,8 +246,8 @@ async fn temporal_modify_instance_exclusive_supported_forwards_and_terminates() 
 /// with `409 Conflict` and no forwarding. Confirms REQ-PROV-96.
 #[tokio::test]
 async fn temporal_modify_instance_op_unsupported_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tmod-unsup");
     let reg_id = topology.id("registration:prov-tmod-unsup");
@@ -281,8 +281,8 @@ async fn temporal_modify_instance_op_unsupported_returns_409() {
 /// Inclusive modify-instance forwards the input. Confirms REQ-PROV-98.
 #[tokio::test]
 async fn temporal_modify_instance_inclusive_forwards_input() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tmod-incl");
     let reg_id = topology.id("registration:prov-tmod-incl");
@@ -321,8 +321,8 @@ async fn temporal_modify_instance_inclusive_forwards_input() {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-99 (positive).
 #[tokio::test]
 async fn temporal_delete_instance_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-tdelinst-absent");
     let instance_id = topology.id("instance:1");
 
@@ -341,8 +341,8 @@ async fn temporal_delete_instance_absent_and_no_registration_returns_404() {
 /// processing. Confirms REQ-PROV-99 (negative), 100, 101.
 #[tokio::test]
 async fn temporal_delete_instance_exclusive_match_forwards_and_terminates() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelinst-excl");
     let reg_id = topology.id("registration:prov-tdelinst-excl");
@@ -387,8 +387,8 @@ async fn temporal_delete_instance_exclusive_match_forwards_and_terminates() {
 /// Inclusive delete-instance forwards the input. Confirms REQ-PROV-102.
 #[tokio::test]
 async fn temporal_delete_instance_inclusive_forwards_input() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelinst-incl");
     let reg_id = topology.id("registration:prov-tdelinst-incl");
@@ -421,8 +421,8 @@ async fn temporal_delete_instance_inclusive_forwards_input() {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-103.
 #[tokio::test]
 async fn temporal_delete_instance_local_present_instance_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-tdelinst-missing");
     let absent_instance = topology.id("instance:absent");
 

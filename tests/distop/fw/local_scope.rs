@@ -10,7 +10,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
@@ -30,12 +30,12 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 /// REQ-FW-69.
 #[tokio::test]
 async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:local-true");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 12))
             .with_ld_json()
@@ -52,12 +52,17 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&local=true", "application/ld+json", None)
         .await
@@ -74,12 +79,12 @@ async fn distop_entity_local_scope_true_uses_only_directly_held_data() {
 /// (clause 4.3.6.3). Confirms REQ-FW-66, REQ-FW-69.
 #[tokio::test]
 async fn distop_entity_local_scope_type_wildcard_implies_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:local-wildcard");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 12))
             .with_ld_json()
@@ -96,12 +101,17 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=*", "application/ld+json", None)
         .await
@@ -117,12 +127,12 @@ async fn distop_entity_local_scope_type_wildcard_implies_local() {
 /// them and returns only local data (clause 4.3.6.3). Confirms REQ-FW-69.
 #[tokio::test]
 async fn distop_entity_local_scope_true_skips_registry_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:local-skip");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 12))
             .with_ld_json()
@@ -140,13 +150,18 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
             .operations(&["queryEntity"])
             .build();
         assert_status(
-            &topology.front().client().create_registration(&registration).await.expect("create registration"),
+            &topology
+                .broker(BrokerRole::A)
+                .client()
+                .create_registration(&registration)
+                .await
+                .expect("create registration"),
             201,
         );
     }
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&local=true", "application/ld+json", None)
         .await
@@ -164,8 +179,8 @@ async fn distop_entity_local_scope_true_skips_registry_csrs() {
 /// REQ-FW-67.
 #[tokio::test]
 async fn distop_entity_local_scope_subscription_local_only_matches_local_only() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let receiver = NotificationAdapter::start().await;
 
@@ -221,7 +236,7 @@ async fn distop_entity_local_scope_subscription_local_only_matches_local_only() 
 /// Confirms REQ-FW-68.
 #[tokio::test]
 async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -233,12 +248,17 @@ async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
         .management(json!({ "localOnly": true }))
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -261,11 +281,11 @@ async fn distop_entity_local_scope_management_local_only_forwards_local_flag() {
 /// 5.16). Confirms REQ-FW-70.
 #[tokio::test]
 async fn distop_entity_local_scope_snapshot_op_ignores_local_false() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let body = json!({ "type": "Snapshot", "snapshotLifetime": "PT1H", "snapshotQueries": [{ "type": "Query" }] });
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/snapshots")
         .json(&body)
@@ -276,7 +296,7 @@ async fn distop_entity_local_scope_snapshot_op_ignores_local_false() {
     let snapshot_id = json_body(&created)["id"].as_str().expect("snapshot has an id").to_owned();
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/snapshots/{snapshot_id}?local=false"))
         .send()

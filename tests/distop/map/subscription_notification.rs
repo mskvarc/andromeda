@@ -8,7 +8,7 @@ use crate::{
     map::subscription_document::{set_watched_attributes, subscription},
     notification_adapter::NotificationAdapter,
     oracle::{assert_status, json_body},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
@@ -25,11 +25,11 @@ const SILENCE: Duration = Duration::from_secs(3);
 /// creation delivers a notification carrying its id (clause 5.8.1). Confirms REQ-MAP-4.
 #[tokio::test]
 async fn sub_create_valid_persists_and_is_notification_eligible() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:eligible");
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_subscription(&subscription(&id, &receiver.endpoint_url()))
         .await
@@ -39,7 +39,7 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
     let entity_id = topology.id("Vehicle:eligible");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 40))
             .with_ld_json()
@@ -64,12 +64,12 @@ async fn sub_create_valid_persists_and_is_notification_eligible() {
 /// `Device` stays silent (clause 5.8.2). Confirms REQ-MAP-10.
 #[tokio::test]
 async fn sub_create_entity_selector_restricts_subscription() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:selector");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -81,7 +81,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
     let device = entity(&device_id, "Device", &[("speed", property(json!(5)))]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&device)
             .with_ld_json()
@@ -95,7 +95,7 @@ async fn sub_create_entity_selector_restricts_subscription() {
     let vehicle_id = topology.id("Vehicle:selector");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&vehicle_id, 40))
             .with_ld_json()
@@ -119,12 +119,12 @@ async fn sub_create_entity_selector_restricts_subscription() {
 /// fires (clause 5.8.2). Confirms REQ-MAP-12.
 #[tokio::test]
 async fn sub_create_absent_watched_attributes_watches_all() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:watch-all");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -135,7 +135,14 @@ async fn sub_create_absent_watched_attributes_watches_all() {
     let entity_id = topology.id("Vehicle:watch-all");
     let body = entity(&entity_id, "Vehicle", &[("colour", property(json!("red")))]);
     assert_status(
-        &topology.front().client().post_entity(&body).with_ld_json().send().await.expect("create entity"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .post_entity(&body)
+            .with_ld_json()
+            .send()
+            .await
+            .expect("create entity"),
         201,
     );
 
@@ -154,7 +161,7 @@ async fn sub_create_absent_watched_attributes_watches_all() {
 /// the attribute (clause 5.8.2). Confirms REQ-MAP-13.
 #[tokio::test]
 async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:span-holders");
     let mut body = subscription(&id, &receiver.endpoint_url());
@@ -162,12 +169,20 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
         .unwrap_or_else(|| unreachable!("subscription is an object"))
         .remove("entities");
     set_watched_attributes(&mut body, &["speed"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
 
     let entity_id = topology.id("Vehicle:span-holders");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 33))
             .with_ld_json()
@@ -192,12 +207,12 @@ async fn sub_create_watched_attributes_no_entities_spans_all_holders() {
 /// (clause 5.8.6). Confirms REQ-MAP-19.
 #[tokio::test]
 async fn sub_create_time_interval_periodic_regardless_of_change() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:periodic");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 22))
             .with_ld_json()
@@ -214,7 +229,15 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
         .as_object_mut()
         .unwrap_or_else(|| unreachable!("notification is an object"))
         .remove("format");
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
 
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     assert_eq!(
@@ -231,12 +254,12 @@ async fn sub_create_time_interval_periodic_regardless_of_change() {
 /// change, then it fires (clause 5.8.6). Confirms REQ-MAP-20.
 #[tokio::test]
 async fn sub_create_no_time_interval_change_driven() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:change-driven");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -249,7 +272,7 @@ async fn sub_create_no_time_interval_change_driven() {
     let entity_id = topology.id("Vehicle:change-driven");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 55))
             .with_ld_json()
@@ -273,19 +296,27 @@ async fn sub_create_no_time_interval_change_driven() {
 /// (clause 5.2.12). Confirms REQ-MAP-35.
 #[tokio::test]
 async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:expiring");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["expiresAt"] = json!((Utc::now() + ChronoDuration::seconds(3)).to_rfc3339());
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
 
     sleep(Duration::from_secs(5)).await;
 
     let entity_id = topology.id("Vehicle:expiring");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 60))
             .with_ld_json()
@@ -296,7 +327,12 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
     );
     receiver.wait_for_no_subscription_notification(&id, SILENCE).await;
 
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription");
     assert_eq!(
         json_body(&retrieved)["status"].as_str(),
         Some("expired"),
@@ -311,12 +347,12 @@ async fn sub_expiration_reached_sets_status_expired_and_stops_notifications() {
 /// (clause 5.8.1). Confirms REQ-MAP-54.
 #[tokio::test]
 async fn sub_delete_removes_and_stops_notifications() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:delete-stops");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -327,7 +363,7 @@ async fn sub_delete_removes_and_stops_notifications() {
     let first_entity = topology.id("Vehicle:delete-stops-1");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&first_entity, 10))
             .with_ld_json()
@@ -343,13 +379,21 @@ async fn sub_delete_removes_and_stops_notifications() {
         "the live subscription fires before deletion"
     );
 
-    assert_status(&topology.front().client().delete_subscription(&id).await.expect("delete subscription"), 204);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .delete_subscription(&id)
+            .await
+            .expect("delete subscription"),
+        204,
+    );
     receiver.clear_notifications().await;
 
     let second_entity = topology.id("Vehicle:delete-stops-2");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&second_entity, 20))
             .with_ld_json()

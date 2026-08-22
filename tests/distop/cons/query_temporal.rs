@@ -10,7 +10,7 @@ use crate::{
     entity::entity,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -47,8 +47,8 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 /// `local=true` query forwards to none (clause 5.7.4.4). Confirms REQ-CONS-60.
 #[tokio::test]
 async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [("/s1", &["queryTemporal"][..]), ("/s2", &["retrieveTemporal"][..])] {
@@ -104,10 +104,10 @@ async fn distop_query_temporal_forwards_matching_querytemporal_local_none() {
 /// (clause 5.7.4.4). Confirms REQ-CONS-63.
 #[tokio::test]
 async fn distop_query_temporal_merges_modes_into_s4() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let shared_id = topology.id("Vehicle:cons63-shared");
     let extra_id = topology.id("Vehicle:cons63-extra");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 
@@ -179,9 +179,9 @@ async fn distop_query_temporal_merges_modes_into_s4() {
 #[tokio::test]
 #[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons64");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     assert_status(
@@ -240,9 +240,9 @@ async fn distop_query_temporal_auxiliary_merged_into_s4_only_if_absent() {
 /// across the aggregated sources (clause 5.7.4.4). Confirms REQ-CONS-69.
 #[tokio::test]
 async fn distop_query_temporal_lastn_limits_projected_post_aggregation() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons69");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 

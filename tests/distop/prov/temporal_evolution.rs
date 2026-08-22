@@ -14,7 +14,7 @@ use crate::{
         temporal_payloads::temporal_vehicle,
     },
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::RESOURCE_NOT_FOUND;
@@ -41,8 +41,8 @@ async fn seed_local_temporal(client: &TestClient, body: &Value) {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-104 (positive).
 #[tokio::test]
 async fn temporal_delete_evolution_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-tdelevo-absent");
 
     let response = client.delete_temporal_entity(&entity_id).await.expect("delete temporal entity");
@@ -56,8 +56,8 @@ async fn temporal_delete_evolution_absent_and_no_registration_returns_404() {
 /// processing. Confirms REQ-PROV-104 (negative), 105, 106.
 #[tokio::test]
 async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelevo-excl");
     let reg_id = topology.id("registration:prov-tdelevo-excl");
@@ -95,8 +95,8 @@ async fn temporal_delete_evolution_exclusive_match_forwards_and_terminates() {
 /// evolution. Confirms REQ-PROV-107.
 #[tokio::test]
 async fn temporal_delete_evolution_inclusive_forwards_and_removes_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-tdelevo-incl");
     let reg_id = topology.id("registration:prov-tdelevo-incl");

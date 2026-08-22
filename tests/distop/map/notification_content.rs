@@ -10,7 +10,7 @@ use crate::{
     },
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
@@ -49,13 +49,21 @@ async fn create_vehicle(client: &TestClient, id: &str, speed: i64) {
 /// Confirms REQ-MAP-58.
 #[tokio::test]
 async fn notif_only_sent_when_status_active() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:status-gate");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["isActive"] = json!(false);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
-    create_vehicle(topology.front().client(), &topology.id("Vehicle:status-gate"), 40).await;
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    create_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:status-gate"), 40).await;
     receiver.wait_for_no_subscription_notification(&id, SILENCE).await;
     receiver.shutdown().await;
     topology.finish().await.expect("topology cleanup");
@@ -65,13 +73,13 @@ async fn notif_only_sent_when_status_active() {
 /// Confirms REQ-MAP-59.
 #[tokio::test]
 async fn notif_time_interval_periodic_regardless_of_change() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
-    create_vehicle(topology.front().client(), &topology.id("Vehicle:periodic-any"), 40).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:periodic-any"), 40).await;
     let id = topology.id("Subscription:periodic-any");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), None))
             .await
@@ -92,16 +100,16 @@ async fn notif_time_interval_periodic_regardless_of_change() {
 /// Confirms REQ-MAP-60.
 #[tokio::test]
 async fn notif_periodic_includes_only_filter_matching_entities() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let fast = topology.id("Vehicle:periodic-fast");
     let slow = topology.id("Vehicle:periodic-slow");
-    create_vehicle(topology.front().client(), &fast, 100).await;
-    create_vehicle(topology.front().client(), &slow, 20).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &fast, 100).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &slow, 20).await;
     let id = topology.id("Subscription:periodic-filter");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), Some("speed>50")))
             .await
@@ -119,16 +127,16 @@ async fn notif_periodic_includes_only_filter_matching_entities() {
 /// (clause 5.8.6). Confirms REQ-MAP-61.
 #[tokio::test]
 async fn notif_periodic_no_filters_includes_all_subscribed() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let first = topology.id("Vehicle:periodic-all-1");
     let second = topology.id("Vehicle:periodic-all-2");
-    create_vehicle(topology.front().client(), &first, 10).await;
-    create_vehicle(topology.front().client(), &second, 20).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &first, 10).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &second, 20).await;
     let id = topology.id("Subscription:periodic-all");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), None))
             .await
@@ -149,7 +157,7 @@ async fn notif_periodic_no_filters_includes_all_subscribed() {
 /// instances (clause 5.8.6). Confirms REQ-MAP-62.
 #[tokio::test]
 async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:periodic-dataset");
     let entity = json!({
@@ -163,7 +171,7 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
     });
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&entity)
             .with_ld_json()
@@ -175,7 +183,15 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
     let id = topology.id("Subscription:periodic-dataset");
     let mut body = periodic(&id, &receiver.endpoint_url(), None);
     body["datasetId"] = json!(["urn:ngsi-ld:ds:one"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     assert!(
         notifies_entity(&notification, &entity_id),
@@ -189,13 +205,13 @@ async fn notif_periodic_includes_only_subscription_dataset_id_instances() {
 /// Confirms REQ-MAP-63.
 #[tokio::test]
 async fn notif_periodic_zero_matches_sends_nothing() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
-    create_vehicle(topology.front().client(), &topology.id("Vehicle:periodic-zero"), 10).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:periodic-zero"), 10).await;
     let id = topology.id("Subscription:periodic-zero");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&periodic(&id, &receiver.endpoint_url(), Some("speed>9999")))
             .await
@@ -211,18 +227,26 @@ async fn notif_periodic_zero_matches_sends_nothing() {
 /// (clause 5.8.6). Confirms REQ-MAP-64.
 #[tokio::test]
 async fn notif_no_time_interval_change_driven_on_watched_change() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:change-watched");
-    create_vehicle(topology.front().client(), &entity_id, 10).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 10).await;
     let id = topology.id("Subscription:change-watched");
     let mut body = subscription(&id, &receiver.endpoint_url());
     set_watched_attributes(&mut body, &["speed"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let fragment = json!({ "speed": property(json!(99)), "@context": COMPOUND_CONTEXT.as_str() });
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .update_entity_attrs(&entity_id, &fragment)
             .await
@@ -239,18 +263,31 @@ async fn notif_no_time_interval_change_driven_on_watched_change() {
 /// (clause 5.8.6). Confirms REQ-MAP-65.
 #[tokio::test]
 async fn notif_change_only_on_actual_value_difference() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:change-diff");
-    create_vehicle(topology.front().client(), &entity_id, 50).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 50).await;
     let id = topology.id("Subscription:change-diff");
     let mut body = subscription(&id, &receiver.endpoint_url());
     set_watched_attributes(&mut body, &["speed"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
 
     let same = json!({ "speed": property(json!(50)), "@context": COMPOUND_CONTEXT.as_str() });
     assert_status(
-        &topology.front().client().update_entity_attrs(&entity_id, &same).await.expect("no-op update"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .update_entity_attrs(&entity_id, &same)
+            .await
+            .expect("no-op update"),
         204,
     );
     receiver.wait_for_no_subscription_notification(&id, SILENCE).await;
@@ -258,7 +295,7 @@ async fn notif_change_only_on_actual_value_difference() {
     let different = json!({ "speed": property(json!(70)), "@context": COMPOUND_CONTEXT.as_str() });
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .update_entity_attrs(&entity_id, &different)
             .await
@@ -275,14 +312,22 @@ async fn notif_change_only_on_actual_value_difference() {
 /// (clause 5.8.6). Confirms REQ-MAP-66.
 #[tokio::test]
 async fn notif_change_driven_includes_changed_filter_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:change-filter");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["q"] = json!("speed>50");
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let entity_id = topology.id("Vehicle:change-filter");
-    create_vehicle(topology.front().client(), &entity_id, 100).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 100).await;
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     assert!(notifies_entity(&notification, &entity_id), "the changed, filter-matching entity is notified");
     receiver.shutdown().await;
@@ -293,12 +338,12 @@ async fn notif_change_driven_includes_changed_filter_matching() {
 /// (clause 5.8.6). Confirms REQ-MAP-67.
 #[tokio::test]
 async fn notif_change_driven_no_filters_includes_all_changed() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:change-nofilter");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -306,7 +351,7 @@ async fn notif_change_driven_no_filters_includes_all_changed() {
         201,
     );
     let entity_id = topology.id("Vehicle:change-nofilter");
-    create_vehicle(topology.front().client(), &entity_id, 15).await;
+    create_vehicle(topology.broker(BrokerRole::A).client(), &entity_id, 15).await;
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     assert!(notifies_entity(&notification, &entity_id), "the changed entity is notified");
     receiver.shutdown().await;
@@ -317,12 +362,20 @@ async fn notif_change_driven_no_filters_includes_all_changed() {
 /// (clause 5.8.6). Confirms REQ-MAP-68.
 #[tokio::test]
 async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:geo-multi");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["geoQ"] = json!({ "georel": "near;maxDistance==2000", "geometry": "Point", "coordinates": [0, 0] });
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let entity_id = topology.id("Vehicle:geo-multi");
     let entity = json!({
         "id": entity_id,
@@ -335,7 +388,7 @@ async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
     });
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&entity)
             .with_ld_json()
@@ -357,12 +410,20 @@ async fn notif_multi_instance_geoproperty_any_matching_instance_qualifies() {
 /// instances (clause 5.8.6). Confirms REQ-MAP-69.
 #[tokio::test]
 async fn notif_change_driven_includes_only_dataset_id_instances() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:change-dataset");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["datasetId"] = json!(["urn:ngsi-ld:ds:one"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let entity_id = topology.id("Vehicle:change-dataset");
     let entity = json!({
         "id": entity_id,
@@ -372,7 +433,7 @@ async fn notif_change_driven_includes_only_dataset_id_instances() {
     });
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&entity)
             .with_ld_json()

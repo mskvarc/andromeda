@@ -6,7 +6,7 @@ use crate::{
     entity::entity,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use serde_json::{Value, json};
 use urlencoding::encode;
@@ -42,9 +42,9 @@ const BEFORE_2030: &str = "timerel=before&timeAt=2030-01-01T00:00:00Z";
 #[tokio::test]
 #[ignore = "SPEC-CONFLICT: clause 5.9.2.4 limits auxiliary registrations to retrieveOps, retrieveEntity and queryEntity, so an auxiliary temporal source cannot be registered"]
 async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons47");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     assert_status(
@@ -105,10 +105,10 @@ async fn distop_retrieve_temporal_auxiliary_added_only_if_timeproperty_absent() 
 /// history; `@none` keeps the default (clause 5.7.3.4). Confirms REQ-CONS-49.
 #[tokio::test]
 async fn distop_retrieve_temporal_datasetid_filters_s1() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons49");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder = topology.broker(BrokerRole::C);
 
     assert_status(
@@ -180,10 +180,10 @@ async fn distop_retrieve_temporal_datasetid_filters_s1() {
 /// other attributes are retained (clause 5.7.3.4). Confirms REQ-CONS-50.
 #[tokio::test]
 async fn distop_retrieve_temporal_datasetid_no_match_removes_attribute() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons50");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
 
     let local = entity(
         &entity_id,
@@ -215,9 +215,9 @@ async fn distop_retrieve_temporal_datasetid_no_match_removes_attribute() {
 /// REQ-CONS-51.
 #[tokio::test]
 async fn distop_retrieve_temporal_lastn_limits_projected_instances() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons51");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 

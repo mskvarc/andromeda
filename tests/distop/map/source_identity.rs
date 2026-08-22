@@ -4,7 +4,7 @@
 
 use crate::{
     oracle::{assert_status, json_body},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::tenant_name::TenantName;
 use axum::http::Method;
@@ -13,9 +13,9 @@ use axum::http::Method;
 /// Confirms REQ-MAP-157.
 #[tokio::test]
 async fn identity_retrieve_returns_context_source_identity() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -33,10 +33,10 @@ async fn identity_retrieve_returns_context_source_identity() {
 /// Confirms REQ-MAP-158.
 #[tokio::test]
 async fn identity_per_tenant_alias_obtainable() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let tenant = TenantName::parse("distopTenantMap").expect("valid tenant name");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .tenant_client(tenant)
         .source_identity(Some("application/ld+json"))
         .await
@@ -53,9 +53,9 @@ async fn identity_per_tenant_alias_obtainable() {
 /// are ignored (clause 5.15.1). Confirms REQ-MAP-159.
 #[tokio::test]
 async fn identity_input_takes_no_body_or_params() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/info/sourceIdentity?ignored=value")
         .header("Accept", "application/ld+json")
@@ -77,9 +77,9 @@ async fn identity_input_takes_no_body_or_params() {
 #[ignore = "GAP REQ-MAP-160: source-identity 501 unsupported branch not implemented"]
 #[tokio::test]
 async fn identity_unsupported_returns_501() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -92,9 +92,9 @@ async fn identity_unsupported_returns_501() {
 /// (clause 5.2.40). Confirms REQ-MAP-161.
 #[tokio::test]
 async fn identity_body_conforms_to_data_model() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -118,9 +118,9 @@ async fn identity_body_conforms_to_data_model() {
 /// (clause 5.15.1, 5.5.7). Confirms REQ-MAP-162.
 #[tokio::test]
 async fn identity_success_returns_200_jsonld() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await

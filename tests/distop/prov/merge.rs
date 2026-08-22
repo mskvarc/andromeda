@@ -12,7 +12,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, attr_present},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::{CONFLICT, RESOURCE_NOT_FOUND};
@@ -45,8 +45,8 @@ async fn seed_local(client: &TestClient, payload: &Value) {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-108 (positive).
 #[tokio::test]
 async fn merge_entity_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-merge-absent");
 
     let merged = client
@@ -63,8 +63,8 @@ async fn merge_entity_absent_and_no_registration_returns_404() {
 /// than answered `404`. Confirms REQ-PROV-108 (negative).
 #[tokio::test]
 async fn merge_entity_registration_matches_entity_absent_not_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-match-absent");
     let reg_id = topology.id("registration:prov-merge-match-absent");
@@ -98,8 +98,8 @@ async fn merge_entity_registration_matches_entity_absent_not_404() {
 /// merge, and keeps the unowned `brandName`. Confirms REQ-PROV-109, 111.
 #[tokio::test]
 async fn merge_entity_exclusive_match_forwards_and_strips() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-exclusive");
     let reg_id = topology.id("registration:prov-merge-exclusive");
@@ -152,8 +152,8 @@ async fn merge_entity_exclusive_match_forwards_and_strips() {
 /// REQ-PROV-110.
 #[tokio::test]
 async fn merge_entity_op_unsupported_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-unsup");
     let reg_id = topology.id("registration:prov-merge-unsup");
@@ -184,8 +184,8 @@ async fn merge_entity_op_unsupported_returns_409() {
 /// Confirms REQ-PROV-112.
 #[tokio::test]
 async fn merge_entity_inclusive_forwards_remainder_and_merges_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-merge-inclusive");
     let reg_id = topology.id("registration:prov-merge-inclusive");

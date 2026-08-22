@@ -9,7 +9,7 @@ use crate::{
     entity::entity,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -59,9 +59,9 @@ fn rich_temporal_filters() -> String {
 /// (clause 5.7.4.4). Confirms REQ-CONS-56.
 #[tokio::test]
 async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal_only() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons56");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 
@@ -127,9 +127,9 @@ async fn distop_split_temporal_query_split_nonlocal_local_stage_id_type_temporal
 /// REQ-CONS-57.
 #[tokio::test]
 async fn distop_split_temporal_query_non_split_staged_local_filtering() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons57");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
 
     assert_status(
         &front
@@ -158,8 +158,8 @@ async fn distop_split_temporal_query_non_split_staged_local_filtering() {
 /// retaining the temporal query (clause 5.7.4.4). Confirms REQ-CONS-62.
 #[tokio::test]
 async fn distop_split_temporal_query_split_strips_then_reapplies() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for source in ["/sb", "/sc"] {
@@ -213,9 +213,9 @@ async fn distop_split_temporal_query_split_strips_then_reapplies() {
 /// REQ-CONS-65.
 #[tokio::test]
 async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons65");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 
@@ -272,9 +272,9 @@ async fn distop_split_temporal_query_split_nonlocal_reapplies_values_geo_scope()
 /// passes through unchanged (clause 5.7.4.4). Confirms REQ-CONS-66.
 #[tokio::test]
 async fn distop_split_temporal_query_no_reapply_s7_equals_s4() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons66");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 

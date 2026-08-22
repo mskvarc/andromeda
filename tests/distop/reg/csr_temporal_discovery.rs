@@ -11,7 +11,7 @@ use crate::{
     oracle::{assert_status, json_body},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use serde_json::{Value, json};
 use urlencoding::encode;
@@ -45,15 +45,23 @@ fn temporal_query(entity_id: &str, from: &str, to: &str, timeproperty: Option<&s
 /// REQ-REG-18.
 #[tokio::test]
 async fn reg_managementinterval_overlap_matched_on_temporal_query() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:mgmt-interval");
     let registration_id = topology.id("registration:mgmt-interval");
     let mut body = CsrBuilder::new(&registration_id, PEER_ENDPOINT).entity_id(&entity_id).build();
     body["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z", "endAt": "2020-12-31T00:00:00Z" });
-    assert_status(&topology.front().client().create_registration(&body).await.expect("create registration"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&body)
+            .await
+            .expect("create registration"),
+        201,
+    );
 
     let overlapping = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("modifiedAt")),
@@ -68,7 +76,7 @@ async fn reg_managementinterval_overlap_matched_on_temporal_query() {
     );
 
     let disjoint = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z", Some("modifiedAt")),
@@ -90,15 +98,23 @@ async fn reg_managementinterval_overlap_matched_on_temporal_query() {
 /// Confirms REQ-REG-21.
 #[tokio::test]
 async fn reg_observationinterval_overlap_matched_on_observedat_query() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:obs-interval");
     let registration_id = topology.id("registration:obs-interval");
     let mut body = CsrBuilder::new(&registration_id, PEER_ENDPOINT).entity_id(&entity_id).build();
     body["observationInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z", "endAt": "2020-12-31T00:00:00Z" });
-    assert_status(&topology.front().client().create_registration(&body).await.expect("create registration"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&body)
+            .await
+            .expect("create registration"),
+        201,
+    );
 
     let overlapping = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("observedAt")),
@@ -113,7 +129,7 @@ async fn reg_observationinterval_overlap_matched_on_observedat_query() {
     );
 
     let disjoint = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2025-01-01T00:00:00Z", "2025-12-31T00:00:00Z", Some("observedAt")),
@@ -134,22 +150,35 @@ async fn reg_observationinterval_overlap_matched_on_observedat_query() {
 /// declaring only a temporal interval (clause 5.9.1). Confirms REQ-REG-50.
 #[tokio::test]
 async fn reg_no_temporal_query_returns_only_latest_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:latest-vs-temporal");
     let latest_id = topology.id("registration:latest-only");
     let temporal_id = topology.id("registration:temporal-only");
 
     let latest = CsrBuilder::new(&latest_id, PEER_ENDPOINT).entity_id(&entity_id).build();
-    assert_status(&topology.front().client().create_registration(&latest).await.expect("create latest CSR"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&latest)
+            .await
+            .expect("create latest CSR"),
+        201,
+    );
     let mut temporal = CsrBuilder::new(&temporal_id, PEER_ENDPOINT).entity_id(&entity_id).build();
     temporal["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z", "endAt": "2020-12-31T00:00:00Z" });
     assert_status(
-        &topology.front().client().create_registration(&temporal).await.expect("create temporal CSR"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&temporal)
+            .await
+            .expect("create temporal CSR"),
         201,
     );
 
     let result = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", encode(&entity_id)), None)
         .await
@@ -166,22 +195,35 @@ async fn reg_no_temporal_query_returns_only_latest_csrs() {
 /// latest-only ones (clause 5.9.1). Confirms REQ-REG-51.
 #[tokio::test]
 async fn reg_temporal_query_returns_only_interval_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-vs-latest");
     let latest_id = topology.id("registration:temporal-latest");
     let temporal_id = topology.id("registration:temporal-interval");
 
     let latest = CsrBuilder::new(&latest_id, PEER_ENDPOINT).entity_id(&entity_id).build();
-    assert_status(&topology.front().client().create_registration(&latest).await.expect("create latest CSR"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&latest)
+            .await
+            .expect("create latest CSR"),
+        201,
+    );
     let mut temporal = CsrBuilder::new(&temporal_id, PEER_ENDPOINT).entity_id(&entity_id).build();
     temporal["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z", "endAt": "2020-12-31T00:00:00Z" });
     assert_status(
-        &topology.front().client().create_registration(&temporal).await.expect("create temporal CSR"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&temporal)
+            .await
+            .expect("create temporal CSR"),
         201,
     );
 
     let result = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("modifiedAt")),
@@ -205,22 +247,30 @@ async fn reg_temporal_query_returns_only_interval_csrs() {
 /// discovery modes (clause 5.9.1). Confirms REQ-REG-49.
 #[tokio::test]
 async fn reg_csr_combining_latest_and_temporal_single_purpose() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:combined-purpose");
     let registration_id = topology.id("registration:combined-purpose");
     let mut body = CsrBuilder::new(&registration_id, PEER_ENDPOINT).entity_id(&entity_id).build();
     body["managementInterval"] = json!({ "startAt": "2020-01-01T00:00:00Z", "endAt": "2020-12-31T00:00:00Z" });
-    assert_status(&topology.front().client().create_registration(&body).await.expect("create combined CSR"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&body)
+            .await
+            .expect("create combined CSR"),
+        201,
+    );
 
     let non_temporal = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", encode(&entity_id)), None)
         .await
         .expect("non-temporal discovery");
     assert_status(&non_temporal, 200);
     let temporal = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(
             &temporal_query(&entity_id, "2020-06-01T00:00:00Z", "2020-06-30T00:00:00Z", Some("modifiedAt")),

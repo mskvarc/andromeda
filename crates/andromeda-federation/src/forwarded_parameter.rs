@@ -13,6 +13,8 @@ pub enum ForwardedParameter {
     Type,
     /// The identifier pattern.
     IdPattern,
+    /// The source-side page limit used while the broker aggregates results.
+    Limit,
     /// The attribute list.
     Attrs,
     /// The clause 4.9 query.

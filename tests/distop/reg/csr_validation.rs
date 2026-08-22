@@ -7,7 +7,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
     reg::PEER_ENDPOINT,
     registration::csr_basic,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
 use serde_json::{Value, json};
@@ -25,12 +25,12 @@ macro_rules! rejection_cases {
         $(
             #[tokio::test]
             async fn $name() {
-                let topology = DistributedTopology::single().await.expect("single-broker topology");
+                let topology = topology::single().await.expect("single-broker topology");
                 let id = topology.id(concat!("registration:", stringify!($name)));
                 let mut body = csr_basic(&id, PEER_ENDPOINT);
                 let mutate: fn(&mut Value) = $mutate;
                 mutate(&mut body);
-                let response = topology.front().client().create_registration(&body).await.expect("create registration");
+                let response = topology.broker(BrokerRole::A).client().create_registration(&body).await.expect("create registration");
                 assert_status(&response, 400);
                 assert_problem_details(&response, BAD_REQUEST_DATA);
                 topology.finish().await.expect("topology cleanup");
@@ -83,15 +83,25 @@ rejection_cases! {
 /// types round-trip (clause 5.2.9, 4.5.4). Confirms REQ-REG-1.
 #[tokio::test]
 async fn reg_entityinfo_type_as_array_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:type-array");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
     body["information"][0]["entities"][0] = json!({ "type": ["Vehicle", "Car"] });
 
-    let created = topology.front().client().create_registration(&body).await.expect("create registration");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&body)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
 
-    let retrieved = topology.front().client().retrieve_registration(&id, None).await.expect("retrieve registration");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_registration(&id, None)
+        .await
+        .expect("retrieve registration");
     assert_status(&retrieved, 200);
     let stored = json_body(&retrieved);
     let types = stored["information"][0]["entities"][0]["type"]
@@ -112,18 +122,23 @@ async fn reg_entityinfo_type_as_array_accepted() {
 /// too wide. Confirms REQ-REG-5.
 #[tokio::test]
 async fn reg_entityinfo_id_and_idpattern_prefers_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let exact = topology.id("Vehicle:EXACT");
     let other = topology.id("Vehicle:OTHER1");
     let id = topology.id("registration:id-wins");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
     body["information"][0]["entities"][0] = json!({ "type": "Vehicle", "id": exact, "idPattern": format!("{}.*", topology.id("Vehicle:OTHER")) });
 
-    let created = topology.front().client().create_registration(&body).await.expect("create registration");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&body)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
 
     let by_exact = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&exact)), None)
         .await
@@ -136,7 +151,7 @@ async fn reg_entityinfo_id_and_idpattern_prefers_id() {
     );
 
     let by_other = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_registrations(&format!("type=Vehicle&id={}", urlencoding::encode(&other)), None)
         .await

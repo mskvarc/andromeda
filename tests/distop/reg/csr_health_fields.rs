@@ -15,7 +15,7 @@ use crate::{
     oracle::{assert_status, json_body},
     reg::PEER_ENDPOINT,
     registration::{CsrBuilder, csr_basic},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::json;
@@ -25,7 +25,7 @@ use serde_json::json;
 /// REQ-REG-30, REQ-REG-31, REQ-REG-32.
 #[tokio::test]
 async fn reg_client_supplied_health_fields_ignored() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:health-ignored");
     let mut body = csr_basic(&id, PEER_ENDPOINT);
     body["status"] = json!("failed");
@@ -33,9 +33,19 @@ async fn reg_client_supplied_health_fields_ignored() {
     body["timesFailed"] = json!(42);
     body["lastSuccess"] = json!("2000-01-01T00:00:00Z");
 
-    let created = topology.front().client().create_registration(&body).await.expect("create registration");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&body)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_registration(&id, None).await.expect("retrieve registration");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_registration(&id, None)
+        .await
+        .expect("retrieve registration");
     assert_status(&retrieved, 200);
     let stored = json_body(&retrieved);
     assert_ne!(stored["status"], json!("failed"), "server owns status; the client-forced value is discarded");
@@ -50,16 +60,21 @@ async fn reg_client_supplied_health_fields_ignored() {
 /// REQ-REG-31, REQ-REG-32.
 #[tokio::test]
 async fn reg_fresh_registration_counters_nonnegative() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:health-fresh");
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&csr_basic(&id, PEER_ENDPOINT))
         .await
         .expect("create registration");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_registration(&id, None).await.expect("retrieve registration");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_registration(&id, None)
+        .await
+        .expect("retrieve registration");
     assert_status(&retrieved, 200);
     let stored = json_body(&retrieved);
     if let Some(times_sent) = stored["timesSent"].as_i64() {
@@ -79,7 +94,7 @@ async fn reg_fresh_registration_counters_nonnegative() {
 /// `failed` (clause 5.2.9, dynamic). Confirms REQ-REG-31 (dynamic).
 #[tokio::test]
 async fn reg_health_status_transitions_to_failed_on_forward_error() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:health-fail");
     let registration_id = topology.id("registration:health-fail");
@@ -92,7 +107,7 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
         .operations(&["retrieveEntity"])
         .build();
     let registered = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&registration)
         .await
@@ -100,14 +115,14 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
     assert_status(&registered, 201);
 
     let _forward = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
         .expect("forwarded retrieve");
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&registration_id, None)
         .await
@@ -127,7 +142,7 @@ async fn reg_health_status_transitions_to_failed_on_forward_error() {
 /// success/failure timestamp (clause 5.2.9, dynamic). Confirms REQ-REG-32 (dynamic).
 #[tokio::test]
 async fn reg_health_counters_increment_on_forward_attempt() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = ContextSourceAdapter::start().await;
     let ok_entity = topology.id("Vehicle:health-ok");
     let fail_entity = topology.id("Vehicle:health-bad");
@@ -143,7 +158,7 @@ async fn reg_health_counters_increment_on_forward_attempt() {
         .operations(&["retrieveEntity"])
         .build();
     let registered = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&registration)
         .await
@@ -151,20 +166,20 @@ async fn reg_health_counters_increment_on_forward_attempt() {
     assert_status(&registered, 201);
 
     let _ok = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&ok_entity, "", "application/ld+json", None)
         .await
         .expect("forwarded success");
     let _bad = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&fail_entity, "", "application/ld+json", None)
         .await
         .expect("forwarded failure");
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_registration(&registration_id, None)
         .await

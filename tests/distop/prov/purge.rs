@@ -13,7 +13,7 @@ use crate::{
     entity::{entity, property},
     oracle::assert_status,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use axum::http::Method;
@@ -32,8 +32,8 @@ fn context_link() -> String {
 /// locally matched entity. Confirms REQ-PROV-130 (local-scope gate).
 #[tokio::test]
 async fn purge_local_scope_skips_forwarding() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-purge-local");
     let reg_id = topology.id("registration:prov-purge-local");
@@ -80,8 +80,8 @@ async fn purge_local_scope_skips_forwarding() {
 /// supports it. Confirms REQ-PROV-130 (support gate), 131.
 #[tokio::test]
 async fn purge_non_local_matching_csr_forwards_per_registration() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let reg_id_one = topology.id("registration:prov-purge-fanout-1");
     let reg_id_two = topology.id("registration:prov-purge-fanout-2");
@@ -132,8 +132,8 @@ async fn purge_non_local_matching_csr_forwards_per_registration() {
 /// Confirms REQ-PROV-132.
 #[tokio::test]
 async fn purge_op_unsupported_returns_conflict_or_partial() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let reg_id = topology.id("registration:prov-purge-unsup");
 
@@ -165,8 +165,8 @@ async fn purge_op_unsupported_returns_conflict_or_partial() {
 /// Confirms REQ-PROV-133.
 #[tokio::test]
 async fn purge_local_phase_queries_then_deletes() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id_one = topology.id("Vehicle:prov-purge-phase-1");
     let entity_id_two = topology.id("Vehicle:prov-purge-phase-2");

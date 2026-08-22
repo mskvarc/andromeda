@@ -12,7 +12,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, forwarded_header, json_body},
     prov::forwarding::{FORWARD_WAIT, attr_present},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::CONFLICT;
 use axum::http::Method;
@@ -27,8 +27,8 @@ fn brand_and_speed(id: &str) -> Value {
 /// fragment, and keeps the unowned `brandName` locally. Confirms REQ-PROV-1, 2, 5.
 #[tokio::test]
 async fn create_exclusive_match_forwards_speed_and_strips_from_fragment() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-exclusive");
     let reg_id = topology.id("registration:prov-create-exclusive");
@@ -80,8 +80,8 @@ async fn create_exclusive_match_forwards_speed_and_strips_from_fragment() {
 /// Confirms REQ-PROV-3.
 #[tokio::test]
 async fn create_exclusive_endpoint_error_returns_partial() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-excl-err");
     let reg_id = topology.id("registration:prov-create-excl-err");
@@ -128,8 +128,8 @@ async fn create_exclusive_endpoint_error_returns_partial() {
 /// Confirms REQ-PROV-4 (complete-fail).
 #[tokio::test]
 async fn create_exclusive_createentity_unsupported_returns_409_conflict() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-excl-unsup");
     let reg_id = topology.id("registration:prov-create-excl-unsup");
@@ -167,8 +167,8 @@ async fn create_exclusive_createentity_unsupported_returns_409_conflict() {
 /// remainder is created locally. Confirms REQ-PROV-4 (partial), 5, 12.
 #[tokio::test]
 async fn create_exclusive_createentity_unsupported_with_local_remainder_returns_207() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-excl-remainder");
     let reg_id = topology.id("registration:prov-create-excl-remainder");
@@ -215,8 +215,8 @@ async fn create_exclusive_createentity_unsupported_with_local_remainder_returns_
 /// Confirms REQ-PROV-6, 7, 9.
 #[tokio::test]
 async fn create_redirect_match_forwards_and_strips() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-redirect");
     let reg_id = topology.id("registration:prov-create-redirect");
@@ -260,8 +260,8 @@ async fn create_redirect_match_forwards_and_strips() {
 /// Confirms REQ-PROV-7.
 #[tokio::test]
 async fn create_redirect_endpoint_error_returns_partial() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-redir-err");
     let reg_id = topology.id("registration:prov-create-redir-err");
@@ -305,8 +305,8 @@ async fn create_redirect_endpoint_error_returns_partial() {
 /// create with a bare `409 Conflict` and no forwarding. Confirms REQ-PROV-8.
 #[tokio::test]
 async fn create_redirect_createentity_unsupported_returns_409_conflict() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-redir-unsup");
     let reg_id = topology.id("registration:prov-create-redir-unsup");
@@ -340,8 +340,8 @@ async fn create_redirect_createentity_unsupported_returns_409_conflict() {
 /// locally. Confirms REQ-PROV-10, 12.
 #[tokio::test]
 async fn create_inclusive_forwards_remainder_and_creates_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-inclusive");
     let reg_id = topology.id("registration:prov-create-inclusive");
@@ -388,8 +388,8 @@ async fn create_inclusive_forwards_remainder_and_creates_local() {
 /// occurs. Confirms REQ-PROV-11.
 #[tokio::test]
 async fn create_existing_locally_returns_already_exists() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-create-existing");
     let reg_id = topology.id("registration:prov-create-existing");
@@ -435,8 +435,8 @@ async fn create_existing_locally_returns_already_exists() {
 /// 5, 12.
 #[tokio::test]
 async fn create_pair_exclusive_end_to_end() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:prov-create-pair");
     let reg_id = topology.id("registration:prov-create-pair");

@@ -8,7 +8,7 @@ use crate::{
     entity::vehicle,
     oracle::{assert_status, entity_map_header, forwarded_header},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
 use axum::http::Method;
@@ -16,9 +16,9 @@ use serde_json::json;
 use std::time::Duration;
 
 /// Query the front broker reusing a supplied entity map.
-async fn query_reusing_map(topology: &DistributedTopology, query: &str, map: &str) -> TestResponse {
+async fn query_reusing_map(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, query: &str, map: &str) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, &format!("/ngsi-ld/v1/entities?{query}"))
         .header("accept", "application/ld+json")
@@ -35,8 +35,8 @@ async fn query_reusing_map(topology: &DistributedTopology, query: &str, map: &st
 /// EntityMap has been (re)created)"). Confirms REQ-CONS-23.
 #[tokio::test]
 async fn distop_query_entities_map_location_reused_or_recreated() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let first_id = topology.id("registration:cons23-s1");
@@ -107,8 +107,8 @@ async fn distop_query_entities_map_location_reused_or_recreated() {
 /// `201` with the `NGSILD-EntityMap` header (clause 6.3.15). Confirms REQ-CONS-24.
 #[tokio::test]
 async fn distop_query_entities_return_flag_creates_map_and_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let entity_id = topology.id("Vehicle:cons24");
     assert_status(
         &front.client().post_entity(&vehicle(&entity_id, 10)).with_ld_json().send().await.expect("local"),
@@ -130,8 +130,8 @@ async fn distop_query_entities_return_flag_creates_map_and_header() {
 /// linked location (clause 5.5.14). Confirms REQ-CONS-26.
 #[tokio::test]
 async fn distop_query_entities_map_linked_entry_forwards_linked_location() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons26");

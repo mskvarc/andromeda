@@ -9,7 +9,7 @@ use crate::{
     entity::{entity, property},
     oracle::assert_status,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -29,7 +29,7 @@ const CONFORMANCE_KEY: &str = "ngsildConformance";
 /// source conformance version and return the exact payload forwarded to the
 /// source, so a downgrade transform can be asserted.
 async fn forwarded_downgrade_body(name: &str, conformance: &str, make_entity: impl FnOnce(&str) -> Value) -> Value {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 201, &json!({})).await;
 
@@ -42,12 +42,24 @@ async fn forwarded_downgrade_body(name: &str, conformance: &str, make_entity: im
         .context_source_info(CONFORMANCE_KEY, conformance)
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let body = make_entity(&entity_id);
-    let created = topology.front().client().post_entity(&body).with_ld_json().send().await.expect("provision");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .post_entity(&body)
+        .with_ld_json()
+        .send()
+        .await
+        .expect("provision");
     assert!(created.status.is_success(), "the provision succeeds: {}", created.status);
 
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;

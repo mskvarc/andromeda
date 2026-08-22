@@ -10,7 +10,7 @@ use crate::{
     oracle::{assert_status, json_body},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::json;
@@ -23,8 +23,8 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 /// REQ-FW-15, REQ-FW-17.
 #[tokio::test]
 async fn distop_entity_auxiliary_never_overrides_local_attribute() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:auxiliary-merge");
 
@@ -67,7 +67,7 @@ async fn distop_entity_auxiliary_never_overrides_local_attribute() {
 /// source copy is discarded (clause 4.3.6.2). Confirms REQ-FW-17.
 #[tokio::test]
 async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:auxiliary-supplement");
     let source_entity = entity(&entity_id, "Vehicle", &[("speed", property(json!(99))), ("fuel", property(json!(20)))]);
@@ -76,7 +76,7 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 50))
             .with_ld_json()
@@ -94,12 +94,17 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -122,13 +127,13 @@ async fn distop_entity_auxiliary_supplementary_attribute_only_included() {
 /// REQ-FW-16.
 #[tokio::test]
 async fn distop_entity_auxiliary_write_not_forwarded() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:auxiliary-write");
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 10))
             .with_ld_json()
@@ -146,13 +151,18 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let fragment = attribute_fragment(&[("speed", property(json!(20)))]);
     let appended = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -161,7 +171,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
     assert_eq!(mock.get_total_count().await, 0, "an auxiliary registration never receives a write");
 
     let local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -178,7 +188,7 @@ async fn distop_entity_auxiliary_write_not_forwarded() {
 /// REQ-FW-18.
 #[tokio::test]
 async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:auxiliary-overlap");
 
     let exclusive = CsrBuilder::new(&topology.id("registration:auxiliary-overlap-exclusive"), PEER_ENDPOINT)
@@ -187,7 +197,12 @@ async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
         .property_names(&["speed"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&exclusive).await.expect("exclusive registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&exclusive)
+            .await
+            .expect("exclusive registration"),
         201,
     );
 
@@ -197,7 +212,12 @@ async fn distop_entity_auxiliary_registration_overlapping_exclusive_accepted() {
         .property_names(&["speed"])
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
-    let accepted = topology.front().client().create_registration(&auxiliary).await.expect("auxiliary registration");
+    let accepted = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&auxiliary)
+        .await
+        .expect("auxiliary registration");
     assert_status(&accepted, 201);
 
     topology.finish().await.expect("topology cleanup");

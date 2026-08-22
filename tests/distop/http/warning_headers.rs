@@ -8,7 +8,7 @@ use crate::{
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, retrieval_source},
     oracle::{assert_status, has_warning, json_body, warning_codes},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::json;
@@ -27,7 +27,7 @@ use serde_json::json;
 /// only. Confirms REQ-HTTP-16, REQ-HTTP-17, REQ-HTTP-19.
 #[tokio::test]
 async fn dist_http_query_cached_result_returns_warning_110() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-110");
     let reg_id = topology.id("registration:warn-110");
     let mock = ContextSourceAdapter::start().await;
@@ -41,7 +41,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -51,7 +51,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let first = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -64,7 +64,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -85,7 +85,7 @@ async fn dist_http_query_cached_result_returns_warning_110() {
 /// `NGSILD-Warning` (clause 6.3.11). Confirms REQ-HTTP-18.
 #[tokio::test]
 async fn dist_http_query_abnormal_source_sets_warning_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-abnormal");
     let reg_id = topology.id("registration:warn-abnormal");
     let mock = ContextSourceAdapter::start().await;
@@ -93,7 +93,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -103,7 +103,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
     mock.set_stub(Method::GET, FORWARDED_ENTITIES_PATH, 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -119,7 +119,7 @@ async fn dist_http_query_abnormal_source_sets_warning_header() {
 /// warning `111` (clause 6.3.11). Confirms REQ-HTTP-20.
 #[tokio::test]
 async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-111");
     let reg_id = topology.id("registration:warn-111");
     let mock = ContextSourceAdapter::start().await;
@@ -127,7 +127,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -138,7 +138,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
         .await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -158,7 +158,7 @@ async fn dist_http_query_invalid_payload_within_timeout_returns_warning_111() {
 /// `199` (clause 6.3.11). Confirms REQ-HTTP-21.
 #[tokio::test]
 async fn dist_http_query_source_timeout_returns_warning_199() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-199");
     let reg_id = topology.id("registration:warn-199");
     let mock = ContextSourceAdapter::start().await;
@@ -170,7 +170,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
     let registration = retrieval_source(&reg_id, &endpoint, &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -179,7 +179,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -198,7 +198,7 @@ async fn dist_http_query_source_timeout_returns_warning_199() {
 /// the timeout, yielding warning `299` (clause 6.3.11). Confirms REQ-HTTP-22.
 #[tokio::test]
 async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-299");
     let reg_id = topology.id("registration:warn-299");
     let mock = ContextSourceAdapter::start().await;
@@ -206,7 +206,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -216,7 +216,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
     mock.set_stub(Method::GET, FORWARDED_ENTITIES_PATH, 403).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -236,7 +236,7 @@ async fn dist_http_query_source_error_within_timeout_returns_warning_299() {
 /// to the merged result (clause 6.3.11). Confirms REQ-HTTP-23.
 #[tokio::test]
 async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-excluded");
     let reg_id = topology.id("registration:warn-excluded");
     let mock = ContextSourceAdapter::start().await;
@@ -244,7 +244,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -255,7 +255,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
         .await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -278,7 +278,7 @@ async fn dist_http_query_non_ngsi_payload_rejected_and_excluded() {
 /// is flagged (clause 6.3.11). Confirms REQ-HTTP-24.
 #[tokio::test]
 async fn dist_http_query_source_404_no_data_not_flagged() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:warn-404");
     let reg_id = topology.id("registration:warn-404");
     let mock = ContextSourceAdapter::start().await;
@@ -286,7 +286,7 @@ async fn dist_http_query_source_404_no_data_not_flagged() {
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -296,7 +296,7 @@ async fn dist_http_query_source_404_no_data_not_flagged() {
     mock.set_stub(Method::GET, FORWARDED_ENTITIES_PATH, 404).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await

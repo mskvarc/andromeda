@@ -7,7 +7,7 @@ use crate::{
     entity::{attribute_fragment, property, vehicle},
     http::forwarding::{context_link, forwarded_entity_path, provision_source},
     oracle::{assert_status, json_body},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -15,11 +15,11 @@ use serde_json::{Value, json};
 /// A local replace returns `204` (clause 6.4.3.3). Confirms REQ-HTTP-70.
 #[tokio::test]
 async fn dist_http_replace_entity_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:replace-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -30,7 +30,7 @@ async fn dist_http_replace_entity_local_returns_204() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .replace_entity(&entity_id, &vehicle(&entity_id, 9), "application/ld+json", None)
         .await
@@ -43,14 +43,14 @@ async fn dist_http_replace_entity_local_returns_204() {
 /// `207` (clause 6.3.16). Confirms REQ-HTTP-70.
 #[tokio::test]
 async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:replace-207");
     let reg_id = topology.id("registration:replace-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -61,7 +61,7 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["replaceEntity"]))
             .await
@@ -71,7 +71,7 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
     mock.set_stub(Method::PUT, &forwarded_entity_path(&entity_id), 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .replace_entity(&entity_id, &vehicle(&entity_id, 9), "application/ld+json", None)
         .await
@@ -86,11 +86,11 @@ async fn dist_http_replace_entity_partial_failure_returns_207_batch_result() {
 /// Confirms REQ-HTTP-70.
 #[tokio::test]
 async fn dist_http_replace_entity_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:replace-400");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -101,7 +101,7 @@ async fn dist_http_replace_entity_invalid_returns_400() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .replace_entity(&entity_id, &json!({ "id": entity_id, "@context": context_link() }), "application/ld+json", None)
         .await
@@ -113,10 +113,10 @@ async fn dist_http_replace_entity_invalid_returns_400() {
 /// Replacing an unknown entity returns `404` (clause 6.4.3.3). Confirms REQ-HTTP-70.
 #[tokio::test]
 async fn dist_http_replace_entity_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:replace-unknown");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .replace_entity(&entity_id, &vehicle(&entity_id, 9), "application/ld+json", None)
         .await
@@ -132,11 +132,11 @@ async fn dist_http_replace_entity_unknown_returns_404() {
 /// the target Entity"). Confirms REQ-HTTP-72.
 #[tokio::test]
 async fn dist_http_merge_entity_new_type_name_added_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:merge-type-change");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -147,7 +147,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .merge_entity(&entity_id, &json!({ "type": "Car", "@context": context_link() }), None)
         .await
@@ -155,7 +155,7 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
     assert_status(&response, 204);
 
     let merged = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", Some(context_link()))
         .await
@@ -178,11 +178,11 @@ async fn dist_http_merge_entity_new_type_name_added_returns_204() {
 /// A local merge returns `204` (clause 6.4.3.3). Confirms REQ-HTTP-73.
 #[tokio::test]
 async fn dist_http_merge_entity_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:merge-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -193,7 +193,12 @@ async fn dist_http_merge_entity_local_returns_204() {
     );
 
     let fragment = attribute_fragment(&[("speed", property(json!(88)))]);
-    let response = topology.front().client().merge_entity(&entity_id, &fragment, None).await.expect("local merge");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .merge_entity(&entity_id, &fragment, None)
+        .await
+        .expect("local merge");
     assert_status(&response, 204);
     topology.finish().await.expect("topology cleanup");
 }
@@ -202,14 +207,14 @@ async fn dist_http_merge_entity_local_returns_204() {
 /// (clause 6.3.16). Confirms REQ-HTTP-73.
 #[tokio::test]
 async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:merge-207");
     let reg_id = topology.id("registration:merge-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -220,7 +225,7 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeEntity"]))
             .await
@@ -231,7 +236,7 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
 
     let fragment = attribute_fragment(&[("speed", property(json!(88)))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .merge_entity(&entity_id, &fragment, None)
         .await
@@ -246,11 +251,11 @@ async fn dist_http_merge_entity_partial_failure_returns_207_batch_result() {
 /// Confirms REQ-HTTP-73.
 #[tokio::test]
 async fn dist_http_merge_entity_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:merge-400");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -261,7 +266,7 @@ async fn dist_http_merge_entity_invalid_returns_400() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .merge_entity(
             &entity_id,
@@ -277,11 +282,11 @@ async fn dist_http_merge_entity_invalid_returns_400() {
 /// Merging an unknown entity returns `404` (clause 6.4.3.3). Confirms REQ-HTTP-73.
 #[tokio::test]
 async fn dist_http_merge_entity_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:merge-unknown");
     let fragment = attribute_fragment(&[("speed", property(json!(88)))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .merge_entity(&entity_id, &fragment, None)
         .await

@@ -7,7 +7,7 @@ use crate::{
     entity::{attribute_fragment, property, vehicle},
     http::forwarding::{context_link, forwarded_attr_path, forwarded_attrs_path, provision_source},
     oracle::assert_status,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::json;
@@ -15,11 +15,11 @@ use serde_json::json;
 /// A local attribute append returns `204` (clause 6.6.3.1). Confirms REQ-HTTP-74.
 #[tokio::test]
 async fn dist_http_append_attrs_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:append-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -31,7 +31,7 @@ async fn dist_http_append_attrs_local_returns_204() {
 
     let fragment = attribute_fragment(&[("fuel", property(json!("diesel")))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -47,14 +47,14 @@ async fn dist_http_append_attrs_local_returns_204() {
 /// failing endpoint. Confirms REQ-HTTP-74.
 #[tokio::test]
 async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:append-207");
     let reg_id = topology.id("registration:append-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -65,7 +65,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["appendAttrs"]))
             .await
@@ -76,7 +76,7 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
 
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -91,11 +91,11 @@ async fn dist_http_append_attrs_partial_failure_returns_207_update_result() {
 /// Confirms REQ-HTTP-74.
 #[tokio::test]
 async fn dist_http_append_attrs_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:append-400");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -106,7 +106,7 @@ async fn dist_http_append_attrs_invalid_returns_400() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .append_entity_attrs(
             &entity_id,
@@ -121,11 +121,11 @@ async fn dist_http_append_attrs_invalid_returns_400() {
 /// Appending to an absent entity returns `404` (clause 6.6.3.1). Confirms REQ-HTTP-74.
 #[tokio::test]
 async fn dist_http_append_attrs_entity_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:append-404");
     let fragment = attribute_fragment(&[("fuel", property(json!("diesel")))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -137,11 +137,11 @@ async fn dist_http_append_attrs_entity_absent_returns_404() {
 /// A local attribute update returns `204` (clause 6.6.3.2). Confirms REQ-HTTP-75.
 #[tokio::test]
 async fn dist_http_update_attrs_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:update-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -153,7 +153,7 @@ async fn dist_http_update_attrs_local_returns_204() {
 
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_entity_attrs(&entity_id, &fragment)
         .await
@@ -168,14 +168,14 @@ async fn dist_http_update_attrs_local_returns_204() {
 /// Confirms REQ-HTTP-75.
 #[tokio::test]
 async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:update-207");
     let reg_id = topology.id("registration:update-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -186,7 +186,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateEntity"]))
             .await
@@ -197,7 +197,7 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
 
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_entity_attrs(&entity_id, &fragment)
         .await
@@ -212,11 +212,11 @@ async fn dist_http_update_attrs_partial_failure_returns_207_update_result() {
 /// Confirms REQ-HTTP-75.
 #[tokio::test]
 async fn dist_http_update_attrs_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:update-400");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -227,7 +227,7 @@ async fn dist_http_update_attrs_invalid_returns_400() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_entity_attrs(
             &entity_id,
@@ -242,11 +242,11 @@ async fn dist_http_update_attrs_invalid_returns_400() {
 /// Updating an absent entity returns `404` (clause 6.6.3.2). Confirms REQ-HTTP-75.
 #[tokio::test]
 async fn dist_http_update_attrs_entity_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:update-404");
     let fragment = attribute_fragment(&[("speed", property(json!(50)))]);
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_entity_attrs(&entity_id, &fragment)
         .await
@@ -259,11 +259,11 @@ async fn dist_http_update_attrs_entity_absent_returns_404() {
 /// Confirms REQ-HTTP-76.
 #[tokio::test]
 async fn dist_http_partial_update_attr_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:partial-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -274,7 +274,7 @@ async fn dist_http_partial_update_attr_local_returns_204() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .partial_update_attr(&entity_id, "speed", &json!({ "value": 60, "@context": context_link() }))
         .await
@@ -287,14 +287,14 @@ async fn dist_http_partial_update_attr_local_returns_204() {
 /// to `207` with an `UpdateResult` (clause 6.3.16). Confirms REQ-HTTP-76.
 #[tokio::test]
 async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:partial-207");
     let reg_id = topology.id("registration:partial-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -305,7 +305,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["updateAttrs"]))
             .await
@@ -315,7 +315,7 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
     mock.set_stub(Method::PATCH, &forwarded_attr_path(&entity_id, "speed"), 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .partial_update_attr(&entity_id, "speed", &json!({ "value": 60, "@context": context_link() }))
         .await
@@ -330,11 +330,11 @@ async fn dist_http_partial_update_attr_partial_failure_returns_207_update_result
 /// (clause 6.7.3.1). Confirms REQ-HTTP-76.
 #[tokio::test]
 async fn dist_http_partial_update_attr_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:partial-400");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -345,7 +345,7 @@ async fn dist_http_partial_update_attr_invalid_returns_400() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .partial_update_attr(
             &entity_id,
@@ -362,11 +362,11 @@ async fn dist_http_partial_update_attr_invalid_returns_400() {
 /// Confirms REQ-HTTP-76.
 #[tokio::test]
 async fn dist_http_partial_update_attr_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:partial-404");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -377,7 +377,7 @@ async fn dist_http_partial_update_attr_absent_returns_404() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .partial_update_attr(&entity_id, "color", &json!({ "value": "red", "@context": context_link() }))
         .await

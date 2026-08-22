@@ -6,7 +6,7 @@ use crate::{
     map::subscription_document::{set_watched_attributes, subscription},
     notification_adapter::NotificationAdapter,
     oracle::{assert_problem_details, assert_status, json_body, location},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
@@ -22,10 +22,15 @@ const INERT_ENDPOINT: &str = "http://127.0.0.1:9/notify";
 /// `400 BadRequestData` (clause 5.8.1). Confirms REQ-MAP-1.
 #[tokio::test]
 async fn sub_create_malformed_body_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:malformed");
     let body = json!({ "id": id, "type": "Subscription", "@context": COMPOUND_CONTEXT.as_str() });
-    let response = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -35,12 +40,12 @@ async fn sub_create_malformed_body_returns_400() {
 /// (clause 5.8.1). Confirms REQ-MAP-2.
 #[tokio::test]
 async fn sub_create_duplicate_id_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:duplicate");
     let body = subscription(&id, INERT_ENDPOINT);
-    let first = topology.front().client().create_subscription(&body).await.expect("first create");
+    let first = topology.broker(BrokerRole::A).client().create_subscription(&body).await.expect("first create");
     assert_status(&first, 201);
-    let second = topology.front().client().create_subscription(&body).await.expect("second create");
+    let second = topology.broker(BrokerRole::A).client().create_subscription(&body).await.expect("second create");
     assert_status(&second, 409);
     assert_problem_details(&second, ALREADY_EXISTS);
     topology.finish().await.expect("topology cleanup");
@@ -50,12 +55,17 @@ async fn sub_create_duplicate_id_returns_409() {
 /// `Location` (clause 5.8.1). Confirms REQ-MAP-3, REQ-MAP-36.
 #[tokio::test]
 async fn sub_create_without_id_returns_generated_uri() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mut body = subscription(&topology.id("Subscription:generated"), INERT_ENDPOINT);
     body.as_object_mut()
         .unwrap_or_else(|| unreachable!("subscription baseline is an object"))
         .remove("id");
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
     let generated = location(&created)
         .rsplit('/')
@@ -64,7 +74,7 @@ async fn sub_create_without_id_returns_generated_uri() {
         .to_owned();
     assert!(generated.starts_with("urn:"), "generated subscription id is a URI: {generated}");
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_subscription(&generated)
         .await
@@ -75,14 +85,19 @@ async fn sub_create_without_id_returns_generated_uri() {
 /// A future `expiresAt` is accepted and stored (clause 5.2.12). Confirms REQ-MAP-5.
 #[tokio::test]
 async fn sub_create_with_expires_at_stores_expiration() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:expires");
     let mut body = subscription(&id, INERT_ENDPOINT);
     body["expiresAt"] = json!("2999-01-01T00:00:00Z");
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .without_default_context()
         .retrieve_subscription(&id, None)
@@ -100,11 +115,16 @@ async fn sub_create_with_expires_at_stores_expiration() {
 /// Confirms REQ-MAP-6.
 #[tokio::test]
 async fn sub_create_past_expires_at_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:past-expires");
     let mut body = subscription(&id, INERT_ENDPOINT);
     body["expiresAt"] = json!("2000-01-01T00:00:00Z");
-    let response = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -114,12 +134,22 @@ async fn sub_create_past_expires_at_returns_400() {
 /// (clause 5.2.12). Confirms REQ-MAP-7.
 #[tokio::test]
 async fn sub_create_without_expires_at_is_perpetual() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:perpetual");
     let body = subscription(&id, INERT_ENDPOINT);
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription");
     assert!(json_body(&retrieved)["expiresAt"].is_null(), "a perpetual subscription stores no expiresAt");
     topology.finish().await.expect("topology cleanup");
 }
@@ -127,12 +157,22 @@ async fn sub_create_without_expires_at_is_perpetual() {
 /// An absent `isActive` yields `status` `active` (clause 5.2.12). Confirms REQ-MAP-8.
 #[tokio::test]
 async fn sub_create_is_active_absent_or_true_status_active() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:active");
     let body = subscription(&id, INERT_ENDPOINT);
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription");
     assert_eq!(
         json_body(&retrieved)["status"].as_str(),
         Some("active"),
@@ -144,13 +184,23 @@ async fn sub_create_is_active_absent_or_true_status_active() {
 /// `isActive` false yields `status` `paused` (clause 5.2.12). Confirms REQ-MAP-9.
 #[tokio::test]
 async fn sub_create_is_active_false_status_paused() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:paused");
     let mut body = subscription(&id, INERT_ENDPOINT);
     body["isActive"] = json!(false);
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription");
     assert_eq!(
         json_body(&retrieved)["status"].as_str(),
         Some("paused"),
@@ -166,14 +216,19 @@ async fn sub_create_is_active_false_status_paused() {
 /// uncompacted, so its expanded IRI is visible. Confirms REQ-MAP-11.
 #[tokio::test]
 async fn sub_create_watched_attributes_expanded_and_stored() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:watched");
     let mut body = subscription(&id, INERT_ENDPOINT);
     set_watched_attributes(&mut body, &["speed"]);
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .without_default_context()
         .retrieve_subscription(&id, None)
@@ -195,14 +250,24 @@ async fn sub_create_watched_attributes_expanded_and_stored() {
 /// context (clause 5.8.1). Confirms REQ-MAP-14.
 #[tokio::test]
 async fn sub_create_notification_context_resolves_from_jsonld_context() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:notif-context");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["jsonldContext"] = json!(COMPOUND_CONTEXT.as_str());
-    let created = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&created, 201);
-    let retrieved = topology.front().client().retrieve_subscription(&id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_subscription(&id, None)
+        .await
+        .expect("retrieve subscription");
     assert_eq!(
         json_body(&retrieved)["jsonldContext"].as_str(),
         Some(COMPOUND_CONTEXT.as_str()),
@@ -216,11 +281,16 @@ async fn sub_create_notification_context_resolves_from_jsonld_context() {
 /// (clause 5.8.1). Confirms REQ-MAP-15.
 #[tokio::test]
 async fn sub_create_unreachable_jsonld_context_returns_504() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:unreachable-context");
     let mut body = subscription(&id, INERT_ENDPOINT);
     body["jsonldContext"] = json!("http://127.0.0.1:9/context.jsonld");
-    let response = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&response, 504);
     assert_problem_details(&response, LD_CONTEXT_NOT_AVAILABLE);
     topology.finish().await.expect("topology cleanup");
@@ -230,11 +300,16 @@ async fn sub_create_unreachable_jsonld_context_returns_504() {
 /// (clause 5.8.1). Confirms REQ-MAP-16.
 #[tokio::test]
 async fn sub_create_invalid_jsonld_context_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("Subscription:invalid-context");
     let mut body = subscription(&id, INERT_ENDPOINT);
     body["jsonldContext"] = json!(42);
-    let response = topology.front().client().create_subscription(&body).await.expect("create subscription");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_subscription(&body)
+        .await
+        .expect("create subscription");
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");

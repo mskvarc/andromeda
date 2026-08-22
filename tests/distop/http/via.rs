@@ -9,7 +9,7 @@ use crate::{
     map::csr_subscription::{FORWARD_TIMEOUT, FORWARDED_SUBSCRIPTIONS_PATH, stub_subscription_endpoints},
     oracle::{assert_status, via_pseudonyms},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -33,7 +33,7 @@ fn vehicle_subscription(id: &str, notify: &str) -> Value {
 /// forwarding broker (clause 6.3.18). Confirms REQ-HTTP-37.
 #[tokio::test]
 async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resources() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:via-carried");
     let reg_id = topology.id("registration:via-carried");
     let mock = ContextSourceAdapter::start().await;
@@ -41,7 +41,7 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
     let registration = retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -51,7 +51,7 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", Some(context_link()))
         .await
@@ -73,7 +73,7 @@ async fn dist_http_forwarded_request_carries_via_header_on_all_distributed_resou
 /// Confirms REQ-HTTP-38.
 #[tokio::test]
 async fn dist_http_chain_forward_appends_broker_host_alias_to_via() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let front = topology.broker(BrokerRole::A);
     let middle = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:via-chain");
@@ -121,7 +121,7 @@ async fn dist_http_chain_forward_appends_broker_host_alias_to_via() {
 /// Confirms REQ-HTTP-39.
 #[tokio::test]
 async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:via-excluded");
     let reg_id = topology.id("registration:via-excluded");
     let alias = "cs-mock-excluded";
@@ -135,7 +135,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -146,7 +146,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &one_vehicle).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -175,7 +175,7 @@ async fn dist_http_incoming_via_excludes_listed_source_from_matching() {
 /// 201 returns.
 #[tokio::test]
 async fn dist_http_subscription_create_excludes_via_listed_source() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:sub-via-excluded");
     let alias = "cs-sub-excluded";
     let mock = ContextSourceAdapter::start().await;
@@ -188,7 +188,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -198,7 +198,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
 
     let sub_id = topology.id("Subscription:sub-via-excluded");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/subscriptions")
         .header("content-type", "application/ld+json")
@@ -223,7 +223,7 @@ async fn dist_http_subscription_create_excludes_via_listed_source() {
 /// forwarded companion copy: a guard against the exclusion firing too broadly.
 #[tokio::test]
 async fn dist_http_subscription_create_without_via_forwards_to_source() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:sub-via-selected");
     let mock = ContextSourceAdapter::start().await;
     stub_subscription_endpoints(&mock).await;
@@ -235,7 +235,7 @@ async fn dist_http_subscription_create_without_via_forwards_to_source() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&registration)
             .await
@@ -245,7 +245,7 @@ async fn dist_http_subscription_create_without_via_forwards_to_source() {
 
     let sub_id = topology.id("Subscription:sub-via-selected");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/subscriptions")
         .header("content-type", "application/ld+json")

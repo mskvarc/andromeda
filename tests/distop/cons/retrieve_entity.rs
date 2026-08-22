@@ -10,7 +10,7 @@ use crate::{
     entity::{entity, property, vehicle},
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::RESOURCE_NOT_FOUND;
 use axum::http::Method;
@@ -31,9 +31,9 @@ fn observed_dataset(value: i64, observed_at: &str, dataset_id: &str) -> Value {
 /// even if the source itself has nothing (clause 5.7.1.4). Confirms REQ-CONS-1.
 #[tokio::test]
 async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons1");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
 
     let no_registration = front.client().get_entity(&entity_id, "", "application/ld+json", None).await.expect("retrieve");
     assert_status(&no_registration, 404);
@@ -64,9 +64,9 @@ async fn distop_retrieve_entity_no_local_no_registration_returns_404() {
 /// remote attributes are merged on top (clause 5.7.1.4). Confirms REQ-CONS-2.
 #[tokio::test]
 async fn distop_retrieve_entity_local_data_is_merge_base() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons2");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     assert_status(
@@ -105,9 +105,9 @@ async fn distop_retrieve_entity_local_data_is_merge_base() {
 /// Confirms REQ-CONS-7.
 #[tokio::test]
 async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons7");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [
@@ -154,8 +154,8 @@ async fn distop_retrieve_entity_forwards_only_retrieveentity_capable_csrs() {
 /// Confirms REQ-CONS-9.
 #[tokio::test]
 async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for mode in ["exclusive", "redirect", "inclusive"] {
@@ -193,9 +193,9 @@ async fn distop_retrieve_entity_forwards_exclusive_redirect_inclusive() {
 /// merge; a non-expired attribute survives (clause 5.7.1.4). Confirms REQ-CONS-10.
 #[tokio::test]
 async fn distop_retrieve_entity_discards_expired_remote_attribute() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons10");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons10");
@@ -232,9 +232,9 @@ async fn distop_retrieve_entity_discards_expired_remote_attribute() {
 /// distinct `datasetId` instance coexists alongside it. Confirms REQ-CONS-11.
 #[tokio::test]
 async fn distop_retrieve_entity_merges_per_4_5_5() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons11");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 

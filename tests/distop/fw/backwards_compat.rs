@@ -9,7 +9,7 @@ use crate::{
     entity::vehicle,
     oracle::{assert_status, forwarded_header, has_warning, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -31,7 +31,12 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 /// Register an inclusive query CSR at the mock and assert acceptance.
-async fn register_inclusive(topology: &DistributedTopology, endpoint: &str, name: &str, conformance: Option<&str>) {
+async fn register_inclusive(
+    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
+    endpoint: &str,
+    name: &str,
+    conformance: Option<&str>,
+) {
     let mut builder = CsrBuilder::new(&topology.id(name), endpoint)
         .mode("inclusive")
         .entity_type("Vehicle")
@@ -41,7 +46,7 @@ async fn register_inclusive(topology: &DistributedTopology, endpoint: &str, name
     }
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&builder.build())
             .await
@@ -55,7 +60,7 @@ async fn register_inclusive(topology: &DistributedTopology, endpoint: &str, name
 /// Confirms REQ-FW-56.
 #[tokio::test]
 async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_raw_body(Method::GET, FORWARDED_ENTITIES, 200, "{ this is not valid json", "application/json")
         .await;
@@ -64,7 +69,7 @@ async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
     register_inclusive(&topology, &endpoint, "registration:bc-malformed", None).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -80,7 +85,7 @@ async fn distop_entity_bc_broker_rejects_malformed_source_payload() {
 /// can amend its response to that version (clause 4.3.6.8). Confirms REQ-FW-57.
 #[tokio::test]
 async fn distop_entity_bc_broker_requests_target_version_source_amends() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -88,7 +93,7 @@ async fn distop_entity_bc_broker_requests_target_version_source_amends() {
     register_inclusive(&topology, &endpoint, "registration:bc-target-version", None).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -110,7 +115,7 @@ async fn distop_entity_bc_broker_requests_target_version_source_amends() {
 /// REQ-FW-58.
 #[tokio::test]
 async fn distop_entity_bc_version_values_are_major_minor() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -118,7 +123,7 @@ async fn distop_entity_bc_version_values_are_major_minor() {
     register_inclusive(&topology, &endpoint, "registration:bc-version-form", None).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -140,7 +145,7 @@ async fn distop_entity_bc_version_values_are_major_minor() {
 /// REQ-FW-64.
 #[tokio::test]
 async fn distop_entity_bc_source_indicates_returned_version() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:bc-returned-version");
     let source_body = json!([vehicle(&entity_id, 42)]).to_string();
@@ -151,7 +156,7 @@ async fn distop_entity_bc_source_indicates_returned_version() {
     register_inclusive(&topology, &endpoint, "registration:bc-returned-version", Some("1.3")).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await
@@ -172,7 +177,7 @@ async fn distop_entity_bc_source_indicates_returned_version() {
 /// Confirms REQ-FW-65.
 #[tokio::test]
 async fn distop_entity_bc_broker_uses_version_info_when_collating() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let modern_mock = ContextSourceAdapter::start().await;
     let legacy_mock = ContextSourceAdapter::start().await;
     let modern_id = topology.id("Vehicle:bc-modern");
@@ -190,7 +195,7 @@ async fn distop_entity_bc_broker_uses_version_info_when_collating() {
     register_inclusive(&topology, &legacy_endpoint, "registration:bc-legacy", Some("1.3")).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await

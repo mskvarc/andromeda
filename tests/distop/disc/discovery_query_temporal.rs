@@ -9,7 +9,7 @@ use crate::{
         csr_discovery::{contains, query, register, register_interval},
     },
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology,
 };
 use urlencoding::encode;
 
@@ -18,7 +18,7 @@ use urlencoding::encode;
 /// Confirms REQ-DISC-30.
 #[tokio::test]
 async fn query_csr_no_temporal_query_returns_latest_info_only() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("LatestType");
     let latest = topology.id("registration:latest");
     let temporal = topology.id("registration:temporal");
@@ -46,7 +46,7 @@ async fn query_csr_no_temporal_query_returns_latest_info_only() {
 /// latest-info ones (clauses 5.10.2, 5.12). Confirms REQ-DISC-31.
 #[tokio::test]
 async fn query_csr_temporal_query_returns_interval_bearing_only() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("IntervalType");
     let latest = topology.id("registration:interval-latest");
     let temporal = topology.id("registration:interval-temporal");
@@ -80,7 +80,7 @@ async fn query_csr_temporal_query_returns_interval_bearing_only() {
 /// (clause 5.12). Confirms REQ-DISC-32.
 #[tokio::test]
 async fn query_csr_observedat_matched_against_observation_interval() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("ObsType");
     let id = topology.id("registration:observed");
     register_interval(&topology, &id, &vtype, "observationInterval", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z").await;
@@ -113,7 +113,7 @@ async fn query_csr_observedat_matched_against_observation_interval() {
 /// registration's `managementInterval` (clause 5.12). Confirms REQ-DISC-33.
 #[tokio::test]
 async fn query_csr_management_timeproperties_matched_against_management_interval() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("MgmtType");
     let id = topology.id("registration:management");
     register_interval(&topology, &id, &vtype, "managementInterval", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z").await;
@@ -136,7 +136,7 @@ async fn query_csr_management_timeproperties_matched_against_management_interval
 /// an `observationInterval` is excluded (clause 5.12). Confirms REQ-DISC-34.
 #[tokio::test]
 async fn query_csr_relevant_interval_absent_no_match() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("AbsentType");
     let id = topology.id("registration:absent-interval");
     register_interval(&topology, &id, &vtype, "observationInterval", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z").await;
@@ -162,7 +162,7 @@ async fn query_csr_relevant_interval_absent_no_match() {
 /// (clause 5.12). Confirms REQ-DISC-35.
 #[tokio::test]
 async fn query_csr_before_after_match_within_or_at_endpoint() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("BeforeAfterType");
     let id = topology.id("registration:before-after");
     register_interval(&topology, &id, &vtype, "observationInterval", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z").await;
@@ -195,7 +195,7 @@ async fn query_csr_before_after_match_within_or_at_endpoint() {
 /// window (clause 5.12). Confirms REQ-DISC-36.
 #[tokio::test]
 async fn query_csr_between_matches_on_interval_overlap() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("BetweenType");
     let id = topology.id("registration:between");
     register_interval(&topology, &id, &vtype, "observationInterval", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z").await;

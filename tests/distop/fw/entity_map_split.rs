@@ -8,7 +8,7 @@ use crate::{
     entity::{entity, property, vehicle},
     oracle::{assert_status, entity_map_header, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -30,7 +30,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 /// 5.7.2). Confirms REQ-FW-53.
 #[tokio::test]
 async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -41,12 +41,17 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&q=speed%3E50&splitEntities=false", "application/ld+json", None)
         .await
@@ -75,8 +80,8 @@ async fn distop_entity_map_no_split_param_forwards_filters_remotely() {
 /// Confirms REQ-FW-54, REQ-FW-55.
 #[tokio::test]
 async fn distop_entity_map_split_entities_assembled_before_filtering() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
-    let front = topology.front();
+    let topology = topology::chain().await.expect("three-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let speed_source = topology.broker(BrokerRole::B);
     let fuel_source = topology.broker(BrokerRole::C);
     let entity_id = topology.id("Vehicle:split-assemble");
@@ -139,8 +144,8 @@ async fn distop_entity_map_split_entities_assembled_before_filtering() {
 /// its location (clause 5.7.2, 5.14). Confirms REQ-FW-71, REQ-FW-72.
 #[tokio::test]
 async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
-    let front = topology.front();
+    let topology = topology::chain().await.expect("three-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let source = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:unitary-map");
     assert_status(
@@ -177,11 +182,11 @@ async fn distop_entity_map_unitary_sequence_creates_and_caches_map() {
 /// (clause 5.14). Confirms REQ-FW-73.
 #[tokio::test]
 async fn distop_entity_map_suggested_expiry_honoured() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:map-expiry");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 15))
             .with_ld_json()
@@ -192,7 +197,7 @@ async fn distop_entity_map_suggested_expiry_honoured() {
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true&entityMapLifetime=PT1H", "application/ld+json", None)
         .await
@@ -200,7 +205,12 @@ async fn distop_entity_map_suggested_expiry_honoured() {
     assert_status(&created, 201);
     let map_id = entity_map_header(&created).expect("map id returned");
 
-    let retrieved = topology.front().client().retrieve_entity_map(&map_id).await.expect("retrieve map");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_entity_map(&map_id)
+        .await
+        .expect("retrieve map");
     assert_status(&retrieved, 200);
     assert!(
         json_body(&retrieved).get("expiresAt").is_some(),
@@ -214,7 +224,7 @@ async fn distop_entity_map_suggested_expiry_honoured() {
 /// broker proceeds and returns its own map (clause 5.7.2). Confirms REQ-FW-74.
 #[tokio::test]
 async fn distop_entity_map_source_may_decline_location() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:map-decline");
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 25)]))
@@ -227,12 +237,17 @@ async fn distop_entity_map_source_may_decline_location() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", None)
         .await

@@ -9,7 +9,7 @@ use crate::{
     entity::{entity, property, vehicle},
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
 use axum::http::Method;
@@ -27,8 +27,8 @@ fn ids(body: &Value) -> Vec<String> {
 /// REQ-CONS-19.
 #[tokio::test]
 async fn distop_query_entities_too_wide_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons19");
@@ -51,8 +51,8 @@ async fn distop_query_entities_too_wide_returns_400() {
 /// it the same `orderBy` succeeds (clause 5.7.2.4). Confirms REQ-CONS-20.
 #[tokio::test]
 async fn distop_query_entities_orderby_without_local_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons20");
@@ -86,8 +86,8 @@ async fn distop_query_entities_orderby_without_local_returns_400() {
 /// query forwards to none (clause 5.7.2.4). Confirms REQ-CONS-25.
 #[tokio::test]
 async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for (source, operations) in [("/s1", &["queryEntity"][..]), ("/s2", &["retrieveEntity"][..])] {
@@ -138,8 +138,8 @@ async fn distop_query_entities_forwards_matching_queryentity_csrs_local_none() {
 /// both: An entity id ... Attributes."). Confirms REQ-CONS-29.
 #[tokio::test]
 async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let mut expected = Vec::new();
@@ -174,8 +174,8 @@ async fn distop_query_entities_forwards_all_modes_returns_entity_arrays() {
 /// Array before aggregation (clause 5.7.2.4). Confirms REQ-CONS-30.
 #[tokio::test]
 async fn distop_query_entities_discards_expired_entities_in_remote_array() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let expired_id = topology.id("Vehicle:cons30-expired");
@@ -209,10 +209,10 @@ async fn distop_query_entities_discards_expired_entities_in_remote_array() {
 /// across sources, and distinct-id entities coexist. Confirms REQ-CONS-31.
 #[tokio::test]
 async fn distop_query_entities_merges_arrays_per_4_5_5() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let shared_id = topology.id("Vehicle:cons31-shared");
     let extra_id = topology.id("Vehicle:cons31-extra");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 

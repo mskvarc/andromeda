@@ -9,7 +9,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
     registration::csr_basic,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
 use reqwest::Method;
@@ -17,9 +17,9 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 /// POST a csource subscription body to the front broker.
-async fn create_csource_subscription(topology: &DistributedTopology, body: &Value) -> TestResponse {
+async fn create_csource_subscription(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, body: &Value) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/csourceSubscriptions")
         .header("content-type", "application/ld+json")
@@ -45,7 +45,7 @@ fn csource_subscription(id: &str, notification_endpoint: Value) -> Value {
 /// (clause 6.3.9). Confirms REQ-HTTP-4.
 #[tokio::test]
 async fn dist_http_csource_notification_posted_to_endpoint_uri() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let sub_id = topology.id("Subscription:csnotif-post");
     let reg_id = topology.id("registration:csnotif-post");
@@ -54,7 +54,7 @@ async fn dist_http_csource_notification_posted_to_endpoint_uri() {
     assert_status(&create_csource_subscription(&topology, &subscription).await, 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -83,7 +83,7 @@ async fn dist_http_csource_notification_posted_to_endpoint_uri() {
 /// Confirms REQ-HTTP-5.
 #[tokio::test]
 async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accept() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let json_receiver = NotificationAdapter::start().await;
     let ld_receiver = NotificationAdapter::start().await;
     let json_sub = topology.id("Subscription:csnotif-mime-json");
@@ -108,7 +108,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -144,7 +144,7 @@ async fn dist_http_csource_notification_mime_defaults_json_and_ld_json_via_accep
 /// header (clause 6.3.9). Confirms REQ-HTTP-6.
 #[tokio::test]
 async fn dist_http_csource_notification_json_target_carries_link_context() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let sub_id = topology.id("Subscription:csnotif-link");
     let reg_id = topology.id("registration:csnotif-link");
@@ -159,7 +159,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await
@@ -181,7 +181,7 @@ async fn dist_http_csource_notification_json_target_carries_link_context() {
 /// (clause 6.3.9). Confirms REQ-HTTP-7.
 #[tokio::test]
 async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let sub_id = topology.id("Subscription:csnotif-receiverinfo");
     let reg_id = topology.id("registration:csnotif-receiverinfo");
@@ -194,7 +194,7 @@ async fn dist_http_csource_notification_receiver_info_becomes_custom_headers() {
     assert_status(&create_csource_subscription(&topology, &csource_subscription(&sub_id, endpoint)).await, 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&csr_basic(&reg_id, PLACEHOLDER_ENDPOINT))
             .await

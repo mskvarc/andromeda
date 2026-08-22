@@ -5,7 +5,7 @@ use crate::{
     entity::vehicle,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 
@@ -14,7 +14,7 @@ use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 /// identities are wired as configured (clause 5.2.40).
 #[tokio::test]
 async fn topology_pair_reports_distinct_source_identities() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology is available");
+    let topology = topology::pair().await.expect("two-broker topology is available");
 
     for role in [BrokerRole::A, BrokerRole::B] {
         let broker = topology.broker(role);
@@ -41,8 +41,8 @@ async fn topology_pair_reports_distinct_source_identities() {
 /// (clause 5.7.2, exclusive mode).
 #[tokio::test]
 async fn topology_pair_exclusive_retrieve_forwards_to_peer() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology is available");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology is available");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     let entity_id = topology.id("Vehicle:smoke-exclusive");

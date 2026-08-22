@@ -9,7 +9,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::{
     context::COMPOUND_CONTEXT,
@@ -18,9 +18,9 @@ use andromeda_test_fixtures::{
 use serde_json::json;
 
 /// Create a local `Vehicle` entity holding a `speed` property on the front broker.
-async fn create_local_vehicle(topology: &DistributedTopology, id: &str, speed: i64) {
+async fn create_local_vehicle(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str, speed: i64) {
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(id, speed))
         .with_ld_json()
@@ -34,7 +34,7 @@ async fn create_local_vehicle(topology: &DistributedTopology, id: &str, speed: i
 /// existing exclusive one is rejected (clause 5.2.9). Confirms REQ-REG-55.
 #[tokio::test]
 async fn reg_exclusive_over_existing_exclusive_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:excl-excl");
     let first_id = topology.id("registration:excl-1");
     let second_id = topology.id("registration:excl-2");
@@ -44,7 +44,12 @@ async fn reg_exclusive_over_existing_exclusive_returns_409() {
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .build();
-    let created = topology.front().client().create_registration(&first).await.expect("create first exclusive");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&first)
+        .await
+        .expect("create first exclusive");
     assert_status(&created, 201);
 
     let second = CsrBuilder::new(&second_id, PEER_ENDPOINT)
@@ -53,7 +58,7 @@ async fn reg_exclusive_over_existing_exclusive_returns_409() {
         .property_names(&["speed"])
         .build();
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&second)
         .await
@@ -68,7 +73,7 @@ async fn reg_exclusive_over_existing_exclusive_returns_409() {
 /// registration is rejected (clause 5.2.9). Confirms REQ-REG-55.
 #[tokio::test]
 async fn reg_exclusive_over_existing_redirect_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:excl-redirect");
     let redirect_id = topology.id("registration:redirect-1");
     let exclusive_id = topology.id("registration:excl-over-redirect");
@@ -78,7 +83,12 @@ async fn reg_exclusive_over_existing_redirect_returns_409() {
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .build();
-    let created = topology.front().client().create_registration(&redirect).await.expect("create redirect");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&redirect)
+        .await
+        .expect("create redirect");
     assert_status(&created, 201);
 
     let exclusive = CsrBuilder::new(&exclusive_id, PEER_ENDPOINT)
@@ -87,7 +97,7 @@ async fn reg_exclusive_over_existing_redirect_returns_409() {
         .property_names(&["speed"])
         .build();
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&exclusive)
         .await
@@ -102,7 +112,7 @@ async fn reg_exclusive_over_existing_redirect_returns_409() {
 /// attribute is rejected (clause 5.2.9). Confirms REQ-REG-56.
 #[tokio::test]
 async fn reg_exclusive_over_local_entity_with_attr_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:excl-local");
     let registration_id = topology.id("registration:excl-local");
     create_local_vehicle(&topology, &entity_id, 50).await;
@@ -113,7 +123,7 @@ async fn reg_exclusive_over_local_entity_with_attr_returns_409() {
         .property_names(&["speed"])
         .build();
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&exclusive)
         .await
@@ -128,14 +138,14 @@ async fn reg_exclusive_over_local_entity_with_attr_returns_409() {
 /// (clause 5.2.9). Confirms REQ-REG-57.
 #[tokio::test]
 async fn reg_redirect_over_existing_entity_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:redirect-local");
     let registration_id = topology.id("registration:redirect-local");
     create_local_vehicle(&topology, &entity_id, 50).await;
 
     let redirect = CsrBuilder::new(&registration_id, PEER_ENDPOINT).mode("redirect").entity_id(&entity_id).build();
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&redirect)
         .await
@@ -150,7 +160,7 @@ async fn reg_redirect_over_existing_entity_returns_409() {
 /// Confirms REQ-REG-58.
 #[tokio::test]
 async fn reg_auxiliary_with_write_operation_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration_id = topology.id("registration:aux-write");
 
     let auxiliary = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
@@ -158,7 +168,7 @@ async fn reg_auxiliary_with_write_operation_returns_400() {
         .operations(&["createEntity"])
         .build();
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&auxiliary)
         .await
@@ -173,7 +183,7 @@ async fn reg_auxiliary_with_write_operation_returns_400() {
 /// (clause 5.2.9). Confirms REQ-REG-58.
 #[tokio::test]
 async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration_id = topology.id("registration:aux-consume");
 
     let auxiliary = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
@@ -181,7 +191,7 @@ async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .create_registration(&auxiliary)
         .await
@@ -195,7 +205,7 @@ async fn reg_auxiliary_with_valid_consumption_ops_accepted() {
 /// rejected (clause 5.9.3). Confirms REQ-REG-73.
 #[tokio::test]
 async fn update_producing_exclusive_overlap_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:update-overlap");
     let first_id = topology.id("registration:update-overlap-a");
     let second_id = topology.id("registration:update-overlap-b");
@@ -205,17 +215,33 @@ async fn update_producing_exclusive_overlap_returns_409() {
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .build();
-    assert_status(&topology.front().client().create_registration(&first).await.expect("create exclusive A"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&first)
+            .await
+            .expect("create exclusive A"),
+        201,
+    );
     let second = CsrBuilder::new(&second_id, PEER_ENDPOINT)
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["fuel"])
         .build();
-    assert_status(&topology.front().client().create_registration(&second).await.expect("create exclusive B"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&second)
+            .await
+            .expect("create exclusive B"),
+        201,
+    );
 
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle", "id": entity_id } ], "propertyNames": ["fuel", "speed"] } ] });
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&second_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -230,7 +256,7 @@ async fn update_producing_exclusive_overlap_returns_409() {
 /// already holds is rejected (clause 5.9.3). Confirms REQ-REG-74.
 #[tokio::test]
 async fn update_exclusive_onto_existing_entity_attr_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:update-onto-local");
     let registration_id = topology.id("registration:update-onto-local");
     create_local_vehicle(&topology, &entity_id, 50).await;
@@ -241,13 +267,18 @@ async fn update_exclusive_onto_existing_entity_attr_returns_409() {
         .property_names(&["fuel"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&exclusive).await.expect("create exclusive B"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&exclusive)
+            .await
+            .expect("create exclusive B"),
         201,
     );
 
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle", "id": entity_id } ], "propertyNames": ["fuel", "speed"] } ] });
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -262,7 +293,7 @@ async fn update_exclusive_onto_existing_entity_attr_returns_409() {
 /// rejected (clause 5.9.3). Confirms REQ-REG-75.
 #[tokio::test]
 async fn update_redirect_matching_existing_entity_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let local_id = topology.id("Vehicle:update-redirect-local");
     let other_id = topology.id("Vehicle:update-redirect-other");
     let registration_id = topology.id("registration:update-redirect");
@@ -271,7 +302,7 @@ async fn update_redirect_matching_existing_entity_returns_409() {
     let redirect = CsrBuilder::new(&registration_id, PEER_ENDPOINT).mode("redirect").entity_id(&other_id).build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&redirect)
             .await
@@ -281,7 +312,7 @@ async fn update_redirect_matching_existing_entity_returns_409() {
 
     let fragment = json!({ "information": [ { "entities": [ { "type": "Vehicle", "id": local_id } ] } ] });
     let conflict = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&registration_id, &fragment, Some(COMPOUND_CONTEXT.as_str()))
         .await
@@ -296,18 +327,26 @@ async fn update_redirect_matching_existing_entity_returns_409() {
 /// (clause 5.9.3). Confirms REQ-REG-76.
 #[tokio::test]
 async fn update_auxiliary_with_write_operation_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration_id = topology.id("registration:update-aux-write");
 
     let auxiliary = CsrBuilder::new(&registration_id, PEER_ENDPOINT)
         .mode("auxiliary")
         .operations(&["retrieveEntity", "queryEntity"])
         .build();
-    assert_status(&topology.front().client().create_registration(&auxiliary).await.expect("create auxiliary"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&auxiliary)
+            .await
+            .expect("create auxiliary"),
+        201,
+    );
 
     let fragment = json!({ "operations": ["updateEntity"] });
     let rejected = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .update_registration(&registration_id, &fragment, None)
         .await

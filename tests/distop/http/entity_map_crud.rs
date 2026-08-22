@@ -7,19 +7,19 @@ use crate::{
     context_source_adapter::ContextSourceAdapter,
     http::forwarding::{FORWARDED_ENTITIES_PATH, context_link, context_link_header, retrieval_source},
     oracle::{assert_status, entity_map_header},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::json;
 
 /// Provision an entity map by running a distributed `entityMap=true` query
 /// against a registered mock source, returning the created map id.
-async fn provision_map(topology: &DistributedTopology, mock: &ContextSourceAdapter, tag: &str) -> String {
+async fn provision_map(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, mock: &ContextSourceAdapter, tag: &str) -> String {
     let entity_id = topology.id(&format!("Vehicle:{tag}"));
     let reg_id = topology.id(&format!("registration:{tag}"));
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -28,7 +28,7 @@ async fn provision_map(topology: &DistributedTopology, mock: &ContextSourceAdapt
     );
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&entityMap=true", "application/ld+json", Some(context_link()))
         .await
@@ -39,11 +39,16 @@ async fn provision_map(topology: &DistributedTopology, mock: &ContextSourceAdapt
 /// Retrieving an entity map by id returns `200` (clause 6.31). Confirms REQ-HTTP-93.
 #[tokio::test]
 async fn dist_http_get_entity_map_by_id_returns_200() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let map_id = provision_map(&topology, &mock, "map-get").await;
 
-    let response = topology.front().client().retrieve_entity_map(&map_id).await.expect("retrieve entity map");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_entity_map(&map_id)
+        .await
+        .expect("retrieve entity map");
     assert_status(&response, 200);
 
     mock.shutdown().await;
@@ -54,9 +59,9 @@ async fn dist_http_get_entity_map_by_id_returns_200() {
 /// Confirms REQ-HTTP-93.
 #[tokio::test]
 async fn dist_http_get_entity_map_by_id_invalid_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_entity_map("not a uri")
         .await
@@ -69,10 +74,10 @@ async fn dist_http_get_entity_map_by_id_invalid_id_returns_400() {
 /// Confirms REQ-HTTP-93.
 #[tokio::test]
 async fn dist_http_get_entity_map_by_id_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let map_id = topology.id("EntityMap:unknown-get");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .retrieve_entity_map(&map_id)
         .await
@@ -84,12 +89,12 @@ async fn dist_http_get_entity_map_by_id_unknown_returns_404() {
 /// Patching an entity map expiry returns `204` (clause 6.32). Confirms REQ-HTTP-94.
 #[tokio::test]
 async fn dist_http_patch_entity_map_expiry_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let map_id = provision_map(&topology, &mock, "map-patch").await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{}", urlencoding::encode(&map_id)))
         .header("content-type", "application/json")
@@ -107,12 +112,12 @@ async fn dist_http_patch_entity_map_expiry_returns_204() {
 /// Confirms REQ-HTTP-94.
 #[tokio::test]
 async fn dist_http_patch_entity_map_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let map_id = provision_map(&topology, &mock, "map-patch-400").await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{}", urlencoding::encode(&map_id)))
         .header("content-type", "application/json")
@@ -129,10 +134,10 @@ async fn dist_http_patch_entity_map_invalid_returns_400() {
 /// Patching an unknown entity map returns `404` (clause 6.32). Confirms REQ-HTTP-94.
 #[tokio::test]
 async fn dist_http_patch_entity_map_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let map_id = topology.id("EntityMap:unknown-patch");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PATCH, &format!("/ngsi-ld/v1/entityMaps/{}", urlencoding::encode(&map_id)))
         .header("content-type", "application/json")
@@ -147,11 +152,16 @@ async fn dist_http_patch_entity_map_unknown_returns_404() {
 /// Deleting an entity map returns `204` (clause 6.33). Confirms REQ-HTTP-95.
 #[tokio::test]
 async fn dist_http_delete_entity_map_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let map_id = provision_map(&topology, &mock, "map-delete").await;
 
-    let response = topology.front().client().delete_entity_map(&map_id).await.expect("delete entity map");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_entity_map(&map_id)
+        .await
+        .expect("delete entity map");
     assert_status(&response, 204);
 
     mock.shutdown().await;
@@ -162,9 +172,9 @@ async fn dist_http_delete_entity_map_returns_204() {
 /// Confirms REQ-HTTP-95.
 #[tokio::test]
 async fn dist_http_delete_entity_map_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_entity_map("not a uri")
         .await
@@ -177,9 +187,14 @@ async fn dist_http_delete_entity_map_invalid_returns_400() {
 /// Confirms REQ-HTTP-95.
 #[tokio::test]
 async fn dist_http_delete_entity_map_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let map_id = topology.id("EntityMap:unknown-delete");
-    let response = topology.front().client().delete_entity_map(&map_id).await.expect("unknown entity map delete");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_entity_map(&map_id)
+        .await
+        .expect("unknown entity map delete");
     assert_status(&response, 404);
     topology.finish().await.expect("topology cleanup");
 }
@@ -188,13 +203,13 @@ async fn dist_http_delete_entity_map_unknown_returns_404() {
 /// (clause 6.31). Confirms REQ-HTTP-98.
 #[tokio::test]
 async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:maps-get-create");
     let reg_id = topology.id("registration:maps-get-create");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -204,7 +219,7 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle")
         .header("accept", "application/ld+json")
@@ -227,9 +242,9 @@ async fn dist_http_get_entity_maps_create_returns_201_and_map_header() {
 /// (clause 6.31). Confirms REQ-HTTP-100.
 #[tokio::test]
 async fn dist_http_get_entity_maps_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entityMaps?type=Vehicle&q=speed%3E")
         .header("accept", "application/ld+json")
@@ -245,13 +260,13 @@ async fn dist_http_get_entity_maps_invalid_returns_400() {
 /// its id in the header (clause 6.31). Confirms REQ-HTTP-101.
 #[tokio::test]
 async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:maps-post");
     let reg_id = topology.id("registration:maps-post");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -261,7 +276,7 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/entityMaps")
         .header("content-type", "application/ld+json")
@@ -287,13 +302,13 @@ async fn dist_http_post_entity_maps_query_body_returns_201_and_map_header() {
 /// of type BadRequestData shall be raised". Confirms REQ-HTTP-102.
 #[tokio::test]
 async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:tmaps-get");
     let reg_id = topology.id("registration:tmaps-get");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -303,7 +318,7 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(
             Method::GET,
@@ -331,13 +346,13 @@ async fn dist_http_get_temporal_entity_maps_create_returns_201_and_map_header() 
 /// an error of type BadRequestData shall be raised". Confirms REQ-HTTP-103.
 #[tokio::test]
 async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_header() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:tmaps-post");
     let reg_id = topology.id("registration:tmaps-post");
     let mock = ContextSourceAdapter::start().await;
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "inclusive"))
             .await
@@ -347,7 +362,7 @@ async fn dist_http_post_temporal_entity_maps_query_body_returns_201_and_map_head
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES_PATH, 200, &json!([])).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::POST, "/ngsi-ld/v1/temporal/entityMaps")
         .header("content-type", "application/ld+json")

@@ -8,7 +8,7 @@ use crate::{
     entity::{attribute_fragment, entity, property, vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -26,8 +26,8 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 /// the source attribute into one entity (clause 4.3.6.3). Confirms REQ-FW-12.
 #[tokio::test]
 async fn distop_entity_inclusive_distributes_despite_local_data_and_integrates() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:inclusive-merge");
 
@@ -62,7 +62,7 @@ async fn distop_entity_inclusive_distributes_despite_local_data_and_integrates()
 /// locally (clause 4.3.6.3). Confirms REQ-FW-11.
 #[tokio::test]
 async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distributed() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:inclusive-append");
     mock.set_stub_with_body(Method::POST, &format!("{FORWARDED_ENTITIES}/{entity_id}/attrs"), 204, &json!({}))
@@ -70,7 +70,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -88,13 +88,18 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
         .operations(&["appendAttrs"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let fragment = attribute_fragment(&[("fuel", property(json!(45)))]);
     let appended = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .append_entity_attrs(&entity_id, &fragment)
         .await
@@ -103,7 +108,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
 
     assert_eq!(mock.get_total_count().await, 1, "the append is distributed to the source");
     let local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -124,7 +129,7 @@ async fn distop_entity_inclusive_additive_provision_serviced_locally_and_distrib
 /// (clause 4.3.6.3). Confirms REQ-FW-13, REQ-FW-46.
 #[tokio::test]
 async fn distop_entity_inclusive_multiple_sources_equal_priority() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
 
@@ -146,13 +151,18 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
             .operations(&["queryEntity"])
             .build();
         assert_status(
-            &topology.front().client().create_registration(&registration).await.expect("create registration"),
+            &topology
+                .broker(BrokerRole::A)
+                .client()
+                .create_registration(&registration)
+                .await
+                .expect("create registration"),
             201,
         );
     }
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -182,7 +192,7 @@ async fn distop_entity_inclusive_multiple_sources_equal_priority() {
 /// 4.3.6.3). Confirms REQ-FW-14.
 #[tokio::test]
 async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:inclusive-default");
     mock.set_stub_with_body(
@@ -195,7 +205,7 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 10))
             .with_ld_json()
@@ -212,12 +222,17 @@ async fn distop_entity_inclusive_is_default_mode_when_unspecified() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await

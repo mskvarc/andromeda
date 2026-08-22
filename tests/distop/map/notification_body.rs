@@ -11,7 +11,7 @@ use crate::{
     },
     notification_adapter::{CapturedNotification, NotificationAdapter},
     oracle::assert_status,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::entity_attribute::DatasetSelection;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
@@ -36,12 +36,12 @@ fn notified_entity(notification: &CapturedNotification, entity_id: &str) -> Valu
 /// Confirms REQ-MAP-76.
 #[tokio::test]
 async fn notif_body_conforms_to_notification_structure() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:structure");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -50,7 +50,7 @@ async fn notif_body_conforms_to_notification_structure() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:structure"), 20))
             .with_ld_json()
@@ -72,15 +72,23 @@ async fn notif_body_conforms_to_notification_structure() {
 /// when delivered as `application/ld+json` (clause 5.8.6). Confirms REQ-MAP-77.
 #[tokio::test]
 async fn notif_context_from_subscription_jsonld_context() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:context");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["endpoint"]["accept"] = json!("application/ld+json");
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:context"), 20))
             .with_ld_json()
@@ -103,17 +111,25 @@ async fn notif_context_from_subscription_jsonld_context() {
 /// Confirms REQ-MAP-78.
 #[tokio::test]
 async fn notif_attributes_limited_to_notification_attributes() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:attrs-limited");
     let mut body = subscription(&id, &receiver.endpoint_url());
     set_notification_attributes(&mut body, &["speed"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let entity_id = topology.id("Vehicle:attrs-limited");
     let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -134,12 +150,12 @@ async fn notif_attributes_limited_to_notification_attributes() {
 /// Confirms REQ-MAP-79.
 #[tokio::test]
 async fn notif_absent_notification_attributes_includes_all() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:attrs-all");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &receiver.endpoint_url()))
             .await
@@ -150,7 +166,7 @@ async fn notif_absent_notification_attributes_includes_all() {
     let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -173,12 +189,12 @@ async fn notif_absent_notification_attributes_includes_all() {
 /// (clause 5.8.6). Confirms REQ-MAP-80.
 #[tokio::test]
 async fn notif_deletion_show_changes_off_only_deleted_at() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:deletion-off");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -190,8 +206,19 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
     let id = topology.id("Subscription:deletion-off");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notificationTrigger"] = json!(["entityDeleted"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
-    assert_status(&topology.front().client().delete_entity(&entity_id).await.expect("delete entity"), 204);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology.broker(BrokerRole::A).client().delete_entity(&entity_id).await.expect("delete entity"),
+        204,
+    );
     let notification = receiver.wait_for_subscription_notification(&id, DELIVER).await;
     let notified = notified_entity(&notification, &entity_id);
     assert!(
@@ -206,16 +233,24 @@ async fn notif_deletion_show_changes_off_only_deleted_at() {
 /// Confirms REQ-MAP-81.
 #[tokio::test]
 async fn notif_sys_attrs_true_includes_created_and_modified() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let id = topology.id("Subscription:sys-attrs");
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["sysAttrs"] = json!(true);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     let entity_id = topology.id("Vehicle:sys-attrs");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 20))
             .with_ld_json()
@@ -236,13 +271,13 @@ async fn notif_sys_attrs_true_includes_created_and_modified() {
 /// (clause 4.5.6). Confirms REQ-MAP-82.
 #[tokio::test]
 async fn notif_deleted_attribute_rendered_as_null_uri() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:deleted-null");
     let with_two = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("colour", property(json!("red")))]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -255,10 +290,18 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["showChanges"] = json!(true);
     body["notificationTrigger"] = json!(["attributeDeleted"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
             .client()
             .delete_entity_attr(&entity_id, "colour", None, DatasetSelection::Default, Some(COMPOUND_CONTEXT.as_str()))
             .await
@@ -279,14 +322,14 @@ async fn notif_deleted_attribute_rendered_as_null_uri() {
 /// information is needed (clause 4.5.6). Confirms REQ-MAP-83.
 #[tokio::test]
 async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:deleted-object-null");
     let observed = json!({ "type": "Property", "value": 20, "observedAt": "2021-01-01T00:00:00Z" });
     let with_two = entity(&entity_id, "Vehicle", &[("speed", observed), ("colour", property(json!("red")))]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&with_two)
             .with_ld_json()
@@ -299,10 +342,18 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["showChanges"] = json!(true);
     body["notificationTrigger"] = json!(["attributeDeleted"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
             .client()
             .delete_entity_attr(&entity_id, "speed", None, DatasetSelection::Default, Some(COMPOUND_CONTEXT.as_str()))
             .await
@@ -323,14 +374,14 @@ async fn notif_deleted_attribute_full_object_null_uri_when_more_info_needed() {
 /// (clause 4.5.6). Confirms REQ-MAP-84.
 #[tokio::test]
 async fn notif_deleted_language_property_language_map_null_uri() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:deleted-language");
     let language = json!({ "type": "LanguageProperty", "languageMap": { "en": "Main Street", "fr": "Rue Principale" } });
     let with_language = entity(&entity_id, "Vehicle", &[("speed", property(json!(20))), ("street", language)]);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&with_language)
             .with_ld_json()
@@ -343,10 +394,18 @@ async fn notif_deleted_language_property_language_map_null_uri() {
     let mut body = subscription(&id, &receiver.endpoint_url());
     body["notification"]["showChanges"] = json!(true);
     body["notificationTrigger"] = json!(["attributeDeleted"]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
             .client()
             .delete_entity_attr(&entity_id, "street", None, DatasetSelection::Default, Some(COMPOUND_CONTEXT.as_str()))
             .await

@@ -13,7 +13,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status},
     prov::forwarding::{FORWARD_WAIT, request_path},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::{CONFLICT, RESOURCE_NOT_FOUND};
@@ -41,8 +41,8 @@ async fn seed_local(client: &TestClient, payload: &Value) {
 /// `404 ResourceNotFound`. Confirms REQ-PROV-41 (positive).
 #[tokio::test]
 async fn delete_entity_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-delete-absent");
 
     let deleted = client.delete_entity(&entity_id).await.expect("delete entity");
@@ -56,8 +56,8 @@ async fn delete_entity_absent_and_no_registration_returns_404() {
 /// than answered `404`. Confirms REQ-PROV-41 (negative).
 #[tokio::test]
 async fn delete_entity_registration_matches_entity_absent_not_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delete-match-absent");
     let reg_id = topology.id("registration:prov-delete-match-absent");
@@ -89,8 +89,8 @@ async fn delete_entity_registration_matches_entity_absent_not_404() {
 /// Source Registration". Confirms REQ-PROV-42, 43.
 #[tokio::test]
 async fn delete_entity_exclusive_redirect_match_forwards() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delete-redirect");
     let reg_id = topology.id("registration:prov-delete-redirect");
@@ -126,8 +126,8 @@ async fn delete_entity_exclusive_redirect_match_forwards() {
 /// turn the row into a `207`. Confirms REQ-PROV-44 (complete-fail).
 #[tokio::test]
 async fn delete_entity_op_unsupported_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delete-unsup");
     let reg_id = topology.id("registration:prov-delete-unsup");
@@ -153,8 +153,8 @@ async fn delete_entity_op_unsupported_returns_409() {
 /// entity. Confirms REQ-PROV-45, 46.
 #[tokio::test]
 async fn delete_entity_inclusive_forwards_and_removes_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-delete-inclusive");
     let reg_id = topology.id("registration:prov-delete-inclusive");
@@ -188,8 +188,8 @@ async fn delete_entity_inclusive_forwards_and_removes_local() {
 /// B. Confirms REQ-PROV-42, 43.
 #[tokio::test]
 async fn delete_entity_pair_redirect_end_to_end() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:prov-delete-pair");
     let reg_id = topology.id("registration:prov-delete-pair");

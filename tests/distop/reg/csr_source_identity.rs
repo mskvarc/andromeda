@@ -9,7 +9,7 @@ use crate::{
     context_source_adapter::ContextSourceAdapter,
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -20,9 +20,9 @@ use serde_json::{Value, json};
 /// REQ-REG-47.
 #[tokio::test]
 async fn source_identity_returns_conformant_identity() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -60,9 +60,9 @@ async fn source_identity_returns_conformant_identity() {
 /// REQ-REG-48.
 #[tokio::test]
 async fn source_identity_preserves_extras_verbatim() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .source_identity(Some("application/ld+json"))
         .await
@@ -87,7 +87,7 @@ macro_rules! source_identity_rejection_cases {
         $(
             #[tokio::test]
             async fn $name() {
-                let topology = DistributedTopology::single().await.expect("single-broker topology");
+                let topology = topology::single().await.expect("single-broker topology");
                 let adapter = ContextSourceAdapter::start().await;
                 let identity: Value = $identity;
                 adapter.set_stub_with_body(Method::GET, "/ngsi-ld/v1/info/sourceIdentity", 200, &identity).await;
@@ -97,10 +97,10 @@ macro_rules! source_identity_rejection_cases {
                     .mode("auxiliary")
                     .operations(&["retrieveEntity", "queryEntity"])
                     .build();
-                let registered = topology.front().client().create_registration(&registration).await.expect("register mock source");
+                let registered = topology.broker(BrokerRole::A).client().create_registration(&registration).await.expect("register mock source");
                 assert_status(&registered, 201);
 
-                let own = topology.front().client().source_identity(Some("application/ld+json")).await.expect("broker source identity");
+                let own = topology.broker(BrokerRole::A).client().source_identity(Some("application/ld+json")).await.expect("broker source identity");
                 assert_status(&own, 200);
                 assert_eq!(
                     json_body(&own)["type"].as_str(),

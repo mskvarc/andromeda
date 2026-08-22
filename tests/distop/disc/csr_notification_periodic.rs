@@ -11,7 +11,7 @@ use crate::{
     },
     notification_adapter::NotificationAdapter,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology,
 };
 use serde_json::json;
 use std::time::Duration;
@@ -26,7 +26,7 @@ const ABSENT: Duration = Duration::from_secs(4);
 /// REQ-DISC-59, REQ-DISC-79, REQ-DISC-80.
 #[tokio::test]
 async fn csr_notification_time_interval_sends_initial_and_periodic_regardless_of_change() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("PeriodicType");
     let subscription_id = topology.id("subscription:periodic");
@@ -52,7 +52,7 @@ async fn csr_notification_time_interval_sends_initial_and_periodic_regardless_of
 /// (clause 5.11.7). Confirms REQ-DISC-80.
 #[tokio::test]
 async fn csr_notification_time_interval_periodic_includes_every_currently_matching_csr() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("PeriodicAllType");
     register(
@@ -90,7 +90,7 @@ async fn csr_notification_time_interval_periodic_includes_every_currently_matchi
 /// REQ-DISC-82, REQ-DISC-78.
 #[tokio::test]
 async fn csr_notification_no_time_interval_is_change_driven() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("ChangeDrivenType");
     let subscription_id = topology.id("subscription:change-driven");
@@ -117,7 +117,7 @@ async fn csr_notification_no_time_interval_is_change_driven() {
 /// 5.12). Confirms REQ-DISC-81, REQ-DISC-49, REQ-DISC-96.
 #[tokio::test]
 async fn csr_notification_empty_watched_or_notification_attributes_match_all() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("EmptyMatchAllType");
     let subscription_id = topology.id("subscription:empty-match-all");
@@ -150,7 +150,7 @@ async fn csr_notification_empty_watched_or_notification_attributes_match_all() {
 /// does notifies (clause 5.12). Confirms REQ-DISC-48.
 #[tokio::test]
 async fn csr_notification_watched_attributes_filter_matches_registration() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("WatchedFilterType");
     let watched = topology.id("attr:watched-filter");
@@ -193,7 +193,7 @@ async fn csr_notification_watched_attributes_filter_matches_registration() {
 /// RegistrationInfo (clause 5.11.7, SHOULD). Confirms REQ-DISC-85, REQ-DISC-84.
 #[tokio::test]
 async fn csr_notification_returns_only_matching_registration_info() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("TrimNotifType");
     let other_type = topology.id("TrimNotifOther");

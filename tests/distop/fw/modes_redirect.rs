@@ -10,7 +10,7 @@ use crate::{
     oracle::{assert_status, json_body},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -28,8 +28,13 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 }
 
 /// Register a redirect CSR and assert it is accepted with 201.
-async fn assert_redirect_accepted(topology: &DistributedTopology, registration: &Value) {
-    let created = topology.front().client().create_registration(registration).await.expect("create registration");
+async fn assert_redirect_accepted(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, registration: &Value) {
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(registration)
+        .await
+        .expect("create registration");
     assert_status(&created, 201);
 }
 
@@ -38,7 +43,7 @@ async fn assert_redirect_accepted(topology: &DistributedTopology, registration: 
 /// REQ-FW-26.
 #[tokio::test]
 async fn distop_entity_redirect_registered_data_obtained_externally() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:redirect-external");
     mock.set_stub_with_body(Method::GET, &format!("{FORWARDED_ENTITIES}/{entity_id}"), 200, &vehicle(&entity_id, 77))
@@ -52,12 +57,17 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -70,7 +80,7 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
     );
 
     let local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -89,7 +99,7 @@ async fn distop_entity_redirect_registered_data_obtained_externally() {
 /// REQ-FW-27.
 #[tokio::test]
 async fn distop_entity_redirect_registration_by_id_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:redirect-by-id");
     let registration = CsrBuilder::new(&topology.id("registration:redirect-by-id"), PEER_ENDPOINT)
         .mode("redirect")
@@ -104,7 +114,7 @@ async fn distop_entity_redirect_registration_by_id_accepted() {
 /// REQ-FW-27.
 #[tokio::test]
 async fn distop_entity_redirect_registration_by_id_pattern_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration = CsrBuilder::new(&topology.id("registration:redirect-by-idpattern"), PEER_ENDPOINT)
         .mode("redirect")
         .id_pattern("urn:ngsi-ld:Vehicle:.*")
@@ -117,7 +127,7 @@ async fn distop_entity_redirect_registration_by_id_pattern_accepted() {
 /// REQ-FW-27.
 #[tokio::test]
 async fn distop_entity_redirect_registration_type_only_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration = CsrBuilder::new(&topology.id("registration:redirect-type-only"), PEER_ENDPOINT)
         .mode("redirect")
         .entity_type("Vehicle")
@@ -130,7 +140,7 @@ async fn distop_entity_redirect_registration_type_only_accepted() {
 /// accepted (clause 5.2.9). Confirms REQ-FW-27.
 #[tokio::test]
 async fn distop_entity_redirect_registration_attributes_only_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration = CsrBuilder::new(&topology.id("registration:redirect-attrs-only"), PEER_ENDPOINT)
         .mode("redirect")
         .without_entity()
@@ -145,7 +155,7 @@ async fn distop_entity_redirect_registration_attributes_only_accepted() {
 /// with nothing local (clause 4.3.6.3). Confirms REQ-FW-28.
 #[tokio::test]
 async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:redirect-whole");
     let source_entity = entity(&entity_id, "Vehicle", &[("speed", property(json!(65))), ("fuel", property(json!(40)))]);
@@ -159,12 +169,17 @@ async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -190,7 +205,7 @@ async fn distop_entity_redirect_whole_entity_by_id_forwards_all_attributes() {
 /// (clause 4.3.6.3). Confirms REQ-FW-29.
 #[tokio::test]
 async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:redirect-fanout");
@@ -221,13 +236,18 @@ async fn distop_entity_redirect_multiple_overlapping_fan_out_to_all_sources() {
             .operations(&["queryEntity"])
             .build();
         assert_status(
-            &topology.front().client().create_registration(&registration).await.expect("create registration"),
+            &topology
+                .broker(BrokerRole::A)
+                .client()
+                .create_registration(&registration)
+                .await
+                .expect("create registration"),
             201,
         );
     }
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await

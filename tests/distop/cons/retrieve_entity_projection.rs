@@ -7,7 +7,7 @@ use crate::{
     entity::{entity, property, property_with_dataset, vehicle},
     oracle::{assert_problem_details, assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::RESOURCE_NOT_FOUND;
 use axum::http::Method;
@@ -20,9 +20,9 @@ use urlencoding::encode;
 /// one that is missing (clause 5.7.1.4, auxiliary mode). Confirms REQ-CONS-12.
 #[tokio::test]
 async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons12");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     assert_status(
@@ -60,9 +60,9 @@ async fn distop_retrieve_entity_auxiliary_added_only_when_absent() {
 /// (clause 5.5.7). Confirms REQ-CONS-14.
 #[tokio::test]
 async fn distop_retrieve_entity_expands_shorthand_attribute_names() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons14");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     let registration_id = topology.id("registration:cons14");
@@ -98,10 +98,10 @@ async fn distop_retrieve_entity_expands_shorthand_attribute_names() {
 /// `@none` keeps only the default instance (clause 5.7.1.4). Confirms REQ-CONS-15.
 #[tokio::test]
 async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons15");
     let dataset_id = topology.id("dataset:2");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder = topology.broker(BrokerRole::C);
 
     assert_status(
@@ -154,9 +154,9 @@ async fn distop_retrieve_entity_datasetid_keeps_matching_instances() {
 /// REQ-CONS-16.
 #[tokio::test]
 async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons16");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder = topology.broker(BrokerRole::C);
 
     assert_status(
@@ -202,9 +202,9 @@ async fn distop_retrieve_entity_datasetid_no_match_omits_attribute() {
 /// holder satisfies returns `200` (clause 5.7.1.4). Confirms REQ-CONS-17.
 #[tokio::test]
 async fn distop_retrieve_entity_projection_lacking_all_attrs_404_after_aggregation() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
+    let topology = topology::pair().await.expect("two-broker topology");
     let entity_id = topology.id("Vehicle:cons17");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
 
     assert_status(

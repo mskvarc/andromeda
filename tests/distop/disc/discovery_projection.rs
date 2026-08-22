@@ -12,7 +12,7 @@ use crate::{
     },
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::header::jsonld_link_header;
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
@@ -23,7 +23,7 @@ use serde_json::json;
 /// keeping `id` and `type` (clause 4.21). Confirms REQ-DISC pick projection.
 #[tokio::test]
 async fn query_csr_pick_reduces_registration_members() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:pick-projection");
     let body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
     register(&topology, &body).await;
@@ -42,7 +42,7 @@ async fn query_csr_pick_reduces_registration_members() {
 /// Confirms REQ-DISC omit projection.
 #[tokio::test]
 async fn query_csr_omit_removes_registration_members() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:omit-projection");
     let body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
     register(&topology, &body).await;
@@ -60,7 +60,7 @@ async fn query_csr_omit_removes_registration_members() {
 /// `Property` (clause 4.15). Confirms REQ-DISC lang negotiation.
 #[tokio::test]
 async fn query_csr_lang_reduces_languagemap() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:lang-projection");
     let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
     // A non-standard member so it lands in the registration's free-form
@@ -95,7 +95,7 @@ async fn query_csr_lang_reduces_languagemap() {
 /// GeoJSON geometry selection.
 #[tokio::test]
 async fn query_csr_geometry_property_selects_geometry() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let reg_id = topology.id("registration:geometry-projection");
     let mut body = CsrBuilder::new(&reg_id, PEER_ENDPOINT).entity_type("Vehicle").build();
     body["location"] = json!({"type": "GeoProperty", "value": {"type": "Point", "coordinates": [13.4, 52.5]}});
@@ -103,7 +103,7 @@ async fn query_csr_geometry_property_selects_geometry() {
 
     let link = jsonld_link_header(COMPOUND_CONTEXT.as_str()).expect("valid compound-context link header");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/csourceRegistrations?type=Vehicle&geometryProperty=location")
         .header("accept", "application/geo+json")

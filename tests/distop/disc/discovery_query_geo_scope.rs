@@ -7,7 +7,7 @@ use crate::{
         csr_discovery::{contains, query, register, register_located},
     },
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology,
 };
 use serde_json::json;
 use urlencoding::encode;
@@ -27,7 +27,7 @@ fn near_query(entity_type: &str, coordinates: [f64; 2], distance: u32, geoproper
 /// registration's `location` GeoProperty (clause 5.12). Confirms REQ-DISC-28.
 #[tokio::test]
 async fn query_csr_geoquery_defaults_to_location_geoproperty() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("GeoDefaultType");
     let id = topology.id("registration:geo-default");
     register_located(&topology, &id, &vtype, [13.404, 52.520]).await;
@@ -45,7 +45,7 @@ async fn query_csr_geoquery_defaults_to_location_geoproperty() {
 /// REQ-DISC-29.
 #[tokio::test]
 async fn query_csr_geoquery_matches_direct_and_possible_containment() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("GeoMatchType");
     let near_id = topology.id("registration:geo-near");
     let far_id = topology.id("registration:geo-far");
@@ -67,7 +67,7 @@ async fn query_csr_geoquery_matches_direct_and_possible_containment() {
 /// REQ-DISC-37.
 #[tokio::test]
 async fn query_csr_csf_matched_against_source_properties() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("CsfType");
     let gold = topology.id("registration:csf-gold");
     let silver = topology.id("registration:csf-silver");
@@ -89,7 +89,7 @@ async fn query_csr_csf_matched_against_source_properties() {
 /// elsewhere (clause 5.12). Confirms REQ-DISC-38.
 #[tokio::test]
 async fn query_csr_scope_query_matched_against_scope() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("ScopeType");
     let madrid = topology.id("registration:scope-madrid");
     let berlin = topology.id("registration:scope-berlin");

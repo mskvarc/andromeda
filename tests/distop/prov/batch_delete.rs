@@ -13,7 +13,7 @@ use crate::{
     oracle::{assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, request_path},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -22,8 +22,8 @@ use serde_json::{Value, json};
 /// Confirms REQ-PROV-73.
 #[tokio::test]
 async fn batch_delete_per_csr_filtering() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-filter-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-filter-v2");
@@ -71,8 +71,8 @@ async fn batch_delete_per_csr_filtering() {
 /// merge keyed by `registrationId`. Confirms REQ-PROV-74.
 #[tokio::test]
 async fn batch_delete_supported_forwards_and_merges() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-merge-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-merge-v2");
@@ -108,8 +108,8 @@ async fn batch_delete_supported_forwards_and_merges() {
 /// Confirms REQ-PROV-75.
 #[tokio::test]
 async fn batch_delete_fallback_per_entity_delete() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-fallback-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-fallback-v2");
@@ -141,8 +141,8 @@ async fn batch_delete_fallback_per_entity_delete() {
 /// REQ-PROV-76.
 #[tokio::test]
 async fn batch_delete_redirect_neither_op_conflict_per_entity() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-neither-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-neither-v2");
@@ -185,8 +185,8 @@ async fn batch_delete_redirect_neither_op_conflict_per_entity() {
 /// the auxiliary registration forwarding nothing. Confirms REQ-PROV-77.
 #[tokio::test]
 async fn batch_delete_local_phase_removes_ids() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:prov-batch-delete-local-v1");
     let v2 = topology.id("Vehicle:prov-batch-delete-local-v2");

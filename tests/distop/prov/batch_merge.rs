@@ -13,7 +13,7 @@ use crate::{
     oracle::{assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, attr_present, entity_with_id, forwarded_entities, request_path},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -36,8 +36,8 @@ fn error_keyed(body: &Value, registration: &str, status: u64) -> bool {
 /// an attribute-less entity is dropped from its copy. Confirms REQ-PROV-125.
 #[tokio::test]
 async fn batch_merge_per_csr_filtering_drops_attrless() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-filter-v1");
     let v2 = topology.id("Vehicle:batch-merge-filter-v2");
@@ -83,8 +83,8 @@ async fn batch_merge_per_csr_filtering_drops_attrless() {
 /// result merged keyed by `registrationId`. Confirms REQ-PROV-126.
 #[tokio::test]
 async fn batch_merge_supported_forwards_and_merges() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-merge-v1");
     let v2 = topology.id("Vehicle:batch-merge-merge-v2");
@@ -121,8 +121,8 @@ async fn batch_merge_supported_forwards_and_merges() {
 /// Merge Entity. Confirms REQ-PROV-127.
 #[tokio::test]
 async fn batch_merge_fallback_per_entity_merge() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-fb-v1");
     let v2 = topology.id("Vehicle:batch-merge-fb-v2");
@@ -159,8 +159,8 @@ async fn batch_merge_fallback_per_entity_merge() {
 /// entity with a `409 Conflict` keyed by `registrationId`. Confirms REQ-PROV-128.
 #[tokio::test]
 async fn batch_merge_redirect_neither_op_conflict_per_entity() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-noviable-v1");
     let v2 = topology.id("Vehicle:batch-merge-noviable-v2");
@@ -198,8 +198,8 @@ async fn batch_merge_redirect_neither_op_conflict_per_entity() {
 /// auxiliary registration suppresses forwarding. Confirms REQ-PROV-129.
 #[tokio::test]
 async fn batch_merge_local_phase_populates_results() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let v1 = topology.id("Vehicle:batch-merge-local-v1");
     let reg_id = topology.id("registration:batch-merge-local");

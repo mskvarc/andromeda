@@ -14,7 +14,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, request_path},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::response::TestResponse;
 use andromeda_test_fixtures::{
@@ -31,9 +31,9 @@ fn speed_node(value: i64) -> Value {
 }
 
 /// Issue the replace-attribute request against broker A for the `speed` attribute.
-async fn replace_speed(topology: &DistributedTopology, entity_id: &str, value: i64) -> TestResponse {
+async fn replace_speed(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, entity_id: &str, value: i64) -> TestResponse {
     topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{entity_id}/attrs/speed"))
         .header("content-type", "application/ld+json")
@@ -47,7 +47,7 @@ async fn replace_speed(topology: &DistributedTopology, entity_id: &str, value: i
 /// plain `404 ResourceNotFound`. Confirms REQ-PROV-119 (positive).
 #[tokio::test]
 async fn replace_attr_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:prov-replaceattr-absent");
 
     let replaced = replace_speed(&topology, &entity_id, 99).await;
@@ -61,7 +61,7 @@ async fn replace_attr_absent_and_no_registration_returns_404() {
 /// replacement rather than returning `404`. Confirms REQ-PROV-119 (negative), 120.
 #[tokio::test]
 async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-absent-reg");
     let reg_id = topology.id("registration:prov-replaceattr-absent-reg");
@@ -74,7 +74,12 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
         .operations(&["replaceAttrs", "retrieveEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
     mock.set_stub(Method::PUT, &path, 204).await;
@@ -96,8 +101,8 @@ async fn replace_attr_registration_matches_entity_absent_not_404_and_forwards() 
 /// `409 Conflict` and no forwarding. Confirms REQ-PROV-121.
 #[tokio::test]
 async fn replace_attr_op_unsupported_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-unsup");
     let reg_id = topology.id("registration:prov-replaceattr-unsup");
@@ -132,8 +137,8 @@ async fn replace_attr_op_unsupported_returns_409() {
 /// terminates without applying it locally. Confirms REQ-PROV-122.
 #[tokio::test]
 async fn replace_attr_exclusive_match_terminates_after_forwarding() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-terminate");
     let reg_id = topology.id("registration:prov-replaceattr-terminate");
@@ -189,8 +194,8 @@ async fn replace_attr_exclusive_match_terminates_after_forwarding() {
 /// it locally. Confirms REQ-PROV-123.
 #[tokio::test]
 async fn replace_attr_inclusive_forwards_remainder() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-replaceattr-inclusive");
     let reg_id = topology.id("registration:prov-replaceattr-inclusive");
@@ -236,8 +241,8 @@ async fn replace_attr_inclusive_forwards_remainder() {
 /// registration is `404 ResourceNotFound`. Confirms REQ-PROV-124.
 #[tokio::test]
 async fn replace_attr_local_present_attr_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-replaceattr-missing");
 
     let seeded = client

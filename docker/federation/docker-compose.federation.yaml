@@ -1,0 +1,169 @@
+# Five independent brokers for the federation acceptance suite.
+#
+# The published broker port is deliberately the same port used on the compose
+# network. This makes a discovered endpoint such as
+# http://fed-domain-madrid:1072 usable unchanged by a client with the test
+# harness DNS override.
+name: andromeda-fed
+
+x-postgres-base: &postgres-base
+  build:
+    context: ../postgresql
+  image: andromeda-fed-postgres:latest
+  environment:
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    POSTGRES_DB: postgres
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres"]
+    interval: 2s
+    timeout: 3s
+    retries: 40
+
+x-broker-base: &broker-base
+  build:
+    context: ../..
+    dockerfile: docker/andromeda/Dockerfile
+  image: andromeda-fed:latest
+  command: ["run"]
+  restart: unless-stopped
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  environment: &broker-env
+    ANDROMEDA_SERVER_HOST: "0.0.0.0"
+    ANDROMEDA_TENANCY_ENABLED: "true"
+    ANDROMEDA_NOTIFICATION_DELIVERY_ENABLED: "true"
+    ANDROMEDA_OBSERVABILITY_LOG_LEVEL: "info"
+    ANDROMEDA_DATABASE_MAX_CONNECTIONS: "16"
+    ANDROMEDA_TENANCY_TENANT_MAX_CONNECTIONS: "8"
+    ANDROMEDA_INFO_SOURCE_EXTRAS: '{"deployment":"federation"}'
+    ANDROMEDA_TEMPORAL_EXPIRATION_CHECK_INTERVAL_SECS: "5"
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:$${ANDROMEDA_SERVER_PORT}/ngsi-ld/v1/health >/dev/null 2>&1 || exit 1"]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+    start_period: 5s
+
+services:
+  fed-postgres-hub:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/hub:/docker-entrypoint-initdb.d:ro
+      - fed-postgres-hub-data:/var/lib/postgresql/data
+    ports:
+      - "5451:5432"
+
+  fed-postgres-madrid:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/madrid:/docker-entrypoint-initdb.d:ro
+      - fed-postgres-madrid-data:/var/lib/postgresql/data
+    ports:
+      - "5452:5432"
+
+  fed-postgres-berlin:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/berlin:/docker-entrypoint-initdb.d:ro
+      - fed-postgres-berlin-data:/var/lib/postgresql/data
+    ports:
+      - "5453:5432"
+
+  fed-postgres-nordic:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/nordic:/docker-entrypoint-initdb.d:ro
+      - fed-postgres-nordic-data:/var/lib/postgresql/data
+    ports:
+      - "5454:5432"
+
+  fed-postgres-north:
+    <<: *postgres-base
+    volumes:
+      - ./initdb/north:/docker-entrypoint-initdb.d:ro
+      - fed-postgres-north-data:/var/lib/postgresql/data
+    ports:
+      - "5455:5432"
+
+  fed-hub:
+    <<: *broker-base
+    depends_on:
+      fed-postgres-hub:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1071"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@fed-postgres-hub:5432/fed_hub"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-hub"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "fed-hub"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://fed-hub:1071"
+    ports:
+      - "1071:1071"
+
+  fed-domain-madrid:
+    <<: *broker-base
+    depends_on:
+      fed-postgres-madrid:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1072"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@fed-postgres-madrid:5432/fed_madrid"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-madrid"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "fed-domain-madrid"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://fed-domain-madrid:1072"
+    ports:
+      - "1072:1072"
+
+  fed-domain-berlin:
+    <<: *broker-base
+    depends_on:
+      fed-postgres-berlin:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1073"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@fed-postgres-berlin:5432/fed_berlin"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-berlin"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "fed-domain-berlin"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://fed-domain-berlin:1073"
+    ports:
+      - "1073:1073"
+
+  fed-domain-nordic:
+    <<: *broker-base
+    depends_on:
+      fed-postgres-nordic:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1074"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@fed-postgres-nordic:5432/fed_nordic"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-nordic"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "fed-domain-nordic"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://fed-domain-nordic:1074"
+    ports:
+      - "1074:1074"
+
+  fed-domain-north:
+    <<: *broker-base
+    depends_on:
+      fed-postgres-north:
+        condition: service_healthy
+    environment:
+      <<: *broker-env
+      ANDROMEDA_SERVER_PORT: "1075"
+      ANDROMEDA_DATABASE_URL: "postgres://postgres:postgres@fed-postgres-north:5432/fed_north"
+      ANDROMEDA_INFO_SOURCE_ID: "urn:ngsi-ld:ContextSourceIdentity:fed-domain-north"
+      ANDROMEDA_INFO_SOURCE_ALIAS: "fed-domain-north"
+      ANDROMEDA_INFO_ADVERTISED_URL: "http://fed-domain-north:1075"
+    ports:
+      - "1075:1075"
+
+volumes:
+  fed-postgres-hub-data:
+  fed-postgres-madrid-data:
+  fed-postgres-berlin-data:
+  fed-postgres-nordic-data:
+  fed-postgres-north-data:

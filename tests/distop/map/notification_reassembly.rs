@@ -14,7 +14,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::assert_status,
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::context::COMPOUND_CONTEXT;
 use serde_json::{Value, json};
@@ -24,7 +24,7 @@ use std::time::Duration;
 const DELIVER: Duration = Duration::from_secs(12);
 
 /// Register an inclusive `Vehicle` source on the front broker pointing at `role`.
-async fn register_source(topology: &DistributedTopology, role: BrokerRole, registration_local: &str) {
+async fn register_source(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, role: BrokerRole, registration_local: &str) {
     let peer = topology.broker(role);
     let registration = CsrBuilder::new(&topology.id(registration_local), peer.peer_url())
         .mode("inclusive")
@@ -32,7 +32,12 @@ async fn register_source(topology: &DistributedTopology, role: BrokerRole, regis
         .operations(&["federationOps"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("register source"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("register source"),
         201,
     );
 }
@@ -45,7 +50,12 @@ async fn register_source(topology: &DistributedTopology, role: BrokerRole, regis
 /// default setting of the deployment allows split entities", and the
 /// deployment default is complete. Returns nothing; the caller triggers a
 /// change and asserts.
-async fn setup_split(topology: &DistributedTopology, receiver: &NotificationAdapter, entity_id: &str, subscription_id: &str) {
+async fn setup_split(
+    topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>,
+    receiver: &NotificationAdapter,
+    entity_id: &str,
+    subscription_id: &str,
+) {
     register_source(topology, BrokerRole::B, "registration:split-b").await;
     register_source(topology, BrokerRole::C, "registration:split-c").await;
     let on_b = entity(entity_id, "Vehicle", &[("speed", property(json!(40)))]);
@@ -76,7 +86,7 @@ async fn setup_split(topology: &DistributedTopology, receiver: &NotificationAdap
     split_subscription["splitEntities"] = json!(true);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&split_subscription)
             .await
@@ -86,7 +96,7 @@ async fn setup_split(topology: &DistributedTopology, receiver: &NotificationAdap
 }
 
 /// Append an attribute to the B-held part so B notifies the front broker.
-async fn trigger_on_b(topology: &DistributedTopology, entity_id: &str) {
+async fn trigger_on_b(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, entity_id: &str) {
     let fragment = json!({ "mileage": property(json!(1000)), "@context": COMPOUND_CONTEXT.as_str() });
     assert_status(
         &topology
@@ -103,7 +113,7 @@ async fn trigger_on_b(topology: &DistributedTopology, entity_id: &str) {
 /// (clause 5.8.6). Confirms REQ-MAP-70.
 #[tokio::test]
 async fn notif_csf_limits_to_matching_origin_entities() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:csf-origin");
     let subscription_id = topology.id("Subscription:csf-origin");
@@ -122,7 +132,7 @@ async fn notif_csf_limits_to_matching_origin_entities() {
 /// copy (clause 5.8.6). Confirms REQ-MAP-71.
 #[tokio::test]
 async fn reassembly_inbound_mapped_subscription_id_creates_copy() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:mapped-copy");
     let subscription_id = topology.id("Subscription:mapped-copy");
@@ -142,7 +152,7 @@ async fn reassembly_inbound_mapped_subscription_id_creates_copy() {
 /// (clause 5.8.6). Confirms REQ-MAP-72.
 #[tokio::test]
 async fn reassembly_split_retrieves_local_and_all_holders_except_sender() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:holders-except-sender");
     let subscription_id = topology.id("Subscription:holders-except-sender");
@@ -167,7 +177,7 @@ async fn reassembly_split_retrieves_local_and_all_holders_except_sender() {
 /// member (clause 5.8.6). Confirms REQ-MAP-73.
 #[tokio::test]
 async fn reassembly_merges_retrieved_with_data_member() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:merge-data");
     let subscription_id = topology.id("Subscription:merge-data");
@@ -192,7 +202,7 @@ async fn reassembly_merges_retrieved_with_data_member() {
 /// (clause 5.8.6). Confirms REQ-MAP-74.
 #[tokio::test]
 async fn reassembly_removes_non_matching_after_merge() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:remove-nonmatching");
     let subscription_id = topology.id("Subscription:remove-nonmatching");
@@ -211,7 +221,15 @@ async fn reassembly_removes_non_matching_after_merge() {
     );
     let mut body = subscription(&subscription_id, &receiver.endpoint_url());
     body["q"] = json!("speed>50");
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
     trigger_on_b(&topology, &entity_id).await;
     let notification = receiver.wait_for_subscription_notification(&subscription_id, DELIVER).await;
     assert!(
@@ -226,7 +244,7 @@ async fn reassembly_removes_non_matching_after_merge() {
 /// local subscription id (clause 5.8.6). Confirms REQ-MAP-75.
 #[tokio::test]
 async fn reassembly_non_empty_copy_forwarded_to_local_endpoint_with_local_id() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let receiver = NotificationAdapter::start().await;
     let entity_id = topology.id("Vehicle:local-endpoint-copy");
     let subscription_id = topology.id("Subscription:local-endpoint-copy");

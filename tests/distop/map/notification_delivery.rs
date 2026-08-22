@@ -9,7 +9,7 @@ use crate::{
     entity::vehicle,
     map::subscription_document::subscription,
     oracle::{assert_status, forwarded_header, json_body},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::json;
@@ -27,16 +27,24 @@ const SETTLE: Duration = Duration::from_millis(750);
 /// receiver info as a header (clauses 5.8.6, 6.3.5). Confirms REQ-MAP-92.
 #[tokio::test]
 async fn notif_sent_to_endpoint_uri_with_receiver_info() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:receiver-info");
     let mut body = subscription(&id, &sink.url("/notify"));
     body["notification"]["endpoint"]["receiverInfo"] = json!([{ "key": "x-scope", "value": "acme" }]);
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:receiver-info"), 20))
             .with_ld_json()
@@ -62,15 +70,23 @@ async fn notif_sent_to_endpoint_uri_with_receiver_info() {
 /// Confirms REQ-MAP-93.
 #[tokio::test]
 async fn notif_content_type_follows_endpoint_accept() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:content-type");
     let body = subscription(&id, &sink.url("/notify"));
-    assert_status(&topology.front().client().create_subscription(&body).await.expect("create subscription"), 201);
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
+            .client()
+            .create_subscription(&body)
+            .await
+            .expect("create subscription"),
+        201,
+    );
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:content-type"), 20))
             .with_ld_json()
@@ -96,9 +112,14 @@ async fn notif_content_type_follows_endpoint_accept() {
 }
 
 /// Retrieve the subscription's `notification` sub-object after a delivery attempt.
-async fn notification_state(topology: &DistributedTopology, id: &str) -> serde_json::Value {
+async fn notification_state(topology: &andromeda_test_harness::multi_broker::MultiBrokerTopology<BrokerRole>, id: &str) -> serde_json::Value {
     sleep(SETTLE).await;
-    let retrieved = topology.front().client().retrieve_subscription(id, None).await.expect("retrieve subscription");
+    let retrieved = topology
+        .broker(BrokerRole::A)
+        .client()
+        .retrieve_subscription(id, None)
+        .await
+        .expect("retrieve subscription");
     assert_status(&retrieved, 200);
     json_body(&retrieved)["notification"].clone()
 }
@@ -107,13 +128,13 @@ async fn notification_state(topology: &DistributedTopology, id: &str) -> serde_j
 /// (clause 5.2.14). Confirms REQ-MAP-94, REQ-MAP-95.
 #[tokio::test]
 async fn notif_times_sent_and_last_notification_updated() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:times-sent");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &sink.url("/notify")))
             .await
@@ -122,7 +143,7 @@ async fn notif_times_sent_and_last_notification_updated() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:times-sent"), 20))
             .with_ld_json()
@@ -148,13 +169,13 @@ async fn notif_times_sent_and_last_notification_updated() {
 /// (clause 5.2.14). Confirms REQ-MAP-96, REQ-MAP-97.
 #[tokio::test]
 async fn notif_success_sets_status_ok_and_last_success() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 200).await;
     let id = topology.id("Subscription:success-state");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &sink.url("/notify")))
             .await
@@ -163,7 +184,7 @@ async fn notif_success_sets_status_ok_and_last_success() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:success-state"), 20))
             .with_ld_json()
@@ -190,13 +211,13 @@ async fn notif_success_sets_status_ok_and_last_success() {
 /// (clause 5.2.14). Confirms REQ-MAP-98, REQ-MAP-99.
 #[tokio::test]
 async fn notif_failure_sets_status_failed_and_last_failure() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let sink = ContextSourceAdapter::start().await;
     sink.set_stub(Method::POST, "/notify", 500).await;
     let id = topology.id("Subscription:failure-state");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_subscription(&subscription(&id, &sink.url("/notify")))
             .await
@@ -205,7 +226,7 @@ async fn notif_failure_sets_status_failed_and_last_failure() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&topology.id("Vehicle:failure-state"), 20))
             .with_ld_json()

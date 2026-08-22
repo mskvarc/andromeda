@@ -10,7 +10,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, entity_map_header, json_body},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, CONFLICT};
 use axum::http::Method;
@@ -34,7 +34,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 /// Confirms REQ-FW-19, REQ-FW-21.
 #[tokio::test]
 async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:exclusive-source");
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 201, &json!({})).await;
@@ -49,12 +49,17 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
         .operations(&["createEntity", "retrieveEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 88))
         .with_ld_json()
@@ -65,7 +70,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
     assert!(mock.get_total_count().await >= 1, "the provision is forwarded to the source");
 
     let retrieved = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", None)
         .await
@@ -78,7 +83,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
     );
 
     let local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -98,7 +103,7 @@ async fn distop_entity_exclusive_registered_attrs_served_only_from_source_none_l
 /// (clause 4.3.6.3). Confirms REQ-FW-20.
 #[tokio::test]
 async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:exclusive-mixed");
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 201, &json!({})).await;
@@ -111,12 +116,24 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
         .operations(&["createEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let body = entity(&entity_id, "Vehicle", &[("speed", property(json!(40))), ("fuel", property(json!(50)))]);
-    let created = topology.front().client().post_entity(&body).with_ld_json().send().await.expect("provision");
+    let created = topology
+        .broker(BrokerRole::A)
+        .client()
+        .post_entity(&body)
+        .with_ld_json()
+        .send()
+        .await
+        .expect("provision");
     assert!(created.status.is_success(), "the mixed provision succeeds: {}", created.status);
 
     let forwarded = mock.next_request(CAPTURE_TIMEOUT).await;
@@ -128,7 +145,7 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
     );
 
     let local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "local=true", "application/ld+json", None)
         .await
@@ -147,7 +164,7 @@ async fn distop_entity_exclusive_unregistered_attrs_may_be_held_locally() {
 /// REQ-FW-22, REQ-FW-25.
 #[tokio::test]
 async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:exclusive-conflict");
 
     let first = CsrBuilder::new(&topology.id("registration:exclusive-first"), PEER_ENDPOINT)
@@ -155,14 +172,27 @@ async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict(
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .build();
-    assert_status(&topology.front().client().create_registration(&first).await.expect("first registration"), 201);
+    assert_status(
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&first)
+            .await
+            .expect("first registration"),
+        201,
+    );
 
     let second = CsrBuilder::new(&topology.id("registration:exclusive-second"), PEER_ENDPOINT)
         .mode("exclusive")
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .build();
-    let conflict = topology.front().client().create_registration(&second).await.expect("second registration");
+    let conflict = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&second)
+        .await
+        .expect("second registration");
     assert_status(&conflict, 409);
     assert_problem_details(&conflict, CONFLICT);
 
@@ -174,7 +204,7 @@ async fn distop_entity_exclusive_second_overlapping_exclusive_rejected_conflict(
 /// REQ-FW-25.
 #[tokio::test]
 async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:exclusive-redirect-conflict");
 
     let exclusive = CsrBuilder::new(&topology.id("registration:exclusive-base"), PEER_ENDPOINT)
@@ -183,7 +213,12 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
         .property_names(&["speed"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&exclusive).await.expect("exclusive registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&exclusive)
+            .await
+            .expect("exclusive registration"),
         201,
     );
 
@@ -192,7 +227,12 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
         .entity_id(&entity_id)
         .property_names(&["speed"])
         .build();
-    let conflict = topology.front().client().create_registration(&redirect).await.expect("redirect registration");
+    let conflict = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&redirect)
+        .await
+        .expect("redirect registration");
     assert_status(&conflict, 409);
     assert_problem_details(&conflict, CONFLICT);
 
@@ -203,13 +243,18 @@ async fn distop_entity_exclusive_then_redirect_same_id_attrs_rejected() {
 /// rejected with 400 BadRequestData (clause 5.2.9). Confirms REQ-FW-23.
 #[tokio::test]
 async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration = CsrBuilder::new(&topology.id("registration:exclusive-idpattern"), PEER_ENDPOINT)
         .mode("exclusive")
         .id_pattern("urn:ngsi-ld:Vehicle:.*")
         .property_names(&["speed"])
         .build();
-    let rejected = topology.front().client().create_registration(&registration).await.expect("create registration");
+    let rejected = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&registration)
+        .await
+        .expect("create registration");
     assert_status(&rejected, 400);
     assert_problem_details(&rejected, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -219,13 +264,18 @@ async fn distop_entity_exclusive_registration_with_id_pattern_rejected() {
 /// 400 BadRequestData (clause 5.2.9). Confirms REQ-FW-23.
 #[tokio::test]
 async fn distop_entity_exclusive_registration_type_only_rejected() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration = CsrBuilder::new(&topology.id("registration:exclusive-typeonly"), PEER_ENDPOINT)
         .mode("exclusive")
         .entity_type("Vehicle")
         .property_names(&["speed"])
         .build();
-    let rejected = topology.front().client().create_registration(&registration).await.expect("create registration");
+    let rejected = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&registration)
+        .await
+        .expect("create registration");
     assert_status(&rejected, 400);
     assert_problem_details(&rejected, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -235,13 +285,18 @@ async fn distop_entity_exclusive_registration_type_only_rejected() {
 /// names is rejected with 400 BadRequestData (clause 5.2.9). Confirms REQ-FW-24.
 #[tokio::test]
 async fn distop_entity_exclusive_registration_without_attributes_rejected() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:exclusive-noattrs");
     let registration = CsrBuilder::new(&topology.id("registration:exclusive-noattrs"), PEER_ENDPOINT)
         .mode("exclusive")
         .entity_id(&entity_id)
         .build();
-    let rejected = topology.front().client().create_registration(&registration).await.expect("create registration");
+    let rejected = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&registration)
+        .await
+        .expect("create registration");
     assert_status(&rejected, 400);
     assert_problem_details(&rejected, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -252,7 +307,7 @@ async fn distop_entity_exclusive_registration_without_attributes_rejected() {
 /// 4.3.6.3, 6.3.15). Confirms REQ-FW-52.
 #[tokio::test]
 async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:exclusive-relevance");
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 33)]))
@@ -266,12 +321,17 @@ async fn distop_entity_exclusive_relevance_inferred_without_entity_map() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await

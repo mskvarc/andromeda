@@ -8,6 +8,7 @@ pub mod database_isolation;
 pub mod database_reset;
 pub mod environment;
 pub mod identifiers;
+pub mod multi_broker;
 pub mod readiness;
 pub mod run_isolated;
 pub mod serialized_environment;

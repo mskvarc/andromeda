@@ -9,7 +9,7 @@ use crate::{
     entity::{entity, property, vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -44,9 +44,9 @@ fn location_node() -> Value {
 /// pre-excluded and survives to assembly (clause 5.7.2.4). Confirms REQ-CONS-21.
 #[tokio::test]
 async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons21");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 
@@ -112,9 +112,9 @@ async fn distop_split_entity_query_split_local_applies_id_type_pattern_only() {
 /// Confirms REQ-CONS-22.
 #[tokio::test]
 async fn distop_split_entity_query_non_split_applies_full_local_filter() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:cons22");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
 
     assert_status(
         &front
@@ -145,8 +145,8 @@ async fn distop_split_entity_query_non_split_applies_full_local_filter() {
 /// only id/type on the forwarded request (clause 5.7.2.4). Confirms REQ-CONS-27.
 #[tokio::test]
 async fn distop_split_entity_query_split_strips_filters_before_forward() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for source in ["/sb", "/sc"] {
@@ -197,10 +197,10 @@ async fn distop_split_entity_query_split_strips_filters_before_forward() {
 /// (clause 5.7.2.4). Confirms REQ-CONS-28.
 #[tokio::test]
 async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let matching_id = topology.id("Vehicle:cons28-match");
     let below_id = topology.id("Vehicle:cons28-below");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 
@@ -274,9 +274,9 @@ async fn distop_split_entity_query_split_reapplies_filters_post_aggregation() {
 /// REQ-CONS-33.
 #[tokio::test]
 async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_recheck() {
-    let topology = DistributedTopology::chain().await.expect("three-broker topology");
+    let topology = topology::chain().await.expect("three-broker topology");
     let entity_id = topology.id("Vehicle:cons33");
-    let front = topology.front();
+    let front = topology.broker(BrokerRole::A);
     let holder_b = topology.broker(BrokerRole::B);
     let holder_c = topology.broker(BrokerRole::C);
 
@@ -342,8 +342,8 @@ async fn distop_split_entity_query_split_nonlocal_removes_non_matching_after_rec
 /// reinforces REQ-CONS-27 by contrast.
 #[tokio::test]
 async fn distop_split_entity_query_non_split_forwards_filters_remotely() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let front = topology.front();
+    let topology = topology::single().await.expect("single-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let mock = ContextSourceAdapter::start().await;
 
     for source in ["/sb", "/sc"] {

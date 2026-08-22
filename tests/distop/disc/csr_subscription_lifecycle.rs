@@ -12,7 +12,7 @@ use crate::{
     notification_adapter::NotificationAdapter,
     oracle::{assert_problem_details, assert_status, json_body, location},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{BAD_REQUEST_DATA, RESOURCE_NOT_FOUND};
 use serde_json::{Value, json};
@@ -35,10 +35,10 @@ fn subscription(id: &str, entity_type: &str) -> Value {
 /// (clauses 5.11.2, 5.9.2). Confirms REQ-DISC-45, REQ-DISC-47, REQ-DISC-63.
 #[tokio::test]
 async fn csr_subscription_create_valid_returns_201_and_location() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("CreateType");
     let id = topology.id("subscription:create");
-    let created = csr_subscription::create(topology.front().client(), &subscription(&id, &vtype)).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription(&id, &vtype)).await;
     assert_status(&created, 201);
     assert!(location(&created).ends_with(&id), "the Location carries the explicit subscription id");
 
@@ -47,7 +47,7 @@ async fn csr_subscription_create_valid_returns_201_and_location() {
         .as_object_mut()
         .unwrap_or_else(|| unreachable!("subscription is an object"))
         .remove("id");
-    let generated = csr_subscription::create(topology.front().client(), &without_id).await;
+    let generated = csr_subscription::create(topology.broker(BrokerRole::A).client(), &without_id).await;
     assert_status(&generated, 201);
     let tail = location(&generated);
     let tail = tail.rsplit('/').next().unwrap_or_else(|| unreachable!("Location has a final segment"));
@@ -61,7 +61,7 @@ async fn csr_subscription_create_valid_returns_201_and_location() {
 /// Confirms REQ-DISC-46.
 #[tokio::test]
 async fn csr_subscription_create_applies_local_case_validation() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("ValidationType");
     let mutations: [fn(&mut Value); 5] = [
         |body| {
@@ -77,7 +77,7 @@ async fn csr_subscription_create_applies_local_case_validation() {
     for (index, mutate) in mutations.into_iter().enumerate() {
         let mut body = subscription(&topology.id(&format!("subscription:invalid:{index}")), &vtype);
         mutate(&mut body);
-        let response = csr_subscription::create(topology.front().client(), &body).await;
+        let response = csr_subscription::create(topology.broker(BrokerRole::A).client(), &body).await;
         assert_status(&response, 400);
         assert_problem_details(&response, BAD_REQUEST_DATA);
     }
@@ -89,12 +89,12 @@ async fn csr_subscription_create_applies_local_case_validation() {
 /// one notifies (clause 5.12). Confirms REQ-DISC-52.
 #[tokio::test]
 async fn csr_subscription_create_no_temporaliq_gates_to_latest_info() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("GateType");
     let subscription_id = topology.id("subscription:gate");
     let created = csr_subscription::create(
-        topology.front().client(),
+        topology.broker(BrokerRole::A).client(),
         &CsrSubscriptionBuilder::new(&subscription_id, &adapter.endpoint_url(), &vtype).build(),
     )
     .await;
@@ -121,16 +121,16 @@ async fn csr_subscription_create_no_temporaliq_gates_to_latest_info() {
 /// subscription (clauses 5.11.3, 5.5.8). Confirms REQ-DISC-66, REQ-DISC-68.
 #[tokio::test]
 async fn csr_subscription_update_valid_returns_204_and_merges() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("MergeType");
     let id = topology.id("subscription:merge");
-    let created = csr_subscription::create(topology.front().client(), &subscription(&id, &vtype)).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription(&id, &vtype)).await;
     assert_status(&created, 201);
 
-    let updated = csr_subscription::update(topology.front().client(), &id, &json!({ "description": "merged description" })).await;
+    let updated = csr_subscription::update(topology.broker(BrokerRole::A).client(), &id, &json!({ "description": "merged description" })).await;
     assert_status(&updated, 204);
 
-    let retrieved = csr_subscription::retrieve(topology.front().client(), &id, None).await;
+    let retrieved = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), &id, None).await;
     assert_status(&retrieved, 200);
     let body = json_body(&retrieved);
     assert_eq!(body["description"].as_str(), Some("merged description"), "the patched field is stored");
@@ -142,17 +142,22 @@ async fn csr_subscription_update_valid_returns_204_and_merges() {
 /// (clause 5.11.3). Confirms REQ-DISC-64, REQ-DISC-65.
 #[tokio::test]
 async fn csr_subscription_update_invalid_id_or_fragment_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("UpdateInvalidType");
     let id = topology.id("subscription:update-invalid");
-    let created = csr_subscription::create(topology.front().client(), &subscription(&id, &vtype)).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription(&id, &vtype)).await;
     assert_status(&created, 201);
 
-    let bad_id = csr_subscription::update(topology.front().client(), "not a uri", &json!({ "description": "x" })).await;
+    let bad_id = csr_subscription::update(topology.broker(BrokerRole::A).client(), "not a uri", &json!({ "description": "x" })).await;
     assert_status(&bad_id, 400);
     assert_problem_details(&bad_id, BAD_REQUEST_DATA);
 
-    let bad_fragment = csr_subscription::update(topology.front().client(), &id, &json!({ "notification": { "format": "keyValues" } })).await;
+    let bad_fragment = csr_subscription::update(
+        topology.broker(BrokerRole::A).client(),
+        &id,
+        &json!({ "notification": { "format": "keyValues" } }),
+    )
+    .await;
     assert_status(&bad_fragment, 400);
     assert_problem_details(&bad_fragment, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -162,9 +167,9 @@ async fn csr_subscription_update_invalid_id_or_fragment_returns_400() {
 /// (clause 5.11.3). Confirms REQ-DISC-64.
 #[tokio::test]
 async fn csr_subscription_update_unknown_id_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let unknown = topology.id("subscription:unknown-update");
-    let response = csr_subscription::update(topology.front().client(), &unknown, &json!({ "description": "x" })).await;
+    let response = csr_subscription::update(topology.broker(BrokerRole::A).client(), &unknown, &json!({ "description": "x" })).await;
     assert_status(&response, 404);
     assert_problem_details(&response, RESOURCE_NOT_FOUND);
     topology.finish().await.expect("topology cleanup");
@@ -174,7 +179,7 @@ async fn csr_subscription_update_unknown_id_returns_404() {
 /// registration (clause 5.11.7). Confirms REQ-DISC-67.
 #[tokio::test]
 async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("UpdateEmitType");
     register(
@@ -194,7 +199,7 @@ async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
 
     let subscription_id = topology.id("subscription:update-emit");
     let created = csr_subscription::create(
-        topology.front().client(),
+        topology.broker(BrokerRole::A).client(),
         &CsrSubscriptionBuilder::new(&subscription_id, &adapter.endpoint_url(), &vtype).build(),
     )
     .await;
@@ -202,7 +207,12 @@ async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
     let _initial = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
     adapter.clear_notifications().await;
 
-    let updated = csr_subscription::update(topology.front().client(), &subscription_id, &json!({ "description": "re-evaluated" })).await;
+    let updated = csr_subscription::update(
+        topology.broker(BrokerRole::A).client(),
+        &subscription_id,
+        &json!({ "description": "re-evaluated" }),
+    )
+    .await;
     assert_status(&updated, 204);
     let notification = adapter.wait_for_subscription_notification(&subscription_id, PRESENT).await;
     let data = notification.body["data"]
@@ -221,13 +231,13 @@ async fn csr_subscription_update_emits_notification_with_all_matching_csrs() {
 /// 5.11.4). Confirms REQ-DISC-71.
 #[tokio::test]
 async fn csr_subscription_retrieve_existing_returns_200() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("RetrieveType");
     let id = topology.id("subscription:retrieve");
-    let created = csr_subscription::create(topology.front().client(), &subscription(&id, &vtype)).await;
+    let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription(&id, &vtype)).await;
     assert_status(&created, 201);
 
-    let retrieved = csr_subscription::retrieve(topology.front().client(), &id, None).await;
+    let retrieved = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), &id, None).await;
     assert_status(&retrieved, 200);
     assert_eq!(
         json_body(&retrieved)["id"].as_str(),
@@ -241,12 +251,12 @@ async fn csr_subscription_retrieve_existing_returns_200() {
 /// (clause 5.11.4). Confirms REQ-DISC-69, REQ-DISC-70.
 #[tokio::test]
 async fn csr_subscription_retrieve_invalid_or_unknown_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let invalid = csr_subscription::retrieve(topology.front().client(), "not a uri", None).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let invalid = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), "not a uri", None).await;
     assert_status(&invalid, 400);
     assert_problem_details(&invalid, BAD_REQUEST_DATA);
 
-    let unknown = csr_subscription::retrieve(topology.front().client(), &topology.id("subscription:unknown-retrieve"), None).await;
+    let unknown = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), &topology.id("subscription:unknown-retrieve"), None).await;
     assert_status(&unknown, 404);
     assert_problem_details(&unknown, RESOURCE_NOT_FOUND);
     topology.finish().await.expect("topology cleanup");
@@ -257,21 +267,21 @@ async fn csr_subscription_retrieve_invalid_or_unknown_id() {
 /// REQ-DISC-73, REQ-DISC-74.
 #[tokio::test]
 async fn csr_subscription_query_lists_all_with_pagination() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("QueryType");
     for index in 0..2 {
         let id = topology.id(&format!("subscription:query:{index}"));
-        let created = csr_subscription::create(topology.front().client(), &subscription(&id, &vtype)).await;
+        let created = csr_subscription::create(topology.broker(BrokerRole::A).client(), &subscription(&id, &vtype)).await;
         assert_status(&created, 201);
     }
 
-    let listed = csr_subscription::query(topology.front().client(), "limit=1").await;
+    let listed = csr_subscription::query(topology.broker(BrokerRole::A).client(), "limit=1").await;
     assert_status(&listed, 200);
     let body = json_body(&listed);
     assert!(body.is_array(), "the subscription query returns a JSON-LD array");
     assert_eq!(body.as_array().map(Vec::len), Some(1), "limit=1 bounds the page to one subscription");
 
-    let invalid = csr_subscription::query(topology.front().client(), "limit=0").await;
+    let invalid = csr_subscription::query(topology.broker(BrokerRole::A).client(), "limit=0").await;
     assert_status(&invalid, 400);
     assert_problem_details(&invalid, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -281,20 +291,20 @@ async fn csr_subscription_query_lists_all_with_pagination() {
 /// further notifications (clause 5.11.6). Confirms REQ-DISC-77.
 #[tokio::test]
 async fn csr_subscription_delete_existing_returns_204_and_stops_notifications() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let adapter = NotificationAdapter::start().await;
     let vtype = topology.id("DeleteType");
     let subscription_id = topology.id("subscription:delete");
     let created = csr_subscription::create(
-        topology.front().client(),
+        topology.broker(BrokerRole::A).client(),
         &CsrSubscriptionBuilder::new(&subscription_id, &adapter.endpoint_url(), &vtype).build(),
     )
     .await;
     assert_status(&created, 201);
 
-    let deleted = csr_subscription::delete(topology.front().client(), &subscription_id).await;
+    let deleted = csr_subscription::delete(topology.broker(BrokerRole::A).client(), &subscription_id).await;
     assert_status(&deleted, 204);
-    let retrieved = csr_subscription::retrieve(topology.front().client(), &subscription_id, None).await;
+    let retrieved = csr_subscription::retrieve(topology.broker(BrokerRole::A).client(), &subscription_id, None).await;
     assert_status(&retrieved, 404);
 
     register(
@@ -313,12 +323,12 @@ async fn csr_subscription_delete_existing_returns_204_and_stops_notifications() 
 /// (clause 5.11.6). Confirms REQ-DISC-75, REQ-DISC-76.
 #[tokio::test]
 async fn csr_subscription_delete_invalid_or_unknown_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let invalid = csr_subscription::delete(topology.front().client(), "not a uri").await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let invalid = csr_subscription::delete(topology.broker(BrokerRole::A).client(), "not a uri").await;
     assert_status(&invalid, 400);
     assert_problem_details(&invalid, BAD_REQUEST_DATA);
 
-    let unknown = csr_subscription::delete(topology.front().client(), &topology.id("subscription:unknown-delete")).await;
+    let unknown = csr_subscription::delete(topology.broker(BrokerRole::A).client(), &topology.id("subscription:unknown-delete")).await;
     assert_status(&unknown, 404);
     assert_problem_details(&unknown, RESOURCE_NOT_FOUND);
     topology.finish().await.expect("topology cleanup");

@@ -14,7 +14,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, json_body},
     prov::forwarding::{FORWARD_WAIT, attr_present},
     registration::CsrBuilder,
-    topology::{BrokerRole, DistributedTopology},
+    topology::{self, BrokerRole},
 };
 use andromeda_test_fixtures::problem_detail::{CONFLICT, RESOURCE_NOT_FOUND};
 use axum::http::Method;
@@ -29,8 +29,8 @@ fn brand_only(id: &str) -> Value {
 /// ResourceNotFound`. Confirms REQ-PROV-13 (positive).
 #[tokio::test]
 async fn update_attrs_absent_and_no_registration_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let entity_id = topology.id("Vehicle:prov-update-absent");
 
     let fragment = attribute_fragment(&[("speed", property(json!(99)))]);
@@ -45,8 +45,8 @@ async fn update_attrs_absent_and_no_registration_returns_404() {
 /// the update forwards once. Confirms REQ-PROV-13 (negative).
 #[tokio::test]
 async fn update_attrs_registration_matches_entity_absent_not_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-match-absent");
     let reg_id = topology.id("registration:prov-update-match-absent");
@@ -78,8 +78,8 @@ async fn update_attrs_registration_matches_entity_absent_not_404() {
 /// patch, and applies the remainder locally. Confirms REQ-PROV-14, 15, 17.
 #[tokio::test]
 async fn update_attrs_exclusive_match_forwards_and_strips() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-exclusive");
     let reg_id = topology.id("registration:prov-update-exclusive");
@@ -141,8 +141,8 @@ async fn update_attrs_exclusive_match_forwards_and_strips() {
 /// forwarding. Confirms REQ-PROV-16 (complete-fail).
 #[tokio::test]
 async fn update_attrs_exclusive_op_unsupported_returns_409() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-unsup");
     let reg_id = topology.id("registration:prov-update-unsup");
@@ -180,8 +180,8 @@ async fn update_attrs_exclusive_op_unsupported_returns_409() {
 /// remainder is patched locally. Confirms REQ-PROV-16 (partial), 19.
 #[tokio::test]
 async fn update_attrs_op_unsupported_with_remainder_returns_207() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-remainder");
     let reg_id = topology.id("registration:prov-update-remainder");
@@ -232,8 +232,8 @@ async fn update_attrs_op_unsupported_with_remainder_returns_207() {
 /// (clause 5.5.8). Confirms REQ-PROV-18, 19.
 #[tokio::test]
 async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let client = topology.front().client();
+    let topology = topology::single().await.expect("single-broker topology");
+    let client = topology.broker(BrokerRole::A).client();
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:prov-update-inclusive");
     let reg_id = topology.id("registration:prov-update-inclusive");
@@ -296,8 +296,8 @@ async fn update_attrs_inclusive_forwards_remainder_and_patches_local() {
 /// never stored on A. Confirms REQ-PROV-14, 15, 17.
 #[tokio::test]
 async fn update_attrs_pair_exclusive_end_to_end() {
-    let topology = DistributedTopology::pair().await.expect("two-broker topology");
-    let front = topology.front();
+    let topology = topology::pair().await.expect("two-broker topology");
+    let front = topology.broker(BrokerRole::A);
     let peer = topology.broker(BrokerRole::B);
     let entity_id = topology.id("Vehicle:prov-update-pair");
     let reg_id = topology.id("registration:prov-update-pair");

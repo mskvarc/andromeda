@@ -10,7 +10,7 @@ use crate::{
     },
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use serde_json::json;
 use urlencoding::encode;
@@ -20,7 +20,7 @@ use urlencoding::encode;
 /// one that covers a different property (clause 5.10.2). Confirms REQ-DISC-19.
 #[tokio::test]
 async fn query_csr_attributes_referenced_only_in_q_used_as_attribute_list() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("QType");
     let speed_csr = topology.id("registration:q-speed");
     let brand_csr = topology.id("registration:q-brand");
@@ -53,7 +53,7 @@ async fn query_csr_attributes_referenced_only_in_q_used_as_attribute_list() {
 /// REQ-DISC-22.
 #[tokio::test]
 async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let id = topology.id("registration:expand-match");
     register(&topology, &CsrBuilder::new(&id, PEER_ENDPOINT).entity_type("Vehicle").build()).await;
 
@@ -61,7 +61,7 @@ async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
     assert!(contains(&with_context, &id), "the compound context expands Vehicle to the registered IRI");
 
     let without_context = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .without_default_context()
         .query_registrations("type=Vehicle", None)
@@ -80,7 +80,7 @@ async fn query_csr_expands_shorthand_type_and_attr_terms_before_matching() {
 /// one part (clause 5.10.2). Confirms REQ-DISC-23.
 #[tokio::test]
 async fn query_csr_returns_only_csrs_meeting_all_conditions() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("AllType");
     let both = topology.id("registration:all-both");
     let one = topology.id("registration:all-one");
@@ -106,7 +106,7 @@ async fn query_csr_returns_only_csrs_meeting_all_conditions() {
 /// Confirms REQ-DISC-24.
 #[tokio::test]
 async fn query_csr_entity_spec_matches_entityinfo() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("PatType");
     let id = topology.id("registration:pattern");
     let covered = topology.id("Match:1");
@@ -132,7 +132,7 @@ async fn query_csr_entity_spec_matches_entityinfo() {
 /// matches any entity condition (clause 5.12). Confirms REQ-DISC-25.
 #[tokio::test]
 async fn query_csr_no_entityinfo_entity_spec_considered_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let attr = topology.id("attr:entityless");
     let id = topology.id("registration:entityless");
     register(
@@ -153,7 +153,7 @@ async fn query_csr_no_entityinfo_entity_spec_considered_matching() {
 /// or a Relationship (clause 5.12). Confirms REQ-DISC-26.
 #[tokio::test]
 async fn query_csr_attribute_name_matches_property_or_relationship() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("RelType");
     let rel = topology.id("rel:parkedIn");
     let id = topology.id("registration:relationship");
@@ -176,7 +176,7 @@ async fn query_csr_attribute_name_matches_property_or_relationship() {
 /// REQ-DISC-27.
 #[tokio::test]
 async fn query_csr_no_registered_attrs_attribute_names_considered_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("AnyAttrType");
     let id = topology.id("registration:any-attr");
     register(&topology, &CsrBuilder::new(&id, PEER_ENDPOINT).entity_type(&vtype).build()).await;
@@ -190,7 +190,7 @@ async fn query_csr_no_registered_attrs_attribute_names_considered_matching() {
 /// match the query (clause 5.10.2, SHOULD). Confirms REQ-DISC-41.
 #[tokio::test]
 async fn query_csr_returns_registrationinfo_trimmed_to_matching() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let vtype = topology.id("TrimType");
     let other_type = topology.id("TrimOther");
     let id = topology.id("registration:trim");

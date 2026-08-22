@@ -9,7 +9,7 @@ use crate::{
     oracle::{assert_problem_details, assert_status, forwarded_header},
     reg::PEER_ENDPOINT,
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::tenant_name::TenantName;
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
@@ -28,7 +28,7 @@ const FORWARDED_ENTITIES: &str = "/ngsi-ld/v1/entities";
 /// (clause 4.3.6.6). Confirms REQ-FW-33.
 #[tokio::test]
 async fn distop_entity_csi_static_header_conveyed_on_forward() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -40,12 +40,17 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
         .context_source_info("X-Auth", "abcd")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -68,7 +73,7 @@ async fn distop_entity_csi_static_header_conveyed_on_forward() {
 /// REQ-FW-34.
 #[tokio::test]
 async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -80,12 +85,17 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
         .context_source_info("user", "urn:ngsi-ld:request")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::GET, "/ngsi-ld/v1/entities?type=Vehicle")
         .header("user", "abcd")
@@ -110,12 +120,12 @@ async fn distop_entity_csi_urn_request_copies_from_triggering_request() {
 /// `contextSourceInfo` (clause 4.3.6.6). Confirms REQ-FW-35.
 #[tokio::test]
 async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
     let tenant = TenantName::parse("distopTenantCsi").expect("valid tenant name");
-    let tenant_client = topology.front().tenant_client(tenant);
+    let tenant_client = topology.broker(BrokerRole::A).tenant_client(tenant);
     let endpoint = mock.url("");
     let registration = CsrBuilder::new(&topology.id("registration:csi-tenant"), &endpoint)
         .mode("inclusive")
@@ -144,7 +154,7 @@ async fn distop_entity_csi_tenant_never_placed_inside_context_source_info() {
 /// length of the forwarded request (clause 4.3.6.6). Confirms REQ-FW-36.
 #[tokio::test]
 async fn distop_entity_csi_cannot_override_content_length() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:csi-content-length");
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 201, &json!({})).await;
@@ -158,12 +168,17 @@ async fn distop_entity_csi_cannot_override_content_length() {
         .context_source_info("Content-Length", "9999")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()
@@ -187,7 +202,7 @@ async fn distop_entity_csi_cannot_override_content_length() {
 /// `Accept` (clause 4.3.6.6). Confirms REQ-FW-37.
 #[tokio::test]
 async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -199,12 +214,17 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
         .context_source_info("accept", "application/ld+json")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -223,7 +243,7 @@ async fn distop_entity_csi_accept_ld_json_sets_forwarded_accept() {
 /// `Accept` (clause 4.3.6.6). Confirms REQ-FW-37.
 #[tokio::test]
 async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -235,12 +255,17 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
         .context_source_info("accept", "application/json")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -259,13 +284,18 @@ async fn distop_entity_csi_accept_plain_json_sets_forwarded_accept() {
 /// with 400 BadRequestData (clause 4.3.6.6, 5.2.9). Confirms REQ-FW-37.
 #[tokio::test]
 async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let registration = CsrBuilder::new(&topology.id("registration:csi-accept-invalid"), PEER_ENDPOINT)
         .mode("inclusive")
         .entity_type("Vehicle")
         .context_source_info("accept", "text/plain")
         .build();
-    let rejected = topology.front().client().create_registration(&registration).await.expect("create registration");
+    let rejected = topology
+        .broker(BrokerRole::A)
+        .client()
+        .create_registration(&registration)
+        .await
+        .expect("create registration");
     assert_status(&rejected, 400);
     assert_problem_details(&rejected, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -276,7 +306,7 @@ async fn distop_entity_csi_accept_invalid_rejected_at_registration() {
 /// REQ-FW-38.
 #[tokio::test]
 async fn distop_entity_csi_source_response_converted_to_client_type() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:csi-convert");
     let source_body = json!([{ "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 42 } }]).to_string();
@@ -290,12 +320,17 @@ async fn distop_entity_csi_source_response_converted_to_client_type() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await
@@ -315,7 +350,7 @@ async fn distop_entity_csi_source_response_converted_to_client_type() {
 /// forwarded `Content-Type` (clause 4.3.6.6). Confirms REQ-FW-39.
 #[tokio::test]
 async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:csi-ct-json");
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 201, &json!({})).await;
@@ -329,12 +364,17 @@ async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type()
         .context_source_info("contentType", "application/json")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()
@@ -359,7 +399,7 @@ async fn distop_entity_csi_content_type_json_constrains_forwarded_content_type()
 /// 4.3.6.6). Confirms REQ-FW-39, REQ-FW-40.
 #[tokio::test]
 async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_type() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:csi-ct-ld");
     mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 201, &json!({})).await;
@@ -373,12 +413,17 @@ async fn distop_entity_csi_content_type_ld_json_constrains_forwarded_content_typ
         .context_source_info("contentType", "application/ld+json")
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&entity_id, 30))
         .with_ld_json()

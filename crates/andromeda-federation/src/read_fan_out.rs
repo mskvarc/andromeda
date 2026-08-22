@@ -14,7 +14,7 @@ use crate::{
     forwarded_query::ForwardedQuery,
     operation::ForwardingOperation,
     outcome::{ForwardGetOutcome, ForwardReadOutcome, MatchedSources},
-    registration_selection::information_matches_entity,
+    registration_selection::{information_matches_entity, registration_scope_admits},
     request::{CsrModeFilter, EntityMapInUse, TriggeringRequest},
 };
 use andromeda_jsonld::{context_spec::ContextSpec, engine::term_lookup::PreparedTermContext};
@@ -25,6 +25,7 @@ use andromeda_ngsi_ld_model::{
 };
 use andromeda_ngsi_ld_query::{
     filter::{eval::evaluate as eval_q_expr, expression::Expr},
+    scope::query::ScopeQuery,
     type_selection::grammar::TypeExprRaw,
 };
 use futures::{StreamExt, stream};
@@ -44,6 +45,9 @@ pub(crate) struct ReadSelection<'a> {
     /// The expanded context source filter, evaluated against each
     /// registration's Context Source Properties (clause 4.9).
     pub(crate) csf: Option<&'a Expr>,
+    /// The client's scope query, used to avoid contacting registrations whose
+    /// declared footprint cannot satisfy it.
+    pub(crate) scope_q: Option<&'a ScopeQuery>,
     /// The operation the registration must advertise (clause 4.20).
     pub(crate) operation: ForwardingOperation,
     /// The modes this forwarding phase admits (clause 4.3.6.2).
@@ -92,6 +96,7 @@ impl FederationService {
             if !selection.operation.matches(&registration)
                 || selection.exclude_registration.is_some_and(|excluded| excluded == &registration.id)
                 || !mode_admitted(&registration, selection.mode_filter)
+                || !registration_scope_admits(&registration, selection.scope_q)
             {
                 continue;
             }

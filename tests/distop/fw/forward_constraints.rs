@@ -8,7 +8,7 @@ use crate::{
     entity::{entity, property_with_dataset, vehicle},
     oracle::{assert_status, json_body},
     registration::CsrBuilder,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use axum::http::Method;
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ fn find_entity<'a>(body: &'a Value, id: &str) -> Option<&'a Value> {
 /// request is forwarded (clause 4.3.6.3). Confirms REQ-FW-1, REQ-FW-6.
 #[tokio::test]
 async fn forward_scopes_request_to_registered_type_only() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -42,12 +42,17 @@ async fn forward_scopes_request_to_registered_type_only() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let query = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle,Device", "application/ld+json", None)
         .await
@@ -81,7 +86,7 @@ async fn forward_scopes_request_to_registered_type_only() {
 /// the client query never reach the source (clause 4.3.6.3). Confirms REQ-FW-2.
 #[tokio::test]
 async fn forward_narrows_to_registered_ids_attrs_geofence() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -95,13 +100,18 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let query = format!("type=Vehicle&id={covered},{other}&attrs=speed,fuel");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&query, "application/ld+json", None)
         .await
@@ -125,7 +135,7 @@ async fn forward_narrows_to_registered_ids_attrs_geofence() {
 /// 4.3.6.3). Confirms REQ-FW-3.
 #[tokio::test]
 async fn forward_constraint_enforced_at_broker_not_source() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -136,12 +146,17 @@ async fn forward_constraint_enforced_at_broker_not_source() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle,Device", "application/ld+json", None)
         .await
@@ -164,7 +179,7 @@ async fn forward_constraint_enforced_at_broker_not_source() {
 /// forwarded (clause 4.3.6.3, 5.7). Confirms REQ-FW-4.
 #[tokio::test]
 async fn forward_mode_governs_distribution_and_local_hold() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let inclusive_mock = ContextSourceAdapter::start().await;
     let auxiliary_mock = ContextSourceAdapter::start().await;
     inclusive_mock.set_stub_with_body(Method::POST, FORWARDED_ENTITIES, 204, &json!({})).await;
@@ -187,7 +202,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
         .build();
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&inclusive_registration)
             .await
@@ -196,7 +211,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&auxiliary_registration)
             .await
@@ -205,7 +220,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     );
 
     let inclusive_created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&inclusive_id, 40))
         .with_ld_json()
@@ -214,7 +229,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
         .expect("inclusive create");
     assert!(inclusive_created.status.is_success(), "inclusive create succeeds: {}", inclusive_created.status);
     let auxiliary_created = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .post_entity(&vehicle(&auxiliary_id, 41))
         .with_ld_json()
@@ -227,7 +242,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
     assert_eq!(auxiliary_mock.get_total_count().await, 0, "an auxiliary write is never forwarded");
 
     let inclusive_local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&inclusive_id, "local=true", "application/ld+json", None)
         .await
@@ -239,7 +254,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
         "the inclusive write is also held locally"
     );
     let auxiliary_local = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&auxiliary_id, "local=true", "application/ld+json", None)
         .await
@@ -261,7 +276,7 @@ async fn forward_mode_governs_distribution_and_local_hold() {
 /// Confirms REQ-FW-5.
 #[tokio::test]
 async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let first_mock = ContextSourceAdapter::start().await;
     let second_mock = ContextSourceAdapter::start().await;
 
@@ -289,13 +304,18 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
             .operations(&["queryEntity"])
             .build();
         assert_status(
-            &topology.front().client().create_registration(&registration).await.expect("create registration"),
+            &topology
+                .broker(BrokerRole::A)
+                .client()
+                .create_registration(&registration)
+                .await
+                .expect("create registration"),
             201,
         );
     }
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities(&format!("type=Vehicle&id={entity_id}"), "application/ld+json", None)
         .await
@@ -315,7 +335,7 @@ async fn forward_same_attribute_two_sources_distinguished_by_dataset_id() {
 /// the `queryEntity` operation (clause 4.3.6.3). Confirms REQ-FW-7.
 #[tokio::test]
 async fn forward_omits_operation_not_supported_by_source() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
 
     let endpoint = mock.url("");
@@ -325,12 +345,17 @@ async fn forward_omits_operation_not_supported_by_source() {
         .operations(&["retrieveEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -351,7 +376,7 @@ async fn forward_omits_operation_not_supported_by_source() {
 /// form is requested from the source (clause 4.3.6.3). Confirms REQ-FW-8.
 #[tokio::test]
 async fn forward_default_representation_is_normalized() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([])).await;
 
@@ -362,12 +387,17 @@ async fn forward_default_representation_is_normalized() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle", "application/ld+json", None)
         .await
@@ -398,7 +428,7 @@ async fn forward_default_representation_is_normalized() {
 /// 4.3.6.3). Confirms REQ-FW-9.
 #[tokio::test]
 async fn forward_non_normalized_format_optional_no_failure() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     mock.set_stub(Method::GET, FORWARDED_ENTITIES, 501).await;
 
@@ -409,12 +439,17 @@ async fn forward_non_normalized_format_optional_no_failure() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&options=keyValues", "application/ld+json", None)
         .await
@@ -434,7 +469,7 @@ async fn forward_non_normalized_format_optional_no_failure() {
 /// (clause 4.3.6.3). Confirms REQ-FW-10.
 #[tokio::test]
 async fn forward_system_attrs_absent_without_error() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let mock = ContextSourceAdapter::start().await;
     let entity_id = topology.id("Vehicle:sysattrs");
     mock.set_stub_with_body(Method::GET, FORWARDED_ENTITIES, 200, &json!([vehicle(&entity_id, 55)]))
@@ -447,12 +482,17 @@ async fn forward_system_attrs_absent_without_error() {
         .operations(&["queryEntity"])
         .build();
     assert_status(
-        &topology.front().client().create_registration(&registration).await.expect("create registration"),
+        &topology
+            .broker(BrokerRole::A)
+            .client()
+            .create_registration(&registration)
+            .await
+            .expect("create registration"),
         201,
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .query_entities("type=Vehicle&options=sysAttrs", "application/ld+json", None)
         .await

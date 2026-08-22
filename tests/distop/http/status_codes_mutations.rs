@@ -7,7 +7,7 @@ use crate::{
     entity::vehicle,
     http::forwarding::{context_link, forwarded_entity_path, provision_source, retrieval_source},
     oracle::assert_status,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use reqwest::Method;
 
@@ -15,9 +15,9 @@ use reqwest::Method;
 /// Confirms REQ-HTTP-68.
 #[tokio::test]
 async fn dist_http_retrieve_entity_invalid_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity("not a uri", "", "application/ld+json", Some(context_link()))
         .await
@@ -29,10 +29,10 @@ async fn dist_http_retrieve_entity_invalid_id_returns_400() {
 /// An unknown entity on retrieve returns `404` (clause 6.4.3.2). Confirms REQ-HTTP-68.
 #[tokio::test]
 async fn dist_http_retrieve_entity_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:retrieve-unknown");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -45,14 +45,14 @@ async fn dist_http_retrieve_entity_unknown_returns_404() {
 /// maps to `501` (clause 6.3.16). Confirms REQ-HTTP-68.
 #[tokio::test]
 async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:retrieve-501");
     let reg_id = topology.id("registration:retrieve-501");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&retrieval_source(&reg_id, &mock.url(""), &entity_id, "exclusive"))
             .await
@@ -62,7 +62,7 @@ async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
     mock.set_stub(Method::GET, &forwarded_entity_path(&entity_id), 501).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .get_entity(&entity_id, "", "application/ld+json", Some(context_link()))
         .await
@@ -76,11 +76,11 @@ async fn dist_http_retrieve_entity_source_unsupported_format_returns_501() {
 /// A local delete returns `204` (clause 6.4.3.3). Confirms REQ-HTTP-69.
 #[tokio::test]
 async fn dist_http_delete_entity_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delete-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -90,7 +90,7 @@ async fn dist_http_delete_entity_local_returns_204() {
         201,
     );
 
-    let response = topology.front().client().delete_entity(&entity_id).await.expect("local delete");
+    let response = topology.broker(BrokerRole::A).client().delete_entity(&entity_id).await.expect("local delete");
     assert_status(&response, 204);
     topology.finish().await.expect("topology cleanup");
 }
@@ -99,14 +99,14 @@ async fn dist_http_delete_entity_local_returns_204() {
 /// `207` (clause 6.3.16). Confirms REQ-HTTP-69.
 #[tokio::test]
 async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delete-207");
     let reg_id = topology.id("registration:delete-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -117,7 +117,7 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteEntity"]))
             .await
@@ -126,7 +126,12 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
     );
     mock.set_stub(Method::DELETE, &forwarded_entity_path(&entity_id), 500).await;
 
-    let response = topology.front().client().delete_entity(&entity_id).await.expect("forwarded delete");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_entity(&entity_id)
+        .await
+        .expect("forwarded delete");
     assert_status(&response, 207);
 
     mock.shutdown().await;
@@ -137,8 +142,13 @@ async fn dist_http_delete_entity_partial_failure_returns_207_batch_result() {
 /// Confirms REQ-HTTP-69.
 #[tokio::test]
 async fn dist_http_delete_entity_invalid_id_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = topology.front().client().delete_entity("not a uri").await.expect("invalid delete");
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = topology
+        .broker(BrokerRole::A)
+        .client()
+        .delete_entity("not a uri")
+        .await
+        .expect("invalid delete");
     assert_status(&response, 400);
     topology.finish().await.expect("topology cleanup");
 }
@@ -146,9 +156,9 @@ async fn dist_http_delete_entity_invalid_id_returns_400() {
 /// An unknown entity on delete returns `404` (clause 6.4.3.3). Confirms REQ-HTTP-69.
 #[tokio::test]
 async fn dist_http_delete_entity_unknown_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delete-unknown");
-    let response = topology.front().client().delete_entity(&entity_id).await.expect("unknown delete");
+    let response = topology.broker(BrokerRole::A).client().delete_entity(&entity_id).await.expect("unknown delete");
     assert_status(&response, 404);
     topology.finish().await.expect("topology cleanup");
 }

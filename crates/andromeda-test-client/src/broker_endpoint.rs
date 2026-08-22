@@ -1,7 +1,7 @@
 //! Validated endpoint of the broker under test.
 
 use crate::transport_error::EndpointError;
-use std::env;
+use std::{env, net::SocketAddr};
 use url::Url;
 
 /// Environment variable containing the broker's NGSI-LD v1 base URL.
@@ -16,6 +16,34 @@ pub const fn default_broker_endpoint() -> &'static str {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BrokerEndpoint {
     url: Url,
+}
+
+/// A deterministic host-to-address mapping used when a test receives a
+/// compose-network endpoint but sends the follow-up request from the host.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrokerDnsOverride {
+    hostname: String,
+    address: SocketAddr,
+}
+
+impl BrokerDnsOverride {
+    /// Associate a broker hostname with a published socket address.
+    pub fn new(hostname: impl Into<String>, address: SocketAddr) -> BrokerDnsOverride {
+        BrokerDnsOverride {
+            hostname: hostname.into(),
+            address,
+        }
+    }
+
+    /// Borrow the hostname passed to reqwest's resolver override.
+    pub fn hostname(&self) -> &str {
+        &self.hostname
+    }
+
+    /// Return the address used for the override.
+    pub const fn address(&self) -> SocketAddr {
+        self.address
+    }
 }
 
 impl BrokerEndpoint {

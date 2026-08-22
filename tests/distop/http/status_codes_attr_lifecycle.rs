@@ -7,7 +7,7 @@ use crate::{
     entity::vehicle,
     http::forwarding::{FORWARDED_BATCH_MERGE_PATH, context_link, forwarded_attr_path, provision_source},
     oracle::assert_status,
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::entity_attribute::DatasetSelection;
 use reqwest::Method;
@@ -16,11 +16,11 @@ use serde_json::json;
 /// A local attribute delete returns `204` (clause 6.7.3.2). Confirms REQ-HTTP-77.
 #[tokio::test]
 async fn dist_http_delete_attr_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delattr-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -31,7 +31,7 @@ async fn dist_http_delete_attr_local_returns_204() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_entity_attr(&entity_id, "speed", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -44,14 +44,14 @@ async fn dist_http_delete_attr_local_returns_204() {
 /// mapped to `207` (clause 6.3.16). Confirms REQ-HTTP-77.
 #[tokio::test]
 async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delattr-207");
     let reg_id = topology.id("registration:delattr-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -62,7 +62,7 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["deleteAttrs"]))
             .await
@@ -72,7 +72,7 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
     mock.set_stub(Method::DELETE, &forwarded_attr_path(&entity_id, "speed"), 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_entity_attr(&entity_id, "speed", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -87,9 +87,9 @@ async fn dist_http_delete_attr_partial_failure_returns_207_update_result() {
 /// (clause 6.7.3.2). Confirms REQ-HTTP-77.
 #[tokio::test]
 async fn dist_http_delete_attr_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_entity_attr("not a uri", "speed", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -101,11 +101,11 @@ async fn dist_http_delete_attr_invalid_returns_400() {
 /// Deleting an absent attribute returns `404` (clause 6.7.3.2). Confirms REQ-HTTP-77.
 #[tokio::test]
 async fn dist_http_delete_attr_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:delattr-404");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -116,7 +116,7 @@ async fn dist_http_delete_attr_absent_returns_404() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .delete_entity_attr(&entity_id, "color", None, DatasetSelection::Default, Some(context_link()))
         .await
@@ -128,11 +128,11 @@ async fn dist_http_delete_attr_absent_returns_404() {
 /// A local attribute replace returns `204` (clause 6.7.3.3). Confirms REQ-HTTP-78.
 #[tokio::test]
 async fn dist_http_replace_attr_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:repattr-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -143,7 +143,7 @@ async fn dist_http_replace_attr_local_returns_204() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/speed", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -160,14 +160,14 @@ async fn dist_http_replace_attr_local_returns_204() {
 /// the Table 4.20-1 name of 5.6.19 Replace Attribute. Confirms REQ-HTTP-78.
 #[tokio::test]
 async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:repattr-207");
     let reg_id = topology.id("registration:repattr-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -178,7 +178,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["replaceAttrs"]))
             .await
@@ -188,7 +188,7 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
     mock.set_stub(Method::PUT, &forwarded_attr_path(&entity_id, "speed"), 500).await;
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/speed", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -206,11 +206,11 @@ async fn dist_http_replace_attr_partial_failure_returns_207_update_result() {
 /// (clause 6.7.3.3). Confirms REQ-HTTP-78.
 #[tokio::test]
 async fn dist_http_replace_attr_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:repattr-400");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -221,7 +221,7 @@ async fn dist_http_replace_attr_invalid_returns_400() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/speed", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -236,11 +236,11 @@ async fn dist_http_replace_attr_invalid_returns_400() {
 /// Replacing an absent attribute returns `404` (clause 6.7.3.3). Confirms REQ-HTTP-78.
 #[tokio::test]
 async fn dist_http_replace_attr_absent_returns_404() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:repattr-404");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -251,7 +251,7 @@ async fn dist_http_replace_attr_absent_returns_404() {
     );
 
     let response = topology
-        .front()
+        .broker(BrokerRole::A)
         .client()
         .raw(Method::PUT, &format!("/ngsi-ld/v1/entities/{}/attrs/color", urlencoding::encode(&entity_id)))
         .header("content-type", "application/ld+json")
@@ -266,11 +266,11 @@ async fn dist_http_replace_attr_absent_returns_404() {
 /// A local batch merge returns `204` (clause 6.20.3.1). Confirms REQ-HTTP-92.
 #[tokio::test]
 async fn dist_http_batch_merge_local_returns_204() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:batch-merge-204");
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -281,7 +281,7 @@ async fn dist_http_batch_merge_local_returns_204() {
     );
 
     let body = json!([ { "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 99 }, "@context": context_link() } ]);
-    let response = topology.front().client().batch_merge(&body).await.expect("local batch merge");
+    let response = topology.broker(BrokerRole::A).client().batch_merge(&body).await.expect("local batch merge");
     assert_status(&response, 204);
     topology.finish().await.expect("topology cleanup");
 }
@@ -293,14 +293,14 @@ async fn dist_http_batch_merge_local_returns_204() {
 /// REQ-HTTP-92.
 #[tokio::test]
 async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:batch-merge-207");
     let reg_id = topology.id("registration:batch-merge-207");
     let mock = ContextSourceAdapter::start().await;
 
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .post_entity(&vehicle(&entity_id, 5))
             .with_ld_json()
@@ -311,7 +311,7 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     );
     assert_status(
         &topology
-            .front()
+            .broker(BrokerRole::A)
             .client()
             .create_registration(&provision_source(&reg_id, &mock.url(""), &entity_id, "inclusive", &["mergeBatch"]))
             .await
@@ -321,7 +321,7 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
     mock.set_stub(Method::POST, FORWARDED_BATCH_MERGE_PATH, 500).await;
 
     let body = json!([ { "id": entity_id, "type": "Vehicle", "speed": { "type": "Property", "value": 99 }, "@context": context_link() } ]);
-    let response = topology.front().client().batch_merge(&body).await.expect("forwarded batch merge");
+    let response = topology.broker(BrokerRole::A).client().batch_merge(&body).await.expect("forwarded batch merge");
     assert_status(&response, 207);
 
     mock.shutdown().await;
@@ -332,9 +332,9 @@ async fn dist_http_batch_merge_partial_failure_returns_207_batch_result() {
 /// Confirms REQ-HTTP-92.
 #[tokio::test]
 async fn dist_http_batch_merge_invalid_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let body = json!([ { "speed": { "type": "Property", "value": 1 }, "@context": context_link() } ]);
-    let response = topology.front().client().batch_merge(&body).await.expect("invalid batch merge");
+    let response = topology.broker(BrokerRole::A).client().batch_merge(&body).await.expect("invalid batch merge");
     assert_status(&response, 400);
     topology.finish().await.expect("topology cleanup");
 }

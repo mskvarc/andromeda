@@ -8,7 +8,7 @@ use crate::{
         temporal_vehicle::{BEFORE_2022, temporal_vehicle},
     },
     oracle::{assert_problem_details, assert_status, json_body},
-    topology::DistributedTopology,
+    topology::{self, BrokerRole},
 };
 use andromeda_test_client::test_client::TestClient;
 use andromeda_test_fixtures::problem_detail::BAD_REQUEST_DATA;
@@ -28,8 +28,8 @@ async fn seed_temporal(client: &TestClient, id: &str, speed: i64) {
 /// Confirms REQ-MAP-132.
 #[tokio::test]
 async fn emt_no_temporal_query_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.front().client(), "type=Vehicle").await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), "type=Vehicle").await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -39,9 +39,9 @@ async fn emt_no_temporal_query_returns_400() {
 /// Confirms REQ-MAP-133.
 #[tokio::test]
 async fn emt_at_least_one_filter_accepted() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    seed_temporal(topology.front().client(), &topology.id("Vehicle:temporal-filter"), 20).await;
-    let response = create_temporal_entity_map(topology.front().client(), &format!("type=Vehicle&{BEFORE_2022}")).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    seed_temporal(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:temporal-filter"), 20).await;
+    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&{BEFORE_2022}")).await;
     assert_status(&response, 201);
     topology.finish().await.expect("topology cleanup");
 }
@@ -50,8 +50,8 @@ async fn emt_at_least_one_filter_accepted() {
 /// Confirms REQ-MAP-134.
 #[tokio::test]
 async fn emt_no_filter_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.front().client(), BEFORE_2022).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), BEFORE_2022).await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -61,8 +61,12 @@ async fn emt_no_filter_returns_400() {
 /// Confirms REQ-MAP-135.
 #[tokio::test]
 async fn emt_linked_entity_retrieval_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.front().client(), &format!("type=Vehicle&join=inline&joinLevel=99&{BEFORE_2022}")).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).client(),
+        &format!("type=Vehicle&join=inline&joinLevel=99&{BEFORE_2022}"),
+    )
+    .await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -72,8 +76,8 @@ async fn emt_linked_entity_retrieval_returns_400() {
 /// (clause 5.14.5). Confirms REQ-MAP-136.
 #[tokio::test]
 async fn emt_invalid_id_q_geoq_csf_returns_400() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    let response = create_temporal_entity_map(topology.front().client(), &format!("id=not-a-uri&{BEFORE_2022}")).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    let response = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("id=not-a-uri&{BEFORE_2022}")).await;
     assert_status(&response, 400);
     assert_problem_details(&response, BAD_REQUEST_DATA);
     topology.finish().await.expect("topology cleanup");
@@ -83,10 +87,10 @@ async fn emt_invalid_id_q_geoq_csf_returns_400() {
 /// (clause 5.14.5). Confirms REQ-MAP-137.
 #[tokio::test]
 async fn emt_expands_type_and_attribute_terms() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-expand");
-    seed_temporal(topology.front().client(), &entity_id, 20).await;
-    let created = create_temporal_entity_map(topology.front().client(), &format!("type=Vehicle&attrs=speed&{BEFORE_2022}")).await;
+    seed_temporal(topology.broker(BrokerRole::A).client(), &entity_id, 20).await;
+    let created = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&attrs=speed&{BEFORE_2022}")).await;
     assert_status(&created, 201);
     assert!(
         json_body(&created)["entityMap"].get(&entity_id).is_some(),
@@ -99,9 +103,9 @@ async fn emt_expands_type_and_attribute_terms() {
 /// Confirms REQ-MAP-138.
 #[tokio::test]
 async fn emt_applies_jsonld_type_coercion() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
-    seed_temporal(topology.front().client(), &topology.id("Vehicle:temporal-coercion"), 20).await;
-    let created = create_temporal_entity_map(topology.front().client(), &format!("type=Vehicle&{BEFORE_2022}")).await;
+    let topology = topology::single().await.expect("single-broker topology");
+    seed_temporal(topology.broker(BrokerRole::A).client(), &topology.id("Vehicle:temporal-coercion"), 20).await;
+    let created = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&{BEFORE_2022}")).await;
     assert_status(&created, 201);
     assert_eq!(
         json_body(&created)["type"].as_str(),
@@ -114,10 +118,10 @@ async fn emt_applies_jsonld_type_coercion() {
 /// `lastN` selects the last N instances (clause 5.14.5). Confirms REQ-MAP-139.
 #[tokio::test]
 async fn emt_last_n_selects_last_n_instances() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-lastn");
-    seed_temporal(topology.front().client(), &entity_id, 20).await;
-    let created = create_temporal_entity_map(topology.front().client(), &format!("type=Vehicle&lastN=2&{BEFORE_2022}")).await;
+    seed_temporal(topology.broker(BrokerRole::A).client(), &entity_id, 20).await;
+    let created = create_temporal_entity_map(topology.broker(BrokerRole::A).client(), &format!("type=Vehicle&lastN=2&{BEFORE_2022}")).await;
     assert_status(&created, 201);
     assert!(
         json_body(&created)["entityMap"].get(&entity_id).is_some(),
@@ -130,10 +134,14 @@ async fn emt_last_n_selects_last_n_instances() {
 /// (clause 5.14.5). Confirms REQ-MAP-141.
 #[tokio::test]
 async fn emt_temporal_filtering_removes_out_of_interval_entities() {
-    let topology = DistributedTopology::single().await.expect("single-broker topology");
+    let topology = topology::single().await.expect("single-broker topology");
     let entity_id = topology.id("Vehicle:temporal-out-of-interval");
-    seed_temporal(topology.front().client(), &entity_id, 20).await;
-    let created = create_temporal_entity_map(topology.front().client(), "type=Vehicle&timerel=before&timeAt=2020-01-01T00:00:00Z").await;
+    seed_temporal(topology.broker(BrokerRole::A).client(), &entity_id, 20).await;
+    let created = create_temporal_entity_map(
+        topology.broker(BrokerRole::A).client(),
+        "type=Vehicle&timerel=before&timeAt=2020-01-01T00:00:00Z",
+    )
+    .await;
     assert_status(&created, 201);
     assert!(
         json_body(&created)["entityMap"].get(&entity_id).is_none(),
