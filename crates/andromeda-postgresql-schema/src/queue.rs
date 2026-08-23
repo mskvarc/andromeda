@@ -28,6 +28,8 @@ pub enum PendingSideEffects {
     Table,
     /// Job surrogate identity, minted by the enqueue
     Id,
+    /// Context-space partition that owns the deferred consequences.
+    ContextSpaceKey,
     /// Instant the job was enqueued, the dead-letter retention clock
     CreatedAt,
     /// Identity of the write that enqueued the job, the deduplication key
@@ -59,6 +61,8 @@ pub enum TemporalAppendIntents {
     Table,
     /// Monotonic queue sequence, the row identity workers order and claim by
     Sequence,
+    /// Context-space partition that owns the deferred append.
+    ContextSpaceKey,
     /// Identity of the write that produced the intent
     WriteId,
     /// Entity the intent appends temporal history for

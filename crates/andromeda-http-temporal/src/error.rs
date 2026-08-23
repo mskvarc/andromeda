@@ -1,6 +1,5 @@
 //! Exhaustive classification for every typed failure consumed by temporal routes.
 
-use crate::snapshot_scope::TemporalSnapshotError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
 use andromeda_http_extraction::classification::{classify_jsonld_error, classify_parameter_error, classify_query_error, classify_tenancy_error};
@@ -54,15 +53,6 @@ pub(crate) fn single_source_declined(status: u16, instance: &Uri) -> ProblemResp
         format!("the registered context source holding the requested data answered HTTP {status}: it does not support the requested representation"),
     )
     .with_instance(instance.clone())
-}
-
-impl TemporalHttpClassify for TemporalSnapshotError {
-    fn classify_for_temporal_http(&self) -> ClassifiedReport {
-        match self {
-            TemporalSnapshotError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
-            TemporalSnapshotError::Internal { .. } => ClassifiedReport::internal(self),
-        }
-    }
 }
 
 impl TemporalHttpClassify for EntityMapError {

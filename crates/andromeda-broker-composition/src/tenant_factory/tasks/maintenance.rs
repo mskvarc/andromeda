@@ -1,7 +1,7 @@
 //! Durable entity side-effect and spatial-maintenance task registration.
 
 use crate::tenant_factory::error::TenantAssemblyError;
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::context_change_event::ContextChangeEvent;
 use andromeda_entity::{
     error::EntityError,
     port::spatial_snapshot::EntitySpatialSnapshotSource,
@@ -99,7 +99,7 @@ pub(super) fn register_entity_side_effect_reap(
 
 pub(super) fn register_spatial_synchronization(
     supervisor: &TaskSupervisor,
-    changes: broadcast::Sender<ChangeEvent>,
+    changes: broadcast::Sender<ContextChangeEvent>,
     synchronizer: Arc<SpatialSynchronizer>,
 ) -> Result<(), TenantAssemblyError> {
     let restart_delay = Duration::from_secs(1);

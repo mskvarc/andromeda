@@ -6,7 +6,6 @@ pub mod error;
 mod join;
 mod operation_query;
 pub mod routes;
-pub mod snapshot_scope;
 pub mod state;
 mod temporal;
 

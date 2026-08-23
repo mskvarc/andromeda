@@ -28,11 +28,15 @@ use crate::entity::{
     selected_dataset_uri,
 };
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn partial_update_attr(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
@@ -56,29 +60,32 @@ pub(crate) async fn partial_update_attr(
 
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::Entities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: Some(&attr_id),
-            method: Method::PATCH,
-            body: Some(&fragment_body),
-            context: &context,
-            operation: ForwardingOperation::PartialUpdateAttribute,
-            path_suffix: Some(&path_suffix),
-            query_string: qs.as_deref(),
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::Entities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: Some(&attr_id),
+                method: Method::PATCH,
+                body: Some(&fragment_body),
+                context: &context,
+                operation: ForwardingOperation::PartialUpdateAttribute,
+                path_suffix: Some(&path_suffix),
+                query_string: qs.as_deref(),
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
         service
-            .partial_update_attr(&id, &attr_id, dataset_id, fragment, &context)
+            .partial_update_attr(&target, &id, &attr_id, dataset_id, fragment, &context)
             .await
             .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -90,7 +97,7 @@ pub(crate) async fn partial_update_attr(
         LocalOutcome::NothingRemained
     } else {
         LocalOutcome::processed(
-            service.partial_update_attr(&id, &attr_id, dataset_id, fragment, &context).await,
+            service.partial_update_attr(&target, &id, &attr_id, dataset_id, fragment, &context).await,
             classify_entity_error,
         )
     };

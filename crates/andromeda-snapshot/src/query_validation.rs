@@ -6,10 +6,10 @@
 use crate::error::SnapshotError;
 use andromeda_ngsi_ld_model::query::body::Query;
 
-/// Rejects empty snapshot requests and queries placed in the wrong collection.
+/// Reject requests that omit both collections and queries placed in the wrong collection.
 pub fn validate_snapshot_query_shapes(snapshot_queries: Option<&[Query]>, snapshot_temporal_queries: Option<&[Query]>) -> Result<(), SnapshotError> {
-    if snapshot_queries.is_none_or(<[Query]>::is_empty) && snapshot_temporal_queries.is_none_or(<[Query]>::is_empty) {
-        return Err(SnapshotError::validation("At least one non-empty snapshot query collection is required"));
+    if snapshot_queries.is_none() && snapshot_temporal_queries.is_none() {
+        return Err(SnapshotError::validation("At least one snapshot query collection is required"));
     }
     if let Some(queries) = snapshot_queries
         && let Some(index) = queries.iter().position(|query| query.temporal_q.is_some())
@@ -70,9 +70,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_query_collections_are_rejected() {
+    fn omitted_query_collections_are_rejected_but_present_empty_collections_are_accepted() {
         assert!(validate_snapshot_query_shapes(None, None).is_err());
-        assert!(validate_snapshot_query_shapes(Some(&[]), Some(&[])).is_err());
+        assert!(validate_snapshot_query_shapes(Some(&[]), None).is_ok());
+        assert!(validate_snapshot_query_shapes(None, Some(&[])).is_ok());
+        assert!(validate_snapshot_query_shapes(Some(&[]), Some(&[])).is_ok());
     }
 
     #[test]

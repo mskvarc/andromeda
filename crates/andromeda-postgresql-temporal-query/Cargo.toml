@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-query.workspace = true
+andromeda-context-space.workspace = true
 andromeda-postgresql-codes.workspace = true
 andromeda-postgresql-query.workspace = true
 andromeda-postgresql-schema.workspace = true

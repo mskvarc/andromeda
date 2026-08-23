@@ -8,6 +8,7 @@
 //! payload.
 
 use crate::notification_event::NotificationEvent;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use chrono::{DateTime, Utc};
 use derive_more::{Display, From};
@@ -27,6 +28,8 @@ impl DeliveryId {
 /// A claimed delivery together with the event payload it must deliver.
 #[derive(Clone, Debug, TypedBuilder)]
 pub struct DeliveryEntry {
+    /// Context branch whose subscription and entity state the event belongs to.
+    pub target: ContextTarget,
     /// Auto-generated delivery identifier, the subject of every acknowledgement.
     pub id: DeliveryId,
     /// Subscription that matched the change and must be notified.

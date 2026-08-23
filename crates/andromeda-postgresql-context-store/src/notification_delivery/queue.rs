@@ -111,6 +111,7 @@ fn readable(claimed: Result<ClaimedDelivery, impl Display>) -> Option<DeliveryEn
 /// Project one validated delivery into the value the port hands the worker.
 fn entry(delivery: ClaimedDelivery) -> DeliveryEntry {
     DeliveryEntry::builder()
+        .target(delivery.target)
         .id(DeliveryId::from(delivery.id))
         .subscription_id(delivery.subscription_id)
         .attempt_count(delivery.attempt_count)
@@ -139,6 +140,11 @@ mod tests {
         rows::ClaimedDelivery,
     };
     use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_notification::{
         delivery_entry::DeliveryId,
@@ -151,6 +157,11 @@ mod tests {
 
     fn delivery() -> ClaimedDelivery {
         ClaimedDelivery {
+            target: ContextTarget::live(ContextSpace::new(
+                ContextSpaceKey::try_from(1).expect("positive context-space key"),
+                ContextSpaceKind::Live,
+            ))
+            .expect("live context target"),
             id: 11,
             subscription_id: "urn:ngsi-ld:Subscription:1".parse().expect("a valid subscription URI"),
             attempt_count: 1,

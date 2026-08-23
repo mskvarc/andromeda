@@ -10,6 +10,7 @@ use andromeda_context_commit::{
     history_record::HistoryRecord,
     precondition::Precondition,
 };
+use andromeda_context_space::context_target::ContextTarget;
 #[cfg(test)]
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{
@@ -25,6 +26,7 @@ use tracing::warn;
 
 /// One entity-policy-owned bounded expiry operation.
 pub struct EntityExpirySweep {
+    target: ContextTarget,
     entity_policy: Arc<EntityService>,
     source: Arc<dyn EntityExpirySource>,
     batch_size: EntityExpiryBatchSize,
@@ -32,8 +34,14 @@ pub struct EntityExpirySweep {
 
 impl EntityExpirySweep {
     /// Construct expiry policy over its semantic service and candidate source.
-    pub const fn new(entity_policy: Arc<EntityService>, source: Arc<dyn EntityExpirySource>, batch_size: EntityExpiryBatchSize) -> EntityExpirySweep {
+    pub const fn new(
+        target: ContextTarget,
+        entity_policy: Arc<EntityService>,
+        source: Arc<dyn EntityExpirySource>,
+        batch_size: EntityExpiryBatchSize,
+    ) -> EntityExpirySweep {
         EntityExpirySweep {
+            target,
             entity_policy,
             source,
             batch_size,
@@ -45,10 +53,13 @@ impl EntityExpirySweep {
         if self.entity_policy.batch_activity.is_within_cooldown() {
             return Ok(EntityExpiryOutcome::DeferredForBatchActivity);
         }
-        let expired_entities = self.entity_policy.expire_due_entities(self.source.as_ref(), cutoff, self.batch_size).await?;
+        let expired_entities = self
+            .entity_policy
+            .expire_due_entities(&self.target, self.source.as_ref(), cutoff, self.batch_size)
+            .await?;
         let purged_attributes = self
             .entity_policy
-            .purge_expired_attributes(self.source.as_ref(), cutoff, self.batch_size)
+            .purge_expired_attributes(&self.target, self.source.as_ref(), cutoff, self.batch_size)
             .await?;
         Ok(EntityExpiryOutcome::Applied {
             expired_entities,
@@ -107,14 +118,15 @@ impl EntityService {
     /// Delete every entity-level expiry candidate through normal entity deletion policy.
     async fn expire_due_entities(
         &self,
+        target: &ContextTarget,
         source: &dyn EntityExpirySource,
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
     ) -> Result<usize, EntityError> {
-        let candidates = source.entities_due_for_expiry(cutoff, batch_size).await?;
+        let candidates = source.entities_due_for_expiry(target, cutoff, batch_size).await?;
         let mut expired = 0usize;
         for entity_id in candidates {
-            match self.delete(&entity_id).await {
+            match self.delete(target, &entity_id).await {
                 Ok(()) => expired += 1,
                 Err(EntityError::NotFound { identifier: _ }) => {}
                 Err(error) => return Err(error),
@@ -126,11 +138,12 @@ impl EntityService {
     /// Remove every past-due attribute instance and record its history tombstone atomically.
     async fn purge_expired_attributes(
         &self,
+        target: &ContextTarget,
         source: &dyn EntityExpirySource,
         cutoff: DateTime<Utc>,
         batch_size: EntityExpiryBatchSize,
     ) -> Result<usize, EntityError> {
-        let candidates = source.entities_with_expired_attributes(cutoff, batch_size).await?;
+        let candidates = source.entities_with_expired_attributes(target, cutoff, batch_size).await?;
         let mut writes = Vec::new();
         let mut pending = Vec::new();
         for (identifier, snapshot) in candidates {
@@ -140,7 +153,7 @@ impl EntityService {
             };
             let types = extract_types(&purged.current);
             let groups = attribute_change_groups(&purged.previous, &purged.current);
-            let plan = self.plan_notifications(&identifier, &types, &groups, Some(&purged.current), Some(&purged.previous));
+            let plan = self.plan_notifications(target, &identifier, &types, &groups, Some(&purged.current), Some(&purged.previous));
             writes.push(
                 AtomicWrite::builder()
                     .entity_id(Arc::new(identifier.clone()))
@@ -156,12 +169,12 @@ impl EntityService {
             return Ok(0);
         }
 
-        let outcomes = self.writes.commit(writes).await?;
+        let outcomes = self.writes.commit(target, writes).await?;
         let mut landed = 0;
         for ((_, events), outcome) in pending.into_iter().zip(&outcomes) {
             if outcome.is_updated() {
                 landed += 1;
-                events.into_iter().for_each(|event| self.emit_change(event));
+                events.into_iter().for_each(|event| self.emit_change(target, event));
             }
         }
         Ok(landed)

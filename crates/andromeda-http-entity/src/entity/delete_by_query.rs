@@ -28,7 +28,7 @@ use crate::entity::{
 };
 use andromeda_entity::side_effect::BatchSideEffectMode;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use axum::http::HeaderMap;
 use std::slice;
 
@@ -47,7 +47,11 @@ fn merge_forwarded_purges(result: &mut BatchOperationResult, forwarded: &[Forwar
 }
 
 pub(crate) async fn delete_by_query(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
@@ -73,7 +77,7 @@ pub(crate) async fn delete_by_query(
     };
 
     let compiled = state.entity_query.compile_query_uncapped(&query, &context).await.with_entity_instance(&uri)?;
-    let entity_ids: Vec<Uri> = state.entity_query.query_ids(&compiled).await.with_entity_instance(&uri)?;
+    let entity_ids: Vec<Uri> = state.entity_query.query_ids(&target, &compiled).await.with_entity_instance(&uri)?;
 
     // Clause 5.6.21.4: the local phase deletes the matched entities, or only
     // the listed (or all but the listed) members of each.
@@ -81,7 +85,7 @@ pub(crate) async fn delete_by_query(
         PurgeMode::Drop(_) | PurgeMode::Keep(_) => {
             state
                 .entities
-                .purge_attrs(&entity_ids, &purge_mode, &context)
+                .purge_attrs(&target, &entity_ids, &purge_mode, &context)
                 .await
                 .with_entity_instance(&uri)?;
             BatchOperationResult {
@@ -96,7 +100,7 @@ pub(crate) async fn delete_by_query(
         PurgeMode::DeleteEntities => {
             let batch = state
                 .entities
-                .batch_delete(&entity_ids, BatchSideEffectMode::Inline)
+                .batch_delete(&target, &entity_ids, BatchSideEffectMode::Inline)
                 .await
                 .with_entity_instance(&uri)?;
             batch_operation_result(batch.success, batch.errors, classify_entity_error)
@@ -110,17 +114,20 @@ pub(crate) async fn delete_by_query(
     } else {
         state
             .forwarding
-            .forward_purge(ForwardPurgeRequest {
-                entity_type_compact: query.entity_type.as_ref(),
-                entity_ids: query.id.as_deref(),
-                local_ids: &entity_ids,
-                query_string: uri.query().unwrap_or(""),
-                context: &context,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
+            .forward_purge(
+                &target,
+                ForwardPurgeRequest {
+                    entity_type_compact: query.entity_type.as_ref(),
+                    entity_ids: query.id.as_deref(),
+                    local_ids: &entity_ids,
+                    query_string: uri.query().unwrap_or(""),
+                    context: &context,
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
                 },
-            })
+            )
             .await
             .with_entity_instance(&uri)?
     };

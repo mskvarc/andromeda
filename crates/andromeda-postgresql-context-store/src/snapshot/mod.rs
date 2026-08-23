@@ -3,16 +3,11 @@
 use andromeda_snapshot::error::SnapshotError;
 use std::fmt::Display;
 
-/// The statements over the rows a snapshot captured.
-pub mod content;
-/// The summaries read over a snapshot's captured entities.
-pub mod introspection;
+mod clone_context;
 /// The statements over the `snapshots` control record.
 pub mod lifecycle;
 /// Row-to-domain conversions for snapshot records.
 pub mod mapper;
-/// Statement-shaped parameters for snapshot queries.
-pub mod params;
 /// The snapshot repository struct.
 pub mod repo;
 /// Placeholder for persistence-shaped snapshot row structs.

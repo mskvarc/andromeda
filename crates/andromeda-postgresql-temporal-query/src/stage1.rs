@@ -13,6 +13,7 @@ use crate::{
     alias::{Ah, An, Ce, Cs, EntityIdColumn, S},
     axis::axis_column,
 };
+use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_ngsi_ld_lexicon::entity_type_name::EntityTypeName;
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
@@ -54,16 +55,16 @@ pub struct Stage1Query {
 }
 
 /// Build Stage 1 query: find entity IDs matching entity-level filters.
-pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
+pub fn build_stage1_entity_ids(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Stage1Query, RenderError> {
     // Entity-level conditions, applied to `temporal_entities` under alias "e".
-    let entity_conditions = build_entity_conditions_for_temporal(compiled, names)?;
+    let entity_conditions = build_entity_conditions_for_temporal(context_space_key, compiled, names)?;
 
     let mut select = SelectStatement::new();
     select
         .expr_as(SeaExpr::col((E, TemporalEntities::Id)), EntityIdColumn)
         .from_as(TemporalEntities::Table, E)
         .cond_where(entity_conditions.clone()) // clone: the count query applies the same entity predicate
-        .cond_where(SeaExpr::exists(temporal_match_subquery(compiled)?))
+        .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)?))
         .order_by((E, TemporalEntities::Id), Order::Asc)
         .limit(compiled.pagination.limit as u64)
         .offset(compiled.pagination.offset as u64);
@@ -74,7 +75,7 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, names: &QueryNa
             .expr(Func::count(SeaExpr::col((E, TemporalEntities::Id))))
             .from_as(TemporalEntities::Table, E)
             .cond_where(entity_conditions)
-            .cond_where(SeaExpr::exists(temporal_match_subquery(compiled)?));
+            .cond_where(SeaExpr::exists(temporal_match_subquery(context_space_key, compiled)?));
         Some(count_select.take())
     } else {
         None
@@ -84,7 +85,7 @@ pub fn build_stage1_entity_ids(compiled: &CompiledTemporalQuery, names: &QueryNa
 }
 
 /// Build the correlated stream/history predicate shared by result and count.
-fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectStatement, RenderError> {
+fn temporal_match_subquery(context_space_key: ContextSpaceKey, compiled: &CompiledTemporalQuery) -> Result<SelectStatement, RenderError> {
     let temporal_conditions = build_temporal_stage1_conditions(compiled)?;
     let mut select = SelectStatement::new();
     select
@@ -97,6 +98,7 @@ fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectSta
             SeaExpr::col((An, AttributeNames::Id)).equals((S, TemporalAttributeStreams::AttributeNameId)),
         )
         .cond_where(SeaExpr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((E, TemporalEntities::EntityKey)))
+        .cond_where(SeaExpr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
         .cond_where(temporal_conditions);
 
     if compiled.window.interval.is_bounded() {
@@ -106,14 +108,19 @@ fn temporal_match_subquery(compiled: &CompiledTemporalQuery) -> Result<SelectSta
             Ah,
             SeaExpr::col((Ah, AttributeHistory::StreamKey)).equals((S, TemporalAttributeStreams::StreamKey)),
         );
+        select.cond_where(SeaExpr::col((Ah, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()));
     }
     Ok(select.take())
 }
 
 /// Build entity-level conditions for temporal queries (using "e" alias for
 /// the `temporal_entities` table).
-fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Condition, RenderError> {
-    let mut condition = Condition::all();
+fn build_entity_conditions_for_temporal(
+    context_space_key: ContextSpaceKey,
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+) -> Result<Condition, RenderError> {
+    let mut condition = Condition::all().add(SeaExpr::col((E, TemporalEntities::ContextSpaceKey)).eq(context_space_key.as_i64()));
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // each reached through the `e` alias stage 1 selects the temporal
@@ -127,7 +134,7 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, names:
         condition = condition.add(union);
     }
 
-    if let Some(probe) = current_state_probe(compiled, names)? {
+    if let Some(probe) = current_state_probe(context_space_key, compiled, names)? {
         condition = condition.add(SeaExpr::exists(probe));
     }
 
@@ -146,7 +153,11 @@ fn build_entity_conditions_for_temporal(compiled: &CompiledTemporalQuery, names:
 /// evaluated inside one probe correlated to the temporal entity's URI. `None`
 /// when the query carries neither filter, so an unfiltered temporal query never
 /// touches current state.
-fn current_state_probe(compiled: &CompiledTemporalQuery, names: &QueryNames) -> Result<Option<SelectStatement>, RenderError> {
+fn current_state_probe(
+    context_space_key: ContextSpaceKey,
+    compiled: &CompiledTemporalQuery,
+    names: &QueryNames,
+) -> Result<Option<SelectStatement>, RenderError> {
     if compiled.entities.q_expr.is_none() && compiled.entities.geo.is_none() {
         return Ok(None);
     }
@@ -173,6 +184,7 @@ fn current_state_probe(compiled: &CompiledTemporalQuery, names: &QueryNames) -> 
 
     probe
         .cond_where(SeaExpr::col((Ce, Entities::Id)).equals((E, TemporalEntities::Id)))
+        .cond_where(SeaExpr::col((Ce, Entities::ContextSpaceKey)).eq(context_space_key.as_i64()))
         .cond_where(current_conditions);
     Ok(Some(probe.take()))
 }
@@ -307,13 +319,18 @@ mod tests {
     /// The Stage 1 result statement, rendered with `$N` placeholders and its
     /// bound values, which is what the store hands to the driver.
     fn built(compiled: &CompiledTemporalQuery, names: &QueryNames) -> (String, Values) {
-        build_stage1_entity_ids(compiled, names).unwrap().select.build(PostgresQueryBuilder)
+        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        build_stage1_entity_ids(context_space_key, compiled, names)
+            .expect("valid temporal query")
+            .select
+            .build(PostgresQueryBuilder)
     }
 
     /// The same for the count statement, panicking when no count was requested.
     fn built_count(compiled: &CompiledTemporalQuery, names: &QueryNames) -> String {
-        build_stage1_entity_ids(compiled, names)
-            .unwrap()
+        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        build_stage1_entity_ids(context_space_key, compiled, names)
+            .expect("valid temporal query")
             .count
             .expect("count requested")
             .build(PostgresQueryBuilder)

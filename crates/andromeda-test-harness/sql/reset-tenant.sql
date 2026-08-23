@@ -26,8 +26,6 @@ TRUNCATE
     notification_deliveries,
     notification_events,
     scope_history,
-    snapshot_temporal_entities,
-    snapshot_entities,
     snapshots,
     registration_information,
     context_source_registrations,

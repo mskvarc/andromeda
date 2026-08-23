@@ -1,6 +1,7 @@
 //! PostgreSQL anchor persistence and delivery state for temporal append intents.
 
 use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_number::json_value::deserialize_exact;
 use andromeda_postgresql_schema::queue::TemporalAppendIntents;
@@ -75,7 +76,13 @@ fn intent_unnest_columns() -> [UnnestColumn; 4] {
 /// `ON CONFLICT ... DO NOTHING` is what makes a commit replayed under its
 /// original identity enqueue no second copy of any entity's intent at a given
 /// base.
-fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, payloads: Vec<Value>) -> Result<InsertStatement, SeaQueryError> {
+fn enqueue_statement(
+    target: &ContextTarget,
+    ids: Vec<Uuid>,
+    entity_ids: &[&str],
+    bases: Vec<i32>,
+    payloads: Vec<Value>,
+) -> Result<InsertStatement, SeaQueryError> {
     let columns = intent_unnest_columns();
     let call = unnest_call([
         (&columns[0], Expr::val(ids)),
@@ -85,6 +92,7 @@ fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, paylo
     ]);
     let input = Alias::new("input");
     let source = Query::select()
+        .expr(Expr::val(target.key().as_i64()))
         .expr(Expr::col((input.clone(), Alias::new("write_id"))))
         .expr(Expr::col((input.clone(), Alias::new("entity_id"))))
         .expr(Expr::col((input.clone(), Alias::new("base"))))
@@ -95,6 +103,7 @@ fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, paylo
     statement
         .into_table(TemporalAppendIntents::Table)
         .columns([
+            TemporalAppendIntents::ContextSpaceKey,
             TemporalAppendIntents::WriteId,
             TemporalAppendIntents::EntityId,
             TemporalAppendIntents::Base,
@@ -102,9 +111,14 @@ fn enqueue_statement(ids: Vec<Uuid>, entity_ids: &[&str], bases: Vec<i32>, paylo
         ])
         .select_from(source)?
         .on_conflict(
-            sea_query::OnConflict::columns([TemporalAppendIntents::WriteId, TemporalAppendIntents::EntityId, TemporalAppendIntents::Base])
-                .do_nothing()
-                .to_owned(),
+            sea_query::OnConflict::columns([
+                TemporalAppendIntents::ContextSpaceKey,
+                TemporalAppendIntents::WriteId,
+                TemporalAppendIntents::EntityId,
+                TemporalAppendIntents::Base,
+            ])
+            .do_nothing()
+            .to_owned(),
         );
     Ok(statement.to_owned())
 }
@@ -125,7 +139,11 @@ impl PostgresTemporalIntentStore {
     }
 
     /// Persist complete intents inside the entity anchor transaction.
-    pub(crate) async fn enqueue_in_tx(tx: &mut Transaction<'_, Postgres>, intents: &[TemporalAppendIntent]) -> Result<(), TemporalError> {
+    pub(crate) async fn enqueue_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        intents: &[TemporalAppendIntent],
+    ) -> Result<(), TemporalError> {
         if intents.is_empty() {
             return Ok(());
         }
@@ -144,7 +162,7 @@ impl PostgresTemporalIntentStore {
             );
             payloads.push(serde_json::to_value(intent).map_err(|error| TemporalError::internal(format!("failed to encode temporal append intent: {error}")))?);
         }
-        let statement = enqueue_statement(ids, &entity_ids, bases, payloads)
+        let statement = enqueue_statement(target, ids, &entity_ids, bases, payloads)
             .map_err(|error| TemporalError::internal(format!("failed to build intent enqueue: {error}")))?;
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let sql = apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns());
@@ -167,12 +185,14 @@ impl PostgresTemporalIntentStore {
     /// Claim an ordered bounded batch, optionally restricted to one entity.
     async fn claim_matching(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         entity_id: Option<&Uri>,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
-        let (sql, values) = claim_statement(owner.as_uuid(), entity_id.map(Uri::as_str), i64::from(limit.get()), lease_until).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) =
+            claim_statement(target.key(), owner.as_uuid(), entity_id.map(Uri::as_str), i64::from(limit.get()), lease_until).build_sqlx(PostgresQueryBuilder);
         let rows = observe_statement(INTENT_CLAIM, sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool))
             .await
             .map_err(persistence)?;
@@ -194,8 +214,8 @@ impl PostgresTemporalIntentStore {
 
 #[async_trait]
 impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
-    async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
-        let (sql, values) = pending_statement(Some(entity_id.as_str())).build_sqlx(PostgresQueryBuilder);
+    async fn pending_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
+        let (sql, values) = pending_statement(target.key(), Some(entity_id.as_str())).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
@@ -203,8 +223,8 @@ impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
         rows.iter().map(PostgresTemporalIntentStore::decode).collect()
     }
 
-    async fn pending_intents(&self) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
-        let (sql, values) = pending_statement(None).build_sqlx(PostgresQueryBuilder);
+    async fn pending_intents(&self, target: &ContextTarget) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
+        let (sql, values) = pending_statement(target.key(), None).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_all(&self.pool)
             .await
@@ -217,26 +237,33 @@ impl PendingTemporalIntentReader for PostgresTemporalIntentStore {
 impl TemporalIntentQueue for PostgresTemporalIntentStore {
     async fn claim(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
-        self.claim_matching(owner, None, limit, lease_until).await
+        self.claim_matching(target, owner, None, limit, lease_until).await
     }
 
     async fn claim_for_entity(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
     ) -> Result<Vec<ClaimedTemporalAppendIntent>, TemporalError> {
-        self.claim_matching(owner, Some(entity_id), limit, lease_until).await
+        self.claim_matching(target, owner, Some(entity_id), limit, lease_until).await
     }
 
-    async fn acknowledge(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError> {
-        let (sql, values) =
-            acknowledge_statement(intent.sequence.get(), intent.intent.record.write_id().as_uuid(), owner.as_uuid()).build_sqlx(PostgresQueryBuilder);
+    async fn acknowledge(
+        &self,
+        target: &ContextTarget,
+        owner: TemporalIntentLeaseOwner,
+        intent: &SequencedTemporalAppendIntent,
+    ) -> Result<LeaseAcknowledgement, TemporalError> {
+        let (sql, values) = acknowledge_statement(target.key(), intent.sequence.get(), intent.intent.record.write_id().as_uuid(), owner.as_uuid())
+            .build_sqlx(PostgresQueryBuilder);
         let result = observe_statement(
             INTENT_ACKNOWLEDGE,
             sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).execute(&self.pool),
@@ -248,11 +275,13 @@ impl TemporalIntentQueue for PostgresTemporalIntentStore {
 
     async fn retry(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         intent: &SequencedTemporalAppendIntent,
         retry: TemporalIntentRetry,
     ) -> Result<LeaseAcknowledgement, TemporalError> {
         let (sql, values) = retry_statement(
+            target.key(),
             retry.eligible_at,
             &retry.summary,
             intent.sequence.get(),
@@ -292,11 +321,12 @@ fn held(rows_affected: u64) -> Result<LeaseAcknowledgement, TemporalError> {
 /// atomically. When `entity_id` is given, only that entity's intents are
 /// eligible; the original expressed this with a `$4 IS NULL OR entity_id = $4`
 /// guard, which is here simply an absent predicate.
-fn claim_statement(owner: Uuid, entity_id: Option<&str>, limit: i64, lease_until: DateTime<Utc>) -> UpdateStatement {
+fn claim_statement(context_space_key: ContextSpaceKey, owner: Uuid, entity_id: Option<&str>, limit: i64, lease_until: DateTime<Utc>) -> UpdateStatement {
     let mut eligible = Query::select();
     eligible
         .column(TemporalAppendIntents::Sequence)
         .from(TemporalAppendIntents::Table)
+        .and_where(Expr::col(TemporalAppendIntents::ContextSpaceKey).eq(context_space_key.as_i64()))
         .and_where(Expr::col(TemporalAppendIntents::AvailableAt).lte(Expr::current_timestamp()))
         .and_where(
             Expr::col(TemporalAppendIntents::LeaseUntil)
@@ -322,12 +352,13 @@ fn claim_statement(owner: Uuid, entity_id: Option<&str>, limit: i64, lease_until
 }
 
 /// Read pending intents in sequence order, optionally for one entity.
-fn pending_statement(entity_id: Option<&str>) -> SelectStatement {
+fn pending_statement(context_space_key: ContextSpaceKey, entity_id: Option<&str>) -> SelectStatement {
     let mut statement = Query::select();
     statement
         .column(TemporalAppendIntents::Sequence)
         .column(TemporalAppendIntents::Intent)
         .from(TemporalAppendIntents::Table);
+    statement.and_where(Expr::col(TemporalAppendIntents::ContextSpaceKey).eq(context_space_key.as_i64()));
     if let Some(entity_id) = entity_id {
         statement.and_where(Expr::col(TemporalAppendIntents::EntityId).eq(entity_id));
     }
@@ -341,8 +372,9 @@ fn pending_statement(entity_id: Option<&str>) -> SelectStatement {
 /// the row and stamp its own owner, but between the lapse and that claim the
 /// old owner still matches; only the live-lease test keeps a late
 /// acknowledgement or retry from overwriting what the next worker is doing.
-fn lease_guard(sequence: i64, write_id: Uuid, owner: Uuid) -> sea_query::Condition {
+fn lease_guard(context_space_key: ContextSpaceKey, sequence: i64, write_id: Uuid, owner: Uuid) -> sea_query::Condition {
     Cond::all()
+        .add(Expr::col(TemporalAppendIntents::ContextSpaceKey).eq(context_space_key.as_i64()))
         .add(Expr::col(TemporalAppendIntents::Sequence).eq(sequence))
         .add(Expr::col(TemporalAppendIntents::WriteId).eq(write_id))
         .add(Expr::col(TemporalAppendIntents::LeaseOwner).eq(owner))
@@ -350,22 +382,29 @@ fn lease_guard(sequence: i64, write_id: Uuid, owner: Uuid) -> sea_query::Conditi
 }
 
 /// Remove one acknowledged intent held under this worker's live lease.
-fn acknowledge_statement(sequence: i64, write_id: Uuid, owner: Uuid) -> DeleteStatement {
+fn acknowledge_statement(context_space_key: ContextSpaceKey, sequence: i64, write_id: Uuid, owner: Uuid) -> DeleteStatement {
     Query::delete()
         .from_table(TemporalAppendIntents::Table)
-        .cond_where(lease_guard(sequence, write_id, owner))
+        .cond_where(lease_guard(context_space_key, sequence, write_id, owner))
         .to_owned()
 }
 
 /// Reschedule one intent held under this worker's live lease and release the lease.
-fn retry_statement(available_at: DateTime<Utc>, last_error: &str, sequence: i64, write_id: Uuid, owner: Uuid) -> UpdateStatement {
+fn retry_statement(
+    context_space_key: ContextSpaceKey,
+    available_at: DateTime<Utc>,
+    last_error: &str,
+    sequence: i64,
+    write_id: Uuid,
+    owner: Uuid,
+) -> UpdateStatement {
     Query::update()
         .table(TemporalAppendIntents::Table)
         .value(TemporalAppendIntents::AvailableAt, available_at)
         .value(TemporalAppendIntents::LastError, last_error)
         .value(TemporalAppendIntents::LeaseOwner, SimpleExpr::Keyword(Keyword::Null))
         .value(TemporalAppendIntents::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
-        .cond_where(lease_guard(sequence, write_id, owner))
+        .cond_where(lease_guard(context_space_key, sequence, write_id, owner))
         .to_owned()
 }
 
@@ -378,14 +417,27 @@ fn persistence(error: impl Display) -> TemporalError {
 mod tests {
     use crate::intent_store::{acknowledge_statement, claim_statement, enqueue_statement, held, intent_unnest_columns, pending_statement, retry_statement};
     use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_postgresql_seaquery::unnest::apply_column_alias;
     use chrono::Utc;
     use sea_query::{Alias, PostgresQueryBuilder};
     use serde_json::json;
     use uuid::Uuid;
 
+    fn context_space_key() -> ContextSpaceKey {
+        ContextSpaceKey::try_from(1).expect("positive context-space key")
+    }
+
+    fn target() -> ContextTarget {
+        ContextTarget::live(ContextSpace::new(context_space_key(), ContextSpaceKind::Live)).expect("live context target")
+    }
+
     fn enqueue_sql() -> String {
-        let statement = enqueue_statement(vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec![json!({})]).expect("arity");
+        let statement = enqueue_statement(&target(), vec![Uuid::nil()], &["urn:ngsi-ld:Vehicle:1"], vec![0], vec![json!({})]).expect("arity");
         let sql = statement.to_string(PostgresQueryBuilder);
         apply_column_alias(sql, &Alias::new("input"), &intent_unnest_columns())
     }
@@ -426,7 +478,7 @@ mod tests {
 
     #[test]
     fn the_claim_steps_over_locked_rows_and_leases_the_batch() {
-        let sql = claim_statement(Uuid::nil(), None, 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(context_space_key(), Uuid::nil(), None, 10, Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"UPDATE "temporal_append_intents""#), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
         assert!(sql.contains(r#""attempts" = "attempts" + 1"#), "{sql}");
@@ -434,15 +486,15 @@ mod tests {
 
     #[test]
     fn a_claim_for_one_entity_restricts_the_eligible_set() {
-        let sql = claim_statement(Uuid::nil(), Some("urn:ngsi-ld:Vehicle:1"), 10, Utc::now()).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(context_space_key(), Uuid::nil(), Some("urn:ngsi-ld:Vehicle:1"), 10, Utc::now()).to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{sql}");
     }
 
     #[test]
     fn pending_reads_are_ordered_by_sequence() {
-        let all = pending_statement(None).to_string(PostgresQueryBuilder);
+        let all = pending_statement(context_space_key(), None).to_string(PostgresQueryBuilder);
         assert!(all.contains(r#"ORDER BY "sequence""#), "{all}");
-        let one = pending_statement(Some("urn:ngsi-ld:Vehicle:1")).to_string(PostgresQueryBuilder);
+        let one = pending_statement(context_space_key(), Some("urn:ngsi-ld:Vehicle:1")).to_string(PostgresQueryBuilder);
         assert!(one.contains(r#""entity_id" = 'urn:ngsi-ld:Vehicle:1'"#), "{one}");
     }
 
@@ -450,13 +502,13 @@ mod tests {
     /// reclaimed, so both statements also require the lease to be live.
     #[test]
     fn acknowledgement_and_retry_are_guarded_by_lease_ownership_and_a_live_lease() {
-        let ack = acknowledge_statement(1, Uuid::nil(), Uuid::nil()).to_string(PostgresQueryBuilder);
+        let ack = acknowledge_statement(context_space_key(), 1, Uuid::nil(), Uuid::nil()).to_string(PostgresQueryBuilder);
         assert!(
             ack.contains(r#"DELETE FROM "temporal_append_intents""#) && ack.contains(r#""lease_owner" ="#),
             "{ack}"
         );
         assert!(ack.contains(r#""lease_until" > CURRENT_TIMESTAMP"#), "{ack}");
-        let retry = retry_statement(Utc::now(), "boom", 1, Uuid::nil(), Uuid::nil()).to_string(PostgresQueryBuilder);
+        let retry = retry_statement(context_space_key(), Utc::now(), "boom", 1, Uuid::nil(), Uuid::nil()).to_string(PostgresQueryBuilder);
         assert!(
             retry.contains(r#""lease_owner" = NULL"#) && retry.contains(r#""lease_until" = NULL"#),
             "{retry}"

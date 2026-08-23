@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use andromeda_http_extraction::tenant_state::ExistingTenantState;
+use andromeda_http_extraction::context_target::ExistingTargetedTenantState;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::OriginalUri,
@@ -90,12 +90,12 @@ impl Stream for SseEventStream {
 /// persistent connection that streams notification events as they are dispatched
 /// by the notification worker.
 pub async fn stream(
-    ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(&subscription_id).await.with_subscription_instance(&uri)?;
+    let subscription = state.subscriptions.get(&target, &subscription_id).await.with_subscription_instance(&uri)?;
 
     // Validate subscription uses SSE transport via the canonical parser
     // (handles case-insensitive URI schemes like SSE://).

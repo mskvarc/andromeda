@@ -57,7 +57,6 @@ use andromeda_ngsi_ld_query::{
 use andromeda_ngsi_ld_render::{
     entity::{EntityRenderer, render_flat_join},
     response::ResponsePayload,
-    snapshot::SnapshotRenderer,
 };
 use andromeda_ngsi_ld_representation::attribute_type_validation::{validate_attribute_node, validate_fragment_attribute_types};
 use andromeda_ngsi_ld_request::{

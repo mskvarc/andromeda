@@ -1,23 +1,44 @@
 //! Cache-invalidation signals for subscription lifecycle changes.
 
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 
 /// Signals entity-subscription lifecycle changes.
 #[derive(Clone, Debug)]
 pub enum SubscriptionChange {
     /// The subscription with this identifier was created or replaced.
-    Upserted(Uri),
+    Upserted {
+        /// Branch that owns the subscription.
+        target: ContextTarget,
+        /// Subscription identifier within the branch.
+        id: Uri,
+    },
     /// The subscription with this identifier was deleted.
-    Deleted(Uri),
+    Deleted {
+        /// Branch that owned the subscription.
+        target: ContextTarget,
+        /// Deleted subscription identifier.
+        id: Uri,
+    },
 }
 
 /// Signals context-source-subscription lifecycle changes.
 #[derive(Clone, Debug)]
 pub enum CsourceSubscriptionChange {
     /// The subscription with this identifier was created or replaced.
-    Upserted(Uri),
+    Upserted {
+        /// Branch that owns the subscription.
+        target: ContextTarget,
+        /// Subscription identifier within the branch.
+        id: Uri,
+    },
     /// The subscription with this identifier was deleted.
-    Deleted(Uri),
+    Deleted {
+        /// Branch that owned the subscription.
+        target: ContextTarget,
+        /// Deleted subscription identifier.
+        id: Uri,
+    },
 }
 
 /// Publishes a lifecycle change without coupling subscription policy to a runtime channel.

@@ -35,6 +35,15 @@ impl NotificationAdapter {
         let _drained = self.server.drain_requests().await;
     }
 
+    pub async fn wait_for_notification(&self, timeout: Duration) -> CapturedNotification {
+        let request = self.server.next_request(timeout).await.expect("notification arrives before timeout");
+        let body = request.json().expect("notification body is valid JSON");
+        CapturedNotification {
+            headers: request.headers,
+            body,
+        }
+    }
+
     pub async fn wait_for_subscription_notification(&self, subscription_id: &str, timeout: Duration) -> CapturedNotification {
         let deadline = Instant::now() + timeout;
         loop {

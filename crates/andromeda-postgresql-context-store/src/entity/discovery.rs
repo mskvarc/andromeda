@@ -14,6 +14,7 @@ use crate::{
     },
     error::ContextStoreError,
 };
+use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_entity::attribute_summary::AttributeSummary;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_postgresql_query::entity_type_id::EntityTypeId;
@@ -174,13 +175,18 @@ fn attribute_container(payload: &dyn Fn() -> SimpleExpr) -> SimpleExpr {
 /// `FROM entity_search s JOIN entity_documents d ON d.entity_key = s.entity_key`,
 /// the source every payload-walking aggregate reads: the type keys from the
 /// search row, the attribute members from the document row.
-fn search_with_documents(statement: &mut SelectStatement) -> &mut SelectStatement {
-    statement.from_as(EntitySearch::Table, S).join_as(
-        JoinType::Join,
-        EntityDocuments::Table,
-        D,
-        Expr::col((D, EntityDocuments::EntityKey)).equals((S, EntitySearch::EntityKey)),
-    )
+fn search_with_documents(statement: &mut SelectStatement, context_space_key: ContextSpaceKey) -> &mut SelectStatement {
+    statement
+        .from_as(EntitySearch::Table, S)
+        .join_as(
+            JoinType::Join,
+            EntityDocuments::Table,
+            D,
+            Expr::col((D, EntityDocuments::EntityKey))
+                .equals((S, EntitySearch::EntityKey))
+                .and(Expr::col((D, EntityDocuments::ContextSpaceKey)).equals((S, EntitySearch::ContextSpaceKey))),
+        )
+        .and_where(Expr::col((S, EntitySearch::ContextSpaceKey)).eq(context_space_key.as_i64()))
 }
 
 /// The keyset guard `$after::text IS NULL OR key > $after`: an absent cursor
@@ -198,8 +204,8 @@ impl EntityRepository {
     /// Driven from the dictionary rather than by unnesting every entity's
     /// `type_ids`: a type is reported when at least one entity carries its
     /// key, which the `type_ids` GIN index answers per dictionary row.
-    pub async fn types(&self) -> Result<Vec<EntityTypeName>, ContextStoreError> {
-        let (sql, values) = types_in_use_statement().build_sqlx(PostgresQueryBuilder);
+    pub async fn types(&self, target: &ContextTarget) -> Result<Vec<EntityTypeName>, ContextStoreError> {
+        let (sql, values) = types_in_use_statement(target.key()).build_sqlx(PostgresQueryBuilder);
         let raw: Vec<String> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         raw.into_iter().map(stored_type_name).collect()
     }
@@ -211,7 +217,13 @@ impl EntityRepository {
     }
 
     /// Retrieve entity payloads filtered by type with optional pagination.
-    pub async fn get_entities_by_type(&self, entity_type: &EntityTypeName, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, ContextStoreError> {
+    pub async fn get_entities_by_type(
+        &self,
+        target: &ContextTarget,
+        entity_type: &EntityTypeName,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> Result<Vec<Value>, ContextStoreError> {
         let Some(type_id) = self.type_id(entity_type).await? else {
             return Ok(Vec::new());
         };
@@ -223,6 +235,9 @@ impl EntityRepository {
                 EntitySearch::Table,
                 Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Entities::Table, Entities::EntityKey)),
             )
+            .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
+            .and_where(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(target.key().as_i64()))
+            .and_where(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(target.key().as_i64()))
             .and_where(array_contains_key(Expr::col((EntitySearch::Table, EntitySearch::TypeIds)), type_id.get()))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
             .offset(<i64 as Ord>::max(offset.unwrap_or(0), 0) as u64);
@@ -234,10 +249,12 @@ impl EntityRepository {
     }
 
     /// Retrieve all entity payloads with optional pagination.
-    pub async fn get_all_entities(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, ContextStoreError> {
+    pub async fn get_all_entities(&self, target: &ContextTarget, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<Value>, ContextStoreError> {
         let mut statement = identity_with_documents();
         statement
             .column((EntityDocuments::Table, EntityDocuments::Payload))
+            .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
+            .and_where(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(target.key().as_i64()))
             .order_by((Entities::Table, Entities::Id), Order::Asc)
             .offset(<i64 as Ord>::max(offset.unwrap_or(0), 0) as u64);
         if let Some(limit) = limit {
@@ -248,13 +265,14 @@ impl EntityRepository {
     }
 
     /// Count entities that have the given type IRI.
-    pub async fn count_by_type(&self, entity_type: &EntityTypeName) -> Result<i64, ContextStoreError> {
+    pub async fn count_by_type(&self, target: &ContextTarget, entity_type: &EntityTypeName) -> Result<i64, ContextStoreError> {
         let Some(type_id) = self.type_id(entity_type).await? else {
             return Ok(0);
         };
         let statement = Query::select()
             .expr(count_all())
             .from(EntitySearch::Table)
+            .and_where(Expr::col(EntitySearch::ContextSpaceKey).eq(target.key().as_i64()))
             .and_where(array_contains_key(Expr::col(EntitySearch::TypeIds), type_id.get()))
             .to_owned();
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
@@ -264,10 +282,11 @@ impl EntityRepository {
     /// Per-type attribute summaries, keyset-paginated on the aggregated type IRI.
     pub async fn get_entity_type_summaries(
         &self,
+        target: &ContextTarget,
         after: Option<&EntityTypeName>,
         limit: u32,
     ) -> Result<Vec<(EntityTypeName, Vec<AttributeName>)>, ContextStoreError> {
-        let (sql, values) = entity_type_summaries_statement(after.map(EntityTypeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = entity_type_summaries_statement(target.key(), after.map(EntityTypeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         rows.into_iter()
@@ -282,15 +301,20 @@ impl EntityRepository {
 
     /// Attribute metadata aggregated at the SQL level, keyset-paginated on the
     /// attribute IRI.
-    pub async fn get_attribute_summary(&self, after: Option<&AttributeName>, limit: u32) -> Result<Vec<AttributeSummary>, ContextStoreError> {
-        let (sql, values) = attribute_summary_statement(after.map(AttributeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
+    pub async fn get_attribute_summary(
+        &self,
+        target: &ContextTarget,
+        after: Option<&AttributeName>,
+        limit: u32,
+    ) -> Result<Vec<AttributeSummary>, ContextStoreError> {
+        let (sql, values) = attribute_summary_statement(target.key(), after.map(AttributeName::as_str), u64::from(limit)).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
         rows.iter().map(row_to_attribute_summary).collect()
     }
 
     /// Attribute metadata for a single attribute IRI.
-    pub async fn get_attribute_info(&self, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, ContextStoreError> {
-        let (sql, values) = attribute_info_statement(attr_iri.as_str()).build_sqlx(PostgresQueryBuilder);
+    pub async fn get_attribute_info(&self, target: &ContextTarget, attr_iri: &AttributeName) -> Result<Option<AttributeSummary>, ContextStoreError> {
+        let (sql, values) = attribute_info_statement(target.key(), attr_iri.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
         row.as_ref().map(row_to_attribute_summary).transpose()
     }
@@ -298,13 +322,17 @@ impl EntityRepository {
 
 /// Every dictionary type at least one entity carries, in name order:
 /// `SELECT n.name FROM entity_type_names n WHERE EXISTS (SELECT 1 FROM entity_search WHERE type_ids @> ARRAY(SELECT n.id::integer)) ORDER BY n.name`.
-fn types_in_use_statement() -> SelectStatement {
+fn types_in_use_statement(context_space_key: ContextSpaceKey) -> SelectStatement {
     let mut carried = Query::select();
-    carried.expr(Expr::val(1)).from(EntitySearch::Table).and_where(array_contains(
-        Expr::col((EntitySearch::Table, EntitySearch::TypeIds)),
-        Expr::col((N, EntityTypeNames::Id)),
-        PostgresType::Integer,
-    ));
+    carried
+        .expr(Expr::val(1))
+        .from(EntitySearch::Table)
+        .and_where(Expr::col(EntitySearch::ContextSpaceKey).eq(context_space_key.as_i64()))
+        .and_where(array_contains(
+            Expr::col((EntitySearch::Table, EntitySearch::TypeIds)),
+            Expr::col((N, EntityTypeNames::Id)),
+            PostgresType::Integer,
+        ));
     let mut statement = Query::select();
     statement
         .expr(type_name())
@@ -325,7 +353,7 @@ fn types_in_use_statement() -> SelectStatement {
 /// `@type` expansion is left-joined so an attribute with no declared type still
 /// contributes its entity to the counts. Entities are counted by surrogate
 /// key, so the identity row is never read.
-fn attribute_summary_base(key_predicate: SimpleExpr) -> SelectStatement {
+fn attribute_summary_base(context_space_key: ContextSpaceKey, key_predicate: SimpleExpr) -> SelectStatement {
     let attributes = Query::select()
         .expr_as(Expr::col((Je, Key)), AttrKey)
         .expr_as(Expr::col((Je, ValueColumn)), AttrValue)
@@ -347,7 +375,7 @@ fn attribute_summary_base(key_predicate: SimpleExpr) -> SelectStatement {
             array_agg_distinct_filter(Expr::col((At, ValueColumn)), Expr::col((At, ValueColumn)).is_not_null()),
             AttributeTypes,
         );
-    search_with_documents(&mut statement);
+    search_with_documents(&mut statement, context_space_key);
     unnest_type_ids(&mut statement);
     join_type_names(&mut statement)
         .join_lateral(JoinType::InnerJoin, attributes, Attrs, SimpleExpr::from(Expr::val(true)))
@@ -358,8 +386,8 @@ fn attribute_summary_base(key_predicate: SimpleExpr) -> SelectStatement {
 
 /// The paginated attribute summary: every non-keyword attribute, keyset-paged on
 /// the attribute IRI.
-fn attribute_summary_statement(after: Option<&str>, limit: u64) -> SelectStatement {
-    let mut statement = attribute_summary_base(Expr::col((Je, Key)).not_like("@%"));
+fn attribute_summary_statement(context_space_key: ContextSpaceKey, after: Option<&str>, limit: u64) -> SelectStatement {
+    let mut statement = attribute_summary_base(context_space_key, Expr::col((Je, Key)).not_like("@%"));
     statement
         .cond_having(keyset_after(Expr::col((Attrs, AttrKey)), after))
         .order_by((Attrs, AttrKey), Order::Asc)
@@ -369,8 +397,8 @@ fn attribute_summary_statement(after: Option<&str>, limit: u64) -> SelectStateme
 
 /// The single-attribute lookup: the aggregate restricted to one attribute key,
 /// which groups to at most one row and needs no keyset clauses.
-fn attribute_info_statement(attr_iri: &str) -> SelectStatement {
-    attribute_summary_base(Expr::col((Je, Key)).eq(attr_iri))
+fn attribute_info_statement(context_space_key: ContextSpaceKey, attr_iri: &str) -> SelectStatement {
+    attribute_summary_base(context_space_key, Expr::col((Je, Key)).eq(attr_iri))
 }
 
 /// Build the per-type attribute-key summary, keyset-paged on the type IRI.
@@ -378,7 +406,7 @@ fn attribute_info_statement(attr_iri: &str) -> SelectStatement {
 /// Each entity contributes one row per type it carries and per top-level
 /// non-keyword attribute key it holds; the aggregate collects the distinct
 /// attribute keys of each type into an array, empty when a type has none.
-fn entity_type_summaries_statement(after: Option<&str>, limit: u64) -> SelectStatement {
+fn entity_type_summaries_statement(context_space_key: ContextSpaceKey, after: Option<&str>, limit: u64) -> SelectStatement {
     let keys = Query::select()
         .expr_as(
             SimpleExpr::from(jsonb_object_keys(attribute_container(&|| Expr::col((D, EntityDocuments::Payload))))),
@@ -394,7 +422,7 @@ fn entity_type_summaries_statement(after: Option<&str>, limit: u64) -> SelectSta
         ]),
         AttrKeys,
     );
-    search_with_documents(&mut statement);
+    search_with_documents(&mut statement, context_space_key);
     unnest_type_ids(&mut statement);
     join_type_names(&mut statement)
         .join_lateral(JoinType::InnerJoin, keys, Ak, SimpleExpr::from(Expr::val(true)))
@@ -430,13 +458,18 @@ fn row_to_attribute_summary(row: &PgRow) -> Result<AttributeSummary, ContextStor
 #[cfg(test)]
 mod tests {
     use crate::entity::discovery::{attribute_info_statement, attribute_summary_statement, entity_type_summaries_statement, types_in_use_statement};
+    use andromeda_context_space::context_space_key::ContextSpaceKey;
     use sea_query::PostgresQueryBuilder;
     use sea_query_sqlx::SqlxBinder;
 
+    fn context_space_key() -> ContextSpaceKey {
+        ContextSpaceKey::try_from(1).expect("positive context-space key")
+    }
+
     #[test]
     fn the_paginated_summary_and_the_single_lookup_share_one_aggregate() {
-        let (summary, _) = attribute_summary_statement(None, 10).build_sqlx(PostgresQueryBuilder);
-        let (info, _) = attribute_info_statement("https://example.org/speed").build_sqlx(PostgresQueryBuilder);
+        let (summary, _) = attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
+        let (info, _) = attribute_info_statement(context_space_key(), "https://example.org/speed").build_sqlx(PostgresQueryBuilder);
         for shared in [
             r#"COUNT(DISTINCT "s"."entity_key")"#,
             r#"FROM "entity_search" AS "s" JOIN "entity_documents" AS "d" ON "d"."entity_key" = "s"."entity_key""#,
@@ -454,7 +487,7 @@ mod tests {
 
     #[test]
     fn the_summary_filters_missing_attribute_types_out_of_the_aggregate() {
-        let (summary, _) = attribute_summary_statement(None, 10).build_sqlx(PostgresQueryBuilder);
+        let (summary, _) = attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(
             summary.contains(r#"array_agg(DISTINCT "at"."value") FILTER (WHERE "at"."value" IS NOT NULL)"#),
             "{summary}"
@@ -463,7 +496,7 @@ mod tests {
 
     #[test]
     fn the_summary_is_keyset_paged_on_the_attribute_iri() {
-        let (summary, values) = attribute_summary_statement(Some("https://example.org/a"), 10).build_sqlx(PostgresQueryBuilder);
+        let (summary, values) = attribute_summary_statement(context_space_key(), Some("https://example.org/a"), 10).build_sqlx(PostgresQueryBuilder);
         assert!(summary.contains(r#"HAVING ($10::text) IS NULL OR "attrs"."attr_key" > $11"#), "{summary}");
         assert!(summary.contains(r#"ORDER BY "attrs"."attr_key" ASC"#), "{summary}");
         assert!(summary.contains("LIMIT $12"), "{summary}");
@@ -475,7 +508,7 @@ mod tests {
 
     #[test]
     fn the_type_summary_walks_the_keys_laterally_and_coalesces_to_an_empty_array() {
-        let (sql, _) = entity_type_summaries_statement(None, 10).build_sqlx(PostgresQueryBuilder);
+        let (sql, _) = entity_type_summaries_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(sql.contains("jsonb_object_keys"), "{sql}");
         assert!(sql.contains("JOIN LATERAL"), "{sql}");
         assert!(
@@ -497,7 +530,7 @@ mod tests {
     /// joined to the dictionary before they are aggregated.
     #[test]
     fn the_attribute_summary_aggregates_type_names_through_the_dictionary() {
-        let (summary, _) = attribute_summary_statement(None, 10).build_sqlx(PostgresQueryBuilder);
+        let (summary, _) = attribute_summary_statement(context_space_key(), None, 10).build_sqlx(PostgresQueryBuilder);
         assert!(summary.contains(r#"array_agg(DISTINCT "n"."name") AS "entity_types""#), "{summary}");
         assert!(
             summary.contains(r#"INNER JOIN LATERAL (SELECT UNNEST("s"."type_ids") AS "t") AS "t" ON $"#),
@@ -510,10 +543,8 @@ mod tests {
     /// index-served containment probe, so it never unnests the whole table.
     #[test]
     fn the_types_in_use_are_the_dictionary_rows_some_entity_carries() {
-        let sql = types_in_use_statement().to_string(PostgresQueryBuilder);
-        pretty_assertions::assert_eq!(
-            sql,
-            r#"SELECT "n"."name" FROM "entity_type_names" AS "n" WHERE EXISTS(SELECT 1 FROM "entity_search" WHERE "entity_search"."type_ids" @> ARRAY(SELECT "n"."id"::integer)) ORDER BY "n"."name" ASC"#
-        );
+        let sql = types_in_use_statement(context_space_key()).to_string(PostgresQueryBuilder);
+        assert!(sql.contains(r#""entity_search"."context_space_key" = 1"#), "{sql}");
+        assert!(sql.contains(r#""entity_search"."type_ids" @> ARRAY(SELECT "n"."id"::integer)"#), "{sql}");
     }
 }

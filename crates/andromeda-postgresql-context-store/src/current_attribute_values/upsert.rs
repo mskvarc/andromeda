@@ -4,6 +4,7 @@ use crate::{
     current_attribute_values::{columns::ProjectionBinds, row::ProjectedAttributeRow},
     error::ContextStoreError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_schema::current::CurrentAttributeValues;
 use andromeda_postgresql_seaquery::{
     pg_operator::PgBinaryOperator,
@@ -104,7 +105,8 @@ const REFRESHED_COLUMNS: [CurrentAttributeValues; 10] = [
 ];
 
 /// All persisted projection columns, in table order.
-const PROJECTION_COLUMNS: [CurrentAttributeValues; 13] = [
+const PROJECTION_COLUMNS: [CurrentAttributeValues; 14] = [
+    CurrentAttributeValues::ContextSpaceKey,
     CurrentAttributeValues::EntityKey,
     CurrentAttributeValues::AttributeNameId,
     CurrentAttributeValues::AttributeKind,
@@ -158,7 +160,11 @@ const PROJECTION_COLUMNS: [CurrentAttributeValues; 13] = [
 ///
 /// Returns [`ContextStoreError::Encoding`] when a geometry cannot be encoded as
 /// EWKB, and [`ContextStoreError::Database`] when the statement fails.
-pub async fn upsert_projection_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &[ProjectedAttributeRow]) -> Result<(), ContextStoreError> {
+pub async fn upsert_projection_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    rows: &[ProjectedAttributeRow],
+) -> Result<(), ContextStoreError> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -179,6 +185,7 @@ pub async fn upsert_projection_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &
         .bind(&binds.value_geos)
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
+        .bind(target.key().as_i64())
         .execute(&mut **tx);
     observe_statement(CAV_UPSERT, statement).await?;
 
@@ -274,6 +281,7 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
             (Staging, CurrentAttributeValues::AttributeNameId),
             (Staging, CurrentAttributeValues::DatasetId),
         ])
+        .expr(Expr::cust("$14"))
         .expr(staged(CurrentAttributeValues::EntityKey))
         .expr(staged(CurrentAttributeValues::AttributeNameId))
         .expr(staged(CurrentAttributeValues::AttributeKind))
@@ -312,6 +320,10 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .inner_join(
             CurrentAttributeValues::Table,
             Condition::all()
+                .add(
+                    Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::ContextSpaceKey))
+                        .equals((Input, CurrentAttributeValues::ContextSpaceKey)),
+                )
                 .add(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Input, CurrentAttributeValues::EntityKey)))
                 .add(
                     Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId))
@@ -354,6 +366,7 @@ fn projection_upsert_sql() -> Result<String, ContextStoreError> {
         .and_where(Expr::exists(matched_input).not());
 
     let conflict = OnConflict::columns([
+        CurrentAttributeValues::ContextSpaceKey,
         CurrentAttributeValues::EntityKey,
         CurrentAttributeValues::AttributeNameId,
         CurrentAttributeValues::DatasetId,

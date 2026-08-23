@@ -15,6 +15,7 @@ use crate::notification_recording_harness::{
     attribute_name,
     core_context,
     entity_uri,
+    live_target,
     recording_service,
     single_recorded_write,
 };
@@ -29,6 +30,7 @@ async fn append_attrs_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
     service
         .append_attrs(
+            &live_target(),
             &entity_uri(),
             json!({"name": {"type": "Property", "value": "lobby"}}),
             OverwritePolicy::Overwrite,
@@ -45,7 +47,12 @@ async fn append_attrs_records_an_attribute_created_match() {
 async fn update_attrs_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
-        .update_attrs(&entity_uri(), json!({"category": {"type": "Property", "value": "retail"}}), &core_context())
+        .update_attrs(
+            &live_target(),
+            &entity_uri(),
+            json!({"category": {"type": "Property", "value": "retail"}}),
+            &core_context(),
+        )
         .await
         .expect("the update lands");
 
@@ -58,6 +65,7 @@ async fn partial_update_attr_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
         .partial_update_attr(
+            &live_target(),
             &entity_uri(),
             &attribute_name("category"),
             None,
@@ -75,7 +83,13 @@ async fn partial_update_attr_records_an_attribute_updated_match() {
 async fn delete_attr_records_an_attribute_deleted_match() {
     let (service, recorded) = recording_service().await;
     service
-        .delete_attr(&entity_uri(), &attribute_name("category"), DatasetSelection::Default, &core_context())
+        .delete_attr(
+            &live_target(),
+            &entity_uri(),
+            &attribute_name("category"),
+            DatasetSelection::Default,
+            &core_context(),
+        )
         .await
         .expect("the delete lands");
 
@@ -88,6 +102,7 @@ async fn replace_attr_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
         .replace_attr(
+            &live_target(),
             &entity_uri(),
             &attribute_name("category"),
             None,

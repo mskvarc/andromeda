@@ -12,6 +12,7 @@ use crate::{
     read_fan_out::{ReadSelection, read_outcome, registered_type_of},
     request::{CsrModeFilter, ForwardQueryRequest, ForwardRetrieveRequest},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
 use chrono::Utc;
@@ -119,7 +120,14 @@ impl FederationService {
 
     /// Forward an entity query to the matching context sources (clause
     /// 5.7.2.4), each sent the part of the client's query it is registered for.
-    pub async fn forward_query(&self, request: ForwardQueryRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
+    pub async fn forward_query(
+        &self,
+        target: &ContextTarget,
+        request: ForwardQueryRequest<'_>,
+    ) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(ForwardReadOutcome::empty());
+        }
         let ForwardQueryRequest {
             client_query,
             split,
@@ -173,7 +181,14 @@ impl FederationService {
     /// Forward an entity retrieval to the matching context sources (clause
     /// 5.7.1.4), each sent the part of the client's parameters it is
     /// registered for.
-    pub async fn forward_retrieve(&self, request: ForwardRetrieveRequest<'_>) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
+    pub async fn forward_retrieve(
+        &self,
+        target: &ContextTarget,
+        request: ForwardRetrieveRequest<'_>,
+    ) -> Result<ForwardReadOutcome<ForwardedEntities>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(ForwardReadOutcome::empty());
+        }
         let ForwardRetrieveRequest {
             entity_id,
             exclude_registration,

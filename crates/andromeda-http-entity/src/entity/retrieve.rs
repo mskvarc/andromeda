@@ -25,7 +25,6 @@ use crate::entity::{
     ResponsePayload,
     RetrievalNarrowing,
     RetrievingJoin,
-    SnapshotRenderer,
     SourceContribution,
     TypedPath,
     Uri,
@@ -48,7 +47,7 @@ use andromeda_federation::{
     outcome::{ForwardReadOutcome, ForwardedEntities, MatchedSources},
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_headers::{ngsild_entity_map::NgsiLdEntityMap, ngsild_warning::NgsiLdWarning};
 use axum::http::HeaderMap;
 use std::{iter::once, slice::from_ref};
@@ -67,7 +66,11 @@ struct ForwardedRetrieval {
 }
 
 pub(crate) async fn get(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -81,7 +84,6 @@ pub(crate) async fn get(
     protocol.extensions().apply_to_entity_get(&mut params).with_entity_instance(&uri)?;
     let language_filter = params.lang.take().or(protocol.language_filter);
     let prefer = protocol.prefer;
-    let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
 
@@ -89,33 +91,6 @@ pub(crate) async fn get(
     // `format` or `options` returns 400, not 404 (clause 5.5.4 general
     // NGSI-LD request-parameter validation).
     params.validate().with_entity_instance(&uri)?;
-
-    // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
-    // is present, retrieve entity from the snapshot's frozen data and return early.
-    if let Some(snapshot_id) = snapshot.into_inner() {
-        state.snapshots.validate(&snapshot_id).await.with_entity_instance(&uri)?;
-
-        let entity_data = state
-            .snapshots
-            .entity(&snapshot_id, &id)
-            .await
-            .with_entity_instance(&uri)?
-            .ok_or_else(|| public_error(NgsiLdErrorType::ResourceNotFound, format!("Entity {id} not found"), &uri))?;
-
-        let mode = params.resolve_render_mode();
-        let result = SnapshotRenderer::new(entity_data)
-            .with_attrs_filter(params.attrs.as_deref())
-            .with_mode(mode)
-            .render()
-            .with_entity_instance(&uri)?;
-
-        let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
-            .with_geometry_property(params.geometry_property.as_ref())
-            .with_payload(ResponsePayload::Single(result))
-            .render()
-            .with_entity_instance(&uri)?;
-        return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
-    }
 
     let sys_attrs = params.options.unwrap_or_default().sys_attrs;
     // Clause 4.21 governs the single-entity retrieval exactly as it governs
@@ -132,9 +107,9 @@ pub(crate) async fn get(
         dataset_ids: params.dataset_id.as_deref().unwrap_or_default(),
         projection: projection.as_ref(),
     };
-    let local_result = service.get_inner(&id, &narrowing, &context).await;
+    let local_result = service.get_inner(&target, &id, &narrowing, &context).await;
 
-    let is_local = params.local.unwrap_or(false);
+    let is_local = !target.permits_federation() || params.local.unwrap_or(false);
 
     // Clause 5.7.1.4: a referenced live EntityMap fixes the registrations the
     // retrieval contacts; an expired or unknown one yields no inference, so a
@@ -173,19 +148,23 @@ pub(crate) async fn get(
             let params = &params;
             let context = &context;
             let id = &id;
+            let target = &target;
             let entity_map = EntityMapInUse::from(&map_use);
             async move {
                 forwarding
-                    .forward_retrieve(ForwardRetrieveRequest {
-                        entity_id: id,
-                        exclude_registration: None,
-                        client_query: ClientQuery::EntityRetrieve(params),
-                        context,
-                        operation: ForwardingOperation::RetrieveEntity,
-                        triggering,
-                        mode_filter,
-                        entity_map,
-                    })
+                    .forward_retrieve(
+                        target,
+                        ForwardRetrieveRequest {
+                            entity_id: id,
+                            exclude_registration: None,
+                            client_query: ClientQuery::EntityRetrieve(params),
+                            context,
+                            operation: ForwardingOperation::RetrieveEntity,
+                            triggering,
+                            mode_filter,
+                            entity_map,
+                        },
+                    )
                     .await
                     .unwrap_or_else(|error| {
                         // Retrieve forwarding is best-effort: a source that
@@ -250,7 +229,7 @@ pub(crate) async fn get(
             sys_attrs,
             projection: projection.as_ref(),
         };
-        let resolved = ResolvedJoin::prepare(service, from_ref(&entity), &context, &request)
+        let resolved = ResolvedJoin::prepare(service, &target, from_ref(&entity), &context, &request)
             .await
             .with_entity_instance(&uri)?;
         // Clause 6.3.17: a Linked Entity the join could not reach leaves the

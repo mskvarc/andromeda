@@ -8,7 +8,7 @@ use andromeda_ngsi_ld_problem_details::{batch_operation::BatchEntityError, error
 use andromeda_snapshot::{error::SnapshotError, service::SnapshotPurgeFailure};
 use andromeda_temporal::error::TemporalError;
 use axum::http::Uri;
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 /// Exhaustively classify one snapshot policy failure.
 pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
@@ -16,6 +16,9 @@ pub fn classify_snapshot_error(error: &SnapshotError) -> ClassifiedReport {
         SnapshotError::Validation { detail } => ClassifiedReport::public(NgsiLdErrorType::BadRequestData, detail),
         SnapshotError::NotFound { .. } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, error.to_string()),
         SnapshotError::AlreadyExists { .. } => ClassifiedReport::public(NgsiLdErrorType::AlreadyExists, error.to_string()),
+        SnapshotError::PreparationTimeout { .. } => {
+            ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, error.to_string()).with_retry_after(Duration::from_secs(1))
+        }
         SnapshotError::Entity(source) => classify_entity_error(source),
         SnapshotError::Temporal(source) => classify_temporal_error(source),
         SnapshotError::Federation(source) => classify_federation_error(source),

@@ -6,7 +6,8 @@ use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use headers::HeaderMapExt;
+use headers::{HeaderMapExt, RetryAfter};
+use std::time::Duration;
 
 /// A local Axum response wrapper around the framework-independent clause 5.5.3 wire value.
 #[derive(Debug)]
@@ -17,12 +18,18 @@ pub struct ProblemResponse {
     /// (clause 6.3.17): a forwarded read that found nothing still reports the
     /// sources it could not reach.
     warnings: Vec<NgsiLdWarning>,
+    /// Optional delay before a recoverable request should be retried.
+    retry_after: Option<Duration>,
 }
 
 impl ProblemResponse {
     /// Wrap a fully classified and request-bound problem detail.
     pub const fn new(problem: ProblemDetail) -> ProblemResponse {
-        ProblemResponse { problem, warnings: Vec::new() }
+        ProblemResponse {
+            problem,
+            warnings: Vec::new(),
+            retry_after: None,
+        }
     }
 
     /// Attach the clause 6.3.17 warnings the failed operation gathered.
@@ -40,6 +47,12 @@ impl ProblemResponse {
     pub fn warnings(&self) -> &[NgsiLdWarning] {
         &self.warnings
     }
+
+    /// Attach the standard `Retry-After` delay form.
+    pub const fn with_retry_after(mut self, retry_after: Duration) -> ProblemResponse {
+        self.retry_after = Some(retry_after);
+        self
+    }
 }
 
 impl IntoResponse for ProblemResponse {
@@ -48,6 +61,9 @@ impl IntoResponse for ProblemResponse {
         let mut response = (status, Json(self.problem)).into_response();
         if !self.warnings.is_empty() {
             response.headers_mut().typed_insert(NgsiLdWarningHeader::new(self.warnings));
+        }
+        if let Some(retry_after) = self.retry_after {
+            response.headers_mut().typed_insert(RetryAfter::delay(retry_after));
         }
         response
     }
@@ -90,6 +106,18 @@ mod tests {
         );
         pretty_assertions::assert_eq!(value["instance"], "/ngsi-ld/v1/entities/x");
         pretty_assertions::assert_eq!(value["detail"], "Entity missing");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recoverable_response_carries_retry_after_delay() -> Result<(), serde_json::Error> {
+        let response = ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, "Snapshot promotion is still pending")
+            .with_retry_after(std::time::Duration::from_secs(1))
+            .with_instance(Uri::from_static("/ngsi-ld/v1/entities"));
+        let (response, value) = body(response).await?;
+        pretty_assertions::assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        pretty_assertions::assert_eq!(response.headers().get("retry-after").and_then(|value| value.to_str().ok()), Some("1"));
+        pretty_assertions::assert_eq!(value["status"], 503);
         Ok(())
     }
 

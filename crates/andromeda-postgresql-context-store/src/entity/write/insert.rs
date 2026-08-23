@@ -12,6 +12,7 @@ use crate::{
     },
     error::ContextStoreError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
@@ -54,9 +55,10 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
     let mut identity = Query::insert();
     identity
         .into_table(Entities::Table)
-        .columns([Entities::Id, Entities::ExpiresAt, Entities::MinAttributeExpiresAt])
+        .columns([Entities::ContextSpaceKey, Entities::Id, Entities::ExpiresAt, Entities::MinAttributeExpiresAt])
         .select_from(
             Query::select()
+                .expr(Expr::cust("$12"))
                 .expr(projected(Entities::Id))
                 .expr(projected(Entities::ExpiresAt))
                 .expr(projected(Entities::MinAttributeExpiresAt))
@@ -65,15 +67,16 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         )
         .map_err(|error| ContextStoreError::Internal(error.to_string()))?;
     identity
-        .on_conflict(OnConflict::column(Entities::Id).do_nothing().to_owned())
+        .on_conflict(OnConflict::columns([Entities::ContextSpaceKey, Entities::Id]).do_nothing().to_owned())
         .returning(Query::returning().columns([Entities::EntityKey, Entities::Id]));
 
     let mut documents = Query::insert();
     documents
         .into_table(EntityDocuments::Table)
-        .columns([EntityDocuments::EntityKey, EntityDocuments::Payload])
+        .columns([EntityDocuments::ContextSpaceKey, EntityDocuments::EntityKey, EntityDocuments::Payload])
         .select_from(
             from_inserted()
+                .expr(Expr::cust("$12"))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntityDocuments::Payload))
                 .take(),
@@ -84,6 +87,7 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
     search
         .into_table(EntitySearch::Table)
         .columns([
+            EntitySearch::ContextSpaceKey,
             EntitySearch::EntityKey,
             EntitySearch::LocationExpiresAt,
             EntitySearch::TypeIds,
@@ -95,6 +99,7 @@ pub(super) fn entity_insert_sql() -> Result<String, ContextStoreError> {
         ])
         .select_from(
             from_inserted()
+                .expr(Expr::cust("$12"))
                 .expr(Expr::col((Ins, Entities::EntityKey)))
                 .expr(projected(EntitySearch::LocationExpiresAt))
                 .expr(projected(EntitySearch::TypeIds))
@@ -132,7 +137,11 @@ fn from_inserted() -> SelectStatement {
 impl EntityRepository {
     /// Insert every entity in `entities` that does not already exist, returning
     /// the rows actually inserted.
-    pub async fn create_batch_in_tx(tx: &mut Transaction<'_, Postgres>, entities: &PreparedEntityColumns) -> Result<Vec<WrittenEntity>, ContextStoreError> {
+    pub async fn create_batch_in_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        entities: &PreparedEntityColumns,
+    ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
         if entities.ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -152,6 +161,7 @@ impl EntityRepository {
             .bind(&entities.location_expires_ats)
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats)
+            .bind(target.key().as_i64())
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_INSERT, rows).await.map_err(entity_write_failure)?;
 

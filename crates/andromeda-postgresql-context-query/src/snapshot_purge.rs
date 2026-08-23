@@ -3,7 +3,6 @@
 
 use andromeda_ngsi_ld_model::snapshot_filter::{Conjunction, SnapshotField, SnapshotOp, SnapshotPurgeFilter, SnapshotPurgeTerm, SnapshotValue};
 use andromeda_postgresql_schema::snapshot::Snapshots;
-use andromeda_postgresql_seaquery::{cast::cast, pg_type::PostgresType};
 use sea_query::{BinOper, Condition, Expr as SeaExpr, ExprTrait, Query, SelectStatement, SimpleExpr};
 
 /// Build the `SELECT` that finds every snapshot a purge filter matches.
@@ -28,6 +27,16 @@ pub fn build_match_query(filter: &SnapshotPurgeFilter) -> SelectStatement {
 
 /// One filter term compiled to its column comparison.
 fn term_predicate(term: &SnapshotPurgeTerm) -> SimpleExpr {
+    if let SnapshotValue::Type(resource_type) = &term.value {
+        let type_matches = resource_type.as_str() == "Snapshot";
+        let predicate_matches = match term.op {
+            SnapshotOp::Eq => type_matches,
+            SnapshotOp::Neq => !type_matches,
+            SnapshotOp::Lt | SnapshotOp::Lte | SnapshotOp::Gt | SnapshotOp::Gte => false,
+        };
+        return SeaExpr::cust(if predicate_matches { "TRUE" } else { "FALSE" });
+    }
+
     let column = SeaExpr::expr(SeaExpr::col(snapshot_column(term.field)));
     let operand = operand(&term.value);
     match term.op {
@@ -45,26 +54,19 @@ fn term_predicate(term: &SnapshotPurgeTerm) -> SimpleExpr {
 const fn snapshot_column(field: SnapshotField) -> Snapshots {
     match field {
         SnapshotField::Id => Snapshots::Id,
+        SnapshotField::Type => Snapshots::Id,
         SnapshotField::SnapshotPriority => Snapshots::SnapshotPriority,
-        SnapshotField::Status => Snapshots::Status,
         SnapshotField::Endpoint => Snapshots::Endpoint,
-        SnapshotField::CreatedAt => Snapshots::CreatedAt,
-        SnapshotField::ModifiedAt => Snapshots::ModifiedAt,
-        SnapshotField::ExpiresAt => Snapshots::ExpiresAt,
-        SnapshotField::LastUsedAt => Snapshots::LastUsedAt,
     }
 }
 
-/// The bound operand a filter value becomes, cast where the column is not of the
-/// bind's type: `status` is a PostgreSQL enum, so a text parameter compared
-/// against one casts to `snapshot_status`.
+/// The bound operand a filter value becomes.
 fn operand(value: &SnapshotValue) -> SimpleExpr {
     match value {
         SnapshotValue::Id(id) => SeaExpr::val(id.as_str()),
+        SnapshotValue::Type(resource_type) => SeaExpr::val(resource_type.as_str() == "Snapshot"),
         SnapshotValue::Priority(priority) => SeaExpr::val(i16::from(priority.as_u8())),
-        SnapshotValue::Status(status) => cast(SeaExpr::val(<&str>::from(*status).to_string()), PostgresType::SnapshotStatus),
         SnapshotValue::Endpoint(url) => SeaExpr::val(url.as_str()),
-        SnapshotValue::DateTime(instant) => SeaExpr::val(*instant),
     }
 }
 
@@ -80,27 +82,22 @@ mod tests {
 
     #[test]
     fn a_single_term_renders_one_predicate_against_its_column() {
-        assert!(
-            sql_of("status==success").starts_with("SELECT \"id\" FROM \"snapshots\" WHERE \"status\" = "),
-            "{}",
-            sql_of("status==success")
-        );
-        assert!(sql_of("status==success").contains("::snapshot_status"), "{}", sql_of("status==success"));
+        let sql = sql_of("id==urn:ngsi-ld:Snapshot:1");
+        assert!(sql.starts_with("SELECT \"id\" FROM \"snapshots\" WHERE \"id\" = "), "{sql}");
     }
 
     #[test]
     fn a_conjunction_joins_its_terms_with_and() {
-        let sql = sql_of("snapshotPriority>=5;status==success");
-        assert!(sql.contains("\"snapshot_priority\" >= "), "{sql}");
-        assert!(sql.contains(" AND \"status\" = "), "{sql}");
-        assert!(sql.contains("::snapshot_status"), "{sql}");
+        let sql = sql_of("snapshotPriority==5;endpoint==https://example.org/status");
+        assert!(sql.contains("\"snapshot_priority\" = "), "{sql}");
+        assert!(sql.contains(" AND \"endpoint\" = "), "{sql}");
     }
 
     #[test]
     fn a_disjunction_joins_its_terms_with_or() {
-        let sql = sql_of("snapshotPriority<3|snapshotPriority>7");
-        assert!(sql.contains("\"snapshot_priority\" < "), "{sql}");
-        assert!(sql.contains(" OR \"snapshot_priority\" > "), "{sql}");
+        let sql = sql_of("id==urn:ngsi-ld:Snapshot:1|snapshotPriority!=7");
+        assert!(sql.contains("\"id\" = "), "{sql}");
+        assert!(sql.contains(" OR (\"snapshot_priority\" != "), "{sql}");
     }
 
     #[test]
@@ -108,20 +105,20 @@ mod tests {
         for (expression, column) in [
             ("id==urn:ngsi-ld:Snapshot:1", "id"),
             ("snapshotPriority==5", "snapshot_priority"),
-            ("status==success", "status"),
-            ("expiresAt>2024-01-01T00:00:00Z", "expires_at"),
-            ("lastUsedAt<2024-01-01T00:00:00Z", "last_used_at"),
-            ("createdAt>2024-01-01T00:00:00Z", "created_at"),
-            ("modifiedAt>2024-01-01T00:00:00Z", "modified_at"),
+            ("endpoint==https://example.org/status", "endpoint"),
         ] {
             assert!(sql_of(expression).contains(&format!("WHERE \"{column}\" ")), "{expression}");
         }
+        assert!(sql_of("type==Snapshot").ends_with("WHERE TRUE"));
+        assert!(sql_of("type!=Snapshot").ends_with("WHERE FALSE"));
     }
 
     #[test]
     fn placeholders_are_contiguous_from_one() {
-        let (sql, values) =
-            build_match_query(&parse_snapshot_q("snapshotPriority>=5;status==success").expect("valid purge filter")).build(PostgresQueryBuilder);
+        let (sql, values) = build_match_query(
+            &parse_snapshot_q("snapshotPriority==5;endpoint==https://example.org/status").expect("valid purge filter"),
+        )
+        .build(PostgresQueryBuilder);
         assert_eq!(values.0.len(), 2);
         assert!(sql.contains("$1"));
         assert!(sql.contains("$2"));

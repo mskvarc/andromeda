@@ -86,12 +86,8 @@ const INVARIANTS: &[Invariant] = &[
         count: "SELECT COUNT(*) FROM context_source_registrations csr WHERE NOT EXISTS (SELECT 1 FROM registration_information ri WHERE ri.registration_id = csr.id)",
     },
     Invariant {
-        description: "captured snapshot entities whose snapshot does not exist",
-        count: "SELECT COUNT(*) FROM snapshot_entities se WHERE NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.snapshot_key = se.snapshot_key)",
-    },
-    Invariant {
-        description: "captured snapshot temporal entities whose snapshot does not exist",
-        count: "SELECT COUNT(*) FROM snapshot_temporal_entities ste WHERE NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.snapshot_key = ste.snapshot_key)",
+        description: "snapshots whose context space does not exist or is not a Snapshot branch",
+        count: "SELECT COUNT(*) FROM snapshots s WHERE NOT EXISTS (SELECT 1 FROM context_spaces cs WHERE cs.context_space_key = s.context_space_key AND cs.kind = 'snapshot')",
     },
     Invariant {
         description: "history rows naming a unit the catalogue does not hold",
@@ -114,7 +110,13 @@ const INVARIANTS: &[Invariant] = &[
 
 /// The relations the rebuild replaced, which must not have been left in place
 /// as a second authority for the same facts.
-const REPLACED_RELATIONS: &[&str] = &["attribute_current", "temporal_entity_attributes", "notification_outbox"];
+const REPLACED_RELATIONS: &[&str] = &[
+    "attribute_current",
+    "temporal_entity_attributes",
+    "notification_outbox",
+    "snapshot_entities",
+    "snapshot_temporal_entities",
+];
 
 /// Every relation an invariant reads, which has to hold rows for the count to
 /// mean anything.
@@ -176,10 +178,7 @@ fn reconciled_registration(id: &str) -> Value {
     })
 }
 
-/// A snapshot whose control record and one captured entity populate the
-/// snapshot relations the invariants join across. The captured row is written
-/// directly under the snapshot's surrogate, as the preparation worker would,
-/// so the invariant does not wait on the worker's cadence.
+/// A Snapshot whose control record owns a first-class context branch.
 fn reconciled_snapshot(id: &str) -> Value {
     json!({
         "id": id,
@@ -236,15 +235,6 @@ async fn the_backfilled_schema_holds_no_orphan_row_and_no_unresolvable_reference
     assert_eq!(snapshotted.status, StatusCode::CREATED, "create snapshot: {:?}", snapshotted.body);
 
     let pool = scope.database_pool();
-    sqlx::query(
-        "INSERT INTO snapshot_entities (snapshot_key, entity_id, entity_data) \
-         VALUES ((SELECT snapshot_key FROM snapshots WHERE id = $1), $2, '{}'::jsonb) ON CONFLICT DO NOTHING",
-    )
-    .bind(&snapshot_id)
-    .bind(&entity_id)
-    .execute(pool)
-    .await
-    .expect("the captured snapshot row must be writable");
     for relation in POPULATED_RELATIONS {
         assert!(
             population(pool, relation).await > 0,

@@ -74,7 +74,12 @@ forward_concurrency = 16
 bulk_mode = "unnest"
 
 [snapshot]
+default_lifetime_secs = 3600
+maximum_lifetime_secs = 2592000
+capture_page_size = 250
 preparation_concurrency = 4
+scoped_operation_wait_secs = 30
+preparation_lease_secs = 30
 
 [notification_delivery]
 enabled = false

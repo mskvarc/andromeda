@@ -2,6 +2,7 @@
 
 use crate::{append_intent::SequencedTemporalAppendIntent, error::TemporalError};
 use andromeda_context_commit::lease_acknowledgement::LeaseAcknowledgement;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -67,6 +68,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     #[must_use = "temporal intent claims must be awaited"]
     async fn claim(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         limit: TemporalIntentBatchSize,
         lease_until: DateTime<Utc>,
@@ -76,6 +78,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     #[must_use = "entity-scoped temporal intent claims must be awaited"]
     async fn claim_for_entity(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
@@ -90,7 +93,12 @@ pub trait TemporalIntentQueue: Send + Sync {
     /// worker that now holds it. The sink is idempotent under the write
     /// identity, so a second delivery lands nothing twice.
     #[must_use = "temporal intent acknowledgements must be awaited"]
-    async fn acknowledge(&self, owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError>;
+    async fn acknowledge(
+        &self,
+        target: &ContextTarget,
+        owner: TemporalIntentLeaseOwner,
+        intent: &SequencedTemporalAppendIntent,
+    ) -> Result<LeaseAcknowledgement, TemporalError>;
 
     /// Release one failed intent with explicit retry metadata.
     ///
@@ -98,6 +106,7 @@ pub trait TemporalIntentQueue: Send + Sync {
     #[must_use = "temporal intent retries must be recorded"]
     async fn retry(
         &self,
+        target: &ContextTarget,
         owner: TemporalIntentLeaseOwner,
         intent: &SequencedTemporalAppendIntent,
         retry: TemporalIntentRetry,

@@ -1,4 +1,5 @@
 use andromeda_context_registry::service::ContextRegistryService;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService};
 use andromeda_entity_map::service::EntityMapService;
@@ -12,6 +13,8 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AndromedaState {
+    /// The tenant's durable live context-space target.
+    pub live_target: ContextTarget,
     pub entities: Arc<EntityService>,
     pub entity_query: Arc<EntityQueryService>,
     pub entity_discovery: Arc<EntityDiscoveryService>,

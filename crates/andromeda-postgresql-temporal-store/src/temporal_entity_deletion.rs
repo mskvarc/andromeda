@@ -14,6 +14,7 @@
 //! tombstones the specification requires instead.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, write_record_release::release_named};
+use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_schema::temporal::{AttributeHistory, ScopeHistory, TemporalAttributeStreams, TemporalEntities};
@@ -98,17 +99,17 @@ impl TemporalRepository {
     /// the identifier, [`TemporalStoreError::Database`] when a statement fails,
     /// and [`TemporalStoreError::Decode`] when the stored temporal-entity key is
     /// outside the range the database assigns.
-    pub async fn delete_temporal_evolution(&self, entity_id: &Uri) -> Result<TemporalEvolutionDeletion, TemporalStoreError> {
+    pub async fn delete_temporal_evolution(&self, target: &ContextTarget, entity_id: &Uri) -> Result<TemporalEvolutionDeletion, TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
-        let entity_key = locate_temporal_entity(&mut tx, entity_id).await?;
-        let attribute_writes = delete_returning_write_ids(&mut tx, delete_attribute_history_statement(entity_key)).await?;
-        let scope_writes = delete_returning_write_ids(&mut tx, delete_scope_history_statement(entity_key)).await?;
-        let (streams_sql, streams_values) = delete_attribute_streams_statement(entity_key).build_sqlx(PostgresQueryBuilder);
+        let entity_key = locate_temporal_entity(&mut tx, target.key(), entity_id).await?;
+        let attribute_writes = delete_returning_write_ids(&mut tx, delete_attribute_history_statement(target.key(), entity_key)).await?;
+        let scope_writes = delete_returning_write_ids(&mut tx, delete_scope_history_statement(target.key(), entity_key)).await?;
+        let (streams_sql, streams_values) = delete_attribute_streams_statement(target.key(), entity_key).build_sqlx(PostgresQueryBuilder);
         let streams = sqlx::query_with(AssertSqlSafe(streams_sql), streams_values)
             .execute(&mut *tx)
             .await?
             .rows_affected();
-        let (entity_sql, entity_values) = delete_temporal_entity_statement(entity_key).build_sqlx(PostgresQueryBuilder);
+        let (entity_sql, entity_values) = delete_temporal_entity_statement(target.key(), entity_key).build_sqlx(PostgresQueryBuilder);
         sqlx::query_with(AssertSqlSafe(entity_sql), entity_values).execute(&mut *tx).await?;
         let touched_writes = attribute_writes.iter().chain(scope_writes.iter()).copied().collect::<BTreeSet<Uuid>>();
         let touched_writes = touched_writes.into_iter().collect::<Vec<Uuid>>();
@@ -151,8 +152,12 @@ fn count(row: &PgRow, column: &str) -> Result<i64, TemporalStoreError> {
 }
 
 /// Resolve and lock the temporal entity one deletion addresses.
-async fn locate_temporal_entity(tx: &mut Transaction<'_, Postgres>, entity_id: &Uri) -> Result<TemporalEntityKey, TemporalStoreError> {
-    let (sql, values) = lock_temporal_entity_statement(entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
+async fn locate_temporal_entity(
+    tx: &mut Transaction<'_, Postgres>,
+    context_space_key: ContextSpaceKey,
+    entity_id: &Uri,
+) -> Result<TemporalEntityKey, TemporalStoreError> {
+    let (sql, values) = lock_temporal_entity_statement(context_space_key, entity_id.as_str()).build_sqlx(PostgresQueryBuilder);
     let located = sqlx::query_with(AssertSqlSafe(sql), values).fetch_optional(&mut **tx).await?;
     let Some(row) = located else {
         return Err(TemporalStoreError::NotFound(format!("Temporal evolution of {entity_id} not found")));
@@ -176,33 +181,37 @@ async fn delete_returning_write_ids(tx: &mut Transaction<'_, Postgres>, statemen
 }
 
 /// Lock the addressed temporal entity before anything is removed.
-fn lock_temporal_entity_statement(id: &str) -> SelectStatement {
+fn lock_temporal_entity_statement(context_space_key: ContextSpaceKey, id: &str) -> SelectStatement {
     Query::select()
         .column(TemporalEntities::EntityKey)
         .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::ContextSpaceKey).eq(context_space_key.as_i64()))
         .and_where(Expr::col(TemporalEntities::Id).eq(id))
         .lock(LockType::Update)
         .to_owned()
 }
 
 /// Remove one entity's attribute history, reporting each removed write identity.
-fn delete_attribute_history_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+fn delete_attribute_history_statement(context_space_key: ContextSpaceKey, entity_key: TemporalEntityKey) -> DeleteStatement {
     let owned_streams = Query::select()
         .column((S, TemporalAttributeStreams::StreamKey))
         .from_as(TemporalAttributeStreams::Table, S)
+        .and_where(Expr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
         .and_where(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).eq(entity_key.get()))
         .to_owned();
     Query::delete()
         .from_table(AttributeHistory::Table)
+        .and_where(Expr::col(AttributeHistory::ContextSpaceKey).eq(context_space_key.as_i64()))
         .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(owned_streams))
         .returning(Query::returning().column(AttributeHistory::WriteId))
         .to_owned()
 }
 
 /// Remove one entity's scope history, reporting each removed write identity.
-fn delete_scope_history_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+fn delete_scope_history_statement(context_space_key: ContextSpaceKey, entity_key: TemporalEntityKey) -> DeleteStatement {
     Query::delete()
         .from_table(ScopeHistory::Table)
+        .and_where(Expr::col(ScopeHistory::ContextSpaceKey).eq(context_space_key.as_i64()))
         .and_where(Expr::col(ScopeHistory::TemporalEntityKey).eq(entity_key.get()))
         .returning(Query::returning().column(ScopeHistory::WriteId))
         .to_owned()
@@ -213,17 +222,19 @@ fn delete_scope_history_statement(entity_key: TemporalEntityKey) -> DeleteStatem
 /// The stream's foreign key cascades from `temporal_entities`, so this is not
 /// what keeps the catalogue consistent; it is stated anyway to keep the sequence
 /// explicit and to report what the deletion removed.
-fn delete_attribute_streams_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+fn delete_attribute_streams_statement(context_space_key: ContextSpaceKey, entity_key: TemporalEntityKey) -> DeleteStatement {
     Query::delete()
         .from_table(TemporalAttributeStreams::Table)
+        .and_where(Expr::col(TemporalAttributeStreams::ContextSpaceKey).eq(context_space_key.as_i64()))
         .and_where(Expr::col(TemporalAttributeStreams::TemporalEntityKey).eq(entity_key.get()))
         .to_owned()
 }
 
 /// Remove the temporal entity itself.
-fn delete_temporal_entity_statement(entity_key: TemporalEntityKey) -> DeleteStatement {
+fn delete_temporal_entity_statement(context_space_key: ContextSpaceKey, entity_key: TemporalEntityKey) -> DeleteStatement {
     Query::delete()
         .from_table(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::ContextSpaceKey).eq(context_space_key.as_i64()))
         .and_where(Expr::col(TemporalEntities::EntityKey).eq(entity_key.get()))
         .to_owned()
 }
@@ -287,6 +298,7 @@ mod tests {
         delete_temporal_entity_statement,
         lock_temporal_entity_statement,
     };
+    use andromeda_context_space::context_space_key::ContextSpaceKey;
     use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
     use sea_query::PostgresQueryBuilder;
 
@@ -294,9 +306,13 @@ mod tests {
         TemporalEntityKey::try_from(1).expect("a positive key")
     }
 
+    fn context_space_key() -> ContextSpaceKey {
+        ContextSpaceKey::try_from(1).expect("positive context-space key")
+    }
+
     #[test]
     fn the_addressed_temporal_entity_is_locked_before_anything_is_removed() {
-        let sql = lock_temporal_entity_statement("urn:ngsi-ld:Vehicle:1").to_string(PostgresQueryBuilder);
+        let sql = lock_temporal_entity_statement(context_space_key(), "urn:ngsi-ld:Vehicle:1").to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"FROM "temporal_entities" WHERE "id" ="#), "{sql}");
         assert!(sql.contains("FOR UPDATE"), "{sql}");
     }
@@ -304,12 +320,12 @@ mod tests {
     #[test]
     fn history_removal_reports_the_write_identity_of_every_removed_row() {
         assert!(
-            delete_attribute_history_statement(key())
+            delete_attribute_history_statement(context_space_key(), key())
                 .to_string(PostgresQueryBuilder)
                 .contains(r#"RETURNING "write_id""#)
         );
         assert!(
-            delete_scope_history_statement(key())
+            delete_scope_history_statement(context_space_key(), key())
                 .to_string(PostgresQueryBuilder)
                 .contains(r#"RETURNING "write_id""#)
         );
@@ -318,22 +334,22 @@ mod tests {
     #[test]
     fn the_sequence_reaches_every_relation_the_evolution_occupies() {
         assert!(
-            delete_attribute_history_statement(key())
+            delete_attribute_history_statement(context_space_key(), key())
                 .to_string(PostgresQueryBuilder)
                 .starts_with(r#"DELETE FROM "attribute_history""#)
         );
         assert!(
-            delete_scope_history_statement(key())
+            delete_scope_history_statement(context_space_key(), key())
                 .to_string(PostgresQueryBuilder)
                 .starts_with(r#"DELETE FROM "scope_history""#)
         );
         assert!(
-            delete_attribute_streams_statement(key())
+            delete_attribute_streams_statement(context_space_key(), key())
                 .to_string(PostgresQueryBuilder)
                 .starts_with(r#"DELETE FROM "temporal_attribute_streams""#)
         );
         assert!(
-            delete_temporal_entity_statement(key())
+            delete_temporal_entity_statement(context_space_key(), key())
                 .to_string(PostgresQueryBuilder)
                 .starts_with(r#"DELETE FROM "temporal_entities""#)
         );
@@ -351,10 +367,10 @@ mod tests {
     #[test]
     fn no_statement_records_a_tombstone_for_a_temporal_evolution_deletion() {
         for sql in [
-            delete_attribute_history_statement(key()).to_string(PostgresQueryBuilder),
-            delete_scope_history_statement(key()).to_string(PostgresQueryBuilder),
-            delete_attribute_streams_statement(key()).to_string(PostgresQueryBuilder),
-            delete_temporal_entity_statement(key()).to_string(PostgresQueryBuilder),
+            delete_attribute_history_statement(context_space_key(), key()).to_string(PostgresQueryBuilder),
+            delete_scope_history_statement(context_space_key(), key()).to_string(PostgresQueryBuilder),
+            delete_attribute_streams_statement(context_space_key(), key()).to_string(PostgresQueryBuilder),
+            delete_temporal_entity_statement(context_space_key(), key()).to_string(PostgresQueryBuilder),
         ] {
             assert!(!sql.contains("INSERT"), "{sql}");
             assert!(!sql.contains("deleted_at"), "{sql}");

@@ -1,8 +1,10 @@
 //! Focused tenant-state resolution for subscription routes.
 
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::stream::{registry::ConnectionRegistry, sse::SseNotificationEvent, ws::WsNotificationMessage};
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
+    context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
     tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
 };
 use andromeda_http_response::problem_response::ProblemResponse;
@@ -16,6 +18,10 @@ use typed_builder::TypedBuilder;
 /// The complete subscription capability set exposed by one tenant.
 #[derive(TypedBuilder)]
 pub struct SubscriptionRouteServices {
+    /// Tenant's ordinary live context branch.
+    pub live_target: ContextTarget,
+    /// Snapshot URI to durable branch resolution.
+    pub snapshot_targets: Arc<dyn SnapshotTargetResolver>,
     /// Entity-subscription lifecycle policy.
     pub subscriptions: Arc<SubscriptionService<EntitySubscriptionVariant>>,
     /// Context-source-subscription lifecycle policy.
@@ -35,9 +41,23 @@ pub struct SubscriptionRouteServices {
 }
 
 /// Existing-tenant extraction specialized to subscription capabilities.
-pub(crate) type SubscriptionTenantState = ExistingTenantState<Arc<SubscriptionRouteServices>>;
+pub(crate) type SubscriptionTenantState = ExistingTargetedTenantState<Arc<SubscriptionRouteServices>>;
 /// Provisionable-tenant extraction specialized to subscription capabilities.
-pub(crate) type SubscriptionTenantStateOrCreate = ProvisionableTenantState<Arc<SubscriptionRouteServices>>;
+pub(crate) type SubscriptionTenantStateOrCreate = ProvisionableTargetedTenantState<Arc<SubscriptionRouteServices>>;
+/// Existing live tenant state for context-source subscription routes.
+pub(crate) type CsourceSubscriptionTenantState = ExistingTenantState<Arc<SubscriptionRouteServices>>;
+/// Provisionable live tenant state for context-source subscription routes.
+pub(crate) type CsourceSubscriptionTenantStateOrCreate = ProvisionableTenantState<Arc<SubscriptionRouteServices>>;
+
+impl ContextTargetProvider for SubscriptionRouteServices {
+    fn live_target(&self) -> &ContextTarget {
+        &self.live_target
+    }
+
+    fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
+        self.snapshot_targets.as_ref()
+    }
+}
 
 /// Resolves only subscription capabilities for one tenant scope.
 pub trait SubscriptionStateResolver: Send + Sync {

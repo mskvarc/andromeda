@@ -1,6 +1,7 @@
 //! Temporal history selection and observation reads.
 
 use crate::{append_intent::TemporalObservationIdentity, error::TemporalError, outcome::TemporalEntityIdOutcome};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{aggr_method::AggrMethod, attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::{TemporalAggregationRow, TemporalHistoryRow};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -105,7 +106,7 @@ pub trait TemporalHistoryReader: Send + Sync {
 
     /// Return whether the logical history view contains an entity.
     #[must_use = "temporal entity existence reads must be awaited"]
-    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError>;
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError>;
 
     /// Read the entity types each named Temporal Evolution records.
     ///
@@ -116,19 +117,29 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// of exactly the entities whose history outlived them. An entity the view
     /// does not contain is absent from the result.
     #[must_use = "temporal entity type reads must be awaited"]
-    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError>;
+    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError>;
 
     /// Resolve temporal entity candidates and report every unapplied predicate and window operation.
     #[must_use = "temporal entity selection must be awaited"]
-    async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError>;
+    async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError>;
 
     /// Read neutral temporal observations for one entity.
     #[must_use = "temporal history reads must be awaited"]
-    async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError>;
+    async fn query_entity_history(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<TemporalHistoryOutcome, TemporalError>;
 
     /// Read neutral aggregation buckets for one entity.
     #[must_use = "temporal aggregation reads must be awaited"]
-    async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
+    async fn query_entity_aggregation(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError>;
 
     /// The value shapes each named attribute has ever been recorded with
     /// across the whole history view, keyed by expanded attribute name; an
@@ -138,5 +149,9 @@ pub trait TemporalHistoryReader: Send + Sync {
     /// ineligible for a requested method before any history is read, and the
     /// eligibility of an attribute is a property of the values it carries.
     #[must_use = "recorded value kind reads must be awaited"]
-    async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError>;
+    async fn recorded_value_kinds(
+        &self,
+        target: &ContextTarget,
+        attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError>;
 }

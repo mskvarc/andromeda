@@ -3,16 +3,15 @@
 //!
 //! The snapshot purge query is a restricted subset of the NGSI-LD query
 //! language (clause 4.9) that filters over the fields of the `Snapshot`
-//! resource itself (clause 5.2.41): `id`, `snapshotPriority`, `status`,
-//! `endpoint`, `createdAt`, `modifiedAt`, `expiresAt`, `lastUsedAt`.
+//! resource itself (clause 5.2.41): `id`, `type`, `snapshotPriority`, and
+//! `endpoint`.
 //!
 //! The opaque `snapshotQueries` / `snapshotTemporalQueries` payloads are
 //! intentionally not filterable.
 
-use crate::snapshot::{SnapshotPriority, SnapshotPriorityParseError, SnapshotStatus};
+use crate::snapshot::{SnapshotPriority, SnapshotPriorityParseError};
 use andromeda_ngsi_ld_lexicon::uri::{Uri, UriParseError};
 use andromeda_ngsi_ld_query::filter::token;
-use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use std::str::FromStr;
 use strum::{Display as StrumDisplay, EnumString};
@@ -25,27 +24,15 @@ pub enum SnapshotField {
     /// The snapshot's identifier.
     #[strum(serialize = "id")]
     Id,
+    /// The resource type, whose value is always `Snapshot`.
+    #[strum(serialize = "type")]
+    Type,
     /// The snapshot's execution priority.
     #[strum(serialize = "snapshotPriority")]
     SnapshotPriority,
-    /// The snapshot's status.
-    #[strum(serialize = "status")]
-    Status,
     /// The endpoint notified on status changes.
     #[strum(serialize = "endpoint")]
     Endpoint,
-    /// When the snapshot was requested.
-    #[strum(serialize = "createdAt")]
-    CreatedAt,
-    /// When the snapshot was last changed.
-    #[strum(serialize = "modifiedAt")]
-    ModifiedAt,
-    /// When the snapshot stops being usable.
-    #[strum(serialize = "expiresAt")]
-    ExpiresAt,
-    /// When the snapshot was last read.
-    #[strum(serialize = "lastUsedAt")]
-    LastUsedAt,
 }
 
 /// Comparison operator (NGSI-LD clause 4.9).
@@ -76,14 +63,12 @@ pub enum SnapshotOp {
 pub enum SnapshotValue {
     /// A snapshot identifier, for the `id` field.
     Id(Uri),
+    /// A resource type, for the `type` field.
+    Type(CompactString),
     /// A priority, for the `snapshotPriority` field.
     Priority(SnapshotPriority),
-    /// A status, for the `status` field.
-    Status(SnapshotStatus),
     /// An endpoint URL, for the `endpoint` field.
     Endpoint(Url),
-    /// A timestamp, for any of the four time fields.
-    DateTime(DateTime<Utc>),
 }
 
 /// Top-level conjunction between filter terms (clause 4.9).
@@ -278,13 +263,15 @@ fn parse_value(field: SnapshotField, op: SnapshotOp, raw: &str) -> Result<Snapsh
             let id: Uri = unquoted.parse()?;
             Ok(SnapshotValue::Id(id))
         }
-        SnapshotField::Status => {
+        SnapshotField::Type => {
             require_eq_or_neq(field, op)?;
-            let status = SnapshotStatus::from_str(unquoted).map_err(|e| SnapshotQParseError::InvalidValue {
-                field,
-                detail: CompactString::from(e.to_string()),
-            })?;
-            Ok(SnapshotValue::Status(status))
+            if unquoted.is_empty() {
+                return Err(SnapshotQParseError::InvalidValue {
+                    field,
+                    detail: CompactString::from("type must not be empty"),
+                });
+            }
+            Ok(SnapshotValue::Type(CompactString::from(unquoted)))
         }
         SnapshotField::Endpoint => {
             require_eq_or_neq(field, op)?;
@@ -295,21 +282,13 @@ fn parse_value(field: SnapshotField, op: SnapshotOp, raw: &str) -> Result<Snapsh
             Ok(SnapshotValue::Endpoint(url))
         }
         SnapshotField::SnapshotPriority => {
+            require_eq_or_neq(field, op)?;
             let n: u8 = unquoted.parse::<u8>().map_err(|e| SnapshotQParseError::InvalidValue {
                 field,
                 detail: CompactString::from(e.to_string()),
             })?;
             let priority = SnapshotPriority::try_from(n)?;
             Ok(SnapshotValue::Priority(priority))
-        }
-        SnapshotField::CreatedAt | SnapshotField::ModifiedAt | SnapshotField::ExpiresAt | SnapshotField::LastUsedAt => {
-            let dt = DateTime::parse_from_rfc3339(unquoted)
-                .map(|d| d.with_timezone(&Utc))
-                .map_err(|e| SnapshotQParseError::InvalidValue {
-                    field,
-                    detail: CompactString::from(e.to_string()),
-                })?;
-            Ok(SnapshotValue::DateTime(dt))
         }
     }
 }
@@ -371,48 +350,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_q_status_eq_success() {
-        // Clause 5.2.41 (snapshotStatus), 4.9 (equality)
-        let filter = parse_snapshot_q("status==success").expect("parse");
+    fn parse_q_type_eq_snapshot() {
+        let filter = parse_snapshot_q("type==Snapshot").expect("parse");
         pretty_assertions::assert_eq!(filter.conjunction, Conjunction::And);
         pretty_assertions::assert_eq!(filter.terms.len(), 1);
         let term = &filter.terms[0];
-        pretty_assertions::assert_eq!(term.field, SnapshotField::Status);
+        pretty_assertions::assert_eq!(term.field, SnapshotField::Type);
         pretty_assertions::assert_eq!(term.op, SnapshotOp::Eq);
-        pretty_assertions::assert_eq!(term.value, SnapshotValue::Status(SnapshotStatus::Success));
+        pretty_assertions::assert_eq!(term.value, SnapshotValue::Type(CompactString::from("Snapshot")));
     }
 
     #[test]
-    fn parse_q_priority_gte_numeric() {
-        // Clause 5.2.41 (snapshotPriority), 4.9 (numeric comparison)
-        let filter = parse_snapshot_q("snapshotPriority>=7").expect("parse");
+    fn parse_q_priority_eq_numeric() {
+        let filter = parse_snapshot_q("snapshotPriority==7").expect("parse");
         pretty_assertions::assert_eq!(filter.terms.len(), 1);
-        pretty_assertions::assert_eq!(filter.terms[0].op, SnapshotOp::Gte);
+        pretty_assertions::assert_eq!(filter.terms[0].op, SnapshotOp::Eq);
         pretty_assertions::assert_eq!(filter.terms[0].value, SnapshotValue::Priority(SnapshotPriority::try_from(7u8).unwrap()));
-    }
-
-    #[test]
-    fn parse_q_expires_at_lt_datetime() {
-        // Clause 5.2.41 (expiresAt), 4.9 (dateTime comparison)
-        let filter = parse_snapshot_q("expiresAt<2026-01-01T00:00:00Z").expect("parse");
-        pretty_assertions::assert_eq!(filter.terms[0].field, SnapshotField::ExpiresAt);
-        pretty_assertions::assert_eq!(filter.terms[0].op, SnapshotOp::Lt);
-        let dt = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap().with_timezone(&Utc);
-        pretty_assertions::assert_eq!(filter.terms[0].value, SnapshotValue::DateTime(dt));
     }
 
     #[test]
     fn parse_q_conjunction_semicolon_means_and_pipe_means_or() {
         // Clause 4.9: ';' = AND, '|' = OR
-        let and_filter = parse_snapshot_q("status==success;snapshotPriority>=5").expect("parse and");
+        let and_filter = parse_snapshot_q("type==Snapshot;snapshotPriority==5").expect("parse and");
         pretty_assertions::assert_eq!(and_filter.conjunction, Conjunction::And);
         pretty_assertions::assert_eq!(and_filter.terms.len(), 2);
 
-        let or_filter = parse_snapshot_q("status==success|status==partial").expect("parse or");
+        let or_filter = parse_snapshot_q("type==Snapshot|snapshotPriority==5").expect("parse or");
         pretty_assertions::assert_eq!(or_filter.conjunction, Conjunction::Or);
         pretty_assertions::assert_eq!(or_filter.terms.len(), 2);
 
-        let mixed = parse_snapshot_q("status==success;status==partial|status==empty");
+        let mixed = parse_snapshot_q("type==Snapshot;snapshotPriority==5|snapshotPriority==6");
         pretty_assertions::assert_eq!(mixed, Err(SnapshotQParseError::MixedConjunctions));
     }
 
@@ -426,7 +393,7 @@ mod tests {
     #[test]
     fn parse_q_rejects_malformed() {
         // Clause 6.3.2 BadRequestData: missing operator
-        let err = parse_snapshot_q("statussuccess").unwrap_err();
+        let err = parse_snapshot_q("typeSnapshot").unwrap_err();
         assert!(matches!(err, SnapshotQParseError::MissingOperator(_)));
 
         let err = parse_snapshot_q("").unwrap_err();
@@ -441,11 +408,11 @@ mod tests {
             }
         ));
 
-        let err = parse_snapshot_q("status<success").unwrap_err();
+        let err = parse_snapshot_q("snapshotPriority<5").unwrap_err();
         assert!(matches!(
             err,
             SnapshotQParseError::OperatorNotSupported {
-                field: SnapshotField::Status,
+                field: SnapshotField::SnapshotPriority,
                 op: SnapshotOp::Lt
             }
         ));
@@ -456,7 +423,7 @@ mod tests {
         let filter = parse_snapshot_q("endpoint==\"https://example.org/sink\"").expect("parse");
         match &filter.terms[0].value {
             SnapshotValue::Endpoint(url) => pretty_assertions::assert_eq!(url.as_str(), "https://example.org/sink"),
-            other @ (SnapshotValue::Id(_) | SnapshotValue::Priority(_) | SnapshotValue::Status(_) | SnapshotValue::DateTime(_)) => {
+            other @ (SnapshotValue::Id(_) | SnapshotValue::Type(_) | SnapshotValue::Priority(_)) => {
                 panic!("unexpected value: {:?}", other)
             }
         }
@@ -467,7 +434,7 @@ mod tests {
         let filter = parse_snapshot_q("id==urn:ngsi-ld:Snapshot:abc").expect("parse");
         match &filter.terms[0].value {
             SnapshotValue::Id(id) => pretty_assertions::assert_eq!(id.as_str(), "urn:ngsi-ld:Snapshot:abc"),
-            other @ (SnapshotValue::Priority(_) | SnapshotValue::Status(_) | SnapshotValue::Endpoint(_) | SnapshotValue::DateTime(_)) => {
+            other @ (SnapshotValue::Type(_) | SnapshotValue::Priority(_) | SnapshotValue::Endpoint(_)) => {
                 panic!("unexpected value: {:?}", other)
             }
         }

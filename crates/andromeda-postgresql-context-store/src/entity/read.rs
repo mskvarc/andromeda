@@ -8,6 +8,7 @@ use crate::{
     entity::{mapper::stored_uri, pushdown, repo::EntityRepository},
     error::ContextStoreError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{entity_snapshot::EntitySnapshot, query_outcome::QueryOutcome};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
@@ -28,8 +29,8 @@ use std::collections::HashMap;
 
 impl EntityRepository {
     /// Retrieve an entity's expanded payload by identifier.
-    pub async fn get(&self, id: &Uri) -> Result<Option<Value>, ContextStoreError> {
-        let (sql, values) = payload_by_id_query(id.as_str()).build_sqlx(PostgresQueryBuilder);
+    pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Option<Value>, ContextStoreError> {
+        let (sql, values) = payload_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let result: Option<Value> = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql.as_str()), values)
             .fetch_optional(&self.pool)
             .await?;
@@ -37,12 +38,12 @@ impl EntityRepository {
     }
 
     /// Fetch expanded payloads for multiple entities in one query.
-    pub async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, ContextStoreError> {
+    pub async fn get_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
-        let (sql, values) = payloads_by_ids_query(&id_strs).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = payloads_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         let mut result = HashMap::with_capacity(ids.len());
@@ -55,8 +56,8 @@ impl EntityRepository {
     }
 
     /// Retrieve an entity's payload together with its `modified_at`.
-    pub async fn get_snapshot(&self, id: &Uri) -> Result<Option<EntitySnapshot>, ContextStoreError> {
-        let (sql, values) = snapshot_by_id_query(id.as_str()).build_sqlx(PostgresQueryBuilder);
+    pub async fn get_snapshot(&self, target: &ContextTarget, id: &Uri) -> Result<Option<EntitySnapshot>, ContextStoreError> {
+        let (sql, values) = snapshot_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
 
         Ok(row.map(|row| EntitySnapshot {
@@ -66,12 +67,12 @@ impl EntityRepository {
     }
 
     /// Retrieve payloads and `modified_at` for several entities in one query.
-    pub async fn get_snapshot_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, ContextStoreError> {
+    pub async fn get_snapshot_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
-        let (sql, values) = snapshots_by_ids_query(&id_strs).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = snapshots_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         let mut result = HashMap::with_capacity(ids.len());
@@ -89,8 +90,8 @@ impl EntityRepository {
     }
 
     /// Retrieve system attributes for a single entity.
-    pub async fn get_sys_attrs(&self, id: &Uri) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
-        let (sql, values) = sys_attrs_by_id_query(id.as_str()).build_sqlx(PostgresQueryBuilder);
+    pub async fn get_sys_attrs(&self, target: &ContextTarget, id: &Uri) -> Result<Option<SysAttrsSnapshot>, ContextStoreError> {
+        let (sql, values) = sys_attrs_by_id_query(target, id.as_str()).build_sqlx(PostgresQueryBuilder);
         let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_optional(&self.pool).await?;
 
         Ok(row.map(|row| SysAttrsSnapshot {
@@ -101,12 +102,12 @@ impl EntityRepository {
     }
 
     /// Fetch system attributes for multiple entities in one query.
-    pub async fn get_sys_attrs_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, ContextStoreError> {
+    pub async fn get_sys_attrs_batch(&self, target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, ContextStoreError> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
         let id_strs: Vec<&str> = ids.iter().map(Uri::as_str).collect();
-        let (sql, values) = sys_attrs_by_ids_query(&id_strs).build_sqlx(PostgresQueryBuilder);
+        let (sql, values) = sys_attrs_by_ids_query(target, &id_strs).build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
 
         let mut result = HashMap::with_capacity(rows.len());
@@ -132,10 +133,10 @@ impl EntityRepository {
     /// back, so the residual is always empty here -- but the decision is read
     /// off the profile rather than assumed, which is what a store without
     /// those extensions changes.
-    pub async fn query_compiled(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, ContextStoreError> {
+    pub async fn query_compiled(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, ContextStoreError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
         let names = self.resolve_names(&planned.query).await?;
-        let built = entity_sql::build_query(&planned.query, &names)?;
+        let built = entity_sql::build_query(target, &planned.query, &names)?;
 
         let has_count = built.count.is_some();
         let (sql, values) = built.select.build_sqlx(PostgresQueryBuilder);
@@ -162,10 +163,10 @@ impl EntityRepository {
     ///
     /// Planned the same way [`EntityRepository::query_compiled`] is; the
     /// statement never counts, so the outcome carries no total either way.
-    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
+    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, ContextStoreError> {
         let planned = pushdown::plan(compiled, &EntityRepository::PROFILE);
         let names = self.resolve_names(&planned.query).await?;
-        let statement = entity_sql::build_ids_query(&planned.query, &names)?;
+        let statement = entity_sql::build_ids_query(target, &planned.query, &names)?;
 
         let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
         let rows = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values).fetch_all(&self.pool).await?;
@@ -248,58 +249,64 @@ pub(super) fn identity_with_documents() -> SelectStatement {
 }
 
 /// The payload of the entity identified by `id`.
-fn payload_by_id_query(id: &str) -> SelectStatement {
+fn payload_by_id_query(target: &ContextTarget, id: &str) -> SelectStatement {
     identity_with_documents()
         .column((EntityDocuments::Table, EntityDocuments::Payload))
+        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
         .take()
 }
 
 /// The identifier and payload of every entity in `ids`.
-fn payloads_by_ids_query(ids: &[&str]) -> SelectStatement {
+fn payloads_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
     identity_with_documents()
         .column((Entities::Table, Entities::Id))
         .column((EntityDocuments::Table, EntityDocuments::Payload))
+        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
         .take()
 }
 
 /// The payload and version token of the entity identified by `id`.
-fn snapshot_by_id_query(id: &str) -> SelectStatement {
+fn snapshot_by_id_query(target: &ContextTarget, id: &str) -> SelectStatement {
     identity_with_documents()
         .column((EntityDocuments::Table, EntityDocuments::Payload))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
+        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
         .take()
 }
 
 /// The identifier, payload and version token of every entity in `ids`.
-fn snapshots_by_ids_query(ids: &[&str]) -> SelectStatement {
+fn snapshots_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
     identity_with_documents()
         .column((Entities::Table, Entities::Id))
         .column((EntityDocuments::Table, EntityDocuments::Payload))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
+        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
         .take()
 }
 
 /// The system attributes of the entity identified by `id`.
-fn sys_attrs_by_id_query(id: &str) -> SelectStatement {
+fn sys_attrs_by_id_query(target: &ContextTarget, id: &str) -> SelectStatement {
     identity_with_documents()
         .column((Entities::Table, Entities::CreatedAt))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
         .column((Entities::Table, Entities::ExpiresAt))
+        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(id))
         .take()
 }
 
 /// The identifier and system attributes of every entity in `ids`.
-fn sys_attrs_by_ids_query(ids: &[&str]) -> SelectStatement {
+fn sys_attrs_by_ids_query(target: &ContextTarget, ids: &[&str]) -> SelectStatement {
     identity_with_documents()
         .column((Entities::Table, Entities::Id))
         .column((Entities::Table, Entities::CreatedAt))
         .column((EntityDocuments::Table, EntityDocuments::ModifiedAt))
         .column((Entities::Table, Entities::ExpiresAt))
+        .and_where(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(Expr::col((Entities::Table, Entities::Id)).eq(any(text_array(ids))))
         .take()
 }
@@ -307,21 +314,31 @@ fn sys_attrs_by_ids_query(ids: &[&str]) -> SelectStatement {
 #[cfg(test)]
 mod tests {
     use crate::entity::read::{payload_by_id_query, payloads_by_ids_query, snapshot_by_id_query, sys_attrs_by_id_query, sys_attrs_by_ids_query};
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use sea_query::PostgresQueryBuilder;
+
+    fn target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
 
     const JOIN: &str = r#"FROM "entities" JOIN "entity_documents" ON "entity_documents"."entity_key" = "entities"."entity_key""#;
 
     #[test]
     fn a_single_payload_reads_by_id_through_the_document_join() {
         assert_eq!(
-            payload_by_id_query("urn:x").to_string(PostgresQueryBuilder),
-            format!(r#"SELECT "entity_documents"."payload" {JOIN} WHERE "entities"."id" = 'urn:x'"#)
+            payload_by_id_query(&target(), "urn:x").to_string(PostgresQueryBuilder),
+            format!(r#"SELECT "entity_documents"."payload" {JOIN} WHERE "entities"."context_space_key" = 1 AND "entities"."id" = 'urn:x'"#)
         );
     }
 
     #[test]
     fn a_batch_reads_through_one_array_membership_test() {
-        let sql = payloads_by_ids_query(&["urn:a", "urn:b"]).to_string(PostgresQueryBuilder);
+        let sql = payloads_by_ids_query(&target(), &["urn:a", "urn:b"]).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(&format!(r#"SELECT "entities"."id", "entity_documents"."payload" {JOIN}"#)),
             "{sql}"
@@ -334,14 +351,14 @@ mod tests {
 
     #[test]
     fn a_snapshot_reads_the_payload_with_its_version_token_from_the_document_row() {
-        let sql = snapshot_by_id_query("urn:x").to_string(PostgresQueryBuilder);
+        let sql = snapshot_by_id_query(&target(), "urn:x").to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#""entity_documents"."payload", "entity_documents"."modified_at""#), "{sql}");
     }
 
     #[test]
     fn system_attributes_read_the_three_lifecycle_instants_from_their_relations() {
-        let single = sys_attrs_by_id_query("urn:x").to_string(PostgresQueryBuilder);
-        let batch = sys_attrs_by_ids_query(&["urn:a"]).to_string(PostgresQueryBuilder);
+        let single = sys_attrs_by_id_query(&target(), "urn:x").to_string(PostgresQueryBuilder);
+        let batch = sys_attrs_by_ids_query(&target(), &["urn:a"]).to_string(PostgresQueryBuilder);
         for column in [
             r#""entities"."created_at""#,
             r#""entity_documents"."modified_at""#,

@@ -5,18 +5,22 @@ use crate::{
     prepare::to_insert_params,
     query_validation::validate_snapshot_query_shapes,
     status::{ScopingEligibility, scoping_eligibility},
-    store::{SnapshotAttributeInfo, SnapshotStore, SnapshotTypeInfo},
+    store::SnapshotStore,
 };
-use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_jsonld::context_spec::ContextSpec;
+use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
-    snapshot::{Snapshot, SnapshotInput, SnapshotPatch, SnapshotStatus},
+    snapshot::{Snapshot, SnapshotStatus},
+    snapshot_clone::SnapshotCloneInput,
     snapshot_filter::SnapshotPurgeFilter,
+    snapshot_input::SnapshotInput,
+    snapshot_patch::{MergePatchValue, SnapshotPatch},
 };
-use andromeda_ngsi_ld_query::type_selection::grammar::TypeExprRaw;
 use chrono::Utc;
 use iso8601_duration::Duration as Iso8601Duration;
-use serde_json::Value;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+use tokio::time::{MissedTickBehavior, interval, timeout};
 use tracing::{info, warn};
 
 /// Service for managing NGSI-LD entity snapshots.
@@ -24,6 +28,9 @@ pub struct SnapshotService {
     repo: Arc<dyn SnapshotStore>,
     notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
     preparation: Option<Arc<SnapshotPreparation>>,
+    default_lifetime: Duration,
+    maximum_lifetime: Duration,
+    scoped_operation_wait: Duration,
 }
 
 impl SnapshotService {
@@ -34,11 +41,17 @@ impl SnapshotService {
         repo: Arc<dyn SnapshotStore>,
         notification_sink: Option<Arc<dyn SnapshotNotificationSink>>,
         preparation: Option<Arc<SnapshotPreparation>>,
+        default_lifetime: Duration,
+        maximum_lifetime: Duration,
+        scoped_operation_wait: Duration,
     ) -> SnapshotService {
         SnapshotService {
             repo,
             notification_sink,
             preparation,
+            default_lifetime,
+            maximum_lifetime,
+            scoped_operation_wait,
         }
     }
 
@@ -63,7 +76,12 @@ impl SnapshotService {
     }
 
     /// Create a new snapshot from the given input parameters.
-    pub async fn create(&self, input: SnapshotInput) -> Result<Snapshot, SnapshotError> {
+    pub async fn create(&self, input: SnapshotInput, context: ContextSpec) -> Result<Snapshot, SnapshotError> {
+        if input.snapshot_queries.is_none() && input.snapshot_temporal_queries.is_none() {
+            return Err(SnapshotError::validation(
+                "At least one of snapshotQueries or snapshotTemporalQueries must be present",
+            ));
+        }
         // Reject a malformed query shape before persistence (clause 5.16.1), so
         // an unparseable `q`, geometry or `timerel` is a 400 rather than a
         // snapshot created 201 that only fails when its queries execute.
@@ -81,13 +99,17 @@ impl SnapshotService {
         let priority = input.snapshot_priority.unwrap_or_default();
 
         let now = Utc::now();
-        let expires_at = compute_snapshot_expires_at(now, input.snapshot_lifetime.as_ref())?;
+        let requested_lifetime = match input.snapshot_lifetime {
+            Some(lifetime) => lifetime,
+            None => iso8601_lifetime(self.default_lifetime)?,
+        };
+        let (snapshot_lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.maximum_lifetime)?;
 
         let snapshot = Snapshot::builder()
             .id(id)
             .snapshot_queries(input.snapshot_queries)
             .snapshot_temporal_queries(input.snapshot_temporal_queries)
-            .snapshot_lifetime(input.snapshot_lifetime)
+            .snapshot_lifetime(Some(snapshot_lifetime))
             .snapshot_priority(priority)
             .endpoint(input.endpoint)
             .receiver_info(input.receiver_info)
@@ -97,11 +119,13 @@ impl SnapshotService {
             .created_at(now)
             .modified_at(now)
             .expires_at(expires_at)
-            .last_used_at(None)
+            .last_used_at(Some(now))
             .build();
 
-        self.repo.create(to_insert_params(&snapshot)?).await?;
-        self.send_notification_if_configured(&snapshot).await;
+        let query_context = context
+            .to_context_value()
+            .ok_or_else(|| SnapshotError::internal("Snapshot request context could not be materialized"))?;
+        self.repo.create(to_insert_params(&snapshot, query_context)?).await?;
 
         Ok(snapshot)
     }
@@ -127,23 +151,44 @@ impl SnapshotService {
 
     /// Partially update a snapshot's lifetime or priority.
     pub async fn update(&self, id: &Uri, patch: SnapshotPatch) -> Result<Snapshot, SnapshotError> {
-        let existing = self.get(id).await?;
+        self.get(id).await?;
+
+        if patch.id.as_ref().is_some_and(|patch_id| patch_id != id) {
+            return Err(SnapshotError::validation("Snapshot id is immutable"));
+        }
+        if !matches!(patch.snapshot_queries, MergePatchValue::Absent) || !matches!(patch.snapshot_temporal_queries, MergePatchValue::Absent) {
+            return Err(SnapshotError::validation("Snapshot query definitions are immutable"));
+        }
 
         let patch_priority = patch.snapshot_priority;
-
-        // Recalculate expiresAt if lifetime changed
-        let new_expires_at = if let Some(ref lt) = patch.snapshot_lifetime {
-            Some(compute_snapshot_expires_at(existing.created_at, Some(lt))?)
-        } else {
-            None
+        let endpoint = match &patch.endpoint {
+            MergePatchValue::Absent => None,
+            MergePatchValue::Null => Some(None),
+            MergePatchValue::Value(endpoint) => Some(Some(endpoint)),
+        };
+        let receiver_info = match &patch.receiver_info {
+            MergePatchValue::Absent => None,
+            MergePatchValue::Null => Some(None),
+            MergePatchValue::Value(receiver_info) => Some(Some(serde_json::to_value(receiver_info)?)),
         };
 
+        // Recalculate expiresAt from patch time and persist the capped effective lifetime.
+        let effective_lifetime = patch
+            .snapshot_lifetime
+            .as_ref()
+            .map(|lifetime| effective_snapshot_lifetime(Utc::now(), lifetime, self.maximum_lifetime))
+            .transpose()?;
+        let persisted_lifetime = effective_lifetime.as_ref().map(|(lifetime, _)| lifetime);
+        let new_expires_at = effective_lifetime.as_ref().map(|(_, expires_at)| *expires_at);
+
         self.repo
-            .update_lifetime_priority(id, patch.snapshot_lifetime.as_ref(), patch_priority, new_expires_at)
+            .update_metadata(id, persisted_lifetime, patch_priority, endpoint, receiver_info, new_expires_at)
             .await?;
 
         let updated = self.get(id).await?;
-        self.send_notification_if_configured(&updated).await;
+        if updated.status != SnapshotStatus::Preparing {
+            self.send_notification_if_configured(&updated).await;
+        }
         Ok(updated)
     }
 
@@ -212,10 +257,10 @@ impl SnapshotService {
             return Err(SnapshotError::not_found(id));
         }
 
-        match scoping_eligibility(snapshot.status) {
-            ScopingEligibility::Usable => {}
-            ScopingEligibility::NotUsable => return Err(SnapshotError::not_found(id)),
-        }
+        let snapshot = match scoping_eligibility(snapshot.status) {
+            ScopingEligibility::Usable => snapshot,
+            ScopingEligibility::Preparing => self.wait_for_terminal(id).await?,
+        };
 
         if let Err(e) = self.repo.touch_last_used(id).await {
             tracing::warn!(error = %e, snapshot_id = %id, "Failed to update snapshot last_used_at");
@@ -224,75 +269,73 @@ impl SnapshotService {
         Ok(snapshot)
     }
 
-    /// Retrieve a single entity from a snapshot's frozen data.
-    pub async fn get_snapshot_entity(&self, snapshot_id: &Uri, entity_id: &Uri) -> Result<Option<Value>, SnapshotError> {
-        self.repo.get_entity(snapshot_id, entity_id).await
+    /// Resolve and validate the typed branch target for a scoped operation.
+    pub async fn resolve_context_target(&self, id: &Uri) -> Result<ContextTarget, SnapshotError> {
+        self.validate_for_scoping(id).await?;
+        let target = self.repo.target(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
+        Ok(ContextTarget::Snapshot(target))
     }
 
-    /// Query entities from a snapshot's frozen data with optional filtering and pagination.
-    pub async fn query_snapshot_entities(
-        &self,
-        snapshot_id: &Uri,
-        entity_type: Option<&TypeExprRaw>,
-        entity_ids: Option<&[Uri]>,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<Value>, i64), SnapshotError> {
-        self.repo.query_entities(snapshot_id, entity_type, entity_ids, limit, offset).await
+    /// Wait until capture or clone promotion leaves `preparing` without treating status as absence.
+    async fn wait_for_terminal(&self, id: &Uri) -> Result<Snapshot, SnapshotError> {
+        let wait = async {
+            let mut poll = interval(Duration::from_millis(25));
+            poll.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            loop {
+                poll.tick().await;
+                let snapshot = self.repo.get(id).await?.ok_or_else(|| SnapshotError::not_found(id))?;
+                if snapshot.expires_at < Utc::now() {
+                    return Err(SnapshotError::not_found(id));
+                }
+                match scoping_eligibility(snapshot.status) {
+                    ScopingEligibility::Usable => return Ok(snapshot),
+                    ScopingEligibility::Preparing => {}
+                }
+            }
+        };
+        timeout(self.scoped_operation_wait, wait)
+            .await
+            .map_err(|_| SnapshotError::preparation_timeout(id))?
     }
 
-    /// Return distinct entity types present in a snapshot's frozen data
-    /// (ETSI GS CIM 009 clause 5.7.5, scoped via 5.5.15).
-    pub async fn snapshot_types(&self, snapshot_id: &Uri) -> Result<Vec<EntityTypeName>, SnapshotError> {
-        self.repo.snapshot_distinct_types(snapshot_id).await
-    }
-
-    /// Return `(entity_count, attribute_names)` for a type within a snapshot,
-    /// or `None` if the type is absent (clause 5.7.7).
-    pub async fn snapshot_type_info(&self, snapshot_id: &Uri, type_name: &EntityTypeName) -> Result<Option<SnapshotTypeInfo>, SnapshotError> {
-        self.repo.snapshot_type_info(snapshot_id, type_name).await
-    }
-
-    /// Return distinct attribute names present across a snapshot's frozen
-    /// entities (clause 5.7.8).
-    pub async fn snapshot_attributes(&self, snapshot_id: &Uri) -> Result<Vec<AttributeName>, SnapshotError> {
-        self.repo.snapshot_distinct_attributes(snapshot_id).await
-    }
-
-    /// Return `(entity_count, type_names)` for an attribute within a snapshot,
-    /// or `None` if the attribute is absent (clause 5.7.10).
-    pub async fn snapshot_attribute_info(&self, snapshot_id: &Uri, attr_name: &AttributeName) -> Result<Option<SnapshotAttributeInfo>, SnapshotError> {
-        self.repo.snapshot_attribute_info(snapshot_id, attr_name).await
-    }
-
-    /// Retrieve a single temporal entity from a snapshot's frozen data.
-    pub async fn get_snapshot_temporal_entity(&self, snapshot_id: &Uri, entity_id: &Uri) -> Result<Option<Value>, SnapshotError> {
-        self.repo.get_temporal_entity(snapshot_id, entity_id).await
-    }
-
-    /// Query temporal entities from a snapshot's frozen data with optional filtering and pagination.
-    pub async fn query_snapshot_temporal_entities(
-        &self,
-        snapshot_id: &Uri,
-        entity_type: Option<&TypeExprRaw>,
-        entity_ids: Option<&[Uri]>,
-        limit: i64,
-        offset: i64,
-    ) -> Result<(Vec<Value>, i64), SnapshotError> {
-        self.repo.query_temporal_entities(snapshot_id, entity_type, entity_ids, limit, offset).await
-    }
-
-    /// Clone an existing snapshot, producing a new snapshot with a fresh ID and expiration.
-    pub async fn clone_snapshot(&self, source_id: &Uri) -> Result<Snapshot, SnapshotError> {
+    /// Commit an asynchronous clone job and return its preparing control resource.
+    pub async fn clone_snapshot(&self, source_id: &Uri, input: SnapshotCloneInput) -> Result<Snapshot, SnapshotError> {
         let source = self.get(source_id).await?;
 
-        let new_id = build_snapshot_id()?;
+        let new_id = match input.id {
+            Some(id) => id,
+            None => build_snapshot_id()?,
+        };
+        if self.repo.exists(&new_id).await? {
+            return Err(SnapshotError::already_exists(&new_id));
+        }
 
-        let new_expires_at = compute_snapshot_expires_at(Utc::now(), source.snapshot_lifetime.as_ref())?;
-
-        let cloned = self.repo.clone_snapshot(source_id, &new_id, new_expires_at).await?;
-
-        self.send_notification_if_configured(&cloned).await;
+        let requested_lifetime = match input.snapshot_lifetime.or(source.snapshot_lifetime) {
+            Some(lifetime) => lifetime,
+            None => iso8601_lifetime(self.default_lifetime)?,
+        };
+        let now = Utc::now();
+        let (lifetime, expires_at) = effective_snapshot_lifetime(now, &requested_lifetime, self.maximum_lifetime)?;
+        let cloned = Snapshot::builder()
+            .id(new_id)
+            .snapshot_queries(source.snapshot_queries)
+            .snapshot_temporal_queries(source.snapshot_temporal_queries)
+            .snapshot_lifetime(Some(lifetime))
+            .snapshot_priority(input.snapshot_priority.unwrap_or(source.snapshot_priority))
+            .endpoint(input.endpoint.or(source.endpoint))
+            .receiver_info(input.receiver_info.or(source.receiver_info))
+            .status(SnapshotStatus::Preparing)
+            .queries_details(source.queries_details)
+            .temporal_queries_details(source.temporal_queries_details)
+            .created_at(now)
+            .modified_at(now)
+            .expires_at(expires_at)
+            .last_used_at(Some(now))
+            .build();
+        let query_context = serde_json::json!([andromeda_ngsi_ld_vocabulary::NGSI_LD_CORE_CONTEXT_URL]);
+        let mut params = to_insert_params(&cloned, query_context)?;
+        params.clone_source_id = Some(source_id);
+        self.repo.create(params).await?;
 
         Ok(cloned)
     }
@@ -348,12 +391,38 @@ fn build_snapshot_id() -> Result<Uri, SnapshotError> {
         .map_err(|error| SnapshotError::internal(format!("Generated snapshot id is not a valid URI: {error}")))
 }
 
-fn compute_snapshot_expires_at(created_at: chrono::DateTime<Utc>, lifetime: Option<&Iso8601Duration>) -> Result<chrono::DateTime<Utc>, SnapshotError> {
-    let parsed = match lifetime {
-        Some(value) => *value,
-        None => "PT1H"
-            .parse::<Iso8601Duration>()
-            .map_err(|e| SnapshotError::internal(format!("Invalid default snapshotLifetime: {:?}", e)))?,
+fn effective_snapshot_lifetime(
+    starts_at: chrono::DateTime<Utc>,
+    lifetime: &Iso8601Duration,
+    maximum_lifetime: Duration,
+) -> Result<(Iso8601Duration, chrono::DateTime<Utc>), SnapshotError> {
+    let expires_at = starts_at + *lifetime;
+    let maximum_expires_at = starts_at
+        + chrono::Duration::from_std(maximum_lifetime)
+            .map_err(|error| SnapshotError::internal(format!("Configured maximum Snapshot lifetime is invalid: {error}")))?;
+    if expires_at <= starts_at {
+        Err(SnapshotError::validation("snapshotLifetime must be positive"))
+    } else if expires_at > maximum_expires_at {
+        Ok((iso8601_lifetime(maximum_lifetime)?, maximum_expires_at))
+    } else {
+        Ok((*lifetime, expires_at))
+    }
+}
+
+fn iso8601_lifetime(duration: Duration) -> Result<Iso8601Duration, SnapshotError> {
+    let total_seconds = duration.as_secs();
+    let days = total_seconds / 86_400;
+    let after_days = total_seconds % 86_400;
+    let hours = after_days / 3_600;
+    let after_hours = after_days % 3_600;
+    let minutes = after_hours / 60;
+    let seconds = after_hours % 60;
+    let value = if days > 0 {
+        format!("P{days}DT{hours}H{minutes}M{seconds}S")
+    } else {
+        format!("PT{hours}H{minutes}M{seconds}S")
     };
-    Ok(created_at + parsed)
+    value
+        .parse()
+        .map_err(|error| SnapshotError::internal(format!("Configured default Snapshot lifetime is invalid: {error:?}")))
 }

@@ -98,7 +98,7 @@ async fn local_entity_ids(
     uri: &HttpUri,
 ) -> Result<Vec<Uri>, ProblemResponse> {
     let compiled = state.entity_query.compile_query_uncapped(query, context).await.with_entity_map_instance(uri)?;
-    state.entity_query.query_ids(&compiled).await.with_entity_map_instance(uri)
+    state.entity_query.query_ids(&state.live_target, &compiled).await.with_entity_map_instance(uri)
 }
 
 /// Create the map an entity query selects, over either binding (clause 5.14.4.4).
@@ -146,7 +146,7 @@ async fn create_from_temporal_query(
     // the candidates the same way they bound a temporal query.
     let local_ids = state
         .temporal
-        .query_ids(params, rendering.context)
+        .query_ids(&state.live_target, params, rendering.context)
         .await
         .with_entity_map_instance(rendering.uri)?;
     create_map(

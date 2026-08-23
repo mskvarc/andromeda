@@ -7,6 +7,7 @@
 //! nest them inside. Neither the shape of the traversal nor the shape of the
 //! two renderings differs between the endpoints, so it is spelled once here.
 
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_http_response::linked_resolution_warning::with_linked_resolution_warnings;
 use andromeda_jsonld::context_spec::ContextSpec;
@@ -56,6 +57,7 @@ pub(crate) struct AppliedTemporalJoin {
 /// entity store cannot be read.
 pub(crate) async fn apply_temporal_join(
     service: &TemporalService,
+    target: &ContextTarget,
     join: RetrievingJoin,
     entities: &mut Vec<Value>,
     seed: &[TemporalLinkedCandidate],
@@ -66,7 +68,7 @@ pub(crate) async fn apply_temporal_join(
     let (join_level, contained_by) = traversal_bounds(params.join_level, params.contained_by.as_deref());
 
     let resolved = service
-        .resolve_linked_temporal(entities, seed, params, join_level, &contained_by, context)
+        .resolve_linked_temporal(target, entities, seed, params, join_level, &contained_by, context)
         .await?;
     let linked_ids: Vec<Uri> = resolved.entities.keys().cloned().collect();
 

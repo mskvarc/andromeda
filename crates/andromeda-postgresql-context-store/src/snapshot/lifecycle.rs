@@ -8,21 +8,30 @@
 //! crosses this boundary.
 
 use crate::snapshot::{mapper::row_to_snapshot, persistence_error};
+use andromeda_context_space::{
+    context_space::{ContextSpace, ContextSpaceKind},
+    context_space_key::ContextSpaceKey,
+    snapshot_target::SnapshotTarget,
+};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     snapshot::{ExecutionResultDetails, Snapshot, SnapshotPriority, SnapshotStatus},
     snapshot_filter::SnapshotPurgeFilter,
 };
 use andromeda_postgresql_context_query::snapshot_purge::build_match_query;
-use andromeda_postgresql_schema::snapshot::Snapshots;
+use andromeda_postgresql_schema::{context_space::ContextSpaces, snapshot::Snapshots};
 use andromeda_postgresql_seaquery::{cast::cast, clock::now, pg_type::PostgresType, placeholder::external_placeholder};
-use andromeda_snapshot::{error::SnapshotError, store::InsertSnapshotParams};
+use andromeda_snapshot::{
+    error::SnapshotError,
+    store::{InsertSnapshotParams, SnapshotPreparationJob},
+};
 use chrono::{DateTime, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use sea_query::{Expr, ExprTrait, Func, Keyword, LockBehavior, LockType, Order, PostgresQueryBuilder, Query, SelectStatement, SimpleExpr, UpdateStatement};
 use sea_query_sqlx::SqlxBinder;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use url::Url;
+use uuid::Uuid;
 
 /// The stored-snapshot projection every read shares, decoding the status enum to
 /// text under the column name the mapper reads it by.
@@ -31,11 +40,13 @@ fn apply_snapshot_projection(select: &mut SelectStatement) {
         .column(Snapshots::Id)
         .column(Snapshots::SnapshotQueries)
         .column(Snapshots::SnapshotTemporalQueries)
+        .column(Snapshots::QueryContext)
         .column(Snapshots::SnapshotLifetime)
         .column(Snapshots::SnapshotPriority)
         .column(Snapshots::Endpoint)
         .column(Snapshots::ReceiverInfo)
         .expr_as(cast(Expr::col(Snapshots::Status), PostgresType::Text), Snapshots::Status)
+        .column(Snapshots::CloneSourceId)
         .column(Snapshots::QueriesDetails)
         .column(Snapshots::TemporalQueriesDetails)
         .column(Snapshots::CreatedAt)
@@ -54,16 +65,19 @@ fn snapshot_select() -> SelectStatement {
 
 /// The columns a control record is written with, in the order the create and
 /// the clone bind them; the surrogate key is issued by the database.
-const fn control_columns() -> [Snapshots; 14] {
+const fn control_columns() -> [Snapshots; 17] {
     [
+        Snapshots::ContextSpaceKey,
         Snapshots::Id,
         Snapshots::SnapshotQueries,
         Snapshots::SnapshotTemporalQueries,
+        Snapshots::QueryContext,
         Snapshots::SnapshotLifetime,
         Snapshots::SnapshotPriority,
         Snapshots::Endpoint,
         Snapshots::ReceiverInfo,
         Snapshots::Status,
+        Snapshots::CloneSourceId,
         Snapshots::QueriesDetails,
         Snapshots::TemporalQueriesDetails,
         Snapshots::CreatedAt,
@@ -73,7 +87,7 @@ const fn control_columns() -> [Snapshots; 14] {
     ]
 }
 
-/// The snapshot insert, its fourteen values bound by the caller's chain; the
+/// The snapshot insert, its seventeen values bound by the caller's chain; the
 /// status marker is cast to the `snapshot_status` enum.
 pub(crate) fn snapshot_create_sql() -> Result<String, SnapshotError> {
     let mut insert = Query::insert();
@@ -87,68 +101,67 @@ pub(crate) fn snapshot_create_sql() -> Result<String, SnapshotError> {
             external_placeholder(5),
             external_placeholder(6),
             external_placeholder(7),
-            cast(external_placeholder(8), PostgresType::SnapshotStatus),
+            external_placeholder(8),
             external_placeholder(9),
-            external_placeholder(10),
+            cast(external_placeholder(10), PostgresType::SnapshotStatus),
             external_placeholder(11),
             external_placeholder(12),
             external_placeholder(13),
             external_placeholder(14),
+            external_placeholder(15),
+            external_placeholder(16),
+            external_placeholder(17),
         ])
         .map_err(persistence_error)?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
-/// Copy the control record of `$1` into a new snapshot `$2` expiring at `$3`.
-pub(crate) fn clone_snapshot_sql() -> Result<String, SnapshotError> {
-    let mut select = Query::select();
-    select
-        .expr(external_placeholder(2))
-        .column(Snapshots::SnapshotQueries)
-        .column(Snapshots::SnapshotTemporalQueries)
-        .column(Snapshots::SnapshotLifetime)
-        .column(Snapshots::SnapshotPriority)
-        .column(Snapshots::Endpoint)
-        .column(Snapshots::ReceiverInfo)
-        .column(Snapshots::Status)
-        .column(Snapshots::QueriesDetails)
-        .column(Snapshots::TemporalQueriesDetails)
-        .expr(now())
-        .expr(now())
-        .expr(external_placeholder(3))
-        .expr(SimpleExpr::Keyword(Keyword::Null))
-        .from(Snapshots::Table)
-        .and_where(Expr::col(Snapshots::Id).eq(external_placeholder(1)));
-    let select = select;
-
-    let mut insert = Query::insert();
-    insert.into_table(Snapshots::Table).columns(control_columns());
-    insert.select_from(select).map_err(persistence_error)?;
-    Ok(insert.to_string(PostgresQueryBuilder))
-}
-
 /// Write one control record.
 pub(crate) async fn create_snapshot(pool: &PgPool, params: InsertSnapshotParams<'_>) -> Result<(), SnapshotError> {
+    let mut tx = pool.begin().await.map_err(persistence_error)?;
+    let context_space_key = create_snapshot_context_space(&mut tx).await?;
     let sql = snapshot_create_sql()?;
     sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(context_space_key.as_i64())
         .bind(params.id.as_str())
         .bind(params.snapshot_queries.map(serde_json::to_value).transpose()?)
         .bind(params.snapshot_temporal_queries.map(serde_json::to_value).transpose()?)
+        .bind(params.query_context_json)
         .bind(params.snapshot_lifetime.map(ToString::to_string))
         .bind(params.snapshot_priority)
         .bind(params.endpoint.map(Url::as_str))
         .bind(params.receiver_info_json)
         .bind(<&str>::from(params.status))
+        .bind(params.clone_source_id.map(Uri::as_str))
         .bind(params.queries_details_json)
         .bind(params.temporal_queries_details_json)
         .bind(params.created_at)
         .bind(params.modified_at)
         .bind(params.expires_at)
         .bind(params.last_used_at)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(persistence_error)?;
+    tx.commit().await.map_err(persistence_error)?;
     Ok(())
+}
+
+/// Allocate the parent branch for one Snapshot in the caller's transaction.
+pub(crate) async fn create_snapshot_context_space(tx: &mut Transaction<'_, Postgres>) -> Result<ContextSpaceKey, SnapshotError> {
+    let mut insert = Query::insert();
+    insert
+        .into_table(ContextSpaces::Table)
+        .columns([ContextSpaces::Kind])
+        .values([cast(Expr::val("snapshot"), PostgresType::ContextSpaceKind)])
+        .map_err(persistence_error)?
+        .returning_col(ContextSpaces::ContextSpaceKey);
+    let (sql, values) = insert.build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(persistence_error)?;
+    let raw = row.try_get::<i64, _>("context_space_key").map_err(persistence_error)?;
+    ContextSpaceKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))
 }
 
 /// Read one snapshot by URI.
@@ -178,6 +191,26 @@ pub(crate) async fn snapshot_exists(pool: &PgPool, id: &Uri) -> Result<bool, Sna
     Ok(row.is_some())
 }
 
+/// Resolve the persisted branch owned by one Snapshot URI.
+pub(crate) async fn resolve_snapshot_target(pool: &PgPool, id: &Uri) -> Result<Option<SnapshotTarget>, SnapshotError> {
+    let statement = Query::select()
+        .column(Snapshots::ContextSpaceKey)
+        .from(Snapshots::Table)
+        .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
+        .to_owned();
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .fetch_optional(pool)
+        .await
+        .map_err(persistence_error)?;
+    row.map(|row| {
+        let raw = row.try_get::<i64, _>("context_space_key").map_err(persistence_error)?;
+        let key = ContextSpaceKey::try_from(raw).map_err(|error| SnapshotError::internal(error.to_string()))?;
+        SnapshotTarget::new(ContextSpace::new(key, ContextSpaceKind::Snapshot), id.clone()).map_err(|error| SnapshotError::internal(error.to_string()))
+    })
+    .transpose()
+}
+
 /// `status = 'preparing'::snapshot_status`: the column is the PostgreSQL enum,
 /// so the literal is cast to it rather than bound as text, which the enum has
 /// no equality operator for.
@@ -188,13 +221,16 @@ fn status_is_preparing() -> SimpleExpr {
 /// The statement selecting and row-locking the next snapshot to prepare.
 ///
 /// `FOR UPDATE SKIP LOCKED` steps over a candidate another preparer already
-/// holds, and `claimed_at IS NULL` excludes one already claimed, so two
-/// preparers racing for work never settle on the same control record.
+/// holds, while the lease predicate permits safe reclamation after expiry.
 fn next_preparing_sql() -> SelectStatement {
     let mut select = snapshot_select();
     select
         .and_where(status_is_preparing())
-        .and_where(Expr::col(Snapshots::ClaimedAt).is_null())
+        .and_where(
+            Expr::col(Snapshots::LeaseUntil)
+                .is_null()
+                .or(Expr::col(Snapshots::LeaseUntil).lte(Expr::current_timestamp())),
+        )
         .order_by(Snapshots::SnapshotPriority, Order::Desc)
         .order_by(Snapshots::CreatedAt, Order::Asc)
         .limit(1)
@@ -203,10 +239,12 @@ fn next_preparing_sql() -> SelectStatement {
 }
 
 /// Stamp the durable preparation claim on one snapshot.
-fn claim_snapshot_sql(id: &Uri) -> UpdateStatement {
+fn claim_snapshot_sql(id: &Uri, claimed_by: Uuid, lease_until: DateTime<Utc>) -> UpdateStatement {
     Query::update()
         .table(Snapshots::Table)
+        .value(Snapshots::ClaimedBy, claimed_by)
         .value(Snapshots::ClaimedAt, now())
+        .value(Snapshots::LeaseUntil, lease_until)
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
         .to_owned()
 }
@@ -219,7 +257,11 @@ fn claim_snapshot_sql(id: &Uri) -> UpdateStatement {
 /// on-create kick (`SnapshotService::prepare_now`) and the scheduled sweep can
 /// both look for work at the same instant, and this is what stops them
 /// executing the same snapshot's queries twice.
-pub(crate) async fn next_preparing_snapshot(pool: &PgPool) -> Result<Option<Snapshot>, SnapshotError> {
+pub(crate) async fn next_preparing_snapshot(
+    pool: &PgPool,
+    claimed_by: Uuid,
+    lease_until: DateTime<Utc>,
+) -> Result<Option<SnapshotPreparationJob>, SnapshotError> {
     let mut tx = pool.begin().await.map_err(persistence_error)?;
     let (sql, values) = next_preparing_sql().build_sqlx(PostgresQueryBuilder);
     let row = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -231,25 +273,56 @@ pub(crate) async fn next_preparing_snapshot(pool: &PgPool) -> Result<Option<Snap
         return Ok(None);
     };
     let snapshot = row_to_snapshot(&row).map_err(persistence_error)?;
-    let (claim_sql, claim_values) = claim_snapshot_sql(&snapshot.id).build_sqlx(PostgresQueryBuilder);
+    let clone_source_id = row
+        .try_get::<Option<String>, _>("clone_source_id")
+        .map_err(persistence_error)?
+        .map(|source| source.parse::<Uri>())
+        .transpose()
+        .map_err(|error| SnapshotError::internal(format!("Invalid clone source URI in snapshots table: {error}")))?;
+    let query_context = row.try_get::<serde_json::Value, _>("query_context").map_err(persistence_error)?;
+    let (claim_sql, claim_values) = claim_snapshot_sql(&snapshot.id, claimed_by, lease_until).build_sqlx(PostgresQueryBuilder);
     sqlx::query_with(sqlx::AssertSqlSafe(claim_sql.as_str()), claim_values)
         .execute(&mut *tx)
         .await
         .map_err(persistence_error)?;
     tx.commit().await.map_err(persistence_error)?;
-    Ok(Some(snapshot))
+    Ok(Some(SnapshotPreparationJob {
+        snapshot,
+        clone_source_id,
+        query_context,
+    }))
 }
 
-/// Update the lifetime, priority and expiry of one snapshot, keeping whatever
-/// the caller left unspecified.
-pub(crate) async fn update_lifetime_priority(
+/// Extend a claim held by this replica, returning false if ownership was lost.
+pub(crate) async fn renew_preparation_lease(pool: &PgPool, id: &Uri, claimed_by: Uuid, lease_until: DateTime<Utc>) -> Result<bool, SnapshotError> {
+    let statement = Query::update()
+        .table(Snapshots::Table)
+        .value(Snapshots::LeaseUntil, lease_until)
+        .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
+        .and_where(Expr::col(Snapshots::ClaimedBy).eq(claimed_by))
+        .and_where(status_is_preparing())
+        .to_owned();
+    let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
+    let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
+        .execute(pool)
+        .await
+        .map_err(persistence_error)?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Apply the mutable metadata of one snapshot, keeping whatever the caller
+/// left unspecified and preserving any active preparation lease.
+pub(crate) async fn update_snapshot_metadata(
     pool: &PgPool,
     id: &Uri,
     lifetime: Option<&Iso8601Duration>,
     priority: Option<SnapshotPriority>,
+    endpoint: Option<Option<&Url>>,
+    receiver_info: Option<Option<serde_json::Value>>,
     new_expires_at: Option<DateTime<Utc>>,
 ) -> Result<u64, SnapshotError> {
-    let statement = Query::update()
+    let mut statement = Query::update();
+    statement
         .table(Snapshots::Table)
         .value(
             Snapshots::SnapshotLifetime,
@@ -263,9 +336,14 @@ pub(crate) async fn update_lifetime_priority(
             Snapshots::ExpiresAt,
             Func::coalesce([Expr::val(new_expires_at), Expr::col(Snapshots::ExpiresAt)]),
         )
-        .value(Snapshots::ModifiedAt, now())
-        .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
-        .to_owned();
+        .value(Snapshots::ModifiedAt, now());
+    if let Some(endpoint) = endpoint {
+        statement.value(Snapshots::Endpoint, endpoint.map(ToString::to_string));
+    }
+    if let Some(receiver_info) = receiver_info {
+        statement.value(Snapshots::ReceiverInfo, receiver_info);
+    }
+    statement.and_where(Expr::col(Snapshots::Id).eq(id.as_str()));
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
         .execute(pool)
@@ -292,6 +370,9 @@ pub(crate) async fn update_status(
             Expr::val(temporal_queries_details.and_then(|d| serde_json::to_value(d).ok())),
         )
         .value(Snapshots::ModifiedAt, now())
+        .value(Snapshots::ClaimedBy, SimpleExpr::Keyword(Keyword::Null))
+        .value(Snapshots::ClaimedAt, SimpleExpr::Keyword(Keyword::Null))
+        .value(Snapshots::LeaseUntil, SimpleExpr::Keyword(Keyword::Null))
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
         .and_where(status_is_preparing())
         .to_owned();
@@ -323,9 +404,14 @@ pub(crate) async fn match_snapshots_by_filter(pool: &PgPool, filter: &SnapshotPu
 
 /// Delete one snapshot by identifier; its captured rows cascade with it.
 pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, SnapshotError> {
-    let statement = Query::delete()
-        .from_table(Snapshots::Table)
+    let context_space = Query::select()
+        .column(Snapshots::ContextSpaceKey)
+        .from(Snapshots::Table)
         .and_where(Expr::col(Snapshots::Id).eq(id.as_str()))
+        .to_owned();
+    let statement = Query::delete()
+        .from_table(ContextSpaces::Table)
+        .and_where(Expr::col(ContextSpaces::ContextSpaceKey).in_subquery(context_space))
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -337,9 +423,14 @@ pub(crate) async fn delete_snapshot(pool: &PgPool, id: &Uri) -> Result<u64, Snap
 
 /// Delete every snapshot whose expiry has passed `cutoff`.
 pub(crate) async fn delete_expired_snapshots(pool: &PgPool, cutoff: DateTime<Utc>) -> Result<u64, SnapshotError> {
-    let statement = Query::delete()
-        .from_table(Snapshots::Table)
+    let expired_context_spaces = Query::select()
+        .column(Snapshots::ContextSpaceKey)
+        .from(Snapshots::Table)
         .and_where(Expr::col(Snapshots::ExpiresAt).lte(cutoff))
+        .to_owned();
+    let statement = Query::delete()
+        .from_table(ContextSpaces::Table)
+        .and_where(Expr::col(ContextSpaces::ContextSpaceKey).in_subquery(expired_context_spaces))
         .to_owned();
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let result = sqlx::query_with(sqlx::AssertSqlSafe(sql.as_str()), values)
@@ -366,9 +457,11 @@ pub(crate) async fn touch_last_used(pool: &PgPool, id: &Uri) -> Result<(), Snaps
 
 #[cfg(test)]
 mod tests {
-    use crate::snapshot::lifecycle::{claim_snapshot_sql, clone_snapshot_sql, next_preparing_sql, snapshot_create_sql};
+    use crate::snapshot::lifecycle::{claim_snapshot_sql, next_preparing_sql, snapshot_create_sql};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
+    use chrono::{TimeZone, Utc};
     use sea_query::PostgresQueryBuilder;
+    use uuid::Uuid;
 
     /// The `snapshot_status` column is a PostgreSQL enum: a text bind has no
     /// equality operator against it, so the preparing marker is cast.
@@ -385,7 +478,7 @@ mod tests {
     #[test]
     fn the_preparing_selection_skips_claimed_and_locked_rows() {
         let sql = next_preparing_sql().to_string(PostgresQueryBuilder);
-        assert!(sql.contains("\"claimed_at\" IS NULL"), "{sql}");
+        assert!(sql.contains("\"lease_until\" IS NULL OR \"lease_until\" <= CURRENT_TIMESTAMP"), "{sql}");
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"), "{sql}");
     }
 
@@ -393,29 +486,28 @@ mod tests {
     #[test]
     fn the_claim_stamps_claimed_at_on_the_selected_snapshot() {
         let id: Uri = "urn:ngsi-ld:Snapshot:1".parse().expect("valid snapshot URI");
-        let sql = claim_snapshot_sql(&id).to_string(PostgresQueryBuilder);
-        assert!(sql.starts_with("UPDATE \"snapshots\" SET \"claimed_at\" ="), "{sql}");
+        let worker = Uuid::from_u128(1);
+        let lease_until = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 30).single().expect("valid lease instant");
+        let sql = claim_snapshot_sql(&id, worker, lease_until).to_string(PostgresQueryBuilder);
+        assert!(sql.starts_with("UPDATE \"snapshots\" SET \"claimed_by\" ="), "{sql}");
+        assert!(sql.contains("\"claimed_at\" = NOW()"), "{sql}");
+        assert!(sql.contains("\"lease_until\" ="), "{sql}");
         assert!(sql.contains("WHERE \"id\" = 'urn:ngsi-ld:Snapshot:1'"), "{sql}");
     }
 
     #[test]
     fn the_create_casts_its_status_marker_and_stamps_no_clock() {
         let sql = snapshot_create_sql().expect("the fixed snapshot insert builds");
-        assert!(sql.contains("$8::snapshot_status"), "{sql}");
-        for marker in 1..=14 {
+        assert!(sql.contains("$9::snapshot_status"), "{sql}");
+        for marker in 1..=16 {
             assert!(sql.contains(&format!("${marker}")), "missing ${marker}: {sql}");
         }
-        assert!(!sql.contains("$15"), "the create binds exactly fourteen values: {sql}");
-        assert!(!sql.contains("snapshot_key"), "the surrogate is issued by the database, never written: {sql}");
-    }
-
-    #[test]
-    fn the_clone_copies_the_control_record_and_stamps_fresh_clocks() {
-        let sql = clone_snapshot_sql().expect("the fixed clone builds");
-        assert!(sql.starts_with(r#"INSERT INTO "snapshots""#), "{sql}");
-        assert!(sql.contains("SELECT $2,"), "the new id is the copied identifier: {sql}");
-        assert!(sql.contains("NOW(), NOW()"), "created_at and modified_at are stamped fresh: {sql}");
-        assert!(sql.contains(r#"WHERE "id" = ($1)"#), "{sql}");
-        assert!(!sql.contains("snapshot_key"), "the clone receives its own surrogate from the database: {sql}");
+        assert!(!sql.contains("$17"), "the create binds exactly sixteen values: {sql}");
+        assert!(sql.contains("context_space_key"), "the branch parent is explicit: {sql}");
+        assert!(sql.contains("clone_source_id"), "the durable preparation kind is explicit: {sql}");
+        assert!(
+            !sql.contains("snapshot_key"),
+            "the snapshot surrogate is issued by the database, never written: {sql}"
+        );
     }
 }

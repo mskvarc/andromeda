@@ -18,6 +18,7 @@ use crate::{
         assert_single_match,
         core_context,
         entity_uri,
+        live_target,
         recording_service,
         single_recorded_write,
     },
@@ -36,6 +37,7 @@ async fn merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
         .merge(
+            &live_target(),
             &entity_uri(),
             &patch(json!({"category": {"type": "Property", "value": "retail"}})),
             &core_context(),
@@ -53,6 +55,7 @@ async fn merge_records_an_attribute_created_match() {
     let (service, recorded) = recording_service().await;
     service
         .merge(
+            &live_target(),
             &entity_uri(),
             &patch(json!({"name": {"type": "Property", "value": "lobby"}})),
             &core_context(),
@@ -72,6 +75,7 @@ async fn replace_entity_records_the_replacement_diff() {
     // deletes it and creates `name` (clause 5.6.18): two per-attribute matches.
     service
         .replace_entity(
+            &live_target(),
             &entity_uri(),
             &patch(json!({"type": "Building", "name": {"type": "Property", "value": "lobby"}})),
             &core_context(),

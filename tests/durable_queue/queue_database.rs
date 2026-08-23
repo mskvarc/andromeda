@@ -6,6 +6,11 @@
 //! before it seeds its own fixture.
 
 use andromeda_context_commit::{subscription_key::SubscriptionKey, write_record::WriteRecord};
+use andromeda_context_space::{
+    context_space::{ContextSpace, ContextSpaceKind},
+    context_space_key::ContextSpaceKey,
+    context_target::ContextTarget,
+};
 use andromeda_postgresql_context_store::{
     error::ContextStoreError,
     notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent},
@@ -41,17 +46,29 @@ pub async fn queue_database() -> PgPool {
     pool
 }
 
+/// Resolve the durable live branch created by the tenant schema.
+pub async fn live_target(pool: &PgPool) -> ContextTarget {
+    let stored: i64 = sqlx::query_scalar("SELECT context_space_key FROM context_spaces WHERE kind = 'live'")
+        .fetch_one(pool)
+        .await
+        .expect("tenant live context space");
+    let key = ContextSpaceKey::try_from(stored).expect("positive context-space key");
+    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+}
+
 /// Seed one Subscription and return the surrogate key its deliveries carry.
 ///
 /// Only the columns the schema requires are written: the queue verifications
 /// address a Subscription by its key and its external identifier, and nothing
 /// here evaluates a selector.
 pub async fn subscription(pool: &PgPool, id: &str) -> i64 {
+    let target = live_target(pool).await;
     let notification = json!({
         "endpoint": {"uri": "http://127.0.0.1:8085/notify", "accept": "application/json"},
         "format": "normalized"
     });
-    sqlx::query_scalar("INSERT INTO subscriptions (id, kind, notification) VALUES ($1, 'entity', $2) RETURNING subscription_key")
+    sqlx::query_scalar("INSERT INTO subscriptions (context_space_key, id, kind, notification) VALUES ($1, $2, 'entity', $3) RETURNING subscription_key")
+        .bind(target.key().as_i64())
         .bind(id)
         .bind(notification)
         .fetch_one(pool)
@@ -82,8 +99,9 @@ pub async fn attribute_name(pool: &PgPool, name: &str) -> AttributeNameId {
 /// expected to be refused by the queue's own write-identity constraint, and
 /// that refusal is the assertion.
 pub async fn record_events(pool: &PgPool, record: &WriteRecord, events: &[NewNotificationEvent<'_>]) -> Result<(), ContextStoreError> {
+    let target = live_target(pool).await;
     let mut transaction = pool.begin().await?;
-    insert_events_in_tx(&mut transaction, record, events).await?;
+    insert_events_in_tx(&mut transaction, &target, record, events).await?;
     transaction.commit().await?;
     Ok(())
 }

@@ -98,11 +98,11 @@ impl SubscriptionVariant for EntitySubscriptionVariant {
         DatasetIdPolicy::Retain
     }
 
-    fn make_upserted(&self, id: Uri) -> SubscriptionChange {
-        SubscriptionChange::Upserted(id)
+    fn make_upserted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> SubscriptionChange {
+        SubscriptionChange::Upserted { target, id }
     }
 
-    fn make_deleted(&self, id: Uri) -> SubscriptionChange {
-        SubscriptionChange::Deleted(id)
+    fn make_deleted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> SubscriptionChange {
+        SubscriptionChange::Deleted { target, id }
     }
 }

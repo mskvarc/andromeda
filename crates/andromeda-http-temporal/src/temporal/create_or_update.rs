@@ -31,7 +31,7 @@ use crate::temporal::{
     provision_response,
     strip_attributes_from_value,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location};
 use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 
@@ -45,7 +45,11 @@ fn success_response(result: &Result<CreateOrUpdateResult, TemporalError>) -> Res
 }
 
 pub async fn create_or_update(
-    tenant_state::ProvisionableTenantState(state): TenantStateOrCreate,
+    context_target::ProvisionableTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
@@ -60,7 +64,7 @@ pub async fn create_or_update(
     let context = context.merge(body_context);
 
     if params.local.unwrap_or(false) {
-        let result = service.create_or_update(payload, &context).await;
+        let result = service.create_or_update(&target, payload, &context).await;
         let success = success_response(&result);
         result.with_instance(&uri)?;
         return Ok(success);
@@ -76,22 +80,25 @@ pub async fn create_or_update(
     let body = serde_json::to_vec(&payload).map_err(|error| ClassifiedReport::internal(&error).with_instance(uri.clone()))?;
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::TemporalEntities,
-            entity_id: &entity_id,
-            entity_type_compact: entity_type.as_ref(),
-            attribute_name: None,
-            method: Method::POST,
-            body: Some(&body),
-            context: &context,
-            operation: ForwardingOperation::UpsertTemporalEntity,
-            path_suffix: None,
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::TemporalEntities,
+                entity_id: &entity_id,
+                entity_type_compact: entity_type.as_ref(),
+                attribute_name: None,
+                method: Method::POST,
+                body: Some(&body),
+                context: &context,
+                operation: ForwardingOperation::UpsertTemporalEntity,
+                path_suffix: None,
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_instance(&uri)?;
 
@@ -100,7 +107,7 @@ pub async fn create_or_update(
     let mut payload = payload;
     strip_attributes_from_value(&mut payload, &collect_proxied_attrs(&forwarded));
     let (local, success) = if forwarded.is_empty() || has_attributes(&payload) {
-        let result = service.create_or_update(payload, &context).await;
+        let result = service.create_or_update(&target, payload, &context).await;
         let success = success_response(&result);
         (LocalOutcome::processed(result, classify_temporal_error), success)
     } else {

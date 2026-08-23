@@ -6,13 +6,21 @@
 //! on a row lock holds a connection for the whole wait, and a burst of
 //! overlapping batches would exhaust the pool waiting for itself.
 
+use andromeda_context_space::{context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_lock::{Mutex, MutexGuardArc};
 use dashmap::DashMap;
 use std::sync::Arc;
 
 /// Map used to coordinate writes by entity id.
-pub(crate) type IdLockMap = DashMap<Uri, Arc<Mutex<()>>>;
+pub(crate) type IdLockMap = DashMap<IdLockKey, Arc<Mutex<()>>>;
+
+/// Identity of one mutable entity inside one context-space partition.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct IdLockKey {
+    context_space_key: ContextSpaceKey,
+    entity_id: Uri,
+}
 
 /// Acquire mutex guards for `ids` against `map`, in deterministic sorted
 /// order. Sorting eliminates lock-ordering deadlocks between concurrent
@@ -20,7 +28,7 @@ pub(crate) type IdLockMap = DashMap<Uri, Arc<Mutex<()>>>;
 ///
 /// Callers receive owned guards so the locks remain held for the lifetime
 /// of the returned `Vec`. Drop the vec to release every lock at once.
-pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, ids: &[Uri]) -> Vec<MutexGuardArc<()>> {
+pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, target: &ContextTarget, ids: &[Uri]) -> Vec<MutexGuardArc<()>> {
     gc_id_locks(map);
     let mut sorted: Vec<&Uri> = ids.iter().collect();
     sorted.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));
@@ -29,7 +37,11 @@ pub(crate) async fn acquire_id_locks_in(map: &IdLockMap, ids: &[Uri]) -> Vec<Mut
     let mut guards = Vec::with_capacity(sorted.len());
     for id in sorted {
         // The map owns its key independently of the caller's input slice.
-        let lock = map.entry(id.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).value().clone();
+        let key = IdLockKey {
+            context_space_key: target.key(),
+            entity_id: id.clone(), // clone: the lock map owns the identifier after the request ends.
+        };
+        let lock = map.entry(key).or_insert_with(|| Arc::new(Mutex::new(()))).value().clone();
         guards.push(lock.lock_arc().await);
     }
     guards
@@ -50,8 +62,18 @@ pub(crate) fn gc_id_locks(map: &IdLockMap) {
 #[cfg(test)]
 mod tests {
     use super::{IdLockMap, acquire_id_locks_in, gc_id_locks};
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use std::sync::Arc;
+
+    fn live_target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
 
     #[tokio::test]
     async fn id_lock_gc_reclaims_unused_entries_after_guards_drop() {
@@ -62,7 +84,7 @@ mod tests {
             "urn:ngsi-ld:Entity:C".parse::<Uri>().expect("valid test URI"),
         ];
 
-        let guards = acquire_id_locks_in(&map, &ids).await;
+        let guards = acquire_id_locks_in(&map, &live_target(), &ids).await;
         pretty_assertions::assert_eq!(map.len(), 3);
 
         // While guards are alive, GC must keep every entry — strong_count > 1.
@@ -87,7 +109,7 @@ mod tests {
             "urn:ngsi-ld:Entity:c".parse::<Uri>().expect("valid test URI"),
             "urn:ngsi-ld:Entity:a".parse::<Uri>().expect("valid test URI"),
         ];
-        let guards = acquire_id_locks_in(&map, &ids).await;
+        let guards = acquire_id_locks_in(&map, &live_target(), &ids).await;
         pretty_assertions::assert_eq!(guards.len(), 3);
         pretty_assertions::assert_eq!(map.len(), 3);
     }

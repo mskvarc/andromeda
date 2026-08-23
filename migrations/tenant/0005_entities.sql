@@ -80,12 +80,27 @@
 -- LZ4 on each varlena column.
 -- ============================================================================
 
+CREATE TABLE context_spaces (
+    context_space_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    kind context_space_kind NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_context_spaces_single_live
+    ON context_spaces ((kind))
+    WHERE kind = 'live';
+
+INSERT INTO context_spaces (kind) VALUES ('live');
+
 CREATE TABLE entities (
     entity_key BIGINT GENERATED ALWAYS AS IDENTITY (CACHE 32) PRIMARY KEY,
+    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ,
     min_attribute_expires_at TIMESTAMPTZ,
-    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE
+    id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
+    CONSTRAINT uq_entities_context_id UNIQUE (context_space_key, id),
+    CONSTRAINT uq_entities_context_key UNIQUE (context_space_key, entity_key)
 ) WITH (
     autovacuum_vacuum_scale_factor = 0.005,
     autovacuum_vacuum_threshold = 500,
@@ -94,18 +109,25 @@ CREATE TABLE entities (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_entities_expires_at ON entities (expires_at)
+CREATE INDEX idx_entities_expires_at ON entities (context_space_key, expires_at)
     WHERE expires_at IS NOT NULL;
 
-CREATE INDEX idx_entities_min_attribute_expires_at ON entities (min_attribute_expires_at)
+CREATE INDEX idx_entities_min_attribute_expires_at ON entities (context_space_key, min_attribute_expires_at)
     WHERE min_attribute_expires_at IS NOT NULL;
 
 CREATE INDEX idx_entities_id_trgm ON entities USING GIN (id gin_trgm_ops);
 
+CREATE INDEX idx_entities_context_space ON entities (context_space_key, entity_key);
+
 CREATE TABLE entity_documents (
-    entity_key BIGINT PRIMARY KEY REFERENCES entities(entity_key) ON DELETE CASCADE,
+    context_space_key BIGINT NOT NULL,
+    entity_key BIGINT NOT NULL,
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    payload JSONB COMPRESSION lz4 NOT NULL
+    payload JSONB COMPRESSION lz4 NOT NULL,
+    CONSTRAINT pk_entity_documents PRIMARY KEY (context_space_key, entity_key),
+    CONSTRAINT fk_entity_documents_entity
+        FOREIGN KEY (context_space_key, entity_key)
+        REFERENCES entities(context_space_key, entity_key) ON DELETE CASCADE
 ) WITH (
     fillfactor = 70,
     autovacuum_vacuum_scale_factor = 0.005,
@@ -118,7 +140,8 @@ CREATE TABLE entity_documents (
 -- No other index on entity_documents: every payload write must stay HOT-eligible.
 
 CREATE TABLE entity_search (
-    entity_key BIGINT PRIMARY KEY REFERENCES entities(entity_key) ON DELETE CASCADE,
+    context_space_key BIGINT NOT NULL,
+    entity_key BIGINT NOT NULL,
     location_expires_at TIMESTAMPTZ,
     type_ids INTEGER[] NOT NULL,
     attribute_name_ids INTEGER[] NOT NULL,
@@ -127,6 +150,10 @@ CREATE TABLE entity_search (
     location_geo geography GENERATED ALWAYS AS (geom_to_geog(location)) STORED,
     observation_space geometry COMPRESSION lz4,
     operation_space geometry COMPRESSION lz4,
+    CONSTRAINT pk_entity_search PRIMARY KEY (context_space_key, entity_key),
+    CONSTRAINT fk_entity_search_entity
+        FOREIGN KEY (context_space_key, entity_key)
+        REFERENCES entities(context_space_key, entity_key) ON DELETE CASCADE,
     CONSTRAINT chk_entity_search_types_present CHECK (cardinality(type_ids) > 0),
     CONSTRAINT chk_entity_search_location_valid
         CHECK (location IS NULL OR ST_IsValid(location)),
@@ -154,22 +181,22 @@ CREATE TABLE entity_search (
     autovacuum_vacuum_cost_delay = 0
 );
 
-CREATE INDEX idx_entity_search_type_ids ON entity_search USING GIN (type_ids);
+CREATE INDEX idx_entity_search_type_ids ON entity_search USING GIN (context_space_key int8_ops, type_ids);
 
-CREATE INDEX idx_entity_search_attribute_name_ids ON entity_search USING GIN (attribute_name_ids);
+CREATE INDEX idx_entity_search_attribute_name_ids ON entity_search USING GIN (context_space_key int8_ops, attribute_name_ids);
 
-CREATE INDEX idx_entity_search_scope_paths ON entity_search USING GIST (scope_paths);
+CREATE INDEX idx_entity_search_scope_paths ON entity_search USING GIST (context_space_key, scope_paths);
 
-CREATE INDEX idx_entity_search_location ON entity_search USING GIST (location)
+CREATE INDEX idx_entity_search_location ON entity_search USING GIST (context_space_key, location)
     WHERE location IS NOT NULL;
 
-CREATE INDEX idx_entity_search_location_geo ON entity_search USING GIST (location_geo)
+CREATE INDEX idx_entity_search_location_geo ON entity_search USING GIST (context_space_key, location_geo)
     WHERE location_geo IS NOT NULL;
 
-CREATE INDEX idx_entity_search_observation_space ON entity_search USING GIST (observation_space)
+CREATE INDEX idx_entity_search_observation_space ON entity_search USING GIST (context_space_key, observation_space)
     WHERE observation_space IS NOT NULL;
 
-CREATE INDEX idx_entity_search_operation_space ON entity_search USING GIST (operation_space)
+CREATE INDEX idx_entity_search_operation_space ON entity_search USING GIST (context_space_key, operation_space)
     WHERE operation_space IS NOT NULL;
 
 ALTER TABLE entity_search ALTER COLUMN type_ids SET STATISTICS 1000;

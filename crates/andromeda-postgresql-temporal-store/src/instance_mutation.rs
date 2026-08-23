@@ -15,6 +15,7 @@ use crate::{
     repo::TemporalRepository,
     unit_code_metadata::take_unit_code,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -59,13 +60,14 @@ impl TemporalRepository {
     /// Replace one expanded attribute instance through the typed PostgreSQL update path.
     pub(crate) async fn update_attribute_instance(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         attribute_name: &AttributeName,
         instance: &InstanceIdentity,
         expanded: &Value,
     ) -> Result<(), TemporalStoreError> {
         let state = build_update_instance_state(expanded)?;
-        self.update_instance(entity_id, attribute_name, instance, &state).await
+        self.update_instance(target, entity_id, attribute_name, instance, &state).await
     }
 
     /// Physically remove one named attribute instance from history.
@@ -87,7 +89,13 @@ impl TemporalRepository {
     /// remain, so retaining here costs one write record's worth of storage
     /// until that sweep runs, whereas guessing wrong and releasing early would
     /// corrupt replay identity for every sibling row still pointing at it.
-    pub(crate) async fn delete_instance(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalStoreError> {
+    pub(crate) async fn delete_instance(
+        &self,
+        target: &ContextTarget,
+        instance: &InstanceIdentity,
+        entity_id: &Uri,
+        attribute_name: &AttributeName,
+    ) -> Result<(), TemporalStoreError> {
         let mut tx = self.pool.begin().await?;
         let generated_sql = delete_instance_sql(InstanceColumn::Generated);
         let verbatim_sql = delete_instance_sql(InstanceColumn::Verbatim);
@@ -98,6 +106,7 @@ impl TemporalRepository {
         let deleted = statement
             .bind(entity_id.as_str())
             .bind(attribute_name.as_str())
+            .bind(target.key().as_i64())
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -114,6 +123,7 @@ impl TemporalRepository {
                 .bind(identifier.as_str())
                 .bind(entity_id.as_str())
                 .bind(attribute_name.as_str())
+                .bind(target.key().as_i64())
                 .execute(&mut *tx)
                 .await?;
         }
@@ -124,6 +134,7 @@ impl TemporalRepository {
     /// Modify one named attribute instance in place.
     async fn update_instance(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         attribute_name: &AttributeName,
         instance: &InstanceIdentity,
@@ -150,6 +161,7 @@ impl TemporalRepository {
             .bind(state.metadata.as_ref())
             .bind(state.unit_code_id.map(UnitCodeId::get))
             .bind(stored_attribute_kind(state.attribute_type).code())
+            .bind(target.key().as_i64())
             .execute(&self.pool)
             .await?
             .rows_affected();
@@ -162,6 +174,7 @@ impl TemporalRepository {
     /// Fetch a single attribute instance for policy validation.
     pub(crate) async fn get_instance(
         &self,
+        target: &ContextTarget,
         instance: &InstanceIdentity,
         entity_id: &Uri,
         attribute_name: &AttributeName,
@@ -175,6 +188,7 @@ impl TemporalRepository {
         Ok(statement
             .bind(entity_id.as_str())
             .bind(attribute_name.as_str())
+            .bind(target.key().as_i64())
             .fetch_optional(&self.pool)
             .await?)
     }
@@ -272,7 +286,7 @@ impl InstanceColumn {
 /// not part of the address clause 5.6.15 defines; every stream of the named
 /// attribute is a candidate and the instance predicate selects within them. The
 /// entity id (`$2`) and attribute name (`$3`) are bound by the caller's chain.
-fn attribute_streams_subquery() -> SelectStatement {
+fn attribute_streams_subquery(context_marker: usize) -> SelectStatement {
     Query::select()
         .column((S, TemporalAttributeStreams::StreamKey))
         .from_as(TemporalAttributeStreams::Table, S)
@@ -290,6 +304,8 @@ fn attribute_streams_subquery() -> SelectStatement {
         )
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
         .and_where(Expr::col((An, AttributeNames::Name)).eq(external_placeholder(3)))
+        .and_where(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(external_placeholder(context_marker)))
+        .and_where(Expr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(external_placeholder(context_marker)))
         .to_owned()
 }
 
@@ -298,7 +314,8 @@ fn delete_instance_sql(column: InstanceColumn) -> String {
     Query::delete()
         .from_table(AttributeHistory::Table)
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
-        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery()))
+        .and_where(Expr::col(AttributeHistory::ContextSpaceKey).eq(external_placeholder(4)))
+        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery(4)))
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -317,6 +334,7 @@ fn release_verbatim_instance_claim_sql() -> String {
             Expr::col((Te, TemporalEntities::EntityKey)).equals((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::TemporalEntityKey)),
         )
         .and_where(Expr::col((Te, TemporalEntities::Id)).eq(external_placeholder(2)))
+        .and_where(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(external_placeholder(4)))
         .to_owned();
     let attribute_scope = Query::select()
         .expr(Expr::val(1))
@@ -327,6 +345,7 @@ fn release_verbatim_instance_claim_sql() -> String {
     Query::delete()
         .from_table(AttributeHistoryInstanceClaims::Table)
         .and_where(Expr::col(AttributeHistoryInstanceClaims::VerbatimInstanceId).eq(external_placeholder(1)))
+        .and_where(Expr::col(AttributeHistoryInstanceClaims::ContextSpaceKey).eq(external_placeholder(4)))
         .and_where(Expr::exists(entity_scope))
         .and_where(Expr::exists(attribute_scope))
         .to_owned()
@@ -370,7 +389,8 @@ fn update_instance_sql(column: InstanceColumn) -> String {
             (AttributeHistory::ModifiedAt, now()),
         ])
         .and_where(Expr::col(column.column()).eq(external_placeholder(1)))
-        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery()))
+        .and_where(Expr::col(AttributeHistory::ContextSpaceKey).eq(external_placeholder(16)))
+        .and_where(Expr::col(AttributeHistory::StreamKey).in_subquery(attribute_streams_subquery(16)))
         .to_owned()
         .to_string(PostgresQueryBuilder)
 }
@@ -388,7 +408,8 @@ fn select_instance_sql(column: InstanceColumn) -> String {
         .column((Ah, AttributeHistory::DeletedAt))
         .from_as(AttributeHistory::Table, Ah)
         .and_where(Expr::col((Ah, column.column())).eq(external_placeholder(1)))
-        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).in_subquery(attribute_streams_subquery()))
+        .and_where(Expr::col((Ah, AttributeHistory::ContextSpaceKey)).eq(external_placeholder(4)))
+        .and_where(Expr::col((Ah, AttributeHistory::StreamKey)).in_subquery(attribute_streams_subquery(4)))
         .limit(1)
         .to_owned()
         .to_string(PostgresQueryBuilder)

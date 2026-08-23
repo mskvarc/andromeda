@@ -7,8 +7,10 @@ use crate::{
     subscription,
     ws,
 };
+use andromeda_http_extraction::{scoped_response::echo_scope_headers, snapshot_write_guard::reject_snapshot_scope};
 use axum::{
     Router,
+    middleware::from_fn,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -28,7 +30,8 @@ impl SubscriptionRoutes {
                 get(subscription::get).patch(subscription::update).delete(subscription::delete),
             )
             .route("/{subscription_id}/stream", get(sse::stream))
-            .route("/{subscription_id}/ws", get(ws::stream));
+            .route("/{subscription_id}/ws", get(ws::stream))
+            .layer(from_fn(echo_scope_headers));
         let csource_subscriptions = Router::new()
             .route("/", post(csource_subscription::create).get(csource_subscription::query))
             .route(
@@ -36,7 +39,8 @@ impl SubscriptionRoutes {
                 get(csource_subscription::get)
                     .patch(csource_subscription::update)
                     .delete(csource_subscription::delete),
-            );
+            )
+            .layer(from_fn(reject_snapshot_scope));
         let router = Router::new()
             .nest("/subscriptions", subscriptions)
             .nest("/csourceSubscriptions", csource_subscriptions)

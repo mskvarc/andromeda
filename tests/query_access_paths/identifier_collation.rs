@@ -51,8 +51,6 @@ async fn identifier_columns_declare_byte_wise_collation() {
         ("registration_information", "registration_id"),
         ("context_source_registrations", "id"),
         ("snapshots", "id"),
-        ("snapshot_entities", "entity_id"),
-        ("snapshot_temporal_entities", "entity_id"),
         ("jsonld_contexts", "id"),
         ("jsonld_contexts", "url"),
         ("notification_events", "entity_id"),

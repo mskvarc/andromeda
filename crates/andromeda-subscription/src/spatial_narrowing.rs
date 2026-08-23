@@ -5,6 +5,7 @@
 //! still re-checked by the exact predicate in `matches_entity_filters`.
 
 use crate::{cache::SubscriptionCache, compiled::CompiledSubscription};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::expanded::geo_property::geo_property_instance_geometries;
@@ -23,10 +24,14 @@ use std::{collections::HashMap, sync::Arc};
 /// must survive the narrowing.
 pub fn narrow_by_spatial_index(
     cache: &SubscriptionCache,
+    target: &ContextTarget,
     matching: Vec<Arc<CompiledSubscription>>,
     entity_data: &Value,
     entity_types: &[EntityTypeName],
 ) -> Vec<Arc<CompiledSubscription>> {
+    if !target.permits_federation() {
+        return matching;
+    }
     let spatial = cache.spatial();
     let tenant = cache.tenant();
 

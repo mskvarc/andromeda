@@ -24,6 +24,8 @@ pub enum ProblemClassification {
     /// The one registered source holding the data cannot serve the requested
     /// representation and returns 501 (Table 6.4.3.2-3, clause 6.3.7).
     NotImplemented,
+    /// A local operation cannot complete before its bounded policy deadline and returns 503.
+    ServiceUnavailable,
 }
 
 impl ProblemClassification {
@@ -31,7 +33,10 @@ impl ProblemClassification {
     pub const fn error_type(self) -> NgsiLdErrorType {
         match self {
             ProblemClassification::Category(error_type) => error_type,
-            ProblemClassification::LoopDetected | ProblemClassification::GatewayTimeout | ProblemClassification::BadGateway => NgsiLdErrorType::InternalError,
+            ProblemClassification::LoopDetected
+            | ProblemClassification::GatewayTimeout
+            | ProblemClassification::BadGateway
+            | ProblemClassification::ServiceUnavailable => NgsiLdErrorType::InternalError,
             ProblemClassification::DistributedResourceNotFound => NgsiLdErrorType::ResourceNotFound,
             ProblemClassification::NotImplemented => NgsiLdErrorType::OperationNotSupported,
         }
@@ -46,6 +51,7 @@ impl ProblemClassification {
             ProblemClassification::DistributedResourceNotFound => StatusCode::NOT_FOUND,
             ProblemClassification::BadGateway => StatusCode::BAD_GATEWAY,
             ProblemClassification::NotImplemented => StatusCode::NOT_IMPLEMENTED,
+            ProblemClassification::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE,
         }
     }
 
@@ -61,6 +67,7 @@ impl ProblemClassification {
             ProblemClassification::LoopDetected => iri!("https://uri.etsi.org/ngsi-ld/errors/LoopDetected"),
             ProblemClassification::GatewayTimeout => iri!("https://uri.etsi.org/ngsi-ld/errors/GatewayTimeout"),
             ProblemClassification::BadGateway => iri!("https://uri.etsi.org/ngsi-ld/errors/BadGateway"),
+            ProblemClassification::ServiceUnavailable => iri!("https://uri.etsi.org/ngsi-ld/errors/ServiceUnavailable"),
             ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
                 self.error_type().type_iri()
             }
@@ -74,6 +81,7 @@ impl ProblemClassification {
             ProblemClassification::LoopDetected => "Loop detected",
             ProblemClassification::GatewayTimeout => "Gateway timeout",
             ProblemClassification::BadGateway => "Bad gateway",
+            ProblemClassification::ServiceUnavailable => "Service unavailable",
             ProblemClassification::Category(_) | ProblemClassification::DistributedResourceNotFound | ProblemClassification::NotImplemented => {
                 self.error_type().title()
             }
@@ -90,6 +98,7 @@ impl ProblemClassification {
             ProblemClassification::LoopDetected,
             ProblemClassification::GatewayTimeout,
             ProblemClassification::BadGateway,
+            ProblemClassification::ServiceUnavailable,
         ]
         .into_iter()
         .find(|classification| classification.type_iri().as_str() == iri.as_str())
@@ -207,6 +216,7 @@ impl WireProblemClassification {
             (NgsiLdErrorType::InternalError, Some(508)) => Ok(ProblemClassification::LoopDetected),
             (NgsiLdErrorType::InternalError, Some(504)) => Ok(ProblemClassification::GatewayTimeout),
             (NgsiLdErrorType::InternalError, Some(502)) => Ok(ProblemClassification::BadGateway),
+            (NgsiLdErrorType::InternalError, Some(503)) => Ok(ProblemClassification::ServiceUnavailable),
             (category, Some(status)) => Err(WireProblemClassificationError::StatusDisagrees { category, status }),
         }
     }

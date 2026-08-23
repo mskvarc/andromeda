@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-delivery.workspace = true
+andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-federation.workspace = true
 andromeda-jsonld.workspace = true

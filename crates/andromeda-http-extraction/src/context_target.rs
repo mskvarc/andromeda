@@ -1,0 +1,163 @@
+//! Combined tenant and context-space targeting for scoped NGSI-LD operations.
+
+use crate::{snapshot::SnapshotHeader, tenant::TenantHeader, tenant_state::TenantStateResolver};
+use andromeda_context_space::context_target::ContextTarget;
+use andromeda_http_response::{classified_report::ClassifiedReport, problem_response::ProblemResponse, tenant_state_rejection::TenantStateRejection};
+use andromeda_ngsi_ld_lexicon::uri::Uri as NgsiLdUri;
+use andromeda_ngsi_ld_problem_details::{error_type::NgsiLdErrorType, problem_detail::ProblemClassification};
+use andromeda_tenancy::{creation_policy::TenantCreationPolicy, tenant_ref::TenantRef};
+use axum::{
+    extract::FromRequestParts,
+    http::{Uri, request::Parts},
+};
+use futures::future::BoxFuture;
+use std::{sync::Arc, time::Duration};
+use thiserror::Error;
+
+/// Failure to resolve an `NGSILD-Snapshot` value to an addressable context branch.
+#[derive(Debug, Error)]
+pub enum ContextTargetResolutionError {
+    /// No unexpired Snapshot owns the requested identifier.
+    #[error("Snapshot {identifier} was not found")]
+    NotFound {
+        /// Requested Snapshot URI.
+        identifier: NgsiLdUri,
+    },
+    /// Capture or clone promotion exceeded the scoped-operation deadline.
+    #[error("Snapshot {identifier} is still preparing")]
+    PreparationTimeout {
+        /// Requested Snapshot URI.
+        identifier: NgsiLdUri,
+    },
+    /// Durable target resolution failed internally.
+    #[error("Snapshot target resolution failed: {detail}")]
+    Internal {
+        /// Operator-facing diagnostic.
+        detail: String,
+    },
+}
+
+impl ContextTargetResolutionError {
+    fn into_problem(self, instance: Uri) -> ProblemResponse {
+        match self {
+            ContextTargetResolutionError::NotFound { .. } => {
+                ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, self.to_string()).with_instance(instance)
+            }
+            ContextTargetResolutionError::PreparationTimeout { .. } => {
+                ClassifiedReport::public_binding(ProblemClassification::ServiceUnavailable, self.to_string())
+                    .with_retry_after(Duration::from_secs(1))
+                    .with_instance(instance)
+            }
+            ContextTargetResolutionError::Internal { .. } => ClassifiedReport::internal(&self).with_instance(instance),
+        }
+    }
+}
+
+/// Resolves one validated Snapshot URI to its durable branch target.
+pub trait SnapshotTargetResolver: Send + Sync {
+    /// Await terminal promotion when necessary and return the typed target.
+    fn resolve<'a>(&'a self, snapshot_id: &'a NgsiLdUri) -> BoxFuture<'a, Result<ContextTarget, ContextTargetResolutionError>>;
+}
+
+/// Route-focused state that exposes its live branch and Snapshot resolver.
+pub trait ContextTargetProvider: Send + Sync {
+    /// Return the tenant's durable live branch.
+    fn live_target(&self) -> &ContextTarget;
+
+    /// Return the resolver used only when `NGSILD-Snapshot` is present.
+    fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver;
+}
+
+impl<T> ContextTargetProvider for Arc<T>
+where
+    T: ContextTargetProvider,
+{
+    fn live_target(&self) -> &ContextTarget {
+        self.as_ref().live_target()
+    }
+
+    fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
+        self.as_ref().snapshot_target_resolver()
+    }
+}
+
+/// Existing tenant state paired with the context branch selected at the HTTP boundary.
+pub struct ExistingTargetedTenantState<T> {
+    /// Focused services for the selected tenant.
+    pub services: T,
+    /// Live or Snapshot branch selected for this request.
+    pub target: ContextTarget,
+    /// Validated Snapshot URI to echo on scoped responses.
+    pub snapshot: Option<NgsiLdUri>,
+}
+
+/// Provisionable tenant state paired with the context branch selected at the HTTP boundary.
+pub struct ProvisionableTargetedTenantState<T> {
+    /// Focused services for the selected tenant.
+    pub services: T,
+    /// Live or Snapshot branch selected for this request.
+    pub target: ContextTarget,
+    /// Validated Snapshot URI to echo on scoped responses.
+    pub snapshot: Option<NgsiLdUri>,
+}
+
+async fn resolve<S, T>(
+    parts: &mut Parts,
+    state: &S,
+    live_creation_policy: TenantCreationPolicy,
+) -> Result<(T, ContextTarget, Option<NgsiLdUri>), TenantStateRejection>
+where
+    S: TenantStateResolver<T>,
+    T: ContextTargetProvider,
+{
+    let tenant = TenantHeader::from_request_parts(parts, state).await.map_err(TenantStateRejection::Extraction)?;
+    let snapshot = SnapshotHeader::from_request_parts(parts, state)
+        .await
+        .map_err(TenantStateRejection::Extraction)?
+        .into_inner();
+    let tenant_ref = TenantRef::from_header(tenant.into_inner());
+    let creation_policy = if snapshot.is_some() {
+        TenantCreationPolicy::MustExist
+    } else {
+        live_creation_policy
+    };
+    let services = state
+        .resolve_tenant(&tenant_ref, creation_policy, &parts.uri)
+        .await
+        .map_err(TenantStateRejection::Resolution)?;
+    let target = match snapshot.as_ref() {
+        Some(snapshot_id) => services
+            .snapshot_target_resolver()
+            .resolve(snapshot_id)
+            .await
+            .map_err(|error| TenantStateRejection::Resolution(error.into_problem(parts.uri.clone())))?,
+        None => services.live_target().clone(),
+    };
+    Ok((services, target, snapshot))
+}
+
+impl<S, T> FromRequestParts<S> for ExistingTargetedTenantState<T>
+where
+    S: TenantStateResolver<T>,
+    T: ContextTargetProvider,
+{
+    type Rejection = TenantStateRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let (services, target, snapshot) = resolve(parts, state, TenantCreationPolicy::MustExist).await?;
+        Ok(ExistingTargetedTenantState { services, target, snapshot })
+    }
+}
+
+impl<S, T> FromRequestParts<S> for ProvisionableTargetedTenantState<T>
+where
+    S: TenantStateResolver<T>,
+    T: ContextTargetProvider,
+{
+    type Rejection = TenantStateRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let (services, target, snapshot) = resolve(parts, state, TenantCreationPolicy::CreateOnDemand).await?;
+        Ok(ProvisionableTargetedTenantState { services, target, snapshot })
+    }
+}

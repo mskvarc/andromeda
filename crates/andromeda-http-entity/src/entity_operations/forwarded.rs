@@ -3,6 +3,7 @@
 //! how the forwarded answers merge into the clause 5.2.16 result.
 
 use crate::{error::EntityResultExt, state::EntityRouteServices};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::error::EntityError;
 use andromeda_federation::{
     outcome::ForwardedWriteOutcome,
@@ -29,6 +30,7 @@ fn matching_type(entity: &Entity) -> Option<&EntityTypeName> {
 /// Forward a batch of entities to every matching registration.
 pub(crate) async fn forward_entities(
     services: &EntityRouteServices,
+    target: &ContextTarget,
     operation: BatchProvisionOperation,
     entities: &[Entity],
     context: &ContextSpec,
@@ -52,13 +54,16 @@ pub(crate) async fn forward_entities(
         .collect::<Vec<_>>();
     services
         .forwarding
-        .forward_batch(ForwardBatchRequest {
-            operation,
-            entities: &batch,
-            context,
-            query_string,
-            triggering,
-        })
+        .forward_batch(
+            target,
+            ForwardBatchRequest {
+                operation,
+                entities: &batch,
+                context,
+                query_string,
+                triggering,
+            },
+        )
         .await
         .with_entity_instance(instance)
 }
@@ -67,6 +72,7 @@ pub(crate) async fn forward_entities(
 /// registration.
 pub(crate) async fn forward_identifiers(
     services: &EntityRouteServices,
+    target: &ContextTarget,
     ids: &[Uri],
     context: &ContextSpec,
     triggering: TriggeringRequest<'_>,
@@ -82,13 +88,16 @@ pub(crate) async fn forward_identifiers(
         .collect::<Vec<_>>();
     services
         .forwarding
-        .forward_batch(ForwardBatchRequest {
-            operation: BatchProvisionOperation::Delete,
-            entities: &batch,
-            context,
-            query_string: None,
-            triggering,
-        })
+        .forward_batch(
+            target,
+            ForwardBatchRequest {
+                operation: BatchProvisionOperation::Delete,
+                entities: &batch,
+                context,
+                query_string: None,
+                triggering,
+            },
+        )
         .await
         .with_entity_instance(instance)
 }

@@ -7,6 +7,7 @@
 //! None of the handlers performs either itself; they describe the join with a
 //! [`JoinRequest`], ask for a [`ResolvedJoin`], and render what it holds.
 
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
     query::{EntityQueryService, linked_entity::ResolvedLinkedEntities},
@@ -69,6 +70,7 @@ impl<'a> ResolvedJoin<'a> {
     /// projection cannot be matched against the entities' attribute keys.
     pub(crate) async fn prepare(
         service: &EntityQueryService,
+        target: &ContextTarget,
         roots: &[Entity],
         context: &ContextSpec,
         request: &JoinRequest<'a>,
@@ -79,7 +81,7 @@ impl<'a> ResolvedJoin<'a> {
             entities: mut linked,
             failures,
         } = service
-            .resolve_linked_entities(roots, join_level, request.sys_attrs, context, &contained_by)
+            .resolve_linked_entities(target, roots, join_level, request.sys_attrs, context, &contained_by)
             .await?;
 
         // Clause 4.21: a `pick`/`omit` term may carry a nested sub-projection

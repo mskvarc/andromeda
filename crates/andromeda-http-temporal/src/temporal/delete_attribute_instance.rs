@@ -29,10 +29,14 @@ use crate::temporal::{
     local_temporal_outcome,
     provision_response,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 
 pub async fn delete_attr_instance(
-    tenant_state::ExistingTenantState(state): TenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,
@@ -49,28 +53,34 @@ pub async fn delete_attr_instance(
     let instance = InstanceIdentity::from_uri(instance_id, InstanceFamily::Attribute);
 
     if params.local.unwrap_or(false) {
-        service.delete_attr_instance(&id, &attr_id, &instance, &context).await.with_instance(&uri)?;
+        service
+            .delete_attr_instance(&target, &id, &attr_id, &instance, &context)
+            .await
+            .with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::TemporalEntities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: Some(&attr_id),
-            method: Method::DELETE,
-            body: None,
-            context: &context,
-            operation: ForwardingOperation::DeleteTemporalAttributeInstance,
-            path_suffix: Some(&path_suffix),
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::TemporalEntities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: Some(&attr_id),
+                method: Method::DELETE,
+                body: None,
+                context: &context,
+                operation: ForwardingOperation::DeleteTemporalAttributeInstance,
+                path_suffix: Some(&path_suffix),
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_instance(&uri)?;
 
@@ -79,7 +89,7 @@ pub async fn delete_attr_instance(
     let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
         LocalOutcome::NothingRemained
     } else {
-        local_temporal_outcome(service.delete_attr_instance(&id, &attr_id, &instance, &context).await, &forwarded)
+        local_temporal_outcome(service.delete_attr_instance(&target, &id, &attr_id, &instance, &context).await, &forwarded)
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

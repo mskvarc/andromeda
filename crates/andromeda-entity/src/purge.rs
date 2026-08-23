@@ -14,6 +14,7 @@ use andromeda_context_commit::{
     entity_record::EntityRecord,
     history_record::HistoryRecord,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances};
@@ -35,7 +36,7 @@ impl EntityService {
     /// `modifiedAt` it assumed and is re-read if a concurrent writer got in.
     ///
     /// Returns the number of entities modified.
-    pub async fn purge_attrs(&self, entity_ids: &[Uri], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, EntityError> {
+    pub async fn purge_attrs(&self, target: &ContextTarget, entity_ids: &[Uri], mode: &PurgeMode, context: &ContextSpec) -> Result<u32, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iris: Vec<IriBuf> = match mode {
             PurgeMode::DeleteEntities => return Ok(0),
@@ -53,12 +54,19 @@ impl EntityService {
         for entity_id in entity_ids {
             let mut purged: Option<PurgedEntity> = None;
             let outcome = self
-                .commit_read_modify_write(entity_id, |previous| {
+                .commit_read_modify_write(target, entity_id, |previous| {
                     let Some((mut write, mut removed)) = build_purge_write(entity_id, previous, mode, &attr_iris)? else {
                         return Ok(None);
                     };
                     let groups = attribute_change_groups(previous, &removed.merged);
-                    let plan = self.plan_notifications(entity_id, &extract_types(&removed.merged), &groups, Some(&removed.merged), Some(previous));
+                    let plan = self.plan_notifications(
+                        target,
+                        entity_id,
+                        &extract_types(&removed.merged),
+                        &groups,
+                        Some(&removed.merged),
+                        Some(previous),
+                    );
                     write.subscription_matches = plan.matches;
                     removed.events = plan.events;
                     purged = Some(removed);
@@ -75,7 +83,7 @@ impl EntityService {
             // `attributeDeleted` trigger says what kind of change fires a
             // notification rather than which operation caused it. Reported the
             // way clause 5.6.5 reports the single-attribute form.
-            purged.events.into_iter().for_each(|event| self.emit_change(event));
+            purged.events.into_iter().for_each(|event| self.emit_change(target, event));
         }
 
         Ok(modified_count)

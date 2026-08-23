@@ -4,6 +4,7 @@ use crate::{
     mapping::{ForwardedSubscriptionRouter, SubscriptionForwardingStore},
     receiver::ReceiverEndpoint,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::FederationService;
@@ -19,6 +20,8 @@ use uuid::Uuid;
 /// The capabilities one tenant's distributed subscription side is built from.
 #[derive(TypedBuilder)]
 pub struct SubscriptionForwardingService {
+    /// Live context branch used by this federation-only service.
+    pub(crate) live_target: ContextTarget,
     /// The endpoint context sources notify this broker at.
     pub(crate) receiver: ReceiverEndpoint,
     /// The tenant the service belongs to.

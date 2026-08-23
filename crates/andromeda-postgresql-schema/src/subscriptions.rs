@@ -19,6 +19,8 @@ pub enum Subscriptions {
     Id,
     /// Internal surrogate the notification queue references
     SubscriptionKey,
+    /// Context-space partition that owns the subscription
+    ContextSpaceKey,
     /// Which subscription family a row is: `entity` or `csource`
     Kind,
     /// The `subscriptionName` member (clause 5.2.12)
@@ -78,6 +80,8 @@ pub enum Subscriptions {
 pub enum SubscriptionDeliveryState {
     /// Table name: `subscription_delivery_state`
     Table,
+    /// Context-space partition that owns the delivery counters
+    ContextSpaceKey,
     /// Foreign key to `subscriptions`, cascading on deletion; also the primary key
     SubscriptionKey,
     /// How many notifications have been sent (`notification.timesSent`)
@@ -100,6 +104,7 @@ mod tests {
         assert_eq!(Subscriptions::Table.to_string(), "subscriptions");
         assert_eq!(Subscriptions::Id.to_string(), "id");
         assert_eq!(Subscriptions::SubscriptionKey.to_string(), "subscription_key");
+        assert_eq!(Subscriptions::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(Subscriptions::Kind.to_string(), "kind");
         assert_eq!(Subscriptions::WatchedAttributes.to_string(), "watched_attributes");
         assert_eq!(Subscriptions::NotificationTrigger.to_string(), "notification_trigger");
@@ -113,6 +118,7 @@ mod tests {
     #[test]
     fn subscription_delivery_state_table_and_columns() {
         assert_eq!(SubscriptionDeliveryState::Table.to_string(), "subscription_delivery_state");
+        assert_eq!(SubscriptionDeliveryState::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(SubscriptionDeliveryState::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(SubscriptionDeliveryState::TimesSent.to_string(), "times_sent");
         assert_eq!(SubscriptionDeliveryState::LastNotification.to_string(), "last_notification");

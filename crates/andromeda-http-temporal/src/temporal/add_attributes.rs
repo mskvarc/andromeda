@@ -30,11 +30,15 @@ use crate::temporal::{
     provision_response,
     strip_attributes_from_value,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_response::classified_report::ClassifiedReport;
 
 pub async fn add_attrs(
-    tenant_state::ExistingTenantState(state): TenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -50,7 +54,7 @@ pub async fn add_attrs(
     let context = context.merge(body_context);
 
     if params.local.unwrap_or(false) {
-        service.add_attrs(&id, payload, &context).await.with_instance(&uri)?;
+        service.add_attrs(&target, &id, payload, &context).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -58,22 +62,25 @@ pub async fn add_attrs(
     let body = serde_json::to_vec(&payload).map_err(|error| ClassifiedReport::internal(&error).with_instance(uri.clone()))?;
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::TemporalEntities,
-            entity_id: &id,
-            entity_type_compact: entity_type.as_ref(),
-            attribute_name: None,
-            method: Method::POST,
-            body: Some(&body),
-            context: &context,
-            operation: ForwardingOperation::AppendTemporalAttributes,
-            path_suffix: Some("/attrs"),
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::TemporalEntities,
+                entity_id: &id,
+                entity_type_compact: entity_type.as_ref(),
+                attribute_name: None,
+                method: Method::POST,
+                body: Some(&body),
+                context: &context,
+                operation: ForwardingOperation::AppendTemporalAttributes,
+                path_suffix: Some("/attrs"),
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_instance(&uri)?;
 
@@ -82,7 +89,7 @@ pub async fn add_attrs(
     let mut payload = payload;
     strip_attributes_from_value(&mut payload, &collect_proxied_attrs(&forwarded));
     let local = if forwarded.is_empty() || has_attributes(&payload) {
-        local_temporal_outcome(service.add_attrs(&id, payload, &context).await, &forwarded)
+        local_temporal_outcome(service.add_attrs(&target, &id, payload, &context).await, &forwarded)
     } else {
         LocalOutcome::NothingRemained
     };

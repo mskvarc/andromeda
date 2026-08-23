@@ -24,12 +24,16 @@ use crate::entity::{
 };
 use andromeda_entity::error::EntityError;
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn delete(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -41,7 +45,7 @@ pub(crate) async fn delete(
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        service.delete(&id).await.with_entity_instance(&uri)?;
+        service.delete(&target, &id).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -49,27 +53,30 @@ pub(crate) async fn delete(
 
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::Entities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: None,
-            method: Method::DELETE,
-            body: None,
-            context: &context,
-            operation: ForwardingOperation::DeleteEntity,
-            path_suffix: None,
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::Entities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: None,
+                method: Method::DELETE,
+                body: None,
+                context: &context,
+                operation: ForwardingOperation::DeleteEntity,
+                path_suffix: None,
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.delete(&id).await.with_entity_instance(&uri)?;
+        service.delete(&target, &id).await.with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -81,7 +88,7 @@ pub(crate) async fn delete(
     let proxied = forwarded
         .iter()
         .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
-    let local = match service.delete(&id).await {
+    let local = match service.delete(&target, &id).await {
         Ok(()) | Err(EntityError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_entity_error),
     };

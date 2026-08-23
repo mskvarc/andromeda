@@ -2,6 +2,7 @@
 
 use crate::{context_hit_flush::ContextHitFlushWorker, tenant_factory::error::TenantAssemblyError};
 use andromeda_context_registry::hit_store::ContextHitStore;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     port::{
         discovery::EntityDiscoveryStore,
@@ -19,6 +20,7 @@ use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name:
 use andromeda_postgresql_atomic_write::config::{AtomicWriteConfig, BulkWriteMode};
 use andromeda_postgresql_context_store::{
     config::DatabaseConfig,
+    context_space::resolve_live_target,
     csource_registration::registration_store::PostgresRegistrationStore,
     entity::repo::EntityRepository,
     entity_map::repo::EntityMapRepository,
@@ -42,6 +44,7 @@ use url::Url;
 /// Validated repositories, indexes, and storage workers for one tenant.
 pub(super) struct TenantStorage {
     pub(super) pool: PgPool,
+    pub(super) live_target: ContextTarget,
     pub(super) engine: JsonLdEngine,
     pub(super) context_hit_flush: Option<ContextHitFlushWorker>,
     pub(super) attribute_names: Arc<dyn NameLookup<AttributeName>>,
@@ -83,6 +86,9 @@ pub(super) async fn initialize_storage(
         .connect(database_url.as_str())
         .await?;
     migrate_tenant_db(&pool).await?;
+    let live_target = resolve_live_target(&pool)
+        .await
+        .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let context_repo = Arc::new(JsonLdContextRepository::new(&pool));
     let engine = jsonld_config.build_engine(Arc::clone(&context_repo))?;
     let context_hit_flush = engine.hit_counter().map(|hit_counter| {
@@ -150,7 +156,7 @@ pub(super) async fn initialize_storage(
     let entity_map_store = Arc::new(EntityMapRepository::new(&pool)) as Arc<dyn EntityMapStore>;
     let snapshot_store = Arc::new(SnapshotRepository::new(&pool)) as Arc<dyn SnapshotStore>;
     let subscription_cache = Arc::new(SubscriptionCache::new(tenant.clone()));
-    if let Err(error) = subscription_cache.reload(&SubscriptionRepository::new(&pool)).await {
+    if let Err(error) = subscription_cache.reload(&live_target, &SubscriptionRepository::new(&pool)).await {
         tracing::error!(%error, "failed to load subscription cache");
     }
     let spatial_index = Arc::new(SpatialEntityIndex::new());
@@ -159,6 +165,7 @@ pub(super) async fn initialize_storage(
     }
     Ok(TenantStorage {
         pool,
+        live_target,
         engine,
         context_hit_flush,
         attribute_names,

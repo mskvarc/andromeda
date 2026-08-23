@@ -63,6 +63,7 @@ shadow-rs = "2.0.0"
 
 [dev-dependencies]
 andromeda-context-commit.workspace = true
+andromeda-context-space.workspace = true
 andromeda-entity.workspace = true
 andromeda-ngsi-ld-lexicon.workspace = true
 andromeda-ngsi-ld-model.workspace = true
@@ -106,6 +107,7 @@ andromeda-architecture-checks = { path = "crates/andromeda-architecture-checks" 
 andromeda-broker-composition = { path = "crates/andromeda-broker-composition" }
 andromeda-component-report = { path = "crates/andromeda-component-report" }
 andromeda-context-commit = { path = "crates/andromeda-context-commit" }
+andromeda-context-space = { path = "crates/andromeda-context-space" }
 andromeda-context-registry = { path = "crates/andromeda-context-registry" }
 andromeda-delivery = { path = "crates/andromeda-delivery" }
 andromeda-entity = { path = "crates/andromeda-entity" }

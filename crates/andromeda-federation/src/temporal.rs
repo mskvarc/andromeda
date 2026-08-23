@@ -12,6 +12,7 @@ use crate::{
     read_fan_out::{ReadSelection, read_outcome, registered_type_of},
     request::{ForwardRetrieveRequest, ForwardTemporalQueryRequest},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_http_headers::ngsild_warning::NgsiLdWarning;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
 use serde_json::Value;
@@ -92,8 +93,12 @@ impl FederationService {
     /// 5.7.4.4), each sent the part of the client's query it is registered for.
     pub async fn forward_temporal_query(
         &self,
+        target: &ContextTarget,
         request: ForwardTemporalQueryRequest<'_>,
     ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(ForwardReadOutcome::empty());
+        }
         let ForwardTemporalQueryRequest {
             client_query,
             split,
@@ -151,8 +156,12 @@ impl FederationService {
     /// registered for.
     pub async fn forward_temporal_retrieve(
         &self,
+        target: &ContextTarget,
         request: ForwardRetrieveRequest<'_>,
     ) -> Result<ForwardReadOutcome<ForwardedTemporalEntities>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(ForwardReadOutcome::empty());
+        }
         let ForwardRetrieveRequest {
             entity_id,
             exclude_registration,

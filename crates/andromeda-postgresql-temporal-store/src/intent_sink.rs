@@ -14,6 +14,7 @@ use crate::{
     unit_code_metadata::take_unit_code,
     write_record_persist::persist_write_record,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -68,6 +69,7 @@ impl PostgresTemporalHistorySink {
     pub(crate) async fn append_entries_batch(
         repository: &TemporalRepository,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        target: &ContextTarget,
         intents: &[TemporalAppendIntent],
     ) -> Result<(), TemporalStoreError> {
         if intents.is_empty() {
@@ -79,7 +81,7 @@ impl PostgresTemporalHistorySink {
         // deferred path a one-element chunk, so the catalogue's write clock is
         // that instant.
         let recorded_at = intents[0].record.recorded_at();
-        let catalog = repository.upsert_temporal_catalog_batch_in_tx(tx, &upserts, recorded_at).await?;
+        let catalog = repository.upsert_temporal_catalog_batch_in_tx(tx, target, &upserts, recorded_at).await?;
         let mut history = Vec::new();
         let mut scopes = Vec::new();
         for intent in intents {
@@ -155,15 +157,15 @@ impl PostgresTemporalHistorySink {
                 }
             }
         }
-        repository.insert_history_batch_in_tx(tx, &history).await?;
-        repository.insert_scope_history_batch_in_tx(tx, &scopes).await?;
+        repository.insert_history_batch_in_tx(tx, target, &history).await?;
+        repository.insert_scope_history_batch_in_tx(tx, target, &scopes).await?;
         Ok(())
     }
 }
 
 #[async_trait]
 impl TemporalHistorySink for PostgresTemporalHistorySink {
-    async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
+    async fn append(&self, target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
         let mut tx = self.repository.pool.begin().await.map_err(persistence)?;
         persist_write_record(&mut tx, &intent.record).await.map_err(persistence)?;
         // No claim gate: a replay of the same intent always reaches this call
@@ -171,7 +173,7 @@ impl TemporalHistorySink for PostgresTemporalHistorySink {
         // their row-level `ON CONFLICT ... DO NOTHING` constraints instead of
         // duplicating them. The one intent is a one-element chunk to the batch
         // path the native commit drives many entities through.
-        PostgresTemporalHistorySink::append_entries_batch(&self.repository, &mut tx, slice::from_ref(intent))
+        PostgresTemporalHistorySink::append_entries_batch(&self.repository, &mut tx, target, slice::from_ref(intent))
             .await
             .map_err(persistence)?;
         tx.commit().await.map_err(persistence)?;

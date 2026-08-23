@@ -182,6 +182,7 @@ async fn build_tenant_state(
     )
     .await?;
     let pool = storage.pool;
+    let live_target = storage.live_target;
     let engine = storage.engine;
     let context_hit_flush = storage.context_hit_flush;
     let temporal_repo = storage.temporal_repo;
@@ -202,6 +203,7 @@ async fn build_tenant_state(
         publisher: intent_publisher,
         mutation_barrier,
     } = register_temporal_intent_drain(
+        live_target.clone(), // clone: the resident deferred-history drain serves the live branch.
         &config.temporal,
         &task_supervisor,
         Arc::clone(&intent_store) as Arc<dyn TemporalIntentQueue>,
@@ -252,6 +254,7 @@ async fn build_tenant_state(
             .temporal_config(&config.temporal)
             .tenancy_config(&config.tenancy)
             .pool(&pool)
+            .live_target(&live_target)
             .tenant(&tenant)
             .signals(&signals)
             .transports(&transports)
@@ -280,6 +283,7 @@ async fn build_tenant_state(
     let transport = transports.dispatcher;
     let supervision = supervise_tasks(
         TaskSupervisionInputs::builder()
+            .live_target(live_target)
             .entity_config(&config.entity)
             .info_config(&config.info)
             .delivery_config(&config.notification_delivery)

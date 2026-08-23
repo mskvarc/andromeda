@@ -1,11 +1,12 @@
 //! Focused tenant-state resolution for temporal route handlers.
 
-use crate::snapshot_scope::TemporalSnapshotScope;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
-    tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
+    context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
+    tenant_state::TenantStateResolver,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_temporal::service::TemporalService;
@@ -24,15 +25,27 @@ pub struct TemporalRouteServices {
     pub forwarding: Arc<FederationService>,
     /// Entity-map policy used for temporal query scoping and result-map creation.
     pub entity_maps: Arc<EntityMapService>,
-    /// Frozen temporal reads used by snapshot-scoped requests.
-    pub snapshots: Arc<dyn TemporalSnapshotScope>,
+    /// Tenant's ordinary live context branch.
+    pub live_target: ContextTarget,
+    /// Snapshot URI to durable branch resolution.
+    pub snapshot_targets: Arc<dyn SnapshotTargetResolver>,
 }
 
 /// Existing-tenant extractor specialized to focused temporal capabilities.
-pub(crate) type TemporalTenantState = ExistingTenantState<Arc<TemporalRouteServices>>;
+pub(crate) type TemporalTenantState = ExistingTargetedTenantState<Arc<TemporalRouteServices>>;
 
 /// Provisionable-tenant extractor specialized to focused temporal capabilities.
-pub(crate) type TemporalTenantStateOrCreate = ProvisionableTenantState<Arc<TemporalRouteServices>>;
+pub(crate) type TemporalTenantStateOrCreate = ProvisionableTargetedTenantState<Arc<TemporalRouteServices>>;
+
+impl ContextTargetProvider for TemporalRouteServices {
+    fn live_target(&self) -> &ContextTarget {
+        &self.live_target
+    }
+
+    fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
+        self.snapshot_targets.as_ref()
+    }
+}
 
 /// Resolves only the temporal capabilities for one tenant scope.
 pub trait TemporalStateResolver: Send + Sync {

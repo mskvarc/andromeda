@@ -20,6 +20,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_postgresql_context_store::notification_delivery::{event_insert::insert_events_in_tx, rows::NewNotificationEvent};
 use andromeda_postgresql_name_dictionary::name_lookup::NameLookup;
@@ -57,6 +58,7 @@ struct EventGroup<'a> {
 /// did not mint.
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
     landed: &[&AtomicWrite],
     record: &WriteRecord,
     base: WriteOrdinal,
@@ -72,7 +74,7 @@ pub(crate) async fn apply(
         .enumerate()
         .map(|(position, group)| event(base, position, group, &dictionary))
         .collect::<Result<Vec<NewNotificationEvent<'_>>, CommitError>>()?;
-    insert_events_in_tx(tx, record, &events).await.map_err(persistence)?;
+    insert_events_in_tx(tx, target, record, &events).await.map_err(persistence)?;
     let advance = u32::try_from(events.len()).map_err(|error| CommitError::Invariant {
         detail: format!("commit produced more notification events than an ordinal can number: {error}"),
     })?;

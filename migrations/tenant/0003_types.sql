@@ -51,3 +51,9 @@ CREATE TYPE snapshot_status AS ENUM (
     'empty',
     'failure'
 );
+
+-- Role-neutral partition discriminator for live and Snapshot branch state.
+CREATE TYPE context_space_kind AS ENUM (
+    'live',
+    'snapshot'
+);

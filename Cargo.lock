@@ -84,6 +84,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-broker-composition",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -139,6 +140,7 @@ dependencies = [
  "andromeda-component-report",
  "andromeda-context-commit",
  "andromeda-context-registry",
+ "andromeda-context-space",
  "andromeda-delivery",
  "andromeda-entity",
  "andromeda-entity-map",
@@ -149,6 +151,7 @@ dependencies = [
  "andromeda-http-context-registry",
  "andromeda-http-entity",
  "andromeda-http-entity-map",
+ "andromeda-http-extraction",
  "andromeda-http-headers",
  "andromeda-http-health",
  "andromeda-http-notification-receiver",
@@ -221,6 +224,7 @@ name = "andromeda-context-commit"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -252,6 +256,15 @@ dependencies = [
  "thiserror 2.0.20",
  "url",
  "urn-rs",
+]
+
+[[package]]
+name = "andromeda-context-space"
+version = "0.1.0"
+dependencies = [
+ "andromeda-ngsi-ld-lexicon",
+ "pretty_assertions",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -294,6 +307,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-federation",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
@@ -358,6 +372,7 @@ name = "andromeda-federation"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-entity-map",
  "andromeda-http-headers",
  "andromeda-jsonld",
@@ -484,6 +499,7 @@ name = "andromeda-http-entity"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-federation",
@@ -517,6 +533,7 @@ name = "andromeda-http-entity-map"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-federation",
@@ -549,6 +566,7 @@ name = "andromeda-http-extraction"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-http-headers",
  "andromeda-http-response",
  "andromeda-jsonld",
@@ -715,9 +733,11 @@ dependencies = [
  "andromeda-federation",
  "andromeda-http-extraction",
  "andromeda-http-response",
+ "andromeda-jsonld",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-problem-details",
+ "andromeda-ngsi-ld-render",
  "andromeda-snapshot",
  "andromeda-temporal",
  "andromeda-tenancy",
@@ -778,6 +798,7 @@ name = "andromeda-http-subscription"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-delivery",
  "andromeda-http-extraction",
  "andromeda-http-headers",
@@ -826,6 +847,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-entity-map",
  "andromeda-federation",
  "andromeda-http-extraction",
@@ -1113,6 +1135,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-delivery",
  "andromeda-entity",
  "andromeda-http-headers",
@@ -1154,6 +1177,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1195,6 +1219,7 @@ name = "andromeda-postgresql-context-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-model",
@@ -1219,6 +1244,7 @@ dependencies = [
  "andromeda-component-report",
  "andromeda-context-commit",
  "andromeda-context-registry",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-entity-map",
  "andromeda-health",
@@ -1375,6 +1401,7 @@ name = "andromeda-postgresql-temporal-query"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
  "andromeda-ngsi-ld-query",
@@ -1398,6 +1425,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
@@ -1461,6 +1489,8 @@ name = "andromeda-snapshot"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-federation",
  "andromeda-jsonld",
@@ -1468,6 +1498,7 @@ dependencies = [
  "andromeda-ngsi-ld-model",
  "andromeda-ngsi-ld-query",
  "andromeda-ngsi-ld-request",
+ "andromeda-ngsi-ld-vocabulary",
  "andromeda-temporal",
  "chrono",
  "confique",
@@ -1507,6 +1538,7 @@ dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
  "andromeda-context-registry",
+ "andromeda-context-space",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",
  "andromeda-ngsi-ld-lexicon",
@@ -1544,6 +1576,7 @@ name = "andromeda-subscription-forwarding"
 version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
+ "andromeda-context-space",
  "andromeda-delivery",
  "andromeda-entity",
  "andromeda-federation",
@@ -1602,6 +1635,7 @@ version = "0.1.0"
 dependencies = [
  "andromeda-architecture-checks",
  "andromeda-context-commit",
+ "andromeda-context-space",
  "andromeda-entity",
  "andromeda-jsonld",
  "andromeda-ngsi-ld-geometry",

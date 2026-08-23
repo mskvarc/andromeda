@@ -18,7 +18,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use headers::HeaderMapExt;
+use headers::{Header, HeaderMapExt};
 
 /// Axum middleware refusing a non-`GET` request that names a Snapshot.
 ///
@@ -33,6 +33,23 @@ pub async fn reject_snapshot_scoped_writes(request: Request, next: Next) -> Resp
             .get::<OriginalUri>()
             .map_or_else(|| request.uri().clone(), |original| original.0.clone());
         return snapshot_write_unsupported(instance).into_response();
+    }
+    next.run(request).await
+}
+
+/// Reject `NGSILD-Snapshot` on a route family outside Core, Temporal, and entity-subscription APIs.
+pub async fn reject_snapshot_scope(request: Request, next: Next) -> Response {
+    if request.headers().contains_key(NgsiLdSnapshot::name()) {
+        let instance = request
+            .extensions()
+            .get::<OriginalUri>()
+            .map_or_else(|| request.uri().clone(), |original| original.0.clone());
+        return ClassifiedReport::public(
+            NgsiLdErrorType::OperationNotSupported,
+            "NGSILD-Snapshot is supported only by Core, Temporal, and entity-subscription operations",
+        )
+        .with_instance(instance)
+        .into_response();
     }
     next.run(request).await
 }

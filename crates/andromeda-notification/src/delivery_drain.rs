@@ -252,6 +252,11 @@ mod tests {
         worker_instance_id::WorkerInstanceId,
     };
     use andromeda_context_commit::{write_id::WriteId, write_ordinal::WriteOrdinal};
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use async_trait::async_trait;
@@ -436,12 +441,18 @@ mod tests {
             .created_at(Utc::now())
             .build();
         Ok(DeliveryEntry::builder()
+            .target(live_target())
             .id(DeliveryId::from(1))
             .subscription_id(parse("urn:ngsi-ld:Subscription:1")?)
             .attempt_count(0)
             .next_attempt_at(Utc::now())
             .event(event)
             .build())
+    }
+
+    fn live_target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
     }
 
     fn drain(store: Arc<RecordingStore>, disposition: DeliveryDisposition) -> Result<NotificationDeliveryDrain, NotificationError> {

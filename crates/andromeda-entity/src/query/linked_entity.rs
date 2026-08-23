@@ -23,6 +23,7 @@ use crate::{
     error::EntityError,
     query::{EntityQueryService, remote_linked::RemoteLinkedEntitySource},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{reference::NgsiLdReference, uri::Uri};
 use andromeda_ngsi_ld_model::{attribute::instance::Attribute, entity::Entity};
@@ -108,6 +109,7 @@ impl EntityQueryService {
     /// are reported rather than propagated.
     pub async fn resolve_linked_entities(
         &self,
+        target: &ContextTarget,
         entities: &[Entity],
         join_level: NonZeroU32,
         sys_attrs: SysAttrsInclusion,
@@ -129,7 +131,7 @@ impl EntityQueryService {
             && !candidates.is_empty()
         {
             visited.extend(candidates.iter().map(|candidate| candidate.id.clone())); // clone: the guard outlives this level's candidates
-            let level = self.resolve_level(&candidates, depth, &visited, sys_attrs, context).await?;
+            let level = self.resolve_level(target, &candidates, depth, &visited, sys_attrs, context).await?;
             // Everything the level produced — including the sub-graph a remote
             // broker returned around a candidate — is now held, so no later
             // level asks for it again.
@@ -161,18 +163,19 @@ impl EntityQueryService {
     /// `depth` is the number of levels still to resolve, this one included.
     async fn resolve_level(
         &self,
+        target: &ContextTarget,
         candidates: &[LinkedCandidate],
         depth: NonZeroU32,
         visited: &IndexSet<Uri>,
         sys_attrs: SysAttrsInclusion,
         context: &ContextSpec,
     ) -> Result<ResolvedLevel, EntityError> {
-        let entities = self.resolve_level_locally(candidates, sys_attrs, context).await?;
+        let entities = self.resolve_level_locally(target, candidates, sys_attrs, context).await?;
         let mut level = ResolvedLevel {
             entities,
             failures: Vec::new(),
         };
-        let Some(source) = self.remote_linked.as_ref() else {
+        let Some(source) = target.permits_federation().then_some(self.remote_linked.as_ref()).flatten() else {
             return Ok(level);
         };
         for candidate in candidates {
@@ -191,14 +194,15 @@ impl EntityQueryService {
     /// Relationship as a plain URI rather than failing the whole retrieval.
     async fn resolve_level_locally(
         &self,
+        target: &ContextTarget,
         candidates: &[LinkedCandidate],
         sys_attrs: SysAttrsInclusion,
         context: &ContextSpec,
     ) -> Result<IndexMap<Uri, Entity>, EntityError> {
         let ids: Vec<Uri> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
-        let mut payloads = self.reader.get_batch(&ids).await?;
+        let mut payloads = self.reader.get_batch(target, &ids).await?;
         let sys_attr_snapshots = match sys_attrs {
-            SysAttrsInclusion::Include => self.reader.get_sys_attrs_batch(&ids).await?,
+            SysAttrsInclusion::Include => self.reader.get_sys_attrs_batch(target, &ids).await?,
             SysAttrsInclusion::Strip => HashMap::new(),
         };
 
@@ -366,6 +370,10 @@ mod tests {
         query_outcome::QueryOutcome,
         storage_profile::StorageProfile,
     };
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+    };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_model::notification::SysAttrsSnapshot;
     use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
@@ -435,30 +443,30 @@ mod tests {
 
     #[async_trait]
     impl EntityReader for StubStore {
-        async fn get(&self, _id: &Uri) -> Result<Option<Value>, EntityError> {
+        async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<Value>, EntityError> {
             Err(unsupported("get"))
         }
 
-        async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+        async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
             Ok(ids
                 .iter()
                 .filter_map(|id| self.entities.get(id).map(|value| (id.clone(), value.clone()))) // clone: the port hands back owned payloads
                 .collect())
         }
 
-        async fn get_snapshot(&self, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+        async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
             Err(unsupported("get_snapshot"))
         }
 
-        async fn get_snapshot_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+        async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
             Err(unsupported("get_snapshot_batch"))
         }
 
-        async fn get_sys_attrs(&self, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
             Err(unsupported("get_sys_attrs"))
         }
 
-        async fn get_sys_attrs_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
             Err(unsupported("get_sys_attrs_batch"))
         }
     }
@@ -469,11 +477,11 @@ mod tests {
             unreachable!("the traversal never inspects the store's profile")
         }
 
-        async fn query_compiled(&self, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
+        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
             Err(unsupported("query_compiled"))
         }
 
-        async fn query_ids(&self, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
+        async fn query_ids(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
             Err(unsupported("query_ids"))
         }
     }
@@ -591,6 +599,11 @@ mod tests {
         NonZeroU32::new(value).expect("positive join level")
     }
 
+    fn live_target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
+
     fn ids(resolved: &ResolvedLinkedEntities) -> Vec<&str> {
         resolved.entities.keys().map(Uri::as_str).collect()
     }
@@ -608,7 +621,7 @@ mod tests {
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:C", "urn:ngsi-ld:T:B"])];
 
         let resolved = service(store)
-            .resolve_linked_entities(&roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -623,7 +636,7 @@ mod tests {
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service(store)
-            .resolve_linked_entities(&roots, level(5), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(5), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -642,7 +655,7 @@ mod tests {
         let contained_by: HashSet<Uri> = [uri("urn:ngsi-ld:T:B")].into_iter().collect();
 
         let resolved = service(store)
-            .resolve_linked_entities(&roots, level(1), SysAttrsInclusion::Strip, &context(), &contained_by)
+            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &contained_by)
             .await
             .expect("resolves");
 
@@ -660,7 +673,7 @@ mod tests {
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service(store)
-            .resolve_linked_entities(&roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -687,7 +700,7 @@ mod tests {
         let roots = vec![root(chain[0], &[chain[1]])];
 
         let resolved = service(store)
-            .resolve_linked_entities(&roots, level(7), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(7), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -705,7 +718,7 @@ mod tests {
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -739,7 +752,7 @@ mod tests {
         let store = StubStore::new([(uri("urn:ngsi-ld:T:L"), stored("urn:ngsi-ld:T:L", &[]))]);
 
         let resolved = service_with_remote(store, &source)
-            .resolve_linked_entities(&roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -755,7 +768,7 @@ mod tests {
         let roots = vec![root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -773,7 +786,7 @@ mod tests {
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves despite the unreachable remainder");
 
@@ -799,7 +812,7 @@ mod tests {
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service_with_remote(StubStore::new([]), &source)
-            .resolve_linked_entities(&roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(1), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -823,7 +836,7 @@ mod tests {
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service_with_remote(store, &source)
-            .resolve_linked_entities(&roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 
@@ -848,7 +861,7 @@ mod tests {
         let roots = vec![root_with_object_type("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
         let resolved = service_with_remote(store, &source)
-            .resolve_linked_entities(&roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
+            .resolve_linked_entities(&live_target(), &roots, level(2), SysAttrsInclusion::Strip, &context(), &HashSet::new())
             .await
             .expect("resolves");
 

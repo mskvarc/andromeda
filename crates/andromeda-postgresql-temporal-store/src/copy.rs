@@ -18,6 +18,7 @@ use crate::{
     error::TemporalStoreError,
     stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, value_kind::ValueKind};
 use andromeda_postgresql_encoding::{
@@ -78,13 +79,13 @@ const COPY_INTO_STAGE_SQL: &str = "COPY stage_attribute_history (recorded_at, wr
 
 const INSERT_FROM_STAGE_SQL: &str = r#"
 INSERT INTO attribute_history (
-    recorded_at, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
+    recorded_at, context_space_key, write_id, stream_key, write_ordinal, attribute_kind, value_kind,
     observed_at, created_at, modified_at, deleted_at, value_datetime,
     generated_instance_uuid, unit_code_id, value_bool, verbatim_instance_id,
     value_number, value_string, value_geo, value_object, value_uri, metadata
 )
 SELECT
-    s.recorded_at, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
+    s.recorded_at, $1, s.write_id, s.stream_key, s.write_ordinal, s.attribute_kind, s.value_kind,
     s.observed_at, s.created_at, s.modified_at, s.deleted_at, s.value_datetime,
     s.generated_instance_uuid, s.unit_code_id, s.value_bool, s.verbatim_instance_id,
     s.value_number::numeric, s.value_string,
@@ -102,7 +103,11 @@ ON CONFLICT ON CONSTRAINT uq_attribute_history_write DO NOTHING
 /// The caller runs any deduplication `DELETE`s against `attribute_history`
 /// before this call, so the staged insert never collides with rows already
 /// present.
-pub(crate) async fn insert_history_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
+pub(crate) async fn insert_history_batch_via_copy_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    rows: &[AttributeHistoryRow],
+) -> Result<(), TemporalStoreError> {
     if rows.is_empty() {
         return Ok(());
     }
@@ -116,7 +121,7 @@ pub(crate) async fn insert_history_batch_via_copy_in_tx(tx: &mut Transaction<'_,
         copy.finish().await?;
     }
 
-    sqlx::query(INSERT_FROM_STAGE_SQL).execute(&mut **tx).await?;
+    sqlx::query(INSERT_FROM_STAGE_SQL).bind(target.key().as_i64()).execute(&mut **tx).await?;
     Ok(())
 }
 

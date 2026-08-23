@@ -2,6 +2,7 @@
 
 use crate::{EntityService, batch::BatchResult, error::EntityError, side_effect::BatchSideEffectMode};
 use andromeda_context_commit::precondition::Precondition;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -30,7 +31,13 @@ impl EntityService {
         (deduped, errors)
     }
 
-    pub(super) async fn batch_create_chunk(&self, entities: &[&Entity], context: &ContextSpec, mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_create_chunk(
+        &self,
+        target: &ContextTarget,
+        entities: &[&Entity],
+        context: &ContextSpec,
+        mode: BatchSideEffectMode,
+    ) -> Result<BatchResult, EntityError> {
         let (prepared, mut errors) = self.prepare_entity_refs(entities, context).await;
 
         if prepared.is_empty() {
@@ -38,19 +45,19 @@ impl EntityService {
         }
 
         let lock_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: guards outlive the borrowed preparation view
-        let _id_guards = self.acquire_id_locks(&lock_ids).await;
+        let _id_guards = self.acquire_id_locks(target, &lock_ids).await;
 
         let mut seen: HashSet<Uri> = HashSet::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             if seen.insert(entity.id.clone()) {
-                writes.push(self.chunk_insert(entity, Precondition::MustNotExist));
+                writes.push(self.chunk_insert(target, entity, Precondition::MustNotExist));
             } else {
                 errors.push((entity.id.clone(), EntityError::already_exists(&entity.id))); // clone: error result owns the entity ID
             }
         }
 
-        let outcome = self.commit_chunk(writes, mode).await?.settled();
+        let outcome = self.commit_chunk(target, writes, mode).await?.settled();
         errors.extend(outcome.errors);
 
         Ok(BatchResult {

@@ -1,6 +1,7 @@
 //! The atomic commit port and the semantics shared by its implementations.
 
 use crate::{atomic_write::AtomicWrite, commit_replay::CommitReplay, error::CommitError, write_outcome::WriteOutcome};
+use andromeda_context_space::context_target::ContextTarget;
 use std::{collections::HashSet, future::Future, pin::Pin, sync::Arc};
 
 /// Owned future returned by an object-safe atomic commit implementation.
@@ -15,7 +16,7 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// nevertheless committed in the same atomic unit as its entity mutation,
     /// under a freshly minted write identity and an ordinal counter that starts
     /// at zero.
-    fn commit(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
+    fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 
     /// Commit writes as the replay of a previously enqueued, partially durable
     /// commit.
@@ -28,7 +29,7 @@ pub trait ContextCommitter: Send + Sync + 'static {
     /// ordinals its first attempt would have produced, so the replay's rows
     /// collide with the first attempt's on their row-level `ON CONFLICT ... DO
     /// NOTHING` constraints instead of duplicating them.
-    fn commit_replayed(&self, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
+    fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_>;
 }
 
 /// Reject a submission that names one entity more than once.

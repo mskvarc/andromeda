@@ -28,6 +28,7 @@ impl EntityMapStateResolver for BrokerEntityMapStateResolver {
                 Arc::clone(&state.entity_query),
                 Arc::clone(&state.temporal),
                 Arc::clone(&state.forwarding),
+                state.live_target.clone(),
             )))
         })
     }

@@ -28,6 +28,12 @@ pub enum SnapshotError {
         /// Conflicting snapshot identifier.
         identifier: Uri,
     },
+    /// The Snapshot remained in preparation beyond the scoped-operation deadline.
+    #[error("snapshot preparation did not complete before the scoped-operation deadline: {identifier}")]
+    PreparationTimeout {
+        /// Snapshot that remained in preparation.
+        identifier: Uri,
+    },
     /// Entity query policy failed during preparation.
     #[error(transparent)]
     Entity(#[from] EntityError),
@@ -73,6 +79,13 @@ impl SnapshotError {
     /// Construct an identifier conflict.
     pub fn already_exists(identifier: &Uri) -> SnapshotError {
         SnapshotError::AlreadyExists {
+            identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
+        }
+    }
+
+    /// Construct a bounded preparation wait failure.
+    pub fn preparation_timeout(identifier: &Uri) -> SnapshotError {
+        SnapshotError::PreparationTimeout {
             identifier: identifier.clone(), // clone: the error owns the borrowed snapshot identifier.
         }
     }

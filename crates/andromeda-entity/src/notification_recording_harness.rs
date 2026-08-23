@@ -31,6 +31,11 @@ use andromeda_context_commit::{
     subscription_key::SubscriptionKey,
     write_outcome::WriteOutcome,
 };
+use andromeda_context_space::{
+    context_space::{ContextSpace, ContextSpaceKind},
+    context_space_key::ContextSpaceKey,
+    context_target::ContextTarget,
+};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -88,7 +93,7 @@ impl RecordingCommitter {
 }
 
 impl ContextCommitter for RecordingCommitter {
-    fn commit(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, _target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         // The outcome mirrors each write's mutation so a batch of inserts settles
         // as created and everything else as updated, which is what the batch
         // coordinator reads back to build its per-entity result.
@@ -106,7 +111,7 @@ impl ContextCommitter for RecordingCommitter {
         Box::pin(async move { Ok(outcomes) })
     }
 
-    fn commit_replayed(&self, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         unreachable!("the durable-match recording tests never replay a commit")
     }
 }
@@ -131,23 +136,23 @@ impl SnapshotReader {
 
 #[async_trait]
 impl EntityReader for SnapshotReader {
-    async fn get(&self, _id: &Uri) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<Value>, EntityError> {
         Ok(Some(self.payload.clone())) // clone: the caller owns its copy while the reader keeps serving the snapshot.
     }
 
-    async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
         // clone: each requested id gets its own owned copy of the fixture.
         Ok(ids.iter().map(|id| (id.clone(), self.payload.clone())).collect())
     }
 
-    async fn get_snapshot(&self, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
         Ok(Some(EntitySnapshot {
             payload: self.payload.clone(), // clone: each read yields an owned snapshot the writer mutates.
             modified_at: self.modified_at,
         }))
     }
 
-    async fn get_snapshot_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+    async fn get_snapshot_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
         Ok(ids
             .iter()
             .map(|id| {
@@ -162,11 +167,11 @@ impl EntityReader for SnapshotReader {
             .collect())
     }
 
-    async fn get_sys_attrs(&self, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
         Ok(Some(self.sys_attrs()))
     }
 
-    async fn get_sys_attrs_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
         Ok(ids.iter().map(|id| (id.clone(), self.sys_attrs())).collect())
     }
 }
@@ -195,7 +200,7 @@ struct UnusedAttributeHistory;
 
 #[async_trait]
 impl AttributeDatasetHistory for UnusedAttributeHistory {
-    async fn dataset_identifiers(&self, _entity: &Uri, _attribute: &AttributeName) -> Result<Vec<Option<Uri>>, EntityError> {
+    async fn dataset_identifiers(&self, _target: &ContextTarget, _entity: &Uri, _attribute: &AttributeName) -> Result<Vec<Option<Uri>>, EntityError> {
         Ok(Vec::new())
     }
 }
@@ -238,51 +243,68 @@ pub(crate) fn subscription_key() -> SubscriptionKey {
 
 #[async_trait]
 impl SubscriptionStore for SingleSubscriptionStore {
-    async fn get(&self, _id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
+    async fn get(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<StoredSubscription>, SubscriptionError> {
         Err(unused_store_call("get"))
     }
 
-    async fn list(&self, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
+    async fn list(&self, _target: &ContextTarget, _limit: Option<i64>, _offset: Option<i64>) -> Result<(Vec<Subscription>, i64), SubscriptionError> {
         Err(unused_store_call("list"))
     }
 
-    async fn delete(&self, _id: &Uri) -> Result<u64, SubscriptionError> {
+    async fn delete(&self, _target: &ContextTarget, _id: &Uri) -> Result<u64, SubscriptionError> {
         Err(unused_store_call("delete"))
     }
 
-    async fn exists(&self, _id: &Uri) -> Result<bool, SubscriptionError> {
+    async fn exists(&self, _target: &ContextTarget, _id: &Uri) -> Result<bool, SubscriptionError> {
         Err(unused_store_call("exists"))
     }
 
-    async fn list_active(&self) -> Result<Vec<StoredSubscription>, SubscriptionError> {
+    async fn list_active(&self, _target: &ContextTarget) -> Result<Vec<StoredSubscription>, SubscriptionError> {
         Ok(vec![stored_building_subscription()?])
     }
 
-    async fn claim_notification_slot(&self, _id: &Uri, _earliest_allowed_last_notification: Option<DateTime<Utc>>) -> Result<bool, SubscriptionError> {
+    async fn claim_notification_slot(
+        &self,
+        _target: &ContextTarget,
+        _id: &Uri,
+        _earliest_allowed_last_notification: Option<DateTime<Utc>>,
+    ) -> Result<bool, SubscriptionError> {
         Err(unused_store_call("claim_notification_slot"))
     }
 
-    async fn mark_success(&self, _id: &Uri) -> Result<(), SubscriptionError> {
+    async fn mark_success(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
         Err(unused_store_call("mark_success"))
     }
 
-    async fn mark_failure(&self, _id: &Uri) -> Result<(), SubscriptionError> {
+    async fn mark_failure(&self, _target: &ContextTarget, _id: &Uri) -> Result<(), SubscriptionError> {
         Err(unused_store_call("mark_failure"))
     }
 
-    async fn expire_due(&self, _cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+    async fn expire_due(&self, _target: &ContextTarget, _cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
         Err(unused_store_call("expire_due"))
     }
 
-    async fn find_due_interval_subscriptions(&self) -> Result<Vec<Subscription>, SubscriptionError> {
+    async fn find_due_interval_subscriptions(&self, _target: &ContextTarget) -> Result<Vec<Subscription>, SubscriptionError> {
         Err(unused_store_call("find_due_interval_subscriptions"))
     }
 
-    async fn create_subscription(&self, _id: &Uri, _fields: &SubscriptionFields<'_>, _status: SubscriptionStatus) -> Result<(), SubscriptionError> {
+    async fn create_subscription(
+        &self,
+        _target: &ContextTarget,
+        _id: &Uri,
+        _fields: &SubscriptionFields<'_>,
+        _status: SubscriptionStatus,
+    ) -> Result<(), SubscriptionError> {
         Err(unused_store_call("create_subscription"))
     }
 
-    async fn update_subscription(&self, _id: &Uri, _fields: &SubscriptionFields<'_>, _status: SubscriptionStatus) -> Result<u64, SubscriptionError> {
+    async fn update_subscription(
+        &self,
+        _target: &ContextTarget,
+        _id: &Uri,
+        _fields: &SubscriptionFields<'_>,
+        _status: SubscriptionStatus,
+    ) -> Result<u64, SubscriptionError> {
         Err(unused_store_call("update_subscription"))
     }
 }
@@ -310,7 +332,10 @@ pub(crate) fn building_snapshot() -> Value {
 pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicWrite>>>) {
     let (committer, recorded) = RecordingCommitter::new();
     let cache = Arc::new(SubscriptionCache::new(TenantRef::UnnamedDefault));
-    cache.reload(&SingleSubscriptionStore).await.expect("the fixture subscription reloads");
+    cache
+        .reload(&live_target(), &SingleSubscriptionStore)
+        .await
+        .expect("the fixture subscription reloads");
 
     let service = EntityService::new(
         Arc::new(SnapshotReader {
@@ -340,6 +365,12 @@ pub(crate) async fn recording_service() -> (EntityService, Arc<Mutex<Vec<AtomicW
         }),
     );
     (service, recorded)
+}
+
+/// The ordinary branch target used by the recording fixtures.
+pub(crate) fn live_target() -> ContextTarget {
+    let key = ContextSpaceKey::try_from(1).expect("the fixture context-space key is positive");
+    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("the fixture context space is live")
 }
 
 /// The fixture entity identifier as a [`Uri`].

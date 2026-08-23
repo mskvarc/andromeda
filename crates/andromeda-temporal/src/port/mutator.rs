@@ -1,6 +1,7 @@
 //! Immediate temporal mutation preconditions and operations.
 
 use crate::error::TemporalError;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, instance_identity::InstanceIdentity, uri::Uri};
 use async_trait::async_trait;
 use serde_json::Value;
@@ -19,24 +20,25 @@ pub enum TemporalDeleteScope {
 pub trait TemporalMutator: Send + Sync {
     /// Return whether temporal history exists for an entity.
     #[must_use = "temporal entity existence checks must be awaited"]
-    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError>;
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError>;
 
     /// Return whether temporal history exists for an entity attribute.
     #[must_use = "temporal attribute existence checks must be awaited"]
-    async fn attribute_exists(&self, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError>;
+    async fn attribute_exists(&self, target: &ContextTarget, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError>;
 
     /// Return expanded attribute names known for an entity.
     #[must_use = "temporal attribute-name reads must be awaited"]
-    async fn attribute_names_for_entity(&self, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError>;
+    async fn attribute_names_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError>;
 
     /// Delete every temporal observation for an entity and return the affected catalogue rows.
     #[must_use = "temporal entity deletions must be awaited"]
-    async fn delete_all_for_entity(&self, entity_id: &Uri) -> Result<u64, TemporalError>;
+    async fn delete_all_for_entity(&self, target: &ContextTarget, entity_id: &Uri) -> Result<u64, TemporalError>;
 
     /// Delete one temporal attribute scope and return the affected catalogue rows.
     #[must_use = "temporal attribute deletions must be awaited"]
     async fn delete_attribute(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         attribute_name: &AttributeName,
         dataset_id: Option<&Uri>,
@@ -45,12 +47,19 @@ pub trait TemporalMutator: Send + Sync {
 
     /// Return whether the selected temporal attribute instance exists.
     #[must_use = "temporal instance existence checks must be awaited"]
-    async fn instance_exists(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<bool, TemporalError>;
+    async fn instance_exists(
+        &self,
+        target: &ContextTarget,
+        instance: &InstanceIdentity,
+        entity_id: &Uri,
+        attribute_name: &AttributeName,
+    ) -> Result<bool, TemporalError>;
 
     /// Replace one temporal attribute instance immediately.
     #[must_use = "temporal instance updates must be awaited"]
     async fn update_instance(
         &self,
+        target: &ContextTarget,
         instance: &InstanceIdentity,
         entity_id: &Uri,
         attribute_name: &AttributeName,
@@ -59,5 +68,11 @@ pub trait TemporalMutator: Send + Sync {
 
     /// Delete one temporal attribute instance immediately.
     #[must_use = "temporal instance deletions must be awaited"]
-    async fn delete_instance(&self, instance: &InstanceIdentity, entity_id: &Uri, attribute_name: &AttributeName) -> Result<(), TemporalError>;
+    async fn delete_instance(
+        &self,
+        target: &ContextTarget,
+        instance: &InstanceIdentity,
+        entity_id: &Uri,
+        attribute_name: &AttributeName,
+    ) -> Result<(), TemporalError>;
 }

@@ -1,6 +1,7 @@
 //! Idempotent temporal-history append capability.
 
 use crate::{append_intent::TemporalAppendIntent, error::TemporalError};
+use andromeda_context_space::context_target::ContextTarget;
 use async_trait::async_trait;
 
 /// Appends complete intents atomically and idempotently by intent identifier.
@@ -12,5 +13,5 @@ pub trait TemporalHistorySink: Send + Sync {
     /// rows the first attempt wrote rather than needing to be told the intent
     /// was already accepted.
     #[must_use = "temporal sink appends must be awaited"]
-    async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError>;
+    async fn append(&self, target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError>;
 }

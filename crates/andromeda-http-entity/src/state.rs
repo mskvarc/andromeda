@@ -1,12 +1,13 @@
 //! Focused state resolution for entity route handlers.
 
-use crate::snapshot_scope::EntitySnapshotScope;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{EntityService, discovery::EntityDiscoveryService, query::EntityQueryService};
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
 use andromeda_http_extraction::{
     classification::classify_tenancy_error,
-    tenant_state::{ExistingTenantState, ProvisionableTenantState, TenantStateResolver},
+    context_target::{ContextTargetProvider, ExistingTargetedTenantState, ProvisionableTargetedTenantState, SnapshotTargetResolver},
+    tenant_state::TenantStateResolver,
 };
 use andromeda_http_response::problem_response::ProblemResponse;
 use andromeda_tenancy::{creation_policy::TenantCreationPolicy, error::TenancyError, tenant_ref::TenantRef};
@@ -28,15 +29,27 @@ pub struct EntityRouteServices {
     pub forwarding: Arc<FederationService>,
     /// Entity Map policy used by entity query scoping and creation.
     pub entity_maps: Arc<EntityMapService>,
-    /// Frozen entity reads for snapshot-scoped requests.
-    pub snapshots: Arc<dyn EntitySnapshotScope>,
+    /// Tenant's ordinary live context branch.
+    pub live_target: ContextTarget,
+    /// Snapshot URI to durable branch resolution.
+    pub snapshot_targets: Arc<dyn SnapshotTargetResolver>,
 }
 
 /// Existing-tenant extractor specialized to the entity binding's focused state.
-pub(crate) type EntityTenantState = ExistingTenantState<Arc<EntityRouteServices>>;
+pub(crate) type EntityTenantState = ExistingTargetedTenantState<Arc<EntityRouteServices>>;
 
 /// Provisionable-tenant extractor specialized to the entity binding's focused state.
-pub(crate) type EntityTenantStateOrCreate = ProvisionableTenantState<Arc<EntityRouteServices>>;
+pub(crate) type EntityTenantStateOrCreate = ProvisionableTargetedTenantState<Arc<EntityRouteServices>>;
+
+impl ContextTargetProvider for EntityRouteServices {
+    fn live_target(&self) -> &ContextTarget {
+        &self.live_target
+    }
+
+    fn snapshot_target_resolver(&self) -> &dyn SnapshotTargetResolver {
+        self.snapshot_targets.as_ref()
+    }
+}
 
 /// Resolves the focused entity capabilities for one typed tenant scope.
 pub trait EntityStateResolver: Send + Sync {

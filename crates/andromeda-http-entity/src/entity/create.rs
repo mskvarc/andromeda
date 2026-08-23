@@ -24,12 +24,16 @@ use crate::entity::{
     provision_response,
 };
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_response::headers::with_location;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn create(
-    tenant_state::ProvisionableTenantState(state): EntityTenantStateOrCreate,
+    context_target::ProvisionableTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     ValidatedQuery(params): ValidatedQuery<LocalOnlyParams>,
     context: ContextUrl,
@@ -45,7 +49,7 @@ pub(crate) async fn create(
     let is_local = params.local.unwrap_or(false);
 
     if is_local {
-        let id = service.create(&entity, &context).await.with_entity_instance(&uri)?;
+        let id = service.create(&target, &entity, &context).await.with_entity_instance(&uri)?;
         return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{}", id)));
     }
 
@@ -59,27 +63,30 @@ pub(crate) async fn create(
 
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::Entities,
-            entity_id: &entity_id,
-            entity_type_compact: entity_type,
-            attribute_name: None,
-            method: Method::POST,
-            body: Some(&entity_body),
-            context: &context,
-            operation: ForwardingOperation::CreateEntity,
-            path_suffix: None,
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::Entities,
+                entity_id: &entity_id,
+                entity_type_compact: entity_type,
+                attribute_name: None,
+                method: Method::POST,
+                body: Some(&entity_body),
+                context: &context,
+                operation: ForwardingOperation::CreateEntity,
+                path_suffix: None,
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        let id = service.create(&entity, &context).await.with_entity_instance(&uri)?;
+        let id = service.create(&target, &entity, &context).await.with_entity_instance(&uri)?;
         return Ok(with_location(StatusCode::CREATED.into_response(), format!("/ngsi-ld/v1/entities/{}", id)));
     }
 
@@ -88,7 +95,7 @@ pub(crate) async fn create(
     let proxied = collect_proxied_attrs(&forwarded);
     let mut entity = entity;
     let local = if entity.strip_attributes(&proxied) {
-        LocalOutcome::processed(service.create(&entity, &context).await, classify_entity_error)
+        LocalOutcome::processed(service.create(&target, &entity, &context).await, classify_entity_error)
     } else {
         LocalOutcome::NothingRemained
     };

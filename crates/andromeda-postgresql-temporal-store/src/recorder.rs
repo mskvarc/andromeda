@@ -2,6 +2,7 @@
 
 use crate::{error::TemporalStoreError, intent_sink::PostgresTemporalHistorySink, repo::TemporalRepository, write_record_persist::persist_write_record};
 use andromeda_context_commit::write_record::WriteRecord;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_temporal::append_intent::TemporalAppendIntent;
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
@@ -49,6 +50,7 @@ impl TemporalRecorder {
     pub async fn record_intents_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         record: &WriteRecord,
         intents: &[TemporalAppendIntent],
     ) -> Result<(), TemporalStoreError> {
@@ -56,7 +58,7 @@ impl TemporalRecorder {
             return Ok(());
         }
         persist_write_record(tx, record).await?;
-        PostgresTemporalHistorySink::append_entries_batch(&self.repo, tx, intents).await?;
+        PostgresTemporalHistorySink::append_entries_batch(&self.repo, tx, target, intents).await?;
         Ok(())
     }
 }

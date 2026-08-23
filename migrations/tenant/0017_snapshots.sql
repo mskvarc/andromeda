@@ -3,14 +3,13 @@
 -- ============================================================================
 -- NGSI-LD Snapshot management (spec clause 5.2.22, operations 5.16.x).
 --
--- A Snapshot captures a point-in-time view of entity or temporal entity data,
--- produced by a snapshot query. `snapshots` is the control record; the
--- materialised documents live in two child tables (`snapshot_entities`,
--- `snapshot_temporal_entities`), one row per captured entity.
+-- A Snapshot captures a point-in-time view of entity or temporal entity data.
+-- `snapshots` is the control record; captured state lives in the ordinary
+-- context-space-partitioned current and temporal relations.
 --
 -- Lifecycle: preparing -> success/partial/empty/failure. Expired snapshots are
--- reaped by a periodic worker on `expires_at`, and the child rows go with them
--- through the cascading foreign key.
+-- reaped by a periodic worker on `expires_at`, and branch rows go with the
+-- context-space parent through cascading foreign keys.
 --
 -- Physical shape:
 --
@@ -35,6 +34,9 @@ CREATE TABLE snapshots (
     -- Surrogate the child tables reference; never rendered.
     snapshot_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
+    -- First-class context branch owned by this control record.
+    context_space_key BIGINT NOT NULL UNIQUE REFERENCES context_spaces (context_space_key) ON DELETE CASCADE,
+
     -- System-managed temporal properties
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -51,6 +53,9 @@ CREATE TABLE snapshots (
     -- Snapshot lifecycle state
     status snapshot_status NOT NULL DEFAULT 'preparing',
 
+    -- Source URI for an asynchronous clone job; NULL for query capture.
+    clone_source_id TEXT COMPRESSION lz4 COLLATE "C",
+
     -- Snapshot URI, e.g. "urn:ngsi-ld:Snapshot:abc123"
     id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL UNIQUE,
 
@@ -65,6 +70,11 @@ CREATE TABLE snapshots (
 
     -- Temporal query parameters used to produce this snapshot
     snapshot_temporal_queries JSONB COMPRESSION lz4,
+
+    -- Resolved JSON-LD context used to compile and execute both query families.
+    -- Stored with the control job so another replica does not fall back to its
+    -- own ambient context while preparing the branch.
+    query_context JSONB COMPRESSION lz4 NOT NULL,
 
     -- Optional receiver info for the notification endpoint
     receiver_info JSONB COMPRESSION lz4,
@@ -89,29 +99,3 @@ CREATE TABLE snapshots (
 
 -- Efficient periodic cleanup of expired snapshots
 CREATE INDEX idx_snapshots_expires_at ON snapshots (expires_at);
-
-CREATE TABLE snapshot_entities (
-    -- Parent snapshot
-    snapshot_key BIGINT NOT NULL REFERENCES snapshots (snapshot_key) ON DELETE CASCADE,
-
-    -- Entity that was captured in this snapshot
-    entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-
-    -- Full entity payload at the time of capture
-    entity_data JSONB COMPRESSION lz4 NOT NULL,
-
-    PRIMARY KEY (snapshot_key, entity_id)
-);
-
-CREATE TABLE snapshot_temporal_entities (
-    -- Parent snapshot
-    snapshot_key BIGINT NOT NULL REFERENCES snapshots (snapshot_key) ON DELETE CASCADE,
-
-    -- Entity that was captured in this snapshot
-    entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
-
-    -- Full temporal entity data at the time of capture
-    temporal_data JSONB COMPRESSION lz4 NOT NULL,
-
-    PRIMARY KEY (snapshot_key, entity_id)
-);

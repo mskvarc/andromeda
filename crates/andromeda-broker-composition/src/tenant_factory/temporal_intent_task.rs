@@ -1,6 +1,7 @@
 //! Composition of temporal intent policy with drain runtime mechanics.
 
 use crate::tenant_factory::error::TenantAssemblyError;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_task_runtime::{
     criticality::TaskCriticality,
     drain_task::{DrainPassOutcome, DrainTask},
@@ -50,6 +51,7 @@ pub(super) struct TemporalIntentRegistration {
 
 /// Register temporal-intent delivery as the first managed drain operation.
 pub(super) fn register_temporal_intent_drain(
+    target: ContextTarget,
     config: &TemporalConfig,
     supervisor: &TaskSupervisor,
     queue: Arc<dyn TemporalIntentQueue>,
@@ -70,6 +72,7 @@ pub(super) fn register_temporal_intent_drain(
     )
     .map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
     let drain = Arc::new(TemporalIntentDrain::new(
+        target,
         queue,
         pending,
         sink,

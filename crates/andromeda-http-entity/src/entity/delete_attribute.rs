@@ -27,11 +27,15 @@ use crate::entity::{
     provision_response,
 };
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn delete_attr(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id)): TypedPath<(Uri, AttributeName)>,
@@ -69,27 +73,33 @@ pub(crate) async fn delete_attr(
 
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::Entities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: Some(&attr_id),
-            method: Method::DELETE,
-            body: None,
-            context: &context,
-            operation: ForwardingOperation::DeleteEntityAttribute,
-            path_suffix: Some(&path_suffix),
-            query_string: qs.as_deref(),
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::Entities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: Some(&attr_id),
+                method: Method::DELETE,
+                body: None,
+                context: &context,
+                operation: ForwardingOperation::DeleteEntityAttribute,
+                path_suffix: Some(&path_suffix),
+                query_string: qs.as_deref(),
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
-        service.delete_attr(&id, &attr_id, selection, &context).await.with_entity_instance(&uri)?;
+        service
+            .delete_attr(&target, &id, &attr_id, selection, &context)
+            .await
+            .with_entity_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
@@ -98,7 +108,7 @@ pub(crate) async fn delete_attr(
     let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
         LocalOutcome::NothingRemained
     } else {
-        LocalOutcome::processed(service.delete_attr(&id, &attr_id, selection, &context).await, classify_entity_error)
+        LocalOutcome::processed(service.delete_attr(&target, &id, &attr_id, selection, &context).await, classify_entity_error)
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

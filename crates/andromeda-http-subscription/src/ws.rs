@@ -6,7 +6,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use andromeda_http_extraction::tenant_state::ExistingTenantState;
+use andromeda_http_extraction::context_target::ExistingTargetedTenantState;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use axum::{
     extract::{
@@ -53,13 +53,13 @@ impl Drop for WsConnectionGuard {
 /// upgrades the HTTP connection to a WebSocket that streams notification
 /// messages as they are dispatched by the notification worker.
 pub async fn stream(
-    ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ProblemResponse> {
     // Validate subscription exists.
-    let subscription = state.subscriptions.get(&subscription_id).await.with_subscription_instance(&uri)?;
+    let subscription = state.subscriptions.get(&target, &subscription_id).await.with_subscription_instance(&uri)?;
 
     // Validate subscription uses WebSocket transport via the canonical parser.
     let is_ws = parse_endpoint_transport(

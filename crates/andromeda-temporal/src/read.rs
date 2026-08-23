@@ -8,6 +8,7 @@ use crate::{
     read::rendered_entity::HistoryPresence,
     service::{TemporalQueryResult, TemporalQueryWarning, TemporalRange, TemporalReadResult, TemporalService, has_explicit_context, iri_short_name},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{compaction::compact_attr_iri, context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{
     aggr_method::AggrMethod,
@@ -30,14 +31,20 @@ use std::{collections::HashMap, slice::from_ref};
 
 impl TemporalService {
     /// Retrieve and render one temporal entity under the supplied query parameters.
-    pub async fn get(&self, entity_id: &Uri, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalReadResult, TemporalError> {
+    pub async fn get(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        params: &TemporalQueryParameters,
+        context: &ContextSpec,
+    ) -> Result<TemporalReadResult, TemporalError> {
         params.validate(false)?;
 
         let compiled = self.compile_temporal_query(params, context).await?;
         ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-        self.ensure_requested_attributes_aggregable(&compiled).await?;
+        self.ensure_requested_attributes_aggregable(target, &compiled).await?;
 
-        if !self.reader.entity_exists(entity_id).await? {
+        if !self.reader.entity_exists(target, entity_id).await? {
             return Err(TemporalError::not_found(entity_id.to_string()));
         }
 
@@ -45,9 +52,14 @@ impl TemporalService {
         // an entity's types, so the mandatory `type` member survives the clause
         // 5.6.6 deletion that removes current state and leaves the Temporal
         // Evolution standing.
-        let entity_types = self.reader.entity_types(from_ref(entity_id)).await?.remove(entity_id).unwrap_or_default();
+        let entity_types = self
+            .reader
+            .entity_types(target, from_ref(entity_id))
+            .await?
+            .remove(entity_id)
+            .unwrap_or_default();
 
-        let rendered = self.render_one_temporal_entity(entity_id, &entity_types, &compiled, context).await?;
+        let rendered = self.render_one_temporal_entity(target, entity_id, &entity_types, &compiled, context).await?;
 
         // Clause 5.7.2: an `attrs` filter that selects nothing leaves no
         // temporal representation to return, which is a 404 rather than an
@@ -78,14 +90,14 @@ impl TemporalService {
     }
 
     /// Query temporal entities matching the given filter and temporal parameters.
-    pub async fn query(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
+    pub async fn query(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<TemporalQueryResult, TemporalError> {
         params.validate(true)?;
 
         let compiled = self.compile_temporal_query(params, context).await?;
 
         ensure_aggregation_supported(self.reader.as_ref(), &compiled.representation.aggr_methods)?;
-        self.ensure_requested_attributes_aggregable(&compiled).await?;
-        let id_outcome = self.reader.query_entity_ids(&compiled).await?;
+        self.ensure_requested_attributes_aggregable(target, &compiled).await?;
+        let id_outcome = self.reader.query_entity_ids(target, &compiled).await?;
         let (entity_ids, total_count) = id_outcome
             .complete(compiled.pagination)
             .map_err(|error| TemporalError::internal(error.to_string()))?;
@@ -93,7 +105,7 @@ impl TemporalService {
         // One batch read of the temporal catalogue, which owns the entity types
         // (clauses 4.5.1 and 4.5.6) and answers for entities whose current
         // state a clause 5.6.6 deletion has already removed.
-        let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(&entity_ids).await?;
+        let entity_types_map: HashMap<Uri, Vec<EntityTypeName>> = self.reader.entity_types(target, &entity_ids).await?;
 
         let mut entities = Vec::new();
         let mut warnings = Vec::new();
@@ -104,7 +116,7 @@ impl TemporalService {
         let mut overall_partition_total: Option<i64> = None;
         for entity_id in entity_ids {
             let entity_types = entity_types_map.get(&entity_id).map(Vec::as_slice).unwrap_or_default();
-            match self.render_one_temporal_entity(&entity_id, entity_types, &compiled, context).await {
+            match self.render_one_temporal_entity(target, &entity_id, entity_types, &compiled, context).await {
                 // An entity the window selects no history for is simply not part
                 // of the result set.
                 Ok(rendered) if rendered.presence == HistoryPresence::Absent => {}
@@ -260,7 +272,7 @@ impl TemporalService {
     /// Runs only the lightweight stage 1 SQL (entity ID resolution) without fetching
     /// temporal history, ensuring the EntityMap captures ALL matching IDs, not just the
     /// current page.
-    pub async fn query_ids(&self, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<Uri>, TemporalError> {
+    pub async fn query_ids(&self, target: &ContextTarget, params: &TemporalQueryParameters, context: &ContextSpec) -> Result<Vec<Uri>, TemporalError> {
         params.validate(true)?;
         let compiled = self.compile_temporal_query(params, context).await?;
         let mut unpaged = compiled.clone();
@@ -270,7 +282,7 @@ impl TemporalService {
             count: CountPolicy::Omit,
         };
         ensure_aggregation_supported(self.reader.as_ref(), &unpaged.representation.aggr_methods)?;
-        let outcome = self.reader.query_entity_ids(&unpaged).await?;
+        let outcome = self.reader.query_entity_ids(target, &unpaged).await?;
         let (identifiers, _total) = outcome
             .complete(unpaged.pagination)
             .map_err(|error| TemporalError::internal(error.to_string()))?;
@@ -284,7 +296,7 @@ impl TemporalService {
     /// decided from the value shapes the attribute has been recorded with
     /// before any history is read. Only the attributes the request named can
     /// be checked ahead of the read; a request over every attribute is not.
-    async fn ensure_requested_attributes_aggregable(&self, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
+    async fn ensure_requested_attributes_aggregable(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<(), TemporalError> {
         if compiled.representation.format != TemporalFormat::AggregatedValues || compiled.instances.attr_filter.is_empty() {
             return Ok(());
         }
@@ -295,7 +307,7 @@ impl TemporalService {
             .map(|iri| iri.as_str().parse::<AttributeName>())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| TemporalError::internal(format!("an expanded attribute IRI is not an attribute name: {error}")))?;
-        let recorded = self.reader.recorded_value_kinds(&attributes).await?;
+        let recorded = self.reader.recorded_value_kinds(target, &attributes).await?;
         ensure_aggregation_eligible(&attributes, &compiled.representation.aggr_methods, &recorded).map_err(TemporalError::from)
     }
 }

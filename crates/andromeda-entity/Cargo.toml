@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 andromeda-context-commit.workspace = true
+andromeda-context-space.workspace = true
 andromeda-federation.workspace = true
 andromeda-jsonld.workspace = true
 andromeda-ngsi-ld-geometry.workspace = true

@@ -22,6 +22,11 @@ use crate::{
     },
 };
 use andromeda_context_commit::{lease_acknowledgement::LeaseAcknowledgement, write_id::WriteId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_space::{
+    context_space::{ContextSpace, ContextSpaceKind},
+    context_space_key::ContextSpaceKey,
+    context_target::ContextTarget,
+};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     attribute_type::AttributeType,
@@ -90,7 +95,7 @@ impl RecordingQueue {
 
 #[async_trait]
 impl PendingTemporalIntentReader for RecordingQueue {
-    async fn pending_for_entity(&self, entity_id: &Uri) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
+    async fn pending_for_entity(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
         Ok(self
             .state
             .lock()
@@ -102,7 +107,7 @@ impl PendingTemporalIntentReader for RecordingQueue {
             .collect())
     }
 
-    async fn pending_intents(&self) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
+    async fn pending_intents(&self, _target: &ContextTarget) -> Result<Vec<SequencedTemporalAppendIntent>, TemporalError> {
         Ok(self.state.lock().await.pending.iter().map(|claim| claim.pending.clone()).collect())
     }
 }
@@ -111,6 +116,7 @@ impl PendingTemporalIntentReader for RecordingQueue {
 impl TemporalIntentQueue for RecordingQueue {
     async fn claim(
         &self,
+        _target: &ContextTarget,
         _owner: TemporalIntentLeaseOwner,
         limit: TemporalIntentBatchSize,
         _lease_until: DateTime<Utc>,
@@ -121,6 +127,7 @@ impl TemporalIntentQueue for RecordingQueue {
 
     async fn claim_for_entity(
         &self,
+        _target: &ContextTarget,
         _owner: TemporalIntentLeaseOwner,
         entity_id: &Uri,
         limit: TemporalIntentBatchSize,
@@ -139,7 +146,12 @@ impl TemporalIntentQueue for RecordingQueue {
             .collect())
     }
 
-    async fn acknowledge(&self, _owner: TemporalIntentLeaseOwner, intent: &SequencedTemporalAppendIntent) -> Result<LeaseAcknowledgement, TemporalError> {
+    async fn acknowledge(
+        &self,
+        _target: &ContextTarget,
+        _owner: TemporalIntentLeaseOwner,
+        intent: &SequencedTemporalAppendIntent,
+    ) -> Result<LeaseAcknowledgement, TemporalError> {
         let mut state = self.state.lock().await;
         if state.lease_lapsed {
             return Ok(LeaseAcknowledgement::Lost);
@@ -153,6 +165,7 @@ impl TemporalIntentQueue for RecordingQueue {
 
     async fn retry(
         &self,
+        _target: &ContextTarget,
         _owner: TemporalIntentLeaseOwner,
         intent: &SequencedTemporalAppendIntent,
         retry: TemporalIntentRetry,
@@ -201,7 +214,7 @@ impl RecordingSink {
 
 #[async_trait]
 impl TemporalHistorySink for RecordingSink {
-    async fn append(&self, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
+    async fn append(&self, _target: &ContextTarget, intent: &TemporalAppendIntent) -> Result<(), TemporalError> {
         let mut state = self.state.lock().await;
         if let Some(detail) = &state.reject {
             return Err(TemporalError::persistence(detail.clone())); // clone: the error owns its detail; the sink keeps rejecting.
@@ -255,11 +268,11 @@ impl TemporalHistoryReader for RecordingSink {
         }
     }
 
-    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
         Ok(self.state.lock().await.observations.values().any(|(stored_id, _)| stored_id == entity_id))
     }
 
-    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
         let state = self.state.lock().await;
         Ok(entity_ids
             .iter()
@@ -268,7 +281,7 @@ impl TemporalHistoryReader for RecordingSink {
             .collect())
     }
 
-    async fn query_entity_ids(&self, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(&self, _target: &ContextTarget, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         let state = self.state.lock().await;
         let mut identifiers = state
             .observations
@@ -290,7 +303,12 @@ impl TemporalHistoryReader for RecordingSink {
         })
     }
 
-    async fn query_entity_history(&self, entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
+    async fn query_entity_history(
+        &self,
+        _target: &ContextTarget,
+        entity_id: &Uri,
+        _compiled: &CompiledTemporalQuery,
+    ) -> Result<TemporalHistoryOutcome, TemporalError> {
         let observations = self
             .state
             .lock()
@@ -303,10 +321,19 @@ impl TemporalHistoryReader for RecordingSink {
         Ok(TemporalHistoryOutcome { observations })
     }
 
-    async fn query_entity_aggregation(&self, _entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+    async fn query_entity_aggregation(
+        &self,
+        _target: &ContextTarget,
+        _entity_id: &Uri,
+        _compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::operation_not_supported("recording sink has no aggregation"))
     }
-    async fn recorded_value_kinds(&self, _attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    async fn recorded_value_kinds(
+        &self,
+        _target: &ContextTarget,
+        _attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
         Ok(HashMap::new())
     }
 }
@@ -344,6 +371,11 @@ fn instant() -> DateTime<Utc> {
     Utc.timestamp_opt(1_700_000_000, 0).single().expect("valid instant")
 }
 
+fn live_target() -> ContextTarget {
+    let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+}
+
 fn query() -> CompiledTemporalQuery {
     CompiledTemporalQuery::builder()
         .entities(EntitySelection::builder().build())
@@ -367,6 +399,7 @@ fn retry_policy() -> TemporalIntentRetryPolicy {
 
 fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntentDrain {
     TemporalIntentDrain::new(
+        live_target(),
         Arc::clone(&queue) as Arc<dyn TemporalIntentQueue>,
         queue as Arc<dyn PendingTemporalIntentReader>,
         sink,
@@ -379,7 +412,7 @@ fn drain(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>) -> TemporalIntent
 
 async fn overlay_rows(queue: Arc<RecordingQueue>, sink: Arc<RecordingSink>, entity_id: &Uri) -> Vec<TemporalHistoryObservation> {
     PendingTemporalHistoryOverlay::new(sink, queue)
-        .query_entity_history(entity_id, &query())
+        .query_entity_history(&live_target(), entity_id, &query())
         .await
         .expect("overlay read")
         .observations
@@ -395,7 +428,7 @@ async fn committed_pending_intent_is_immediately_visible_once() {
         Arc::clone(&sink) as Arc<dyn TemporalHistoryReader>,
         Arc::clone(&queue) as Arc<dyn PendingTemporalIntentReader>,
     );
-    assert!(overlay.entity_exists(&entity_id).await.expect("logical entity existence"));
+    assert!(overlay.entity_exists(&live_target(), &entity_id).await.expect("logical entity existence"));
     let rows = overlay_rows(queue, sink, &entity_id).await;
     assert_eq!(rows.len(), 1);
     assert!(rows[0].identity.is_some());
@@ -422,7 +455,7 @@ async fn mutation_barrier_delivers_the_target_entity_before_returning() {
     let (pending, entity_id) = fixture();
     queue.insert(pending).await;
     drain(Arc::clone(&queue), Arc::clone(&sink))
-        .synchronize(&entity_id)
+        .synchronize(&live_target(), &entity_id)
         .await
         .expect("entity synchronization succeeds");
     assert_eq!(queue.pending_count().await, 0);
@@ -435,7 +468,7 @@ async fn sink_acceptance_before_acknowledgement_deduplicates_by_intent_identity(
     let sink = Arc::new(RecordingSink::default());
     let (pending, entity_id) = fixture();
     queue.insert(pending.clone()).await;
-    sink.append(&pending.intent).await.expect("sink accepts intent");
+    sink.append(&live_target(), &pending.intent).await.expect("sink accepts intent");
     let rows = overlay_rows(queue, sink, &entity_id).await;
     assert_eq!(rows.len(), 1);
     pretty_assertions::assert_eq!(
@@ -468,7 +501,7 @@ async fn lost_acknowledgement_replays_successfully_with_one_logical_sink_effect(
     let sink = Arc::new(RecordingSink::default());
     let (pending, _entity_id) = fixture();
     queue.insert(pending.clone()).await;
-    sink.append(&pending.intent).await.expect("first sink effect succeeds");
+    sink.append(&live_target(), &pending.intent).await.expect("first sink effect succeeds");
     drain(Arc::clone(&queue), Arc::clone(&sink)).execute(instant()).await.expect("replay succeeds");
     assert_eq!(sink.logical_effect_count().await, 1);
     assert_eq!(queue.acknowledged_count().await, 1);

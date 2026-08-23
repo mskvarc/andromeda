@@ -6,13 +6,20 @@
 
 use crate::{EntityService, batch::BatchResult, error::EntityError, notification_plan::attribute_change_groups, side_effect::BatchSideEffectMode};
 use andromeda_context_commit::precondition::Precondition;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{entity::Entity, expanded::mutation::entity::merge_entity};
 use std::sync::Arc;
 
 impl EntityService {
-    pub(super) async fn batch_merge_chunk(&self, entities: &[Entity], context: &ContextSpec, mode: BatchSideEffectMode) -> Result<BatchResult, EntityError> {
+    pub(super) async fn batch_merge_chunk(
+        &self,
+        target: &ContextTarget,
+        entities: &[Entity],
+        context: &ContextSpec,
+        mode: BatchSideEffectMode,
+    ) -> Result<BatchResult, EntityError> {
         let (prepared, mut errors) = self.prepare_entities(entities, context).await;
         if prepared.is_empty() {
             return Ok(BatchResult { success: Vec::new(), errors });
@@ -21,8 +28,8 @@ impl EntityService {
         let prepared_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
         // Hold the per-id locks across the read-modify-write window so two
         // concurrent merges for the same id can't lose each other's writes.
-        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
-        let existing_map = self.reader.get_batch(&prepared_ids).await?;
+        let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
+        let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
 
         let mut writes = Vec::with_capacity(prepared.len());
         for prepared_entity in prepared {
@@ -42,6 +49,7 @@ impl EntityService {
             let groups = attribute_change_groups(previous, &existing);
 
             writes.push(self.chunk_update(
+                target,
                 id,
                 previous,
                 Arc::new(existing),
@@ -52,7 +60,7 @@ impl EntityService {
             ));
         }
 
-        let outcome = self.commit_chunk(writes, mode).await?.settled();
+        let outcome = self.commit_chunk(target, writes, mode).await?.settled();
         errors.extend(outcome.errors);
         Ok(BatchResult {
             success: outcome.success,

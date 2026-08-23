@@ -10,6 +10,7 @@ use crate::{
     request::{ForwardProvisionRequest, TriggeringRequest},
     transport::ForwardedRequest,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
@@ -39,7 +40,10 @@ pub(crate) struct PlannedWrite<'a> {
 
 impl FederationService {
     /// Forward a single NGSI-LD provision operation.
-    pub async fn forward_provision(&self, request: ForwardProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, FederationError> {
+    pub async fn forward_provision(&self, target: &ContextTarget, request: ForwardProvisionRequest<'_>) -> Result<Vec<ForwardedWriteResult>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(Vec::new());
+        }
         if self.is_loop_detected(request.triggering.via) {
             debug!("Loop detected in Via header chain, skipping provision forwarding");
             return Ok(Vec::new());

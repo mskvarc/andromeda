@@ -27,12 +27,16 @@ use crate::entity_operations::{
     multi_status_response,
     public_error,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_jsonld::context_spec::ContextSpec;
 use axum::http::HeaderMap;
 
 pub(crate) async fn batch_delete(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     _accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -64,12 +68,12 @@ pub(crate) async fn batch_delete(
         via: incoming_via.as_ref(),
         headers: Some(&headers),
     };
-    let forwarded = forward_identifiers(&state, &entity_ids, &context, triggering, &uri).await?;
+    let forwarded = forward_identifiers(&state, &target, &entity_ids, &context, triggering, &uri).await?;
 
     // Clause 5.6.10.4: every identifier is also deleted locally; an entity a
     // proxied registration holds is no local failure when it is absent here.
     let mode = service.effective_side_effect_mode(async_preference(&prefer), entity_ids.len());
-    let mut batch = service.batch_delete(&entity_ids, mode).await.with_entity_instance(&uri)?;
+    let mut batch = service.batch_delete(&target, &entity_ids, mode).await.with_entity_instance(&uri)?;
     drop_absent_proxied(&mut batch.errors, &forwarded);
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     merge_forwarded(&mut result, &forwarded);

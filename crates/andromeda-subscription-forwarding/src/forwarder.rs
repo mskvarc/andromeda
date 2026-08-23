@@ -152,7 +152,7 @@ impl SubscriptionForwardingService {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
             });
         };
-        let Some(stored) = self.subscriptions.get(&local).await? else {
+        let Some(stored) = self.subscriptions.get(&self.live_target, &local).await? else {
             debug!(subscription = %local, "companion notification for a subscription that no longer exists");
             return Ok(());
         };

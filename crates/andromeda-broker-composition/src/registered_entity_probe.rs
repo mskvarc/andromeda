@@ -6,6 +6,7 @@
 //! Neither crate may name the other for this, so the adapter lives here, beside
 //! the other cross-service joins the runtime composes.
 
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
     port::{query::EntityQueryStore, reader::EntityReader},
@@ -36,12 +37,24 @@ pub(crate) struct EntityStoreRegistrationProbe {
     /// Compiles a registration's type expression, whose leaves are already
     /// expanded IRIs, into the query form.
     engine: JsonLdEngine,
+    /// Tenant live branch registration admission inspects.
+    live_target: ContextTarget,
 }
 
 impl EntityStoreRegistrationProbe {
     /// Create a probe over the tenant's entity reader and query store.
-    pub(crate) const fn new(reader: Arc<dyn EntityReader>, query: Arc<dyn EntityQueryStore>, engine: JsonLdEngine) -> EntityStoreRegistrationProbe {
-        EntityStoreRegistrationProbe { reader, query, engine }
+    pub(crate) const fn new(
+        reader: Arc<dyn EntityReader>,
+        query: Arc<dyn EntityQueryStore>,
+        engine: JsonLdEngine,
+        live_target: ContextTarget,
+    ) -> EntityStoreRegistrationProbe {
+        EntityStoreRegistrationProbe {
+            reader,
+            query,
+            engine,
+            live_target,
+        }
     }
 
     /// Compile one registration selector into the query form.
@@ -79,7 +92,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            let Some(entity) = self.reader.get(entity_id).await.map_err(probe_error)? else {
+            let Some(entity) = self.reader.get(&self.live_target, entity_id).await.map_err(probe_error)? else {
                 return Ok(EntityPresence::Absent);
             };
             // The reader hands back the stored expanded payload, which wraps
@@ -120,7 +133,7 @@ impl RegisteredEntityProbe for EntityStoreRegistrationProbe {
                     count: CountPolicy::Omit,
                 })
                 .build();
-            let outcome = self.query.query_ids(&compiled).await.map_err(probe_error)?;
+            let outcome = self.query.query_ids(&self.live_target, &compiled).await.map_err(probe_error)?;
             // An identifier-only read leaves nothing to finish a declined
             // predicate against, so a store that declined one cannot answer.
             if !outcome.unapplied.is_empty() {

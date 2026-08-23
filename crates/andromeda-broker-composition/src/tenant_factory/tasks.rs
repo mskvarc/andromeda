@@ -40,7 +40,8 @@ use crate::{
         },
     },
 };
-use andromeda_context_commit::{change_event::ChangeEvent, committer::ContextCommitter};
+use andromeda_context_commit::{committer::ContextCommitter, context_change_event::ContextChangeEvent};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_entity::{
     EntityService,
@@ -103,7 +104,7 @@ use typed_builder::TypedBuilder;
 
 /// Change channels shared by tenant services and their workers.
 pub(super) struct TenantSignals {
-    pub(super) entity: broadcast::Sender<ChangeEvent>,
+    pub(super) entity: broadcast::Sender<ContextChangeEvent>,
     pub(super) subscription: broadcast::Sender<SubscriptionChange>,
     pub(super) registration: broadcast::Sender<CsrChangeEvent>,
     pub(super) csource_subscription: broadcast::Sender<CsourceSubscriptionChange>,
@@ -128,6 +129,7 @@ impl TenantSignals {
 /// Inputs owned or shared by the tenant's worker set.
 #[derive(TypedBuilder)]
 pub(super) struct TaskSupervisionInputs<'a> {
+    pub(super) live_target: ContextTarget,
     pub(super) entity_config: &'a EntityConfig,
     pub(super) info_config: &'a InfoConfig,
     pub(super) delivery_config: &'a DeliveryConfig,
@@ -175,6 +177,7 @@ enum EntityNotificationDelivery {
 /// Spawn every background worker owned by a tenant.
 pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskSupervision, TenantAssemblyError> {
     let TaskSupervisionInputs {
+        live_target,
         entity_config,
         info_config,
         delivery_config,
@@ -262,11 +265,12 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         tenant.clone(), // clone: the query service owns its tenant partition.
         // A notification's join resolves Linked Entities exactly as a request's
         // does, including the ones clause 4.5.23.1 places outside this broker.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(forwarding)) as Arc<dyn RemoteLinkedEntitySource>),
+        Some(Arc::new(ForwardedLinkedEntitySource::new(forwarding, live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>),
     ));
     let entity_subscription_store = Arc::new(SubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
     let csource_subscription_store = Arc::new(CsourceSubscriptionRepository::new(pool)) as Arc<dyn SubscriptionStore>;
     let notification_processor = Arc::new(NotificationProcessor::new(NotificationProcessorDeps {
+        live_target: live_target.clone(), // clone: worker startup reloads the durable live-branch cache.
         sub_repo: Arc::clone(&entity_subscription_store),
         entity_reader: Arc::clone(&entity_reader),
         entity_query: notification_query,
@@ -293,10 +297,17 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
         drain_wakes.push(register_notification_delivery(&task_supervisor, Arc::new(drain), delivery_config)?);
     }
     let expiration_interval = temporal_config.expiration_check_interval_secs;
-    register_subscription_expiry(&task_supervisor, "subscription-expiry", subscription_policy, expiration_interval)?;
+    register_subscription_expiry(
+        &task_supervisor,
+        "subscription-expiry",
+        live_target.clone(),
+        subscription_policy,
+        expiration_interval,
+    )?;
     register_subscription_expiry(
         &task_supervisor,
         "csource-subscription-expiry",
+        live_target.clone(),
         csource_subscription_policy,
         expiration_interval,
     )?;
@@ -309,6 +320,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     register_interval_notification(
         &task_supervisor,
         Arc::new(IntervalNotificationOperation::new(
+            live_target.clone(), // clone: interval delivery and expiry both operate on the tenant's live branch.
             entity_subscription_store,
             Arc::clone(&entity_reader),
             Arc::clone(&entity_discovery_store),
@@ -319,6 +331,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     )?;
     register_csource_notification_processor(
         &task_supervisor,
+        live_target.clone(),
         registration,
         csource_subscription,
         csource_subscription_store.clone(),
@@ -328,6 +341,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     )?;
     register_entity_expiry(
         &task_supervisor,
+        live_target.clone(),
         entity_policy,
         entity_expiry_source,
         expiration_interval,
@@ -352,6 +366,7 @@ pub(super) fn supervise_tasks(inputs: TaskSupervisionInputs<'_>) -> Result<TaskS
     register_csource_interval_notification(
         &task_supervisor,
         Arc::new(CsourceIntervalNotificationOperation::new(
+            live_target,
             csource_subscription_store,
             registration_store,
             transport,

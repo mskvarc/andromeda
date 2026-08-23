@@ -13,15 +13,15 @@ pub enum ScopingEligibility {
     /// it is empty (clause 5.2.40: `empty` is a finished preparation whose
     /// queries matched nothing).
     Usable,
-    /// The snapshot has no dataset to read: still preparing, or every query failed.
-    NotUsable,
+    /// Capture or clone promotion has not yet committed.
+    Preparing,
 }
 
 /// Decide whether a snapshot in `status` can scope a request.
 pub const fn scoping_eligibility(status: SnapshotStatus) -> ScopingEligibility {
     match status {
-        SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty => ScopingEligibility::Usable,
-        SnapshotStatus::Preparing | SnapshotStatus::Failure => ScopingEligibility::NotUsable,
+        SnapshotStatus::Success | SnapshotStatus::Partial | SnapshotStatus::Empty | SnapshotStatus::Failure => ScopingEligibility::Usable,
+        SnapshotStatus::Preparing => ScopingEligibility::Preparing,
     }
 }
 
@@ -48,10 +48,9 @@ mod tests {
     }
 
     #[test]
-    fn preparing_and_failed_snapshots_cannot_scope_a_request() {
-        for status in [SnapshotStatus::Preparing, SnapshotStatus::Failure] {
-            assert_eq!(scoping_eligibility(status), ScopingEligibility::NotUsable, "{status}");
-        }
+    fn terminal_failure_remains_addressable_and_preparing_waits() {
+        assert_eq!(scoping_eligibility(SnapshotStatus::Failure), ScopingEligibility::Usable);
+        assert_eq!(scoping_eligibility(SnapshotStatus::Preparing), ScopingEligibility::Preparing);
     }
 
     #[test]

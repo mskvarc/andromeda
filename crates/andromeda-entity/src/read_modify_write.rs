@@ -20,6 +20,7 @@ use andromeda_context_commit::{
     write_outcome::{WriteOutcome, single},
     write_retry::{WRITE_ATTEMPTS, backoff_after_lost_attempts},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use serde_json::Value;
 use std::slice::from_ref;
@@ -46,16 +47,16 @@ impl EntityService {
     ///
     /// Propagates whatever `build` or the coordinator returns, and reports
     /// [`EntityError::Contention`] once the attempt budget is spent.
-    pub(crate) async fn commit_read_modify_write<B>(&self, id: &Uri, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
+    pub(crate) async fn commit_read_modify_write<B>(&self, target: &ContextTarget, id: &Uri, mut build: B) -> Result<Option<WriteOutcome>, EntityError>
     where
         B: FnMut(&Value) -> Result<Option<AtomicWrite>, EntityError>,
     {
-        let _id_guard = self.acquire_id_locks(from_ref(id)).await;
+        let _id_guard = self.acquire_id_locks(target, from_ref(id)).await;
 
         for lost_attempts in 0..WRITE_ATTEMPTS {
             self.wait_before_retry(lost_attempts).await;
 
-            let Some(snapshot) = self.reader.get_snapshot(id).await? else {
+            let Some(snapshot) = self.reader.get_snapshot(target, id).await? else {
                 return Ok(None);
             };
             let Some(mut write) = build(&snapshot.payload)? else {
@@ -63,7 +64,7 @@ impl EntityService {
             };
             write.precondition = Precondition::UnchangedSince(snapshot.modified_at);
 
-            let outcome = single(self.writes.commit(vec![write]).await?)?;
+            let outcome = single(self.writes.commit(target, vec![write]).await?)?;
             match after_attempt(&outcome) {
                 AfterAttempt::Settled => return Ok(Some(outcome)),
                 AfterAttempt::Vanished => return Ok(None),
@@ -95,13 +96,13 @@ impl EntityService {
     ///
     /// Reports [`EntityError::NotFound`] when the entity is absent,
     /// and otherwise propagates whatever `build` or the coordinator returns.
-    pub(crate) async fn commit_computed_write<B, T>(&self, id: &Uri, mut build: B) -> Result<T, EntityError>
+    pub(crate) async fn commit_computed_write<B, T>(&self, target: &ContextTarget, id: &Uri, mut build: B) -> Result<T, EntityError>
     where
         B: FnMut(&Value) -> Result<(AtomicWrite, T), EntityError>,
     {
         let mut produced: Option<T> = None;
         let landed = self
-            .commit_read_modify_write(id, |previous| {
+            .commit_read_modify_write(target, id, |previous| {
                 let (write, value) = build(previous)?;
                 produced = Some(value);
                 Ok(Some(write))

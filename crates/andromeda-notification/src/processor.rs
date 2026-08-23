@@ -8,7 +8,8 @@ mod durable_delivery;
 pub(crate) mod payload;
 
 use crate::{error::NotificationError, processor::change_payload::entity_data_for};
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{
     dispatch::{DeliveryResult, TransportDispatcher},
     endpoint::transport::{EndpointTransport, parse_endpoint_transport},
@@ -50,6 +51,7 @@ fn compiled_transport(subscription: &CompiledSubscription) -> Option<EndpointTra
 
 /// Applies subscription and entity changes to entity-notification policy.
 pub struct NotificationProcessor {
+    live_target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
     entity_reader: Arc<dyn EntityReader>,
     entity_query: Arc<EntityQueryService>,
@@ -62,6 +64,8 @@ pub struct NotificationProcessor {
 #[derive(Clone)]
 /// Focused capabilities used by entity-notification evaluation.
 pub struct NotificationProcessorDeps {
+    /// Tenant live branch loaded during worker startup.
+    pub live_target: ContextTarget,
     /// Entity-subscription persistence.
     pub sub_repo: Arc<dyn SubscriptionStore>,
     /// Current entity reads used to assemble notification data.
@@ -93,6 +97,7 @@ impl NotificationProcessor {
     /// Construct event evaluation from its focused capabilities.
     pub fn new(deps: NotificationProcessorDeps) -> NotificationProcessor {
         NotificationProcessor {
+            live_target: deps.live_target,
             sub_repo: deps.sub_repo,
             entity_reader: deps.entity_reader,
             entity_query: deps.entity_query,
@@ -105,13 +110,13 @@ impl NotificationProcessor {
 
     /// Reload compiled subscriptions after startup or an event-stream gap.
     pub async fn reload_cache(&self) -> Result<(), NotificationError> {
-        self.cache.reload(self.sub_repo.as_ref()).await.map_err(Into::into)
+        self.cache.reload(&self.live_target, self.sub_repo.as_ref()).await.map_err(Into::into)
     }
 
     /// Apply one committed subscription lifecycle change to matching state.
     pub async fn apply_subscription_change(&self, change: SubscriptionChange) {
         // Close any active SSE/WebSocket connections when a subscription is deleted.
-        if let SubscriptionChange::Deleted(ref id) = change {
+        if let SubscriptionChange::Deleted { ref id, .. } = change {
             self.transport.sse_registry().close(id);
             self.transport.ws_registry().close(id);
         }
@@ -119,8 +124,8 @@ impl NotificationProcessor {
 
         // After cache update, close lingering SSE/WebSocket connections if
         // transport was changed away from the streaming type.
-        if let SubscriptionChange::Upserted(ref id) = change
-            && let Some(compiled) = self.cache.get(id)
+        if let SubscriptionChange::Upserted { ref target, ref id } = change
+            && let Some(compiled) = self.cache.get(target, id)
         {
             let endpoint_transport = compiled_transport(&compiled);
             if !matches!(endpoint_transport, Some(EndpointTransport::Sse)) {
@@ -133,11 +138,11 @@ impl NotificationProcessor {
     }
 
     /// Evaluate and deliver notifications for one committed entity change.
-    pub async fn apply_entity_change(&self, event: ChangeEvent) -> NotificationEvaluationOutcome {
-        self.apply_entity_change_for(event, None).await
+    pub async fn apply_entity_change(&self, change: ContextChangeEvent) -> NotificationEvaluationOutcome {
+        self.apply_entity_change_for(change.target, change.event, None).await
     }
 
-    async fn apply_entity_change_for(&self, event: ChangeEvent, subscription_id: Option<&Uri>) -> NotificationEvaluationOutcome {
+    async fn apply_entity_change_for(&self, target: ContextTarget, event: ChangeEvent, subscription_id: Option<&Uri>) -> NotificationEvaluationOutcome {
         debug!(
             "Change event received: id={}, trigger={}, types={:?}, attrs={:?}",
             event.entity_id, event.trigger_reason, event.entity_types, event.changed_attributes
@@ -149,10 +154,16 @@ impl NotificationProcessor {
         // drops a subscription created elsewhere nor notifies one deleted there.
         if let Some(subscription_id) = subscription_id {
             self.cache
-                .handle_change(&SubscriptionChange::Upserted(subscription_id.clone()), self.sub_repo.as_ref()) // clone: the change names the identifier the delivery carries
+                .handle_change(
+                    &SubscriptionChange::Upserted {
+                        target: target.clone(),      // clone: the cache refresh and delivery share the branch target.
+                        id: subscription_id.clone(), // clone: the change names the identifier the delivery carries.
+                    },
+                    self.sub_repo.as_ref(),
+                )
                 .await;
         }
-        let outcome = self.cache.find_matching(&event);
+        let outcome = self.cache.find_matching(&target, &event);
         debug!(
             entity = %event.entity_id,
             trigger = %event.trigger_reason,
@@ -176,7 +187,7 @@ impl NotificationProcessor {
         debug!("Found {} matching subscriptions for event {}", matching.len(), event.entity_id);
 
         // Fetch entity data once for all matching subscriptions
-        let entity_data = entity_data_for(self.entity_reader.as_ref(), &event).await;
+        let entity_data = entity_data_for(self.entity_reader.as_ref(), &target, &event).await;
 
         let filter_data = if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted | NotificationTrigger::AttributeDeleted) {
             event.previous_attributes.as_ref().or(event.entity_snapshot.as_ref()).map(AsRef::as_ref)
@@ -184,7 +195,7 @@ impl NotificationProcessor {
             entity_data.as_ref()
         };
         let matching: Vec<Arc<CompiledSubscription>> = if let Some(data) = filter_data {
-            let geo_filtered = narrow_by_spatial_index(&self.cache, matching, data, &event.entity_types);
+            let geo_filtered = narrow_by_spatial_index(&self.cache, &target, matching, data, &event.entity_types);
             geo_filtered.into_iter().filter(|sub| matches_entity_filters(sub, data)).collect()
         } else {
             matching
@@ -201,7 +212,7 @@ impl NotificationProcessor {
             if matches!(event.trigger_reason, NotificationTrigger::EntityDeleted) {
                 fallback_sys_attrs
             } else {
-                match self.entity_reader.get_sys_attrs(&event.entity_id).await {
+                match self.entity_reader.get_sys_attrs(&target, &event.entity_id).await {
                     Ok(Some(attrs)) => Some(attrs),
                     Ok(None) => fallback_sys_attrs,
                     Err(e) => {
@@ -219,6 +230,7 @@ impl NotificationProcessor {
         let results: Vec<Option<DeliveryResult>> = stream::iter(matching)
             .map(|compiled_sub| {
                 let event = Arc::clone(&event);
+                let target = target.clone(); // clone: every concurrent notification resolves linked state in the event's branch.
                 let mut entity_data = entity_data.clone();
                 let sys_attrs = sys_attrs.clone();
                 let compaction_cache = &compaction_cache;
@@ -227,7 +239,7 @@ impl NotificationProcessor {
 
                     match self
                         .sub_repo
-                        .claim_notification_slot(&sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+                        .claim_notification_slot(&target, &sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
                         .await
                     {
                         Ok(true) => {}
@@ -247,6 +259,7 @@ impl NotificationProcessor {
                     let data = match entity_data {
                         Some(ref d) => {
                             build_notification_data(NotificationBuildParams {
+                                target: &target,
                                 engine: &self.engine,
                                 entity_data: d,
                                 previous_attributes: event.previous_attributes.as_deref(),
@@ -308,10 +321,10 @@ impl NotificationProcessor {
                     let delivery = self.transport.deliver(&endpoint_transport, &request).await;
 
                     if delivery.is_delivered() {
-                        if let Err(e) = self.sub_repo.mark_success(&sub_id).await {
+                        if let Err(e) = self.sub_repo.mark_success(&target, &sub_id).await {
                             debug!("Failed to mark notification success for {}: {}", sub_id, e);
                         }
-                    } else if let Err(e) = self.sub_repo.mark_failure(&sub_id).await {
+                    } else if let Err(e) = self.sub_repo.mark_failure(&target, &sub_id).await {
                         debug!("Failed to mark notification failure for {}: {}", sub_id, e);
                     }
                     Some(delivery)

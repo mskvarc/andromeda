@@ -34,10 +34,14 @@ use crate::entity_operations::{
     parse_batch_entities,
     public_error,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 
 pub(crate) async fn batch_upsert(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -71,6 +75,7 @@ pub(crate) async fn batch_upsert(
     };
     let forwarded = forward_entities(
         &state,
+        &target,
         BatchProvisionOperation::Upsert(upsert_mode),
         &entities,
         &context,
@@ -85,7 +90,7 @@ pub(crate) async fn batch_upsert(
     let remainder = local_remainder(entities, &forwarded);
     let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
     let (batch, mut created) = service
-        .batch_upsert(&remainder, &context, upsert_policy, mode)
+        .batch_upsert(&target, &remainder, &context, upsert_policy, mode)
         .await
         .with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);

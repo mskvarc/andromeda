@@ -20,6 +20,7 @@ use crate::{
     repo::TemporalRepository,
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use chrono::{DateTime, Utc};
@@ -60,11 +61,12 @@ impl TemporalRepository {
     pub(crate) async fn upsert_temporal_catalog_batch_in_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         upserts: &[TemporalCatalogUpsert],
         recorded_at: DateTime<Utc>,
     ) -> Result<TemporalCatalog, TemporalStoreError> {
-        let entity_keys = self.upsert_temporal_entities_batch(tx, upserts, recorded_at).await?;
-        let streams = self.resolve_stream_catalog_batch(tx, upserts, &entity_keys).await?;
+        let entity_keys = self.upsert_temporal_entities_batch(tx, target, upserts, recorded_at).await?;
+        let streams = self.resolve_stream_catalog_batch(tx, target, upserts, &entity_keys).await?;
         Ok(TemporalCatalog { entity_keys, streams })
     }
 }

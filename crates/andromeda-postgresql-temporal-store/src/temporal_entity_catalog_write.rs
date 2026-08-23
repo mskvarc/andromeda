@@ -11,6 +11,7 @@
 //! is deleted, so the temporal catalogue has to be able to exist without it.
 
 use crate::{error::TemporalStoreError, repo::TemporalRepository, temporal_stream::TemporalCatalogUpsert};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_codes::temporal_entity_key::TemporalEntityKey;
 use andromeda_postgresql_query::entity_type_id::EntityTypeId;
@@ -73,6 +74,7 @@ impl TemporalRepository {
     pub(crate) async fn upsert_temporal_entities_batch(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         upserts: &[TemporalCatalogUpsert],
         recorded_at: DateTime<Utc>,
     ) -> Result<HashMap<Uri, TemporalEntityKey>, TemporalStoreError> {
@@ -90,6 +92,7 @@ impl TemporalRepository {
                 .bind(&binds.ids)
                 .bind(&binds.recorded_ats)
                 .bind(&binds.type_ids_json)
+                .bind(target.key().as_i64())
                 .fetch_all(&mut **tx)
                 .await?;
             harvest_keys(&mut entity_keys, rows)?;
@@ -101,7 +104,11 @@ impl TemporalRepository {
             .collect();
         if !typeless_ids.is_empty() {
             let sql = temporal_entity_keys_lookup_sql();
-            let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql)).bind(&typeless_ids).fetch_all(&mut **tx).await?;
+            let rows: Vec<(i64, String)> = sqlx::query_as(AssertSqlSafe(sql))
+                .bind(&typeless_ids)
+                .bind(target.key().as_i64())
+                .fetch_all(&mut **tx)
+                .await?;
             harvest_keys(&mut entity_keys, rows)?;
             if let Some(missing) = first_missing_typeless(upserts, &entity_keys) {
                 return Err(TemporalStoreError::NotFound(format!(
@@ -223,6 +230,7 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
 
     let mut select = Query::select();
     select
+        .expr(external_placeholder(4))
         .expr(Expr::col((D, EntityStaged::Id)))
         .expr(Expr::col((D, EntityStaged::RecordedAt)))
         .expr(Expr::col((D, EntityStaged::RecordedAt)))
@@ -232,6 +240,7 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
 
     let mut insert = Query::insert();
     insert.into_table(TemporalEntities::Table).columns([
+        TemporalEntities::ContextSpaceKey,
         TemporalEntities::Id,
         TemporalEntities::CreatedAt,
         TemporalEntities::ModifiedAt,
@@ -241,7 +250,7 @@ fn temporal_entity_upsert_batch_sql() -> Result<String, TemporalStoreError> {
         .select_from(select)
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
-            OnConflict::column(TemporalEntities::Id)
+            OnConflict::columns([TemporalEntities::ContextSpaceKey, TemporalEntities::Id])
                 .update_columns([TemporalEntities::ModifiedAt, TemporalEntities::TypeIds])
                 .to_owned(),
         )
@@ -259,6 +268,7 @@ fn temporal_entity_keys_lookup_sql() -> String {
     Query::select()
         .columns([TemporalEntities::EntityKey, TemporalEntities::Id])
         .from(TemporalEntities::Table)
+        .and_where(Expr::col(TemporalEntities::ContextSpaceKey).eq(external_placeholder(2)))
         .and_where(Expr::col(TemporalEntities::Id).eq(any(cast(external_placeholder(1), PostgresType::TextArray))))
         .to_owned()
         .to_string(PostgresQueryBuilder)

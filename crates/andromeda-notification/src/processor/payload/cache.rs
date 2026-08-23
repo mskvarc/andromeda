@@ -1,6 +1,7 @@
 //! Per-event memoization for notification compaction and linked-entity resolution.
 
 use crate::error::NotificationError;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
@@ -48,6 +49,7 @@ pub(crate) struct NotificationCompactionCache {
 }
 
 pub(super) async fn resolve_linked_cached(
+    target: &ContextTarget,
     entity_query: &EntityQueryService,
     main_entity: &Entity,
     join_level: NonZeroU32,
@@ -69,7 +71,7 @@ pub(super) async fn resolve_linked_cached(
         });
     }
     let resolution = entity_query
-        .resolve_linked_entities(from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
+        .resolve_linked_entities(target, from_ref(main_entity), join_level, sys_attrs, context, &HashSet::new())
         .await
         .map_err(NotificationError::from)?;
     // A notification has no response to carry a clause 6.3.17 warning on, so an

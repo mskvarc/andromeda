@@ -19,6 +19,7 @@ use crate::{
         stored_kind::{StoredKind, of_kind},
     },
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_postgresql_schema::subscriptions::Subscriptions;
@@ -39,6 +40,7 @@ fn stored_triggers(fields: &SubscriptionFields<'_>) -> Option<Vec<i16>> {
 /// Bind an entity-subscription create command in statement order.
 pub fn bind_entity_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
+    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -69,11 +71,13 @@ pub fn bind_entity_create<'q>(
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
         .bind(fields.split_entities)
+        .bind(target.key().as_i64())
 }
 
 /// Bind an entity-subscription update command in statement order.
 pub fn bind_entity_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
+    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -103,11 +107,13 @@ pub fn bind_entity_update<'q>(
         .bind(fields.jsonld_context.map(Url::as_str))
         .bind(fields.local_only)
         .bind(fields.split_entities)
+        .bind(target.key().as_i64())
 }
 
 /// Bind a context-source-subscription create command in statement order.
 pub fn bind_csource_create<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
+    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -135,11 +141,13 @@ pub fn bind_csource_create<'q>(
         .bind(fields.temporal_q.map(Json))
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(target.key().as_i64())
 }
 
 /// Bind a context-source-subscription update command in statement order.
 pub fn bind_csource_update<'q>(
     query: SqlxQuery<'q, sqlx::Postgres, PgArguments>,
+    target: &'q ContextTarget,
     id: &'q Uri,
     fields: &'q SubscriptionFields<'q>,
     status: SubscriptionStatus,
@@ -166,6 +174,7 @@ pub fn bind_csource_update<'q>(
         .bind(<&str>::from(status))
         .bind(fields.lang.map(ToString::to_string))
         .bind(fields.jsonld_context.map(Url::as_str))
+        .bind(target.key().as_i64())
 }
 
 /// The entity-subscription insert, its field values bound by
@@ -195,6 +204,7 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::JsonldContext,
         Subscriptions::LocalOnly,
         Subscriptions::SplitEntities,
+        Subscriptions::ContextSpaceKey,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
     ]);
@@ -222,6 +232,7 @@ pub fn entity_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(19),
             external_placeholder(20),
             external_placeholder(21),
+            external_placeholder(22),
             now(),
             now(),
         ])
@@ -258,6 +269,7 @@ pub fn entity_update_sql() -> String {
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
+        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(21)))
         .and_where(of_kind(StoredKind::Entity));
     update.to_string(PostgresQueryBuilder)
 }
@@ -285,6 +297,7 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
         Subscriptions::TemporalQ,
         Subscriptions::Lang,
         Subscriptions::JsonldContext,
+        Subscriptions::ContextSpaceKey,
         Subscriptions::CreatedAt,
         Subscriptions::ModifiedAt,
     ]);
@@ -309,6 +322,7 @@ pub fn csource_create_sql() -> Result<String, SubscriptionError> {
             external_placeholder(16),
             external_placeholder(17),
             external_placeholder(18),
+            external_placeholder(19),
             now(),
             now(),
         ])
@@ -342,6 +356,7 @@ pub fn csource_update_sql() -> String {
             (Subscriptions::ModifiedAt, now()),
         ])
         .and_where(Expr::col(Subscriptions::Id).eq(external_placeholder(1)))
+        .and_where(Expr::col(Subscriptions::ContextSpaceKey).eq(external_placeholder(18)))
         .and_where(of_kind(StoredKind::Csource));
     update.to_string(PostgresQueryBuilder)
 }

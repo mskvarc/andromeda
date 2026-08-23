@@ -16,6 +16,7 @@
 
 use crate::commit_refusal::{persistence, unit_code};
 use andromeda_context_commit::error::CommitError;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::current_attribute_values::{
@@ -50,6 +51,7 @@ struct ProjectionWork {
 /// dictionary did not resolve.
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
     intents: &[TemporalAppendIntent],
     keys: &HashMap<Uri, EntityKey>,
     dictionary: &HashMap<AttributeName, AttributeNameId>,
@@ -71,8 +73,8 @@ pub(crate) async fn apply(
     // Removals run first so that a mutation which both ends one instance and
     // restates another leaves the second standing. No grain appears on both
     // sides: an instance the mutation gives a value to is not one it removed.
-    delete_instances_in_tx(tx, &work.removals).await.map_err(persistence)?;
-    upsert_projection_in_tx(tx, &work.upserts).await.map_err(persistence)?;
+    delete_instances_in_tx(tx, target, &work.removals).await.map_err(persistence)?;
+    upsert_projection_in_tx(tx, target, &work.upserts).await.map_err(persistence)?;
     Ok(())
 }
 

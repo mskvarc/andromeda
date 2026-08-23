@@ -9,6 +9,7 @@ use crate::{
     repo::TemporalRepository,
     stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::{attribute_kind::AttributeKind, stream_key::StreamKey, value_kind::ValueKind};
 use andromeda_postgresql_encoding::ewkb_binding::geometry_bytes;
@@ -119,16 +120,21 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Validation`] when a row's position within
     /// its write exceeds the stored column's width or a geometry cannot be
     /// encoded, and [`TemporalStoreError::Database`] when a statement fails.
-    pub async fn insert_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
+    pub async fn insert_history_batch_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        rows: &[AttributeHistoryRow],
+    ) -> Result<(), TemporalStoreError> {
         if rows.is_empty() {
             return Ok(());
         }
         let targets = verbatim_instance_targets(rows);
-        run_history_dedup_deletes(tx, &targets).await?;
-        claim_verbatim_instances(tx, &targets).await?;
+        run_history_dedup_deletes(tx, target, &targets).await?;
+        claim_verbatim_instances(tx, target, &targets).await?;
         match self.bulk_write_mode {
-            BulkWriteMode::Unnest => observe_statement(HISTORY_INSERT, insert_history_batch_unnest_in_tx(tx, rows)).await?,
-            BulkWriteMode::CopyStaging => observe_statement(HISTORY_INSERT, insert_history_batch_via_copy_in_tx(tx, rows)).await?,
+            BulkWriteMode::Unnest => observe_statement(HISTORY_INSERT, insert_history_batch_unnest_in_tx(tx, target, rows)).await?,
+            BulkWriteMode::CopyStaging => observe_statement(HISTORY_INSERT, insert_history_batch_via_copy_in_tx(tx, target, rows)).await?,
         }
         Ok(())
     }
@@ -198,7 +204,11 @@ fn verbatim_instance_targets(rows: &[AttributeHistoryRow]) -> VerbatimInstanceTa
 /// write would silently drop the replace-on-resend behaviour it existed for
 /// while keeping the same footgun for any two writes that legitimately share
 /// an `observedAt` on one stream.
-async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, targets: &VerbatimInstanceTargets<'_>) -> Result<(), TemporalStoreError> {
+async fn run_history_dedup_deletes(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    targets: &VerbatimInstanceTargets<'_>,
+) -> Result<(), TemporalStoreError> {
     if targets.ids.is_empty() {
         return Ok(());
     }
@@ -206,12 +216,14 @@ async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, targets: 
     sqlx::query(AssertSqlSafe(history_dedup_sql))
         .bind(&targets.streams)
         .bind(&targets.ids)
+        .bind(target.key().as_i64())
         .execute(&mut **tx)
         .await?;
     let claim_dedup_sql = claim_verbatim_dedup_delete_sql();
     sqlx::query(AssertSqlSafe(claim_dedup_sql))
         .bind(&targets.streams)
         .bind(&targets.ids)
+        .bind(target.key().as_i64())
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -230,7 +242,11 @@ async fn run_history_dedup_deletes(tx: &mut Transaction<'_, Postgres>, targets: 
 /// a guarantee no check confined to one batch's own rows could give, because
 /// by the time either transaction's `INSERT` runs, neither has seen the
 /// other's uncommitted row.
-async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &VerbatimInstanceTargets<'_>) -> Result<(), TemporalStoreError> {
+async fn claim_verbatim_instances(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    targets: &VerbatimInstanceTargets<'_>,
+) -> Result<(), TemporalStoreError> {
     if targets.ids.is_empty() {
         return Ok(());
     }
@@ -238,6 +254,7 @@ async fn claim_verbatim_instances(tx: &mut Transaction<'_, Postgres>, targets: &
     sqlx::query(AssertSqlSafe(claim_sql))
         .bind(&targets.streams)
         .bind(&targets.ids)
+        .bind(target.key().as_i64())
         .execute(&mut **tx)
         .await
         .map_err(claim_write_failure)?;
@@ -270,6 +287,7 @@ fn history_verbatim_dedup_sql() -> String {
         .from_as(TemporalAttributeStreams::Table, S2)
         .and_where(Expr::col((S2, TemporalAttributeStreams::TemporalEntityKey)).equals((S1, TemporalAttributeStreams::TemporalEntityKey)))
         .and_where(Expr::col((S2, TemporalAttributeStreams::AttributeNameId)).equals((S1, TemporalAttributeStreams::AttributeNameId)))
+        .and_where(Expr::col((S2, TemporalAttributeStreams::ContextSpaceKey)).eq(external_placeholder(3)))
         .to_owned();
     let matches = Query::select()
         .expr(Expr::val(1))
@@ -280,6 +298,8 @@ fn history_verbatim_dedup_sql() -> String {
             S1,
             Expr::col((S1, TemporalAttributeStreams::StreamKey)).equals((D, DedupStaged::StreamKey)),
         )
+        .and_where(Expr::col((S1, TemporalAttributeStreams::ContextSpaceKey)).eq(external_placeholder(3)))
+        .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::ContextSpaceKey)).eq(external_placeholder(3)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::VerbatimInstanceId)).equals((D, DedupStaged::VerbatimInstanceId)))
         .and_where(Expr::col((AttributeHistory::Table, AttributeHistory::StreamKey)).in_subquery(sibling_streams))
         .to_owned();
@@ -303,6 +323,8 @@ fn claim_verbatim_dedup_delete_sql() -> String {
             S1,
             Expr::col((S1, TemporalAttributeStreams::StreamKey)).equals((D, DedupStaged::StreamKey)),
         )
+        .and_where(Expr::col((S1, TemporalAttributeStreams::ContextSpaceKey)).eq(external_placeholder(3)))
+        .and_where(Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::ContextSpaceKey)).eq(external_placeholder(3)))
         .and_where(
             Expr::col((AttributeHistoryInstanceClaims::Table, AttributeHistoryInstanceClaims::VerbatimInstanceId)).equals((D, DedupStaged::VerbatimInstanceId)),
         )
@@ -328,6 +350,7 @@ fn claim_verbatim_dedup_delete_sql() -> String {
 /// carries no `ON CONFLICT`.
 fn claim_verbatim_instances_sql() -> Result<String, TemporalStoreError> {
     let select = Query::select()
+        .expr(external_placeholder(3))
         .expr(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)))
         .expr(Expr::col((S, TemporalAttributeStreams::AttributeNameId)))
         .expr(Expr::col((D, DedupStaged::VerbatimInstanceId)))
@@ -338,9 +361,11 @@ fn claim_verbatim_instances_sql() -> Result<String, TemporalStoreError> {
             S,
             Expr::col((S, TemporalAttributeStreams::StreamKey)).equals((D, DedupStaged::StreamKey)),
         )
+        .and_where(Expr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(external_placeholder(3)))
         .to_owned();
     let mut insert = Query::insert();
     insert.into_table(AttributeHistoryInstanceClaims::Table).columns([
+        AttributeHistoryInstanceClaims::ContextSpaceKey,
         AttributeHistoryInstanceClaims::TemporalEntityKey,
         AttributeHistoryInstanceClaims::AttributeNameId,
         AttributeHistoryInstanceClaims::VerbatimInstanceId,
@@ -503,6 +528,7 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
     let mut select = Query::select();
     select
         .expr(staged(HistoryStaged::RecordedAt))
+        .expr(external_placeholder(22))
         .expr(staged(HistoryStaged::WriteId))
         .expr(staged(HistoryStaged::StreamKey))
         .expr(staged(HistoryStaged::WriteOrdinal))
@@ -529,6 +555,7 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
     let mut insert = Query::insert();
     insert.into_table(AttributeHistory::Table).columns([
         AttributeHistory::RecordedAt,
+        AttributeHistory::ContextSpaceKey,
         AttributeHistory::WriteId,
         AttributeHistory::StreamKey,
         AttributeHistory::WriteOrdinal,
@@ -554,9 +581,14 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
         .select_from(select)
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
-            OnConflict::columns([AttributeHistory::RecordedAt, AttributeHistory::WriteId, AttributeHistory::WriteOrdinal])
-                .do_nothing()
-                .to_owned(),
+            OnConflict::columns([
+                AttributeHistory::RecordedAt,
+                AttributeHistory::ContextSpaceKey,
+                AttributeHistory::WriteId,
+                AttributeHistory::WriteOrdinal,
+            ])
+            .do_nothing()
+            .to_owned(),
         );
 
     let sql = insert.to_string(PostgresQueryBuilder);
@@ -564,7 +596,11 @@ fn attribute_history_insert_sql() -> Result<String, TemporalStoreError> {
 }
 
 /// Insert one batch by binding parallel arrays and expanding them with `UNNEST`.
-async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, rows: &[AttributeHistoryRow]) -> Result<(), TemporalStoreError> {
+async fn insert_history_batch_unnest_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    rows: &[AttributeHistoryRow],
+) -> Result<(), TemporalStoreError> {
     let binds = attribute_history_binds(rows)?;
     let sql = attribute_history_insert_sql()?;
     sqlx::query(AssertSqlSafe(sql))
@@ -589,6 +625,7 @@ async fn insert_history_batch_unnest_in_tx(tx: &mut Transaction<'_, Postgres>, r
         .bind(&binds.value_objects)
         .bind(&binds.value_uris)
         .bind(&binds.metadatas)
+        .bind(target.key().as_i64())
         .execute(&mut **tx)
         .await?;
     Ok(())

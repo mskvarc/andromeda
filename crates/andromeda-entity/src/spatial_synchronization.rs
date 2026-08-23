@@ -1,7 +1,8 @@
 //! Incremental synchronization policy for the resident entity spatial index.
 
 use crate::port::reader::EntityReader;
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::{change_event::ChangeEvent, context_change_event::ContextChangeEvent};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_geometry::geometry::Geometry;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{expanded::geo_property::geo_property_instance_geometries, notification::NotificationTrigger};
@@ -27,7 +28,11 @@ impl SpatialSynchronizer {
     }
 
     /// Apply one committed change idempotently.
-    pub async fn apply(&self, event: ChangeEvent) {
+    pub async fn apply(&self, change: ContextChangeEvent) {
+        if change.target.snapshot().is_some() {
+            return;
+        }
+        let ContextChangeEvent { target, event } = change;
         let urn = match event.entity_id.to_string().parse::<Urn>() {
             Ok(urn) => urn,
             Err(error) => {
@@ -40,20 +45,20 @@ impl SpatialSynchronizer {
             NotificationTrigger::EntityCreated
             | NotificationTrigger::EntityUpdated
             | NotificationTrigger::AttributeCreated
-            | NotificationTrigger::AttributeUpdated => self.synchronize_entity(&urn, &event).await,
+            | NotificationTrigger::AttributeUpdated => self.synchronize_entity(&target, &urn, &event).await,
             NotificationTrigger::AttributeDeleted => {
                 self.index.remove(&urn);
-                self.synchronize_entity(&urn, &event).await;
+                self.synchronize_entity(&target, &urn, &event).await;
             }
         }
     }
 
-    async fn synchronize_entity(&self, urn: &Urn, event: &ChangeEvent) {
+    async fn synchronize_entity(&self, target: &ContextTarget, urn: &Urn, event: &ChangeEvent) {
         let payload = match &event.current_payload {
             Some(payload) => Arc::clone(payload),
             None => {
                 let identifier = Uri::from(urn.clone()); // clone: the fallback read owns a URI while the index retains the URN.
-                match self.reader.get(&identifier).await {
+                match self.reader.get(&target, &identifier).await {
                     Ok(Some(payload)) => Arc::new(payload),
                     Ok(None) => {
                         self.index.remove(urn);

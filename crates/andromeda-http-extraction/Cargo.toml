@@ -9,6 +9,7 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+andromeda-context-space.workspace = true
 andromeda-http-headers.workspace = true
 andromeda-http-response.workspace = true
 andromeda-jsonld.workspace = true

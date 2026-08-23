@@ -72,6 +72,7 @@
 
 CREATE TABLE pending_side_effects (
     id UUID PRIMARY KEY,
+    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     recorded_at TIMESTAMPTZ NOT NULL,
     write_id UUID NOT NULL,
@@ -86,7 +87,8 @@ CREATE TABLE pending_side_effects (
     CONSTRAINT chk_pse_consequence_base_non_negative CHECK (consequence_base >= 0),
     CONSTRAINT chk_pse_attempts_non_negative CHECK (attempts >= 0),
     CONSTRAINT chk_pse_lock_coherent CHECK (num_nonnulls(locked_until, locked_by) IN (0, 2)),
-    CONSTRAINT chk_pse_dead_state CHECK (dead = FALSE OR num_nonnulls(locked_until, locked_by) = 0)
+    CONSTRAINT chk_pse_dead_state CHECK (dead = FALSE OR num_nonnulls(locked_until, locked_by) = 0),
+    CONSTRAINT uq_pse_write_identity UNIQUE (context_space_key, write_id)
 ) WITH (
     fillfactor = 50,
     autovacuum_vacuum_scale_factor = 0.005,
@@ -103,5 +105,3 @@ CREATE INDEX idx_pse_claim_candidates
 CREATE INDEX idx_pse_dead
     ON pending_side_effects (created_at)
     WHERE dead;
-
-CREATE UNIQUE INDEX idx_pse_write_identity ON pending_side_effects (write_id);

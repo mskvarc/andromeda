@@ -26,11 +26,15 @@ use crate::temporal::{
     classify_temporal_error,
     provision_response,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_ngsi_ld_model::registration::ForwardingMode;
 
 pub async fn delete(
-    tenant_state::ExistingTenantState(state): TenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -41,29 +45,32 @@ pub async fn delete(
     let service = &state.temporal;
 
     if params.local.unwrap_or(false) {
-        service.delete(&id).await.with_instance(&uri)?;
+        service.delete(&target, &id).await.with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
     let context: ContextSpec = context.into_inner();
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::TemporalEntities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: None,
-            method: Method::DELETE,
-            body: None,
-            context: &context,
-            operation: ForwardingOperation::DeleteTemporalEntity,
-            path_suffix: None,
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::TemporalEntities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: None,
+                method: Method::DELETE,
+                body: None,
+                context: &context,
+                operation: ForwardingOperation::DeleteTemporalEntity,
+                path_suffix: None,
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_instance(&uri)?;
 
@@ -73,7 +80,7 @@ pub async fn delete(
     let proxied = forwarded
         .iter()
         .any(|result| matches!(result.mode, ForwardingMode::Exclusive | ForwardingMode::Redirect));
-    let local = match service.delete(&id).await {
+    let local = match service.delete(&target, &id).await {
         Err(TemporalError::NotFound { .. }) if proxied => LocalOutcome::NothingRemained,
         other => LocalOutcome::processed(other, classify_temporal_error),
     };

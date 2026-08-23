@@ -81,7 +81,10 @@ impl SubscriptionForwardingService {
         let document = companion_document(subscription, &minted, self.receiver.url());
         // The companion is a local resource; its own creation passes through no
         // context source, so it carries no `Via` chain of its own.
-        let companion = self.csource_subscriptions.create(document, &ContextSpec::core_only(), None, &[]).await?;
+        let companion = self
+            .csource_subscriptions
+            .create(&self.live_target, document, &ContextSpec::core_only(), None, &[])
+            .await?;
         self.place_initial_copies(subscription, &companion, context, encountered_sources).await?;
         self.mappings.link_companion(&subscription.id, &companion).await?;
         self.router.register(&companion, &self.tenant).await?;
@@ -91,7 +94,9 @@ impl SubscriptionForwardingService {
 
     /// The companion as the matcher its notifications are decided by.
     async fn compiled_companion(&self, companion: &Uri) -> Result<CompiledCsrSubscription, SubscriptionForwardingError> {
-        Ok(compile_csource_subscription(&self.csource_subscriptions.get(companion).await?))
+        Ok(compile_csource_subscription(
+            &self.csource_subscriptions.get(&self.live_target, companion).await?,
+        ))
     }
 
     /// Place a reduced copy at every registered source the companion already
@@ -205,7 +210,7 @@ impl SubscriptionForwardingService {
 
     /// Delete the companion of `local` and unlink it.
     async fn tear_down_companion(&self, local: &Uri, companion: &Uri) {
-        if let Err(error) = self.csource_subscriptions.delete(companion).await {
+        if let Err(error) = self.csource_subscriptions.delete(&self.live_target, companion).await {
             warn!(subscription = %local, %companion, %error, "companion subscription could not be deleted");
         }
         if let Err(error) = self.mappings.unlink_companion(local).await {
@@ -229,7 +234,9 @@ impl SubscriptionForwardingService {
                     object.remove("id");
                     object.remove("type");
                 }
-                self.csource_subscriptions.update(&companion, fragment, &ContextSpec::core_only(), None).await?;
+                self.csource_subscriptions
+                    .update(&self.live_target, &companion, fragment, &ContextSpec::core_only(), None)
+                    .await?;
                 companion
             }
             None => {

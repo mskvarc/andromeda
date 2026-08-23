@@ -10,6 +10,7 @@ use crate::{
     },
     error::EntityError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::entity_type_list::{EntityType, EntityTypeType};
@@ -21,14 +22,14 @@ impl EntityDiscoveryService {
     /// attribute names (clause 5.2.25). A type only the registry knows is
     /// reported with the attribute names registered beside it, which may be
     /// none (clause 5.7.11).
-    pub async fn type_details(&self, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
+    pub async fn type_details(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
         // Keyset-paginate the aggregation so a very large set of distinct
         // types does not require a single large result set.
         const PAGE: u32 = 500;
         let mut summaries: Vec<(EntityTypeName, Vec<AttributeName>)> = Vec::new();
         let mut cursor: Option<EntityTypeName> = None;
         loop {
-            let page = self.store.get_entity_type_summaries(cursor.as_ref(), PAGE).await?;
+            let page = self.store.get_entity_type_summaries(target, cursor.as_ref(), PAGE).await?;
             if page.is_empty() {
                 break;
             }

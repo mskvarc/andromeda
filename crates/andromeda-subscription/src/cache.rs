@@ -16,6 +16,7 @@ use crate::{
     store::SubscriptionStore,
 };
 use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_space::{context_space::ContextSpaceKind, context_space_key::ContextSpaceKey, context_target::ContextTarget};
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::subscription::SubscriptionStatus;
 use andromeda_spatial_index::{
@@ -25,7 +26,7 @@ use andromeda_spatial_index::{
 use andromeda_tenancy::tenant_ref::TenantRef;
 use iri_rs::IriBuf;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::debug;
 
 /// Thread-safe subscription cache for fast event matching.
@@ -35,7 +36,7 @@ use tracing::debug;
 /// lifecycle changes) and take it exclusively.
 #[derive(Debug)]
 pub struct SubscriptionCache {
-    index: RwLock<CandidateIndex>,
+    indices: RwLock<HashMap<ContextSpaceKey, CandidateIndex>>,
     spatial: Arc<SpatialSubscriptionIndex>,
     tenant: TenantRef,
 }
@@ -50,7 +51,7 @@ impl SubscriptionCache {
     /// the given shared [`SpatialSubscriptionIndex`].
     pub fn with_spatial(tenant: TenantRef, spatial: Arc<SpatialSubscriptionIndex>) -> SubscriptionCache {
         SubscriptionCache {
-            index: RwLock::new(CandidateIndex::default()),
+            indices: RwLock::new(HashMap::new()),
             spatial,
             tenant,
         }
@@ -60,13 +61,14 @@ impl SubscriptionCache {
     ///
     /// Clears existing entries and replaces them with all currently active
     /// subscriptions. Failed compilations are logged and skipped.
-    pub async fn reload(&self, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
-        let subscriptions = repo.list_active().await?;
+    pub async fn reload(&self, target: &ContextTarget, repo: &(impl SubscriptionStore + ?Sized)) -> Result<(), SubscriptionError> {
+        let subscriptions = repo.list_active(target).await?;
         let compiled: Vec<CompiledSubscription> = subscriptions.iter().map(compile_subscription).collect();
-        let mut index = self.index.write();
+        let mut indices = self.indices.write();
+        let index = indices.entry(target.key()).or_default();
         index.clear();
         for compiled in compiled {
-            self.spatial_insert(&compiled);
+            self.spatial_insert(target, &compiled);
             index.insert(Arc::new(compiled));
         }
         Ok(())
@@ -75,35 +77,41 @@ impl SubscriptionCache {
     /// Handle a single subscription change event (upsert or removal).
     pub async fn handle_change(&self, change: &SubscriptionChange, repo: &(impl SubscriptionStore + ?Sized)) {
         match change {
-            SubscriptionChange::Upserted(id) => match repo.get(id).await {
+            SubscriptionChange::Upserted { target, id } => match repo.get(target, id).await {
                 Ok(Some(stored)) => {
                     if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
-                        self.insert(compile_subscription(&stored));
+                        self.insert(target, compile_subscription(&stored));
                     } else {
-                        self.remove(id);
+                        self.remove(target, id);
                     }
                 }
-                Ok(None) => self.remove(id),
+                Ok(None) => self.remove(target, id),
                 Err(e) => {
                     debug!("Failed to load subscription {} for cache update: {}", id, e);
                 }
             },
-            SubscriptionChange::Deleted(id) => self.remove(id),
+            SubscriptionChange::Deleted { target, id } => self.remove(target, id),
         }
     }
 
     /// Index one compiled subscription, replacing any earlier entry with the
     /// same identifier in both the candidate and the spatial index.
-    pub fn insert(&self, compiled: CompiledSubscription) {
-        self.spatial.remove(&compiled.id);
-        self.spatial_insert(&compiled);
-        self.index.write().insert(Arc::new(compiled));
+    pub fn insert(&self, target: &ContextTarget, compiled: CompiledSubscription) {
+        if target.kind() == ContextSpaceKind::Live {
+            self.spatial.remove(&compiled.id);
+            self.spatial_insert(target, &compiled);
+        }
+        self.indices.write().entry(target.key()).or_default().insert(Arc::new(compiled));
     }
 
     /// Drop the subscription with this identifier from both indexes.
-    pub fn remove(&self, id: &Uri) {
-        self.spatial.remove(id);
-        self.index.write().remove(id);
+    pub fn remove(&self, target: &ContextTarget, id: &Uri) {
+        if target.kind() == ContextSpaceKind::Live {
+            self.spatial.remove(id);
+        }
+        if let Some(index) = self.indices.write().get_mut(&target.key()) {
+            index.remove(id);
+        }
     }
 
     /// Find all compiled subscriptions that match the given change event.
@@ -112,13 +120,16 @@ impl SubscriptionCache {
     /// watched attributes) and evaluates the authoritative matcher only on
     /// the survivors. The outcome carries the funnel counts for the caller to
     /// log and record.
-    pub fn find_matching(&self, event: &ChangeEvent) -> MatchOutcome {
-        self.index.read().find_matching(event)
+    pub fn find_matching(&self, target: &ContextTarget, event: &ChangeEvent) -> MatchOutcome {
+        self.indices
+            .read()
+            .get(&target.key())
+            .map_or_else(MatchOutcome::default, |index| index.find_matching(event))
     }
 
     /// Look up a single compiled subscription by ID.
-    pub fn get(&self, id: &Uri) -> Option<Arc<CompiledSubscription>> {
-        self.index.read().get(id).map(Arc::clone)
+    pub fn get(&self, target: &ContextTarget, id: &Uri) -> Option<Arc<CompiledSubscription>> {
+        self.indices.read().get(&target.key()).and_then(|index| index.get(id).map(Arc::clone))
     }
 
     /// Tenant scope of this cache (used by callers building [`SpatialKey`]s
@@ -133,16 +144,19 @@ impl SubscriptionCache {
     }
 
     /// Returns the number of cached subscriptions.
-    pub fn len(&self) -> usize {
-        self.index.read().len()
+    pub fn len(&self, target: &ContextTarget) -> usize {
+        self.indices.read().get(&target.key()).map_or(0, CandidateIndex::len)
     }
 
     /// Whether the cache contains no compiled subscriptions.
-    pub fn is_empty(&self) -> bool {
-        self.index.read().is_empty()
+    pub fn is_empty(&self, target: &ContextTarget) -> bool {
+        self.len(target) == 0
     }
 
-    fn spatial_insert(&self, compiled: &CompiledSubscription) {
+    fn spatial_insert(&self, target: &ContextTarget, compiled: &CompiledSubscription) {
+        if target.kind() != ContextSpaceKind::Live {
+            return;
+        }
         let Some(geo_q) = compiled.compiled_geo_q.as_ref() else {
             return;
         };
@@ -195,12 +209,18 @@ mod tests {
     use super::*;
     use crate::error::SubscriptionError;
     use andromeda_context_commit::subscription_key::SubscriptionKey;
+    use andromeda_context_space::context_space::ContextSpace;
     use andromeda_ngsi_ld_model::subscription::{EntitySelector, SubscriptionStatus};
     use andromeda_ngsi_ld_query::projection::compiled::Projection;
     use andromeda_ngsi_ld_representation::sys_attrs::SysAttrsInclusion;
     use chrono::{DateTime, Utc};
     use std::num::NonZeroU32;
     use url::Url;
+
+    fn live_target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
 
     fn make_compiled_sub(id: &str, key: i64, type_: &str, triggers: Vec<&str>) -> Result<CompiledSubscription, SubscriptionError> {
         Ok(CompiledSubscription {
@@ -254,27 +274,29 @@ mod tests {
     #[test]
     fn len_reflects_cache_size() -> Result<(), SubscriptionError> {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
-        assert!(cache.is_empty());
-        assert_eq!(cache.len(), 0);
+        let target = live_target();
+        assert!(cache.is_empty(&target));
+        assert_eq!(cache.len(&target), 0);
 
         let sub1 = make_compiled_sub("sub1", 1, "Vehicle", vec!["entityCreated"])?;
-        cache.insert(sub1);
-        assert_eq!(cache.len(), 1);
+        cache.insert(&target, sub1);
+        assert_eq!(cache.len(&target), 1);
 
         let sub2 = make_compiled_sub("sub2", 2, "Building", vec!["entityCreated"])?;
-        cache.insert(sub2);
-        assert_eq!(cache.len(), 2);
+        cache.insert(&target, sub2);
+        assert_eq!(cache.len(&target), 2);
         Ok(())
     }
 
     #[test]
     fn a_cached_subscription_carries_its_store_key_beside_its_identifier() -> Result<(), SubscriptionError> {
         let cache = SubscriptionCache::new(TenantRef::UnnamedDefault);
+        let target = live_target();
         let subscription = make_compiled_sub("keyed", 7, "Vehicle", vec!["entityCreated"])?;
         let id = subscription.id.clone(); // clone: the lookup outlives the value the map takes
-        cache.insert(subscription);
+        cache.insert(&target, subscription);
 
-        assert_eq!(cache.get(&id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
+        assert_eq!(cache.get(&target, &id).map(|compiled| compiled.key), SubscriptionKey::try_from(7).ok());
         Ok(())
     }
 }

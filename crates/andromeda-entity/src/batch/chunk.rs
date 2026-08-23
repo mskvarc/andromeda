@@ -30,6 +30,7 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
     write_retry::WRITE_ATTEMPTS,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::{entity_member::extract_types, removed_instance::removed_attribute_instances},
@@ -88,7 +89,7 @@ impl EntityService {
     ///
     /// Mirrors the single create (clause 5.6.1): one `entityCreated` over the
     /// whole payload.
-    pub(super) fn chunk_insert(&self, prepared: PreparedEntity, precondition: Precondition) -> ChunkWrite {
+    pub(super) fn chunk_insert(&self, target: &ContextTarget, prepared: PreparedEntity, precondition: Precondition) -> ChunkWrite {
         let PreparedEntity {
             id,
             expanded,
@@ -101,7 +102,7 @@ impl EntityService {
         let types = projection.types.clone(); // clone: the plan carries the names after the record has taken them
         let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
         groups.extend(attribute_change_groups(&Value::Null, &payload));
-        let plan = self.plan_notifications(&id, &types, &groups, Some(&payload), None);
+        let plan = self.plan_notifications(target, &id, &types, &groups, Some(&payload), None);
         ChunkWrite {
             id,
             entity: EntityMutation::Insert(EntityRecord::from_parts(
@@ -119,12 +120,19 @@ impl EntityService {
 
     /// The write that stores `payload` as a new entity, deriving its columns
     /// from the payload rather than from a preparation pass.
-    pub(super) fn chunk_insert_payload(&self, id: Uri, payload: Arc<Value>, changed_attributes: Vec<AttributeName>, precondition: Precondition) -> ChunkWrite {
+    pub(super) fn chunk_insert_payload(
+        &self,
+        target: &ContextTarget,
+        id: Uri,
+        payload: Arc<Value>,
+        changed_attributes: Vec<AttributeName>,
+        precondition: Precondition,
+    ) -> ChunkWrite {
         let record = EntityRecord::from_expanded(Arc::clone(&payload)); // clone: Arc ref-count bump; the same payload is the observation
         let types = record.projection.types.clone(); // clone: the plan carries the names the record holds
         let mut groups = vec![NotificationGroup::entity(NotificationTrigger::EntityCreated, changed_attributes)];
         groups.extend(attribute_change_groups(&Value::Null, &payload));
-        let plan = self.plan_notifications(&id, &types, &groups, Some(&payload), None);
+        let plan = self.plan_notifications(target, &id, &types, &groups, Some(&payload), None);
         ChunkWrite {
             id,
             entity: EntityMutation::Insert(record),
@@ -143,6 +151,7 @@ impl EntityService {
     /// filtering and `showChanges`.
     pub(super) fn chunk_update(
         &self,
+        target: &ContextTarget,
         id: Uri,
         previous: &Value,
         merged: Arc<Value>,
@@ -156,7 +165,7 @@ impl EntityService {
             .map(HistoryRecord::Tombstone)
             .collect();
         let types = extract_types(&merged);
-        let plan = self.plan_notifications(&id, &types, &groups, Some(&merged), previous_snapshot);
+        let plan = self.plan_notifications(target, &id, &types, &groups, Some(&merged), previous_snapshot);
         let record = EntityRecord::from_expanded(merged);
         ChunkWrite {
             id,
@@ -192,7 +201,7 @@ impl EntityService {
     /// replays them, which is what makes `Prefer: respond-async` crash-consistent
     /// rather than merely faster. The durable subscription matches commit with
     /// the entity row in either mode, never deferred to the worker.
-    pub(super) async fn commit_chunk(&self, entries: Vec<ChunkWrite>, mode: BatchSideEffectMode) -> Result<ChunkOutcome, EntityError> {
+    pub(super) async fn commit_chunk(&self, target: &ContextTarget, entries: Vec<ChunkWrite>, mode: BatchSideEffectMode) -> Result<ChunkOutcome, EntityError> {
         if entries.is_empty() {
             return Ok(ChunkOutcome::default());
         }
@@ -232,6 +241,7 @@ impl EntityService {
                     // leave `current_attribute_values` answering `q` filters with a
                     // value the entity no longer has.
                     let job = BatchSideEffectJob {
+                        target: target.clone(), // clone: durable replay owns the immutable branch selection.
                         temporal_entities: vec![(entity_id, observed)],
                         change_events: events,
                     };
@@ -243,7 +253,7 @@ impl EntityService {
             settled.push((id, creates, inline_events));
         }
 
-        let outcomes = self.writes.commit(writes).await?;
+        let outcomes = self.writes.commit(target, writes).await?;
         if outcomes.len() != settled.len() {
             return Err(EntityError::internal(format!(
                 "chunk of {} writes produced {} outcomes",
@@ -273,7 +283,7 @@ impl EntityService {
         }
 
         for event in emit_events {
-            self.emit_change(event);
+            self.emit_change(target, event);
         }
 
         Ok(chunk)

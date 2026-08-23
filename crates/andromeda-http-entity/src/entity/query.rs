@@ -22,7 +22,6 @@ use crate::entity::{
     Response,
     ResponsePayload,
     RetrievingJoin,
-    SnapshotRenderer,
     SourceContribution,
     StatusCode,
     Value,
@@ -45,7 +44,7 @@ use andromeda_federation::{
     config::SplitEntities,
     request::{EntityMapInUse, TriggeringRequest},
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::pagination::{PageExtent, PaginationStyle, append_pagination_links};
 use andromeda_ngsi_ld_request::query::SharedQueryParams;
@@ -53,7 +52,11 @@ use axum::http::HeaderMap;
 use std::iter::empty;
 
 pub(crate) async fn query(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormat,
     context: ContextUrl,
@@ -65,75 +68,41 @@ pub(crate) async fn query(
         let service = &state.entity_query;
         let context: ContextSpec = context.into_inner();
         protocol.extensions().apply_to_entity_query(&mut query).with_entity_instance(&uri)?;
+        if !target.permits_federation() {
+            query.local = Some(true);
+        }
         query.validate().with_entity_instance(&uri)?;
         let language_filter = query.lang.take().or(protocol.language_filter);
         let prefer = protocol.prefer;
-        let snapshot = protocol.snapshot;
         let incoming_via = protocol.incoming_via;
         let entity_map_header = protocol.entity_map;
-
-        // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
-        // is present, query entities from the snapshot's frozen data and return early.
-        if let Some(snapshot_id) = snapshot.into_inner() {
-            state.snapshots.validate(&snapshot_id).await.with_entity_instance(&uri)?;
-
-            let entity_type = query.entity_type.as_ref();
-            let entity_ids = query.id.clone();
-            let limit = query.limit.unwrap_or(100) as i64;
-            let offset = query.offset.unwrap_or(0) as i64;
-
-            let (entities, total) = state
-                .snapshots
-                .entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
-                .await
-                .with_entity_instance(&uri)?;
-
-            let opts = query.parse_options();
-            let filtered: Vec<Value> = entities
-                .into_iter()
-                .map(|v| {
-                    SnapshotRenderer::new(v)
-                        .with_attrs_filter(query.attrs.as_deref())
-                        .with_mode(opts.render_mode)
-                        .render()
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .with_entity_instance(&uri)?;
-
-            let rendered = start_rendering(accept.media_type(), &context, prefer.rendering_preferences())
-                .with_geometry_property(query.geometry_property.as_ref())
-                .with_payload(ResponsePayload::Collection(filtered))
-                .render()
-                .with_entity_instance(&uri)?;
-            let response = NgsiLdCollectionResponse::ok(rendered)
-                .with_snapshot_uri(snapshot_id)
-                .with_total_count(total as usize);
-
-            return Ok(response.into_response());
-        }
 
         // Clause 5.5.14: a referenced live EntityMap fixes the entities the
         // query considers and the sources it contacts, and holds the query to
         // the creating request's filters; an expired or unknown one yields no
         // inference, so a fresh map is created instead. The fingerprint is
         // taken before the query is narrowed below.
-        let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(&query)).with_entity_instance(&uri)?;
-        let map_use = state
-            .entity_maps
-            .resolve_use(
-                entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner),
-                EntityMapFlag::from_parameter(query.entity_map),
-                &fingerprint,
-                query.entity_map_lifetime.as_ref(),
-            )
-            .await
-            .with_entity_instance(&uri)?;
+        let map_use = if target.permits_federation() {
+            let fingerprint = fingerprint_of(FingerprintedRequest::QueryEntities(&query)).with_entity_instance(&uri)?;
+            state
+                .entity_maps
+                .resolve_use(
+                    entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner),
+                    EntityMapFlag::from_parameter(query.entity_map),
+                    &fingerprint,
+                    query.entity_map_lifetime.as_ref(),
+                )
+                .await
+                .with_entity_instance(&uri)?
+        } else {
+            EntityMapUse::None
+        };
         if let Some(map) = map_use.reused() {
             query.id = Some(EntityMapService::scope_query_ids(map, query.id.as_deref()));
         }
 
         let opts = query.parse_options();
-        let is_local = query.is_local();
+        let is_local = !target.permits_federation() || query.is_local();
         let split = state.forwarding.split_entities(query.split_entities);
         let split_entities = !is_local && split == SplitEntities::Split;
 
@@ -146,6 +115,7 @@ pub(crate) async fn query(
         } else {
             let forwarding = QueryForwarding {
                 forwarding: &state.forwarding,
+                target: &target,
                 engine: service.engine(),
                 uri: &uri,
                 query: &query,
@@ -182,7 +152,7 @@ pub(crate) async fn query(
             query.offset = Some(0);
         }
 
-        let (local_entities, local_total) = service.query(&query, &context).await.with_entity_instance(&uri)?;
+        let (local_entities, local_total) = service.query(&target, &query, &context).await.with_entity_instance(&uri)?;
 
         let mut contributions: Vec<SourceContribution> = Vec::new();
         let (mut entities, warnings) = match forwarded {
@@ -275,7 +245,11 @@ pub(crate) async fn query(
                     sys_attrs: opts.sys_attrs,
                     projection,
                 };
-                Some(ResolvedJoin::prepare(service, &entities, &context, &request).await.with_entity_instance(&uri)?)
+                Some(
+                    ResolvedJoin::prepare(service, &target, &entities, &context, &request)
+                        .await
+                        .with_entity_instance(&uri)?,
+                )
             }
             None => None,
         };
@@ -301,7 +275,7 @@ pub(crate) async fn query(
             }
             EntityMapUse::Mint(mut map) => {
                 let compiled = service.compile_query_public(&query, &context).await.with_entity_instance(&uri)?;
-                let mut local_ids = service.query_ids(&compiled).await.with_entity_instance(&uri)?;
+                let mut local_ids = service.query_ids(&target, &compiled).await.with_entity_instance(&uri)?;
                 // Linked entities the join resolved belong to the unitary request too (clause 5.5.14).
                 if let Some(resolved) = &resolved {
                     local_ids.extend(resolved.linked.keys().cloned());

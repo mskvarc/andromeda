@@ -26,6 +26,11 @@ mod tests {
         query_outcome::QueryOutcome,
         storage_profile::{GeoPredicatePushdown, ScopePushdown, StorageProfile, ValueFilterPushdown},
     };
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_jsonld::engine::processor::JsonLdEngine;
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry, relation::matches};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
@@ -142,12 +147,12 @@ mod tests {
 
     #[async_trait]
     impl EntityReader for ProfiledEntityStore {
-        async fn get(&self, id: &Uri) -> Result<Option<Value>, EntityError> {
+        async fn get(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
             // clone: the double hands out owned payloads, as a real store does
             Ok(self.entities.iter().find(|entity| extract_id(entity).as_ref() == Some(id)).cloned())
         }
 
-        async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+        async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
             Ok(self
                 .entities
                 .iter()
@@ -157,19 +162,19 @@ mod tests {
                 .collect())
         }
 
-        async fn get_snapshot(&self, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+        async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
             Err(unused("get_snapshot"))
         }
 
-        async fn get_snapshot_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+        async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
             Err(unused("get_snapshot_batch"))
         }
 
-        async fn get_sys_attrs(&self, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
             Err(unused("get_sys_attrs"))
         }
 
-        async fn get_sys_attrs_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+        async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
             Err(unused("get_sys_attrs_batch"))
         }
     }
@@ -180,13 +185,18 @@ mod tests {
             &self.profile
         }
 
-        async fn query_compiled(&self, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
+        async fn query_compiled(&self, _target: &ContextTarget, _compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Value>, EntityError> {
             Err(unused("query_compiled"))
         }
 
-        async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
+        async fn query_ids(&self, _target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<QueryOutcome<Uri>, EntityError> {
             Ok(self.run(compiled))
         }
+    }
+
+    fn live_target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
     }
 
     /// One building, at a temperature, at a position, in a scope.
@@ -291,13 +301,16 @@ mod tests {
         // an implementation detail of that store, never a difference the client
         // can observe (clause 5.7.2).
         let expected = service(StorageProfile::POSTGIS_LTREE)
-            .query_ids(&query(100, 0))
+            .query_ids(&live_target(), &query(100, 0))
             .await
             .expect("the full profile answers");
         assert!(!expected.is_empty(), "the fixtures must exercise the predicates");
 
         for (name, profile) in narrowing_profiles() {
-            let actual = service(profile).query_ids(&query(100, 0)).await.expect("a narrowing profile answers");
+            let actual = service(profile)
+                .query_ids(&live_target(), &query(100, 0))
+                .await
+                .expect("a narrowing profile answers");
             pretty_assertions::assert_eq!(actual, expected, "profile {name} disagreed with the full pushdown");
         }
     }
@@ -308,7 +321,7 @@ mod tests {
         // taken after the residual rather than before it.
         for (limit, offset) in [(1, 0), (1, 1), (2, 0), (2, 1), (10, 0), (10, 5)] {
             let expected = service(StorageProfile::POSTGIS_LTREE)
-                .query_ids(&query(limit, offset))
+                .query_ids(&live_target(), &query(limit, offset))
                 .await
                 .expect("the full profile answers");
             let deferred = StorageProfile {
@@ -316,7 +329,10 @@ mod tests {
                 value_filter: ValueFilterPushdown::Structured,
                 scope: ScopePushdown::PrefixOnly,
             };
-            let actual = service(deferred).query_ids(&query(limit, offset)).await.expect("the deferring profile answers");
+            let actual = service(deferred)
+                .query_ids(&live_target(), &query(limit, offset))
+                .await
+                .expect("the deferring profile answers");
             pretty_assertions::assert_eq!(actual, expected, "limit={limit} offset={offset}");
         }
     }
@@ -343,7 +359,7 @@ mod tests {
             },
         ];
         for profile in refusing {
-            let error = service(profile).query_ids(&query(100, 0)).await.expect_err("must refuse");
+            let error = service(profile).query_ids(&live_target(), &query(100, 0)).await.expect_err("must refuse");
             assert!(
                 error.to_string().contains("cannot evaluate"),
                 "the refusal explains itself rather than answering slowly: {error}"
@@ -372,7 +388,10 @@ mod tests {
             })
             .build();
 
-        let ids = service(no_geo_support).query_ids(&without_geo).await.expect("no geo predicate, no refusal");
+        let ids = service(no_geo_support)
+            .query_ids(&live_target(), &without_geo)
+            .await
+            .expect("no geo predicate, no refusal");
         pretty_assertions::assert_eq!(ids.len(), 5, "every building above 15 degrees");
     }
 }

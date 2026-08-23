@@ -12,6 +12,7 @@ use crate::{
     },
     error::EntityError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::options::{CompactOptions, ContextStripping},
@@ -36,6 +37,7 @@ impl EntityDiscoveryService {
     /// registered beside it, which may be none (clause 5.7.11).
     pub async fn attributes(
         &self,
+        target: &ContextTarget,
         representation: AttributeCollectionRepresentation,
         scope: DiscoveryScope,
         context: &ContextSpec,
@@ -45,7 +47,7 @@ impl EntityDiscoveryService {
         let mut summary_rows: Vec<AttributeSummary> = Vec::new();
         let mut cursor: Option<AttributeName> = None;
         loop {
-            let page = self.store.get_attribute_summary(cursor.as_ref(), PAGE).await?;
+            let page = self.store.get_attribute_summary(target, cursor.as_ref(), PAGE).await?;
             if page.is_empty() {
                 break;
             }

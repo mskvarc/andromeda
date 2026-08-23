@@ -12,6 +12,7 @@ use crate::{
     },
     error::ContextStoreError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::current::{Entities, EntityDocuments, EntitySearch};
 use andromeda_postgresql_seaquery::{clock::now, pg_operator::PgBinaryOperator, unnest::apply_column_alias};
@@ -72,6 +73,8 @@ pub(super) fn entity_update_sql() -> String {
         .cond_where(
             Cond::all()
                 .add(Expr::col((Entities::Table, Entities::Id)).equals((Proj, Entities::Id)))
+                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(Expr::cust("$13")))
+                .add(Expr::col((EntityDocuments::Table, EntityDocuments::ContextSpaceKey)).eq(Expr::cust("$13")))
                 .add(Expr::col((EntityDocuments::Table, EntityDocuments::EntityKey)).equals((Entities::Table, Entities::EntityKey)))
                 .add(expectation(projected(StagedColumn::ExpectedModifiedAt), EntityDocuments::Table)),
         )
@@ -89,6 +92,7 @@ pub(super) fn entity_update_sql() -> String {
         Cond::all()
             .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
             .add(Expr::col((EntitySearch::Table, EntitySearch::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
+            .add(Expr::col((EntitySearch::Table, EntitySearch::ContextSpaceKey)).eq(Expr::cust("$13")))
             .add(SEARCH_COLUMNS.into_iter().fold(Cond::any(), |changed, column| {
                 changed.add(SimpleExpr::from(Expr::col((EntitySearch::Table, column))).distinct_from(projected(column)))
             })),
@@ -111,6 +115,7 @@ pub(super) fn entity_update_sql() -> String {
             Cond::all()
                 .add(Expr::col((Proj, Entities::Id)).equals((Docs, Entities::Id)))
                 .add(Expr::col((Entities::Table, Entities::EntityKey)).equals((Docs, EntityDocuments::EntityKey)))
+                .add(Expr::col((Entities::Table, Entities::ContextSpaceKey)).eq(Expr::cust("$13")))
                 .add(
                     Cond::any()
                         .add(SimpleExpr::from(Expr::col((Entities::Table, Entities::ExpiresAt))).distinct_from(coalesced_expiry()))
@@ -154,6 +159,7 @@ impl EntityRepository {
     /// entry overwrites unconditionally.
     pub async fn save_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         entities: &PreparedEntityColumns,
         expected_modified_at: &[Option<DateTime<Utc>>],
     ) -> Result<Vec<WrittenEntity>, ContextStoreError> {
@@ -184,6 +190,7 @@ impl EntityRepository {
             .bind(&entities.expires_ats)
             .bind(&entities.min_attribute_expires_ats)
             .bind(expected_modified_at)
+            .bind(target.key().as_i64())
             .fetch_all(&mut **tx);
         let rows: Vec<(i64, String)> = observe_statement(ENTITY_UPDATE, rows).await.map_err(entity_write_failure)?;
 

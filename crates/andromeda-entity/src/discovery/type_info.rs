@@ -9,6 +9,7 @@ use crate::{
     },
     error::EntityError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::{
@@ -30,14 +31,20 @@ impl EntityDiscoveryService {
     /// registry knows it. A type only the registry knows has no instances
     /// here, so its count is zero and its attribute details carry the names
     /// registered beside it with no attribute types (clause 5.7.11).
-    pub async fn type_info(&self, type_name: &EntityTypeName, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
+    pub async fn type_info(
+        &self,
+        target: &ContextTarget,
+        type_name: &EntityTypeName,
+        scope: DiscoveryScope,
+        context: &ContextSpec,
+    ) -> Result<Value, EntityError> {
         // Expand the type name first — DB stores expanded IRIs
         let prepared_context = self.engine.prepare_term_context(context);
         let type_iri = self.engine.expand_type(type_name.as_str(), &prepared_context).await?;
         let type_key = parse_type_name(type_iri.as_str())?;
 
-        let entities = self.store.get_entities_by_type(&type_key, None, None).await?;
-        let count = self.store.count_by_type(&type_key).await?;
+        let entities = self.store.get_entities_by_type(target, &type_key, None, None).await?;
+        let count = self.store.count_by_type(target, &type_key).await?;
         let registered = self.registered_types(scope).await?.into_iter().find(|registered| registered.name == type_key);
 
         if count == 0 && registered.is_none() {

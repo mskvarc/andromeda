@@ -53,7 +53,7 @@ impl CsourceNotificationProcessor {
 
         match self
             .sub_repo
-            .claim_notification_slot(sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
+            .claim_notification_slot(&self.target, sub_id, ceiling_for_throttle(Utc::now(), compiled_sub.throttling_secs))
             .await
         {
             Ok(true) => {}
@@ -95,10 +95,10 @@ impl CsourceNotificationProcessor {
         let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
         if success {
-            if let Err(e) = self.sub_repo.mark_success(sub_id).await {
+            if let Err(e) = self.sub_repo.mark_success(&self.target, sub_id).await {
                 debug!("Failed to mark CSR notification success for {}: {}", sub_id, e);
             }
-        } else if let Err(e) = self.sub_repo.mark_failure(sub_id).await {
+        } else if let Err(e) = self.sub_repo.mark_failure(&self.target, sub_id).await {
             debug!("Failed to mark CSR notification failure for {}: {}", sub_id, e);
         }
     }

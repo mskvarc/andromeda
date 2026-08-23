@@ -26,11 +26,15 @@ use crate::entity::{
     strip_attributes_from_value,
 };
 use andromeda_federation::request::TriggeringRequest;
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use axum::http::{HeaderMap, Method};
 
 pub(crate) async fn update_attrs(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath(id): TypedPath<Uri>,
@@ -50,28 +54,31 @@ pub(crate) async fn update_attrs(
 
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::Entities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: None,
-            method: Method::PATCH,
-            body: Some(&fragment_body),
-            context: &context,
-            operation: ForwardingOperation::UpdateEntityAttributes,
-            path_suffix: Some("/attrs"),
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::Entities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: None,
+                method: Method::PATCH,
+                body: Some(&fragment_body),
+                context: &context,
+                operation: ForwardingOperation::UpdateEntityAttributes,
+                path_suffix: Some("/attrs"),
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_entity_instance(&uri)?;
 
     if forwarded.is_empty() {
         // No matching CSRs — update locally
-        let not_updated = service.update_attrs(&id, fragment, &context).await.with_entity_instance(&uri)?;
+        let not_updated = service.update_attrs(&target, &id, fragment, &context).await.with_entity_instance(&uri)?;
         if not_updated.is_empty() {
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
@@ -91,7 +98,7 @@ pub(crate) async fn update_attrs(
     let local = if local_fragment.as_object().is_some_and(|object| object.is_empty()) {
         LocalOutcome::NothingRemained
     } else {
-        LocalOutcome::processed(service.update_attrs(&id, local_fragment, &context).await, classify_entity_error)
+        LocalOutcome::processed(service.update_attrs(&target, &id, local_fragment, &context).await, classify_entity_error)
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

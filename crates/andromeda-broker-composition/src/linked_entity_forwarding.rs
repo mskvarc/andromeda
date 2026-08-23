@@ -9,6 +9,7 @@
 //! Registrations.
 
 use crate::{linked_resolution_failure_mapping::resolution_failure, linked_traversal_parameters::traversal_continuation};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     error::EntityError,
     query::remote_linked::{RemoteLinkedEntities, RemoteLinkedEntitySource},
@@ -34,12 +35,14 @@ pub(crate) struct ForwardedLinkedEntitySource {
     /// The forwarding service that owns registration matching and transport.
     #[debug(skip)]
     federation: Arc<FederationService>,
+    /// Tenant live branch used by linked forwarding.
+    live_target: ContextTarget,
 }
 
 impl ForwardedLinkedEntitySource {
     /// Resolve Linked Entities through the given forwarding service.
-    pub(crate) const fn new(federation: Arc<FederationService>) -> ForwardedLinkedEntitySource {
-        ForwardedLinkedEntitySource { federation }
+    pub(crate) const fn new(federation: Arc<FederationService>, live_target: ContextTarget) -> ForwardedLinkedEntitySource {
+        ForwardedLinkedEntitySource { federation, live_target }
     }
 }
 
@@ -61,21 +64,24 @@ impl RemoteLinkedEntitySource for ForwardedLinkedEntitySource {
         let parameters = linked_retrieval_parameters(remaining_depth, visited);
         let forwarded = self
             .federation
-            .forward_retrieve(ForwardRetrieveRequest {
-                entity_id: id,
-                exclude_registration: None,
-                client_query: ClientQuery::EntityRetrieve(&parameters),
-                context,
-                operation: ForwardingOperation::RetrieveEntity,
-                // A linked retrieval starts at this broker rather than being a
-                // hop of an inbound one, so there is no `Via` chain to extend
-                // and no headers to pass through.
-                triggering: TriggeringRequest::default(),
-                // Clause 4.3.6.2: an auxiliary context source only supplements
-                // an entity that already exists, never supplies a missing one.
-                mode_filter: CsrModeFilter::ExcludeAuxiliary,
-                entity_map: EntityMapInUse::None,
-            })
+            .forward_retrieve(
+                &self.live_target,
+                ForwardRetrieveRequest {
+                    entity_id: id,
+                    exclude_registration: None,
+                    client_query: ClientQuery::EntityRetrieve(&parameters),
+                    context,
+                    operation: ForwardingOperation::RetrieveEntity,
+                    // A linked retrieval starts at this broker rather than being a
+                    // hop of an inbound one, so there is no `Via` chain to extend
+                    // and no headers to pass through.
+                    triggering: TriggeringRequest::default(),
+                    // Clause 4.3.6.2: an auxiliary context source only supplements
+                    // an entity that already exists, never supplies a missing one.
+                    mode_filter: CsrModeFilter::ExcludeAuxiliary,
+                    entity_map: EntityMapInUse::None,
+                },
+            )
             .await;
 
         // A Linked Entity that cannot be reached degrades the join instead of

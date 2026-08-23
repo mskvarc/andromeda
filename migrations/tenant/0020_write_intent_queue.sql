@@ -70,6 +70,7 @@
 
 CREATE TABLE temporal_append_intents (
     sequence BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     base INTEGER NOT NULL,
@@ -80,7 +81,7 @@ CREATE TABLE temporal_append_intents (
     entity_id TEXT COMPRESSION lz4 COLLATE "C" NOT NULL,
     intent JSONB COMPRESSION lz4 NOT NULL,
     last_error TEXT COMPRESSION lz4,
-    CONSTRAINT uq_temporal_append_intents_write UNIQUE (write_id, entity_id, base),
+    CONSTRAINT uq_temporal_append_intents_write UNIQUE (context_space_key, write_id, entity_id, base),
     CONSTRAINT chk_temporal_append_intents_attempts_non_negative CHECK (attempts >= 0),
     CONSTRAINT chk_temporal_append_intents_base_non_negative CHECK (base >= 0),
     CONSTRAINT chk_temporal_append_intents_lease_coherent CHECK ((lease_owner IS NULL) = (lease_until IS NULL)),
@@ -95,10 +96,10 @@ CREATE TABLE temporal_append_intents (
 );
 
 CREATE INDEX idx_temporal_append_intents_claim
-    ON temporal_append_intents (available_at, sequence);
+    ON temporal_append_intents (context_space_key, available_at, sequence);
 
 CREATE INDEX idx_temporal_append_intents_entity
-    ON temporal_append_intents (entity_id, sequence);
+    ON temporal_append_intents (context_space_key, entity_id, sequence);
 
 CREATE TABLE write_records (
     recorded_at TIMESTAMPTZ NOT NULL,

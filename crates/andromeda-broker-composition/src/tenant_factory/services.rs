@@ -18,6 +18,7 @@ use crate::{
 };
 use andromeda_context_commit::committer::ContextCommitter;
 use andromeda_context_registry::{service::ContextRegistryService, store::ContextRegistryStore};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     EntityService,
     NotificationWriteConfig,
@@ -79,7 +80,7 @@ use andromeda_temporal::{
 };
 use andromeda_tenancy::{config::TenancyConfig, tenant_ref::TenantRef};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use typed_builder::TypedBuilder;
 
 /// Values used once to compose a tenant's request services.
@@ -95,6 +96,7 @@ pub(super) struct ServiceConstructionInputs<'a> {
     pub(super) temporal_config: &'a TemporalConfig,
     pub(super) tenancy_config: &'a TenancyConfig,
     pub(super) pool: &'a PgPool,
+    pub(super) live_target: &'a ContextTarget,
     pub(super) tenant: &'a TenantRef,
     pub(super) signals: &'a TenantSignals,
     pub(super) transports: &'a TenantTransports,
@@ -135,6 +137,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         temporal_config,
         tenancy_config,
         pool,
+        live_target,
         tenant,
         signals,
         transports,
@@ -206,7 +209,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         // Clause 4.5.23.1 applied to the temporal API: an annotated Linked
         // Entity whose history this broker does not record is fetched from the
         // context sources registered for it.
-        Some(Arc::new(ForwardedTemporalLinkedSource::new(Arc::clone(&forwarding))) as Arc<dyn RemoteTemporalLinkedSource>), // clone: request handling and linked resolution share one forwarding service.
+        Some(Arc::new(ForwardedTemporalLinkedSource::new(Arc::clone(&forwarding), live_target.clone())) as Arc<dyn RemoteTemporalLinkedSource>), // clone: request handling and linked resolution share one forwarding service.
     ));
     let entity_query = Arc::new(EntityQueryService::new(
         Arc::clone(entity_reader),
@@ -216,23 +219,30 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         tenant.clone(), // clone: the query service owns its tenant partition.
         // Clause 4.5.23.1: an `objectType`-annotated Linked Entity this broker
         // does not store is fetched from the context sources registered for it.
-        Some(Arc::new(ForwardedLinkedEntitySource::new(Arc::clone(&forwarding))) as Arc<dyn RemoteLinkedEntitySource>), // clone: request handling and linked resolution share one forwarding service.
+        Some(Arc::new(ForwardedLinkedEntitySource::new(Arc::clone(&forwarding), live_target.clone())) as Arc<dyn RemoteLinkedEntitySource>), // clone: request handling and linked resolution share one forwarding service.
     ));
     let context_store = Arc::new(JsonLdContextRepository::new(pool)) as Arc<dyn ContextRegistryStore>;
     let contexts = Arc::new(ContextRegistryService::new(context_store, engine.clone()));
     let snapshot_notifications: Arc<dyn SnapshotNotificationSink> = Arc::new(DeliverySnapshotNotificationSink::new(Arc::clone(&transports.dispatcher)));
     let snapshot_preparation = Arc::new(SnapshotPreparation::new(
+        live_target.clone(), // clone: capture queries execute against the tenant's ordinary live branch.
         Arc::clone(snapshot_store),
+        Arc::clone(writes),
         Arc::clone(&entity_query),
         Arc::clone(&temporal),
         Arc::clone(&forwarding),
         Some(Arc::clone(&snapshot_notifications)),
+        snapshot_config.capture_page_size,
         snapshot_config.preparation_concurrency,
+        Duration::from_secs(snapshot_config.preparation_lease_secs),
     ));
     let snapshots = Arc::new(SnapshotService::new(
         Arc::clone(snapshot_store),
         Some(snapshot_notifications),
         Some(Arc::clone(&snapshot_preparation)),
+        Duration::from_secs(snapshot_config.default_lifetime_secs),
+        Duration::from_secs(snapshot_config.maximum_lifetime_secs),
+        Duration::from_secs(snapshot_config.scoped_operation_wait_secs),
     ));
 
     let subscription_endpoint_validator: Arc<dyn SubscriptionEndpointValidator> = Arc::new(DeliverySubscriptionEndpointValidator);
@@ -250,6 +260,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
     let subscription_forwarding = match info_config.advertised_url.as_ref().and_then(ReceiverEndpoint::from_advertised) {
         Some(receiver) => Some(Arc::new(
             SubscriptionForwardingService::builder()
+                .live_target(live_target.clone()) // clone: forwarding is defined only over the tenant's live branch.
                 .receiver(receiver)
                 .tenant(tenant.clone()) // clone: the forwarding service owns its tenant
                 .subscriptions(Arc::clone(&subscription_store))
@@ -278,6 +289,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
         subscriptions = subscriptions.with_forwarding_hook(Arc::clone(forwarding_service) as Arc<dyn SubscriptionForwardingHook>);
     }
     let state = AndromedaState {
+        live_target: live_target.clone(), // clone: request state owns the immutable typed live-branch selection.
         entities,
         entity_query,
         entity_discovery: Arc::new(EntityDiscoveryService::new(
@@ -296,6 +308,7 @@ pub(super) fn construct_services(inputs: ServiceConstructionInputs<'_>) -> Resul
                 Arc::clone(entity_reader),
                 Arc::clone(entity_query_store),
                 engine.clone(), // clone: the probe compiles registration selectors against its own engine handle.
+                live_target.clone(),
             )) as Arc<dyn RegisteredEntityProbe>,
             engine.clone(),
             Some(Arc::new(BroadcastRegistrationChangeSink::new(signals.registration.clone()))), // clone: each tenant service and worker own a sender handle.

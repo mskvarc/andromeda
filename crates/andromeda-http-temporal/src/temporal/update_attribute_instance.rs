@@ -30,11 +30,15 @@ use crate::temporal::{
     local_temporal_outcome,
     provision_response,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_response::classified_report::ClassifiedReport;
 
 pub async fn update_attr_instance(
-    tenant_state::ExistingTenantState(state): TenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantState,
     OriginalUri(uri): OriginalUri,
     context: ContextUrl,
     TypedPath((id, attr_id, instance_id)): TypedPath<(Uri, AttributeName, Uri)>,
@@ -56,7 +60,7 @@ pub async fn update_attr_instance(
 
     if params.local.unwrap_or(false) {
         service
-            .modify_attr_instance(&id, &attr_id, &instance, payload, &context)
+            .modify_attr_instance(&target, &id, &attr_id, &instance, payload, &context)
             .await
             .with_instance(&uri)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
@@ -65,22 +69,25 @@ pub async fn update_attr_instance(
     let body = serde_json::to_vec(&payload).map_err(|error| ClassifiedReport::internal(&error).with_instance(uri.clone()))?;
     let forwarded = state
         .forwarding
-        .forward_provision(ForwardProvisionRequest {
-            resource: ProvisionResource::TemporalEntities,
-            entity_id: &id,
-            entity_type_compact: None,
-            attribute_name: Some(&attr_id),
-            method: Method::PATCH,
-            body: Some(&body),
-            context: &context,
-            operation: ForwardingOperation::UpdateTemporalAttributeInstance,
-            path_suffix: Some(&path_suffix),
-            query_string: None,
-            triggering: TriggeringRequest {
-                via: incoming_via.as_ref(),
-                headers: Some(&headers),
+        .forward_provision(
+            &target,
+            ForwardProvisionRequest {
+                resource: ProvisionResource::TemporalEntities,
+                entity_id: &id,
+                entity_type_compact: None,
+                attribute_name: Some(&attr_id),
+                method: Method::PATCH,
+                body: Some(&body),
+                context: &context,
+                operation: ForwardingOperation::UpdateTemporalAttributeInstance,
+                path_suffix: Some(&path_suffix),
+                query_string: None,
+                triggering: TriggeringRequest {
+                    via: incoming_via.as_ref(),
+                    headers: Some(&headers),
+                },
             },
-        })
+        )
         .await
         .with_instance(&uri)?;
 
@@ -89,7 +96,10 @@ pub async fn update_attr_instance(
     let local = if collect_proxied_attrs(&forwarded).contains(&attr_id) {
         LocalOutcome::NothingRemained
     } else {
-        local_temporal_outcome(service.modify_attr_instance(&id, &attr_id, &instance, payload, &context).await, &forwarded)
+        local_temporal_outcome(
+            service.modify_attr_instance(&target, &id, &attr_id, &instance, payload, &context).await,
+            &forwarded,
+        )
     };
     provision_response(&id, &forwarded, local, StatusCode::NO_CONTENT.into_response(), &uri)
 }

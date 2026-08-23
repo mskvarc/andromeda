@@ -7,11 +7,11 @@ use crate::{
 use andromeda_http_extraction::{
     accept::AcceptFormatNoGeo,
     context::ContextUrl,
+    context_target::{ExistingTargetedTenantState, ProvisionableTargetedTenantState},
     jsonld::JsonLd,
     origin::request_origin,
     prefer::PreferHeader,
     query::ValidatedQuery,
-    tenant_state::{ExistingTenantState, ProvisionableTenantState},
     typed_path::TypedPath,
     via::IncomingVia,
 };
@@ -41,7 +41,7 @@ use serde_json::Value;
 
 /// POST /ngsi-ld/v1/subscriptions -- Create a new subscription.
 pub async fn create(
-    ProvisionableTenantState(state): SubscriptionTenantStateOrCreate,
+    ProvisionableTargetedTenantState { services: state, target, .. }: SubscriptionTenantStateOrCreate,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
@@ -60,7 +60,7 @@ pub async fn create(
     let encountered_sources: Vec<ContextSourcePseudonym> = incoming_via.iter().flat_map(Via::pseudonyms).cloned().collect();
 
     let id = service
-        .create(payload, &context, base_url.as_ref(), &encountered_sources)
+        .create(&target, payload, &context, base_url.as_ref(), &encountered_sources)
         .await
         .with_subscription_instance(&uri)?;
 
@@ -69,7 +69,7 @@ pub async fn create(
 
 /// GET /ngsi-ld/v1/subscriptions/{subscription_id} -- Retrieve a subscription.
 pub async fn get(
-    ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -80,7 +80,10 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     let options = params.options.unwrap_or_default();
 
-    let subscription = service.get_for_response(&subscription_id, &context).await.with_subscription_instance(&uri)?;
+    let subscription = service
+        .get_for_response(&target, &subscription_id, &context)
+        .await
+        .with_subscription_instance(&uri)?;
 
     let subscription = SubscriptionRenderer::new(subscription, SubscriptionFlavor::Local)
         .with_sys_attrs(options.sys_attrs)
@@ -100,7 +103,7 @@ pub async fn get(
 
 /// GET /ngsi-ld/v1/subscriptions -- Query subscriptions.
 pub async fn query(
-    ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -121,7 +124,7 @@ pub async fn query(
     }
 
     let (subscriptions, total) = service
-        .list_for_response(Some(i64::from(limit)), Some(i64::from(offset)), &context)
+        .list_for_response(&target, Some(i64::from(limit)), Some(i64::from(offset)), &context)
         .await
         .with_subscription_instance(&uri)?;
 
@@ -159,7 +162,7 @@ pub async fn query(
 
 /// PATCH /ngsi-ld/v1/subscriptions/{subscription_id} -- Update a subscription.
 pub async fn update(
-    ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     context: ContextUrl,
@@ -174,7 +177,7 @@ pub async fn update(
     let context = context.merge(body_context);
 
     service
-        .update(&subscription_id, payload, &context, base_url.as_ref())
+        .update(&target, &subscription_id, payload, &context, base_url.as_ref())
         .await
         .with_subscription_instance(&uri)?;
 
@@ -183,12 +186,12 @@ pub async fn update(
 
 /// DELETE /ngsi-ld/v1/subscriptions/{subscription_id} -- Delete a subscription.
 pub async fn delete(
-    ExistingTenantState(state): SubscriptionTenantState,
+    ExistingTargetedTenantState { services: state, target, .. }: SubscriptionTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(subscription_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
     let service = &state.subscriptions;
-    service.delete(&subscription_id).await.with_subscription_instance(&uri)?;
+    service.delete(&target, &subscription_id).await.with_subscription_instance(&uri)?;
 
     Ok(StatusCode::NO_CONTENT.into_response())
 }

@@ -2,6 +2,7 @@
 //! index.
 
 use crate::query::EntityQueryService;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_query::entity::compiled::CompiledEntityQuery;
 use andromeda_spatial_index::key::{SpatialKey, flatten_or_type_iris};
@@ -40,7 +41,10 @@ impl EntityQueryService {
     /// a cold partition, or a reference geometry the index cannot use. The store
     /// then applies the full `georel`. A warm partition that matches nothing
     /// yields [`SpatialNarrowing::EmptyResult`].
-    pub(super) fn spatial_prefilter(&self, compiled: &Arc<CompiledEntityQuery>) -> SpatialNarrowing {
+    pub(super) fn spatial_prefilter(&self, target: &ContextTarget, compiled: &Arc<CompiledEntityQuery>) -> SpatialNarrowing {
+        if target.snapshot().is_some() {
+            return SpatialNarrowing::Query(Arc::clone(compiled));
+        }
         let Some(ref geo_query) = compiled.selection.geo else {
             return SpatialNarrowing::Query(Arc::clone(compiled));
         };

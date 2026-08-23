@@ -54,6 +54,7 @@ use crate::{
     remote_linked::{RemoteTemporalLinkedSource, TemporalLinkedWindow},
     service::TemporalService,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, term_expansion::ContextualExpander};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::entity_member::extract_types;
@@ -134,6 +135,7 @@ impl TemporalService {
     /// than propagated.
     pub async fn resolve_linked_temporal(
         &self,
+        target: &ContextTarget,
         rendered: &[Value],
         seed: &[TemporalLinkedCandidate],
         params: &TemporalQueryParameters,
@@ -174,7 +176,7 @@ impl TemporalService {
             && !candidates.is_empty()
         {
             visited.extend(candidates.iter().map(|candidate| candidate.id.clone())); // clone: the guard outlives this level's candidates
-            let level = self.resolve_level(&candidates, depth, &visited, &compiled, &window, context).await?;
+            let level = self.resolve_level(target, &candidates, depth, &visited, &compiled, &window, context).await?;
             // Everything the level produced — including the sub-graph a remote
             // broker returned around a candidate — is now held, so no later
             // level asks for it again.
@@ -232,6 +234,7 @@ impl TemporalService {
     /// `depth` is the number of levels still to resolve, this one included.
     async fn resolve_level(
         &self,
+        target: &ContextTarget,
         candidates: &[TemporalLinkedCandidate],
         depth: NonZeroU32,
         visited: &IndexSet<Uri>,
@@ -239,13 +242,13 @@ impl TemporalService {
         window: &TemporalLinkedWindow,
         context: &ContextSpec,
     ) -> Result<ResolvedTemporalLevel, TemporalError> {
-        let (entities, named) = self.resolve_level_locally(candidates, compiled, context).await?;
+        let (entities, named) = self.resolve_level_locally(target, candidates, compiled, context).await?;
         let mut level = ResolvedTemporalLevel {
             entities,
             failures: Vec::new(),
             candidates: named,
         };
-        let Some(source) = self.remote_temporal_linked.as_ref() else {
+        let Some(source) = target.permits_federation().then_some(self.remote_temporal_linked.as_ref()).flatten() else {
             return Ok(level);
         };
         for candidate in candidates {
@@ -265,6 +268,7 @@ impl TemporalService {
     /// a Relationship as a plain URI rather than failing the whole retrieval.
     async fn resolve_level_locally(
         &self,
+        target: &ContextTarget,
         candidates: &[TemporalLinkedCandidate],
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
@@ -272,7 +276,7 @@ impl TemporalService {
         let ids: Vec<Uri> = candidates.iter().map(|candidate| candidate.id.clone()).collect(); // clone: the store reads an owned id slice
         let payloads = self
             .entity_reader
-            .get_batch(&ids)
+            .get_batch(target, &ids)
             .await
             .map_err(|error| TemporalError::persistence(error.to_string()))?;
         let types: HashMap<&Uri, Vec<EntityTypeName>> = payloads.iter().map(|(id, payload)| (id, extract_types(payload))).collect();
@@ -285,7 +289,7 @@ impl TemporalService {
             let Some(entity_types) = types.get(&candidate.id) else {
                 continue;
             };
-            match self.render_one_temporal_entity(&candidate.id, entity_types, compiled, context).await {
+            match self.render_one_temporal_entity(target, &candidate.id, entity_types, compiled, context).await {
                 Ok(rendered) => {
                     if rendered.presence == HistoryPresence::Present {
                         level.insert(candidate.id.clone(), rendered.value); // clone: the result map owns its keys

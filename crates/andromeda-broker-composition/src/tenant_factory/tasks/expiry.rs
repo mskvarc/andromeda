@@ -4,6 +4,7 @@ use crate::tenant_factory::{
     error::TenantAssemblyError,
     tasks::maintenance::{classify_entity_expiry_failure, classify_registration_expiry_failure, classify_subscription_expiry_failure},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     EntityService,
     expiry::{EntityExpiryBatchSize, EntityExpiryOutcome, EntityExpirySweep},
@@ -37,6 +38,7 @@ use std::{sync::Arc, time::Duration};
 
 pub(super) fn register_entity_expiry(
     supervisor: &TaskSupervisor,
+    target: ContextTarget,
     entity_policy: Arc<EntityService>,
     entity_expiry_source: Arc<dyn EntityExpirySource>,
     expiration_interval: u64,
@@ -53,7 +55,7 @@ pub(super) fn register_entity_expiry(
         ShutdownPolicy::new(cadence),
     );
     let expiry_batch_size = EntityExpiryBatchSize::try_from(expiry_batch_size).map_err(|error| TenantAssemblyError::invariant(error.to_string()))?;
-    let sweep = Arc::new(EntityExpirySweep::new(entity_policy, entity_expiry_source, expiry_batch_size));
+    let sweep = Arc::new(EntityExpirySweep::new(target, entity_policy, entity_expiry_source, expiry_batch_size));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let sweep = Arc::clone(&sweep); // clone: each scheduled future owns the shared policy operation for its duration.
         async move {
@@ -78,6 +80,7 @@ pub(super) fn register_entity_expiry(
 pub(super) fn register_subscription_expiry<V>(
     supervisor: &TaskSupervisor,
     task_name: &'static str,
+    target: ContextTarget,
     policy: Arc<SubscriptionService<V>>,
     expiration_interval: u64,
 ) -> Result<(), TenantAssemblyError>
@@ -94,7 +97,7 @@ where
         RestartPolicy::transient(u32::MAX, cadence, cadence),
         ShutdownPolicy::new(cadence),
     );
-    let expiry = Arc::new(SubscriptionExpiry::new(policy));
+    let expiry = Arc::new(SubscriptionExpiry::new(target, policy));
     let task = ScheduledTask::new(registration, schedule, move |execution| {
         let expiry = Arc::clone(&expiry); // clone: each scheduled future owns the policy operation while executing.
         async move {
@@ -262,6 +265,7 @@ fn classify_snapshot_failure(error: SnapshotError) -> TaskFailure {
         SnapshotError::Validation { .. }
         | SnapshotError::NotFound { .. }
         | SnapshotError::AlreadyExists { .. }
+        | SnapshotError::PreparationTimeout { .. }
         | SnapshotError::Entity(_)
         | SnapshotError::Temporal(_)
         | SnapshotError::Federation(_)

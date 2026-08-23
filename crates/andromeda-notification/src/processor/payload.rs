@@ -9,6 +9,7 @@ use crate::processor::payload::{
     projection::apply_notification_projection,
     representation::{compact_for_notification, render_format},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{
     query::EntityQueryService,
     sys_attrs::{expanded_entity_object_mut, inject_attr_sys_attrs},
@@ -33,6 +34,7 @@ use std::mem::take;
 use tracing::debug;
 
 pub(super) struct NotificationBuildParams<'a> {
+    pub(super) target: &'a ContextTarget,
     pub(super) engine: &'a JsonLdEngine,
     pub(super) entity_data: &'a Value,
     pub(super) previous_attributes: Option<&'a Value>,
@@ -48,6 +50,7 @@ pub(super) struct NotificationBuildParams<'a> {
 pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>) -> Vec<Value> {
     let NotificationBuildParams {
         engine,
+        target,
         entity_data,
         previous_attributes,
         sub,
@@ -178,6 +181,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
             && let Ok(main_entity) = deserialize_exact::<Entity>(&all_compacted[0])
         {
             match resolve_linked_cached(
+                target,
                 entity_query,
                 &main_entity,
                 sub.notification_join_level,
@@ -201,6 +205,7 @@ pub(super) async fn build_notification_data(params: NotificationBuildParams<'_>)
             && let Ok(main_entity) = deserialize_exact::<Entity>(&all_compacted[0])
         {
             match resolve_linked_cached(
+                target,
                 entity_query,
                 &main_entity,
                 sub.notification_join_level,

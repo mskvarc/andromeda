@@ -4,11 +4,19 @@ use crate::{
     error::{SnapshotResultExt, internal_problem, project_purge_failure},
     state::SnapshotTenantState,
 };
-use andromeda_http_extraction::{jsonld::JsonLd, snapshot_purge::SnapshotPurgeQ, tenant_state, typed_path::TypedPath};
-use andromeda_http_response::{classified_report::ClassifiedReport, headers::with_location, problem_response::ProblemResponse};
+use andromeda_http_extraction::{accept::AcceptFormatNoGeo, jsonld::JsonLd, snapshot_purge::SnapshotPurgeQ, tenant_state, typed_path::TypedPath};
+use andromeda_http_response::{
+    classified_report::ClassifiedReport,
+    headers::with_location,
+    problem_response::ProblemResponse,
+    render::{RenderingPreferences, start_rendering},
+    single::NgsiLdResponse,
+};
+use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
-use andromeda_ngsi_ld_model::snapshot::{SnapshotInput, SnapshotPatch};
+use andromeda_ngsi_ld_model::{snapshot_clone::SnapshotCloneInput, snapshot_input::SnapshotInput, snapshot_patch::SnapshotPatch};
 use andromeda_ngsi_ld_problem_details::{batch_operation::BatchOperationResult, error_type::NgsiLdErrorType};
+use andromeda_ngsi_ld_render::response::ResponsePayload;
 use andromeda_snapshot::service::PurgeOutcome;
 use axum::{
     Json,
@@ -26,40 +34,49 @@ use axum::{
 pub async fn create(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
-    JsonLd { value: input, context: _ }: JsonLd<SnapshotInput>,
+    JsonLd { value: input, context }: JsonLd<SnapshotInput>,
 ) -> Result<Response, ProblemResponse> {
-    let snapshot = state.snapshots.create(input).await.with_snapshot_instance(&uri)?;
+    let snapshot = state.snapshots.create(input, context).await.with_snapshot_instance(&uri)?;
     state.snapshots.prepare_now();
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", snapshot.id);
 
-    let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, &uri))?;
-    Ok(with_location((StatusCode::CREATED, Json(body)).into_response(), location))
+    Ok(with_location(StatusCode::CREATED.into_response(), location))
 }
 
 /// GET /ngsi-ld/v1/snapshots/{snapshot_id} -- Retrieve snapshot status.
 pub async fn get(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormatNoGeo,
     TypedPath(snapshot_id): TypedPath<Uri>,
 ) -> Result<Response, ProblemResponse> {
     let snapshot = state.snapshots.get(&snapshot_id).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&snapshot).map_err(|error| internal_problem(&error, &uri))?;
-    Ok((StatusCode::OK, Json(body)).into_response())
+    let rendered = start_rendering(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
+        .with_payload(ResponsePayload::Single(body))
+        .render()
+        .map_err(|error| internal_problem(&error, &uri))?;
+    Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
 /// PATCH /ngsi-ld/v1/snapshots/{snapshot_id} -- Update snapshot status.
 pub async fn update(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
+    accept: AcceptFormatNoGeo,
     TypedPath(snapshot_id): TypedPath<Uri>,
     JsonLd { value: patch, context: _ }: JsonLd<SnapshotPatch>,
 ) -> Result<Response, ProblemResponse> {
     let updated = state.snapshots.update(&snapshot_id, patch).await.with_snapshot_instance(&uri)?;
 
     let body = serde_json::to_value(&updated).map_err(|error| internal_problem(&error, &uri))?;
-    Ok((StatusCode::OK, Json(body)).into_response())
+    let rendered = start_rendering(accept.media_type(), &ContextSpec::none(), RenderingPreferences::default())
+        .with_payload(ResponsePayload::Single(body))
+        .render()
+        .map_err(|error| internal_problem(&error, &uri))?;
+    Ok(NgsiLdResponse::ok(rendered).into_response())
 }
 
 /// DELETE /ngsi-ld/v1/snapshots/{snapshot_id} -- Delete a snapshot.
@@ -115,10 +132,11 @@ pub async fn clone(
     tenant_state::ExistingTenantState(state): SnapshotTenantState,
     OriginalUri(uri): OriginalUri,
     TypedPath(snapshot_id): TypedPath<Uri>,
+    JsonLd { value: input, context: _ }: JsonLd<SnapshotCloneInput>,
 ) -> Result<Response, ProblemResponse> {
-    let cloned = state.snapshots.clone_snapshot(&snapshot_id).await.with_snapshot_instance(&uri)?;
+    let cloned = state.snapshots.clone_snapshot(&snapshot_id, input).await.with_snapshot_instance(&uri)?;
+    state.snapshots.prepare_now();
 
     let location = format!("/ngsi-ld/v1/snapshots/{}", cloned.id);
-    let body = serde_json::to_value(&cloned).map_err(|error| internal_problem(&error, &uri))?;
-    Ok(with_location((StatusCode::CREATED, Json(body)).into_response(), location))
+    Ok(with_location(StatusCode::CREATED.into_response(), location))
 }

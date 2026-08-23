@@ -63,6 +63,10 @@ CREATE TABLE subscriptions (
     -- primary key.
     subscription_key BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 
+    -- Context branch that owns this subscription. Snapshot deletion cascades
+    -- through the subscription and every delivery-state row below.
+    context_space_key BIGINT NOT NULL REFERENCES context_spaces(context_space_key) ON DELETE CASCADE,
+
     -- System-managed temporal properties (clause 4.8).
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     modified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -146,7 +150,8 @@ CREATE TABLE subscriptions (
 
     -- `id` is the external identity a client registers and matches under; the
     -- surrogate key is the primary key, so `id` carries its own unique index.
-    CONSTRAINT uq_subscriptions_id UNIQUE (id),
+    CONSTRAINT uq_subscriptions_context_id UNIQUE (context_space_key, id),
+    CONSTRAINT uq_subscriptions_context_key UNIQUE (context_space_key, subscription_key),
 
     -- Every stored trigger is one of the six clause-5.2.12 registry codes;
     -- mirrors the notification queue's `trigger` bound (0018).
@@ -161,12 +166,12 @@ CREATE TABLE subscriptions (
 );
 
 -- Lookup active subscriptions for notification matching (partitioned by kind)
-CREATE INDEX idx_subscriptions_kind_status ON subscriptions(kind, status);
+CREATE INDEX idx_subscriptions_kind_status ON subscriptions(context_space_key, kind, status);
 
 -- Efficiently find and expire subscriptions past their expiry. Perpetual
 -- subscriptions carry NULL and are never candidates, so they are kept out of
 -- the index.
-CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX idx_subscriptions_expires_at ON subscriptions(context_space_key, expires_at) WHERE expires_at IS NOT NULL;
 
 -- Notification delivery statistics (spec clause 5.2.15), one row per
 -- subscription, created together with the subscription in the same
@@ -179,11 +184,15 @@ CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at) WHERE exp
 -- is the delivery rate, so the default scale factors would let dead tuples
 -- outnumber live rows many times over before a vacuum ran.
 CREATE TABLE subscription_delivery_state (
-    subscription_key BIGINT PRIMARY KEY REFERENCES subscriptions(subscription_key) ON DELETE CASCADE,
+    context_space_key BIGINT NOT NULL,
+    subscription_key BIGINT PRIMARY KEY,
     times_sent INTEGER NOT NULL DEFAULT 0,
     last_notification TIMESTAMPTZ,
     last_success TIMESTAMPTZ,
     last_failure TIMESTAMPTZ,
+    CONSTRAINT fk_subscription_delivery_state_context_subscription
+        FOREIGN KEY (context_space_key, subscription_key)
+        REFERENCES subscriptions(context_space_key, subscription_key) ON DELETE CASCADE,
     CONSTRAINT chk_subscription_delivery_state_times_sent_non_negative CHECK (times_sent >= 0)
 ) WITH (
     fillfactor = 50,

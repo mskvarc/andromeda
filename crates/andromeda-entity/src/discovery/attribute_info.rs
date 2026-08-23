@@ -10,6 +10,7 @@ use crate::{
     },
     error::EntityError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_model::attribute_list::AttributeInfo;
@@ -34,12 +35,18 @@ impl EntityDiscoveryService {
     /// registry knows it. One only the registry knows is carried by no local
     /// entity, so its count is zero, its attribute types are empty and its
     /// type names are those registered beside it (clause 5.7.11).
-    pub async fn attribute_info(&self, attr_id: &AttributeName, scope: DiscoveryScope, context: &ContextSpec) -> Result<Value, EntityError> {
+    pub async fn attribute_info(
+        &self,
+        target: &ContextTarget,
+        attr_id: &AttributeName,
+        scope: DiscoveryScope,
+        context: &ContextSpec,
+    ) -> Result<Value, EntityError> {
         let prepared_context = self.engine.prepare_term_context(context);
         let attr_iri_buf = self.engine.expand_term(attr_id.as_str(), &prepared_context).await?;
         let attr_iri = parse_attribute_name(attr_iri_buf.as_str())?;
 
-        let local = self.store.get_attribute_info(&attr_iri).await?;
+        let local = self.store.get_attribute_info(target, &attr_iri).await?;
         let registered = self
             .registered_attributes(scope)
             .await?

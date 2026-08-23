@@ -15,6 +15,8 @@ pub enum NotificationEvents {
     Table,
     /// Surrogate key referenced by every delivery that answers the event
     Id,
+    /// Context-space partition that owns the event.
+    ContextSpaceKey,
     /// Instant the event was written, the retention clock reads
     CreatedAt,
     /// Identity of the write that produced the event
@@ -42,6 +44,8 @@ pub enum NotificationDeliveries {
     Table,
     /// Delivery surrogate key
     Id,
+    /// Context-space partition that owns the delivery
+    ContextSpaceKey,
     /// Event the delivery answers
     EventId,
     /// External key of the subscription the delivery is owed to
@@ -88,6 +92,7 @@ mod tests {
     fn notification_deliveries_table_and_columns() {
         assert_eq!(NotificationDeliveries::Table.to_string(), "notification_deliveries");
         assert_eq!(NotificationDeliveries::Id.to_string(), "id");
+        assert_eq!(NotificationDeliveries::ContextSpaceKey.to_string(), "context_space_key");
         assert_eq!(NotificationDeliveries::EventId.to_string(), "event_id");
         assert_eq!(NotificationDeliveries::SubscriptionKey.to_string(), "subscription_key");
         assert_eq!(NotificationDeliveries::AttemptCount.to_string(), "attempt_count");

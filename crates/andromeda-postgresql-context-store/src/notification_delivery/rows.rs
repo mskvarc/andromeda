@@ -6,6 +6,12 @@ use andromeda_context_commit::{
     write_id::WriteId,
     write_ordinal::{WriteOrdinal, WriteOrdinalOutOfRange},
 };
+use andromeda_context_space::{
+    context_space::{ContextSpace, ContextSpaceKind},
+    context_space_key::{ContextSpaceKey, ContextSpaceKeyError},
+    context_target::ContextTarget,
+    snapshot_target::{SnapshotTarget, SnapshotTargetError},
+};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
     reference::NgsiLdReferenceError,
@@ -27,6 +33,8 @@ use uuid::Uuid;
 /// it has already been attempted.
 #[derive(Debug)]
 pub struct ClaimedDelivery {
+    /// Context branch that owns the event and subscription.
+    pub target: ContextTarget,
     /// Identifier of the claimed delivery row.
     pub id: i64,
     /// Subscription this delivery answers.
@@ -60,6 +68,33 @@ pub struct ClaimedDelivery {
 /// Why a claimed delivery could not be read back as its domain record.
 #[derive(Debug, Error)]
 pub enum ClaimedDeliveryError {
+    /// The stored context-space key violates its positive identity invariant.
+    #[error("notification delivery {delivery} carries invalid context-space key {value}")]
+    InvalidContextSpaceKey {
+        /// Delivery the unreadable value was read from.
+        delivery: i64,
+        /// Invalid stored key.
+        value: i64,
+        /// Key validation failure.
+        #[source]
+        source: ContextSpaceKeyError,
+    },
+    /// The context-space role is not one this broker understands.
+    #[error("notification delivery {delivery} carries unknown context-space kind `{value}`")]
+    UnknownContextSpaceKind {
+        /// Delivery the unreadable value was read from.
+        delivery: i64,
+        /// Unknown stored role.
+        value: String,
+    },
+    /// Snapshot-owned context state has no valid Snapshot URI.
+    #[error("notification delivery {delivery} carries invalid Snapshot target")]
+    InvalidSnapshotTarget {
+        /// Delivery the unreadable value was read from.
+        delivery: i64,
+        /// Target validation detail.
+        detail: String,
+    },
     /// The subscription identifier is not a URI permitted by clause 4.6.2.
     #[error("notification delivery {delivery} references invalid subscription URI `{value}`")]
     InvalidSubscriptionId {
@@ -133,6 +168,12 @@ pub enum ClaimedDeliveryError {
 pub(crate) struct RawClaimedDeliveryRow {
     /// Database-generated delivery identifier.
     id: i64,
+    /// Durable context-space identity of the event.
+    context_space_key: i64,
+    /// Text form of the context-space role enum.
+    context_space_kind: String,
+    /// Snapshot URI for Snapshot-owned context spaces.
+    snapshot_id: Option<String>,
     /// Raw subscription identifier decoded by the row mapper.
     subscription_id: String,
     /// Delivery attempts already made.
@@ -172,6 +213,43 @@ impl TryFrom<RawClaimedDeliveryRow> for ClaimedDelivery {
 
     fn try_from(row: RawClaimedDeliveryRow) -> Result<ClaimedDelivery, ClaimedDeliveryError> {
         let delivery = row.id;
+        let context_space_key = ContextSpaceKey::try_from(row.context_space_key).map_err(|source| ClaimedDeliveryError::InvalidContextSpaceKey {
+            delivery,
+            value: row.context_space_key,
+            source,
+        })?;
+        let context_space_kind = match row.context_space_kind.as_str() {
+            "live" => ContextSpaceKind::Live,
+            "snapshot" => ContextSpaceKind::Snapshot,
+            _ => {
+                return Err(ClaimedDeliveryError::UnknownContextSpaceKind {
+                    delivery,
+                    value: row.context_space_kind,
+                });
+            }
+        };
+        let space = ContextSpace::new(context_space_key, context_space_kind);
+        let target = match context_space_kind {
+            ContextSpaceKind::Live => ContextTarget::live(space).map_err(|error| ClaimedDeliveryError::InvalidSnapshotTarget {
+                delivery,
+                detail: error.to_string(),
+            })?,
+            ContextSpaceKind::Snapshot => {
+                let raw = row.snapshot_id.ok_or_else(|| ClaimedDeliveryError::InvalidSnapshotTarget {
+                    delivery,
+                    detail: "Snapshot context has no owning Snapshot URI".to_owned(),
+                })?;
+                let snapshot_id = raw.parse().map_err(|error: UriParseError| ClaimedDeliveryError::InvalidSnapshotTarget {
+                    delivery,
+                    detail: error.to_string(),
+                })?;
+                let snapshot = SnapshotTarget::new(space, snapshot_id).map_err(|error: SnapshotTargetError| ClaimedDeliveryError::InvalidSnapshotTarget {
+                    delivery,
+                    detail: error.to_string(),
+                })?;
+                ContextTarget::Snapshot(snapshot)
+            }
+        };
         let subscription_id = row.subscription_id.parse().map_err(|source| ClaimedDeliveryError::InvalidSubscriptionId {
             delivery,
             value: row.subscription_id,
@@ -204,6 +282,7 @@ impl TryFrom<RawClaimedDeliveryRow> for ClaimedDelivery {
             })
             .transpose()?;
         Ok(ClaimedDelivery {
+            target,
             id: delivery,
             subscription_id,
             attempt_count: row.attempt_count,
@@ -259,6 +338,9 @@ mod tests {
     fn row() -> RawClaimedDeliveryRow {
         RawClaimedDeliveryRow {
             id: 7,
+            context_space_key: 1,
+            context_space_kind: "live".to_owned(),
+            snapshot_id: None,
             subscription_id: "urn:ngsi-ld:Subscription:1".to_owned(),
             attempt_count: 2,
             next_attempt_at: Utc::now(),

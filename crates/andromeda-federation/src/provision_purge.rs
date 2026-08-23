@@ -16,6 +16,7 @@ use crate::{
     registration_selection::information_matches_entity,
     request::TriggeringRequest,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::registration::{ContextSourceRegistration, ForwardingMode};
@@ -89,7 +90,10 @@ fn reported_ids(csr: &ContextSourceRegistration, local_ids: &[Uri]) -> Vec<Uri> 
 
 impl FederationService {
     /// Forward a purge to every matching registration.
-    pub async fn forward_purge(&self, request: ForwardPurgeRequest<'_>) -> Result<Vec<ForwardedPurgeResult>, FederationError> {
+    pub async fn forward_purge(&self, target: &ContextTarget, request: ForwardPurgeRequest<'_>) -> Result<Vec<ForwardedPurgeResult>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(Vec::new());
+        }
         if self.is_loop_detected(request.triggering.via) {
             debug!("Loop detected in Via header chain, skipping purge forwarding");
             return Ok(Vec::new());

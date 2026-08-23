@@ -7,7 +7,7 @@ use crate::{
     entity_type,
     state::{EntityRouteState, EntityStateResolver},
 };
-use andromeda_http_extraction::snapshot_write_guard::reject_snapshot_scoped_writes;
+use andromeda_http_extraction::scoped_response::echo_scope_headers;
 use axum::{
     Router,
     middleware::from_fn,
@@ -38,10 +38,7 @@ impl EntityRoutes {
             .route("/{id}/attrs", patch(entity::update_attributes::update_attrs))
             .route("/{id}/attrs/{attr_id}", patch(entity::partial_update_attribute::partial_update_attr))
             .route("/{id}/attrs/{attr_id}", delete(entity::delete_attribute::delete_attr))
-            .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr))
-            // Clause 5.5.15: reads are served from the Snapshot; writes into
-            // one are not supported, so they are refused before any handler.
-            .layer(from_fn(reject_snapshot_scoped_writes));
+            .route("/{id}/attrs/{attr_id}", put(entity::replace_attribute::replace_attr));
 
         // The batch query is consumption over POST, so it is added after the
         // guard layer and stays outside it.
@@ -51,7 +48,6 @@ impl EntityRoutes {
             .route("/update", post(entity_operations::update::batch_update))
             .route("/merge", post(entity_operations::merge::batch_merge))
             .route("/delete", post(entity_operations::delete::batch_delete))
-            .layer(from_fn(reject_snapshot_scoped_writes))
             .route("/query", post(entity_operations::query::query));
 
         let type_routes = Router::new().route("/", get(entity_type::query)).route("/{type_}", get(entity_type::get));
@@ -62,6 +58,7 @@ impl EntityRoutes {
             .nest("/entityOperations", entity_operation_routes)
             .nest("/types", type_routes)
             .nest("/attributes", attribute_routes)
+            .layer(from_fn(echo_scope_headers))
             .with_state(state);
         EntityRoutes { router }
     }

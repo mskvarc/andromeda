@@ -13,7 +13,6 @@ pub mod error;
 mod join;
 mod request_projection;
 pub mod routes;
-pub mod snapshot_scope;
 pub mod state;
 
 #[cfg(test)]

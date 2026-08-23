@@ -6,6 +6,7 @@ use crate::{
     scope_history_entry::ScopeHistoryEntry,
     stored_instance_columns::{generated_instance_uuid, verbatim_instance_id},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_codes::scope_value_kind::ScopeValueKind;
 use andromeda_postgresql_query::ltree::scope_to_ltree;
 use andromeda_postgresql_schema::temporal::{ScopeHistory, TemporalEntities};
@@ -76,7 +77,12 @@ impl TemporalRepository {
     /// Returns [`TemporalStoreError::Validation`] when a row's position within
     /// its write exceeds the stored column's width, and
     /// [`TemporalStoreError::Database`] when a statement fails.
-    pub async fn insert_scope_history_batch_in_tx(&self, tx: &mut Transaction<'_, Postgres>, entries: &[ScopeHistoryEntry]) -> Result<(), TemporalStoreError> {
+    pub async fn insert_scope_history_batch_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
+        entries: &[ScopeHistoryEntry],
+    ) -> Result<(), TemporalStoreError> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -86,6 +92,7 @@ impl TemporalRepository {
             .bind(&binds.entity_ids)
             .bind(&binds.generated_instance_uuids)
             .bind(&binds.verbatim_instance_ids)
+            .bind(target.key().as_i64())
             .execute(&mut **tx)
             .await?;
         let insert_sql = scope_history_insert_sql()?;
@@ -102,6 +109,7 @@ impl TemporalRepository {
             .bind(&binds.generated_instance_uuids)
             .bind(&binds.verbatim_instance_ids)
             .bind(&binds.scope_paths)
+            .bind(target.key().as_i64())
             .execute(&mut **tx)
             .await?;
         Ok(())
@@ -200,6 +208,8 @@ fn scope_history_dedup_sql() -> String {
             Te,
             Expr::col((Te, TemporalEntities::Id)).equals((D, Staged::EntityId)),
         )
+        .and_where(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(external_placeholder(4)))
+        .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::ContextSpaceKey)).eq(external_placeholder(4)))
         .and_where(Expr::col((ScopeHistory::Table, ScopeHistory::TemporalEntityKey)).equals((Te, TemporalEntities::EntityKey)))
         .and_where(
             SimpleExpr::from(Expr::col((ScopeHistory::Table, ScopeHistory::GeneratedInstanceUuid)))
@@ -244,6 +254,7 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
     let mut select = Query::select();
     select
         .expr(Expr::col((D, Staged::RecordedAt)))
+        .expr(external_placeholder(13))
         .expr(Expr::col((Te, TemporalEntities::EntityKey)))
         .expr(Expr::col((D, Staged::WriteId)))
         .expr(Expr::col((D, Staged::WriteOrdinal)))
@@ -261,12 +272,14 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
             TemporalEntities::Table,
             Te,
             Expr::col((Te, TemporalEntities::Id)).equals((D, Staged::EntityId)),
-        );
+        )
+        .and_where(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(external_placeholder(13)));
     let select = select;
 
     let mut insert = Query::insert();
     insert.into_table(ScopeHistory::Table).columns([
         ScopeHistory::RecordedAt,
+        ScopeHistory::ContextSpaceKey,
         ScopeHistory::TemporalEntityKey,
         ScopeHistory::WriteId,
         ScopeHistory::WriteOrdinal,
@@ -283,9 +296,14 @@ fn scope_history_insert_sql() -> Result<String, TemporalStoreError> {
         .select_from(select)
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
-            OnConflict::columns([ScopeHistory::RecordedAt, ScopeHistory::WriteId, ScopeHistory::WriteOrdinal])
-                .do_nothing()
-                .to_owned(),
+            OnConflict::columns([
+                ScopeHistory::RecordedAt,
+                ScopeHistory::ContextSpaceKey,
+                ScopeHistory::WriteId,
+                ScopeHistory::WriteOrdinal,
+            ])
+            .do_nothing()
+            .to_owned(),
         );
 
     let sql = insert.to_string(PostgresQueryBuilder);

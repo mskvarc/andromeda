@@ -1,6 +1,5 @@
 //! Focused classification helpers for every non-entity policy consumed by entity routes.
 
-use crate::snapshot_scope::EntitySnapshotError;
 use andromeda_entity::error::EntityError;
 use andromeda_entity_map::error::EntityMapError;
 use andromeda_federation::error::FederationError;
@@ -55,15 +54,6 @@ impl EntityHttpClassify for FederationError {
             | FederationError::Registration(_)
             | FederationError::Representation(_)
             | FederationError::Internal { .. } => classify_forwarding_error(self),
-        }
-    }
-}
-
-impl EntityHttpClassify for EntitySnapshotError {
-    fn classify_for_entity_http(&self) -> ClassifiedReport {
-        match self {
-            EntitySnapshotError::NotFound { detail } => ClassifiedReport::public(NgsiLdErrorType::ResourceNotFound, detail),
-            EntitySnapshotError::Internal { .. } => ClassifiedReport::internal(self),
         }
     }
 }

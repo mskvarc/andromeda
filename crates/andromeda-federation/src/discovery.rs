@@ -8,6 +8,7 @@ use crate::{
     outcome::{ForwardGetOutcome, ForwardedDiscoveryResult},
     request::ForwardDiscoveryRequest,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use futures::{StreamExt, stream};
 use tracing::warn;
@@ -15,7 +16,10 @@ use tracing::warn;
 impl FederationService {
     /// Forward a type or attribute discovery query to every active registration
     /// that advertises the operation.
-    pub async fn forward_discovery_query(&self, request: ForwardDiscoveryRequest<'_>) -> Vec<ForwardedDiscoveryResult> {
+    pub async fn forward_discovery_query(&self, target: &ContextTarget, request: ForwardDiscoveryRequest<'_>) -> Vec<ForwardedDiscoveryResult> {
+        if !target.permits_federation() {
+            return Vec::new();
+        }
         let ForwardDiscoveryRequest {
             path,
             query_string,

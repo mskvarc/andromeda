@@ -32,10 +32,14 @@ use crate::entity_operations::{
     parse_batch_entities,
     public_error,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 
 pub(crate) async fn batch_update(
-    tenant_state::ExistingTenantState(state): EntityTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: EntityTenantState,
     OriginalUri(uri): OriginalUri,
     _accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -68,6 +72,7 @@ pub(crate) async fn batch_update(
     };
     let forwarded = forward_entities(
         &state,
+        &target,
         BatchProvisionOperation::Update(overwrite),
         &entities,
         &context,
@@ -80,7 +85,10 @@ pub(crate) async fn batch_update(
     // Clause 5.6.9.4: the local phase updates what proxied registrations left.
     let remainder = local_remainder(entities, &forwarded);
     let mode = service.effective_side_effect_mode(async_preference(&prefer), remainder.len());
-    let batch = service.batch_update(&remainder, &context, overwrite, mode).await.with_entity_instance(&uri)?;
+    let batch = service
+        .batch_update(&target, &remainder, &context, overwrite, mode)
+        .await
+        .with_entity_instance(&uri)?;
     let mut result: BatchOperationResult = batch_operation_result(batch.success, batch.errors, classify_entity_error);
     result.errors.append(&mut parse_errors);
     merge_forwarded(&mut result, &forwarded);

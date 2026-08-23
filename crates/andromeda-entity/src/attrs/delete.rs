@@ -8,6 +8,7 @@ use crate::{
     notification_plan::attribute_change_groups,
 };
 use andromeda_context_commit::history_record::tombstone;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, attribute_type::AttributeType, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
@@ -24,7 +25,14 @@ impl EntityService {
     /// The deletion is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
-    pub async fn delete_attr(&self, id: &Uri, attr_name: &AttributeName, selection: DatasetSelection<'_>, context: &ContextSpec) -> Result<(), EntityError> {
+    pub async fn delete_attr(
+        &self,
+        target: &ContextTarget,
+        id: &Uri,
+        attr_name: &AttributeName,
+        selection: DatasetSelection<'_>,
+        context: &ContextSpec,
+    ) -> Result<(), EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
         let id = id.as_str();
 
@@ -36,7 +44,7 @@ impl EntityService {
         // payload. The catalogue outlives the attributes it describes, so this
         // does not have to be re-read per attempt.
         let tombstone_targets: Vec<Option<Uri>> = match selection {
-            DatasetSelection::All => match self.attribute_history.dataset_identifiers(&entity_uri, &expanded_attr_name).await {
+            DatasetSelection::All => match self.attribute_history.dataset_identifiers(target, &entity_uri, &expanded_attr_name).await {
                 Ok(dataset_identifiers) => dataset_identifiers,
                 Err(e) => {
                     tracing::warn!(error = %e, entity_id = %id, event = "tea_lookup_failed_for_deletion");
@@ -48,7 +56,7 @@ impl EntityService {
         };
 
         let MutatedEntity { events } = self
-            .commit_computed_write(&entity_uri, |previous| {
+            .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the deletion mutates its own copy of the stored payload
                 delete_attr(&mut existing, &attr_iri, selection)?;
 
@@ -66,14 +74,14 @@ impl EntityService {
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
                 let groups = attribute_change_groups(previous, &merged);
-                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let write = payload_write(&entity_uri, &merged, history, plan.matches);
                 Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(event));
+        events.into_iter().for_each(|event| self.emit_change(target, event));
 
         Ok(())
     }

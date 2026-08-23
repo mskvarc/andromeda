@@ -10,6 +10,7 @@ use crate::{
     notification_plan::attribute_change_groups,
 };
 use andromeda_context_commit::{change_event::ChangeEvent, history_record::mutation_history};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::entity::update_entity_attrs};
@@ -27,7 +28,7 @@ impl EntityService {
     /// The update is computed from a payload read outside the writing
     /// transaction, so the write states the `modifiedAt` it assumed and is
     /// recomputed against a fresh read if a concurrent writer got in first.
-    pub async fn update_attrs(&self, id: &Uri, mut fragment: Value, context: &ContextSpec) -> Result<Vec<AttributeName>, EntityError> {
+    pub async fn update_attrs(&self, target: &ContextTarget, id: &Uri, mut fragment: Value, context: &ContextSpec) -> Result<Vec<AttributeName>, EntityError> {
         let entity_uri = id.clone(); // clone: notification and computed write own the identifier
 
         normalize_entity_attributes(&mut fragment);
@@ -35,7 +36,7 @@ impl EntityService {
         validate_attribute_envelopes(&expanded)?;
         validate_geo_property_geometries(&expanded)?;
         let (events, not_updated): (Vec<ChangeEvent>, Vec<AttributeName>) = self
-            .commit_computed_write(&entity_uri, |previous| {
+            .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 let not_updated = update_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded))?;
 
@@ -46,7 +47,7 @@ impl EntityService {
                 // together from one partition, so the two channels always agree
                 // on the per-attribute triggers (clause 5.2.12).
                 let groups = attribute_change_groups(previous, &merged);
-                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let history = mutation_history(&expanded, previous, &merged);
                 let write = payload_write(&entity_uri, &merged, history, plan.matches);
@@ -55,7 +56,7 @@ impl EntityService {
             .await?;
 
         for event in events {
-            self.emit_change(event);
+            self.emit_change(target, event);
         }
 
         Ok(not_updated)

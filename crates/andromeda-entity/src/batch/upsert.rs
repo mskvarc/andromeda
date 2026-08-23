@@ -22,6 +22,7 @@ use crate::{
     side_effect::BatchSideEffectMode,
 };
 use andromeda_context_commit::{precondition::Precondition, write_retry::WRITE_ATTEMPTS};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -56,6 +57,7 @@ impl EntityService {
 
     pub(super) async fn batch_upsert_replace_chunk(
         &self,
+        target: &ContextTarget,
         entities: &[&Entity],
         context: &ContextSpec,
         errors: &mut Vec<(Uri, EntityError)>,
@@ -74,18 +76,18 @@ impl EntityService {
         }
 
         let chunk_ids: Vec<Uri> = prepared.iter().map(|entity| entity.id.clone()).collect(); // clone: the guards outlive the prepared entities
-        let _id_guards = self.acquire_id_locks(&chunk_ids).await;
+        let _id_guards = self.acquire_id_locks(target, &chunk_ids).await;
 
-        let snapshots = self.reader.get_snapshot_batch(&chunk_ids).await?;
+        let snapshots = self.reader.get_snapshot_batch(target, &chunk_ids).await?;
         let mut payloads: HashMap<Uri, Arc<Value>> = HashMap::with_capacity(prepared.len());
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
             let write = match snapshots.get(&entity.id) {
                 Some(snapshot) => {
                     let payload = Arc::new(entity.expanded);
-                    self.replacement_write(entity.id, &payload, &snapshot.payload, snapshot.modified_at, entity.changed_attributes)
+                    self.replacement_write(target, entity.id, &payload, &snapshot.payload, snapshot.modified_at, entity.changed_attributes)
                 }
-                None => self.chunk_insert(entity, Precondition::MustNotExist),
+                None => self.chunk_insert(target, entity, Precondition::MustNotExist),
             };
             // clone: an `Arc` handle kept for a possible retry, which must not
             // re-expand the request payload.
@@ -95,7 +97,7 @@ impl EntityService {
 
         let mut success = Vec::new();
         let mut created = Vec::new();
-        let mut outcome = self.commit_chunk(writes, mode).await?;
+        let mut outcome = self.commit_chunk(target, writes, mode).await?;
 
         for attempt in 1..=WRITE_ATTEMPTS {
             success.extend(take(&mut outcome.success));
@@ -114,7 +116,7 @@ impl EntityService {
             self.wait_before_retry(attempt).await;
 
             let retry_ids: Vec<Uri> = retry.into_iter().map(|(id, _error)| id).collect();
-            let snapshots = self.reader.get_snapshot_batch(&retry_ids).await?;
+            let snapshots = self.reader.get_snapshot_batch(target, &retry_ids).await?;
             let mut retry_writes = Vec::with_capacity(retry_ids.len());
             for id in retry_ids {
                 let Some(payload) = payloads.get(&id) else {
@@ -124,12 +126,12 @@ impl EntityService {
                 // clone: `Arc` ref-count bumps; the payload is reused for every
                 // attempt this entity needs.
                 let write = match snapshots.get(&id) {
-                    Some(snapshot) => self.replacement_write(id, payload, &snapshot.payload, snapshot.modified_at, changed),
-                    None => self.chunk_insert_payload(id, Arc::clone(payload), changed, Precondition::MustNotExist),
+                    Some(snapshot) => self.replacement_write(target, id, payload, &snapshot.payload, snapshot.modified_at, changed),
+                    None => self.chunk_insert_payload(target, id, Arc::clone(payload), changed, Precondition::MustNotExist),
                 };
                 retry_writes.push(write);
             }
-            outcome = self.commit_chunk(retry_writes, mode).await?;
+            outcome = self.commit_chunk(target, retry_writes, mode).await?;
         }
 
         Ok((BatchResult { success, errors: Vec::new() }, created))
@@ -137,6 +139,7 @@ impl EntityService {
 
     pub(super) async fn batch_upsert_update_chunk(
         &self,
+        target: &ContextTarget,
         entities: &[&Entity],
         context: &ContextSpec,
         errors: &mut Vec<(Uri, EntityError)>,
@@ -158,8 +161,8 @@ impl EntityService {
         // Hold the per-id locks across the read-modify-write window: concurrent
         // upsert-update calls for the same id must not race the snapshot read,
         // the merge, and the write.
-        let _id_guards = self.acquire_id_locks(&prepared_ids).await;
-        let existing_map = self.reader.get_batch(&prepared_ids).await?;
+        let _id_guards = self.acquire_id_locks(target, &prepared_ids).await;
+        let existing_map = self.reader.get_batch(target, &prepared_ids).await?;
 
         let mut writes = Vec::with_capacity(prepared.len());
         for entity in prepared {
@@ -168,7 +171,7 @@ impl EntityService {
                 // created by someone else, and this request has nothing to add
                 // to it. Reported as neither a success nor a failure, which is
                 // what this path has always done.
-                writes.push(self.chunk_insert(entity, Precondition::None));
+                writes.push(self.chunk_insert(target, entity, Precondition::None));
                 continue;
             };
 
@@ -186,6 +189,7 @@ impl EntityService {
             let groups = attribute_change_groups(existing, &merged);
 
             writes.push(self.chunk_update(
+                target,
                 id,
                 existing,
                 Arc::new(merged),
@@ -196,7 +200,7 @@ impl EntityService {
             ));
         }
 
-        let outcome = self.commit_chunk(writes, mode).await?.settled();
+        let outcome = self.commit_chunk(target, writes, mode).await?.settled();
         errors.extend(outcome.errors);
 
         Ok((
@@ -217,6 +221,7 @@ impl EntityService {
     /// created, updated, or deleted attribute instance.
     fn replacement_write(
         &self,
+        target: &ContextTarget,
         id: Uri,
         payload: &Arc<Value>,
         previous: &Value,
@@ -226,6 +231,7 @@ impl EntityService {
         let groups = attribute_change_groups(previous, payload);
         // clone: `Arc` ref-count bumps; the same payload is stored and observed.
         self.chunk_update(
+            target,
             id,
             previous,
             Arc::clone(payload),

@@ -9,6 +9,7 @@
 
 use crate::processor::payload::context::strip_to_structural_keys;
 use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::port::reader::EntityReader;
 use andromeda_ngsi_ld_lexicon::rfc3339::whole_seconds;
 use andromeda_ngsi_ld_model::notification::NotificationTrigger;
@@ -20,34 +21,34 @@ use tracing::{debug, error};
 
 /// The expanded entity a notification of `event` is built from, or `None`
 /// when there is nothing left to notify about.
-pub(super) async fn entity_data_for(reader: &dyn EntityReader, event: &ChangeEvent) -> Option<Value> {
+pub(super) async fn entity_data_for(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
     match event.trigger_reason {
         NotificationTrigger::EntityCreated
         | NotificationTrigger::EntityUpdated
         | NotificationTrigger::AttributeCreated
-        | NotificationTrigger::AttributeUpdated => current_entity(reader, event).await,
-        NotificationTrigger::AttributeDeleted => attribute_deletion_entity(reader, event).await,
+        | NotificationTrigger::AttributeUpdated => current_entity(reader, target, event).await,
+        NotificationTrigger::AttributeDeleted => attribute_deletion_entity(reader, target, event).await,
         NotificationTrigger::EntityDeleted => Some(entity_deletion_entity(event)),
     }
 }
 
 /// The entity as the write left it: the payload the event carries, or the
 /// stored entity when the event carries none.
-async fn current_entity(reader: &dyn EntityReader, event: &ChangeEvent) -> Option<Value> {
+async fn current_entity(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
     match event.current_payload.as_deref() {
         Some(payload) => Some(payload.clone()), // clone: the notification owns its document while the event stays shared
-        None => read_entity(reader, event).await,
+        None => read_entity(reader, target, event).await,
     }
 }
 
 /// What remains of the entity after an attribute deletion: the payload or
 /// snapshot the event carries, the stored entity, or -- when the entity is
 /// gone too -- the snapshot's structural members stamped with `deletedAt`.
-async fn attribute_deletion_entity(reader: &dyn EntityReader, event: &ChangeEvent) -> Option<Value> {
+async fn attribute_deletion_entity(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
     if let Some(payload) = event.current_payload.as_deref().or(event.entity_snapshot.as_deref()) {
         return Some(payload.clone()); // clone: the notification owns its document while the event stays shared
     }
-    if let Some(entity) = read_entity(reader, event).await {
+    if let Some(entity) = read_entity(reader, target, event).await {
         return Some(entity);
     }
     let snapshot = event.entity_snapshot.as_ref()?;
@@ -72,8 +73,8 @@ fn entity_deletion_entity(event: &ChangeEvent) -> Value {
 
 /// Read the entity the event names from the store, reporting a read failure
 /// and answering `None` for an entity that no longer exists.
-async fn read_entity(reader: &dyn EntityReader, event: &ChangeEvent) -> Option<Value> {
-    match reader.get(&event.entity_id).await {
+async fn read_entity(reader: &dyn EntityReader, target: &ContextTarget, event: &ChangeEvent) -> Option<Value> {
+    match reader.get(target, &event.entity_id).await {
         Ok(Some(data)) => Some(data),
         Ok(None) => {
             debug!("Entity {} no longer exists, skipping notification", event.entity_id);

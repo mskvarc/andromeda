@@ -11,6 +11,7 @@ use crate::{
     null_content::reject_null_content,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{entity_member::extract_types, mutation::attribute::replace_attr};
@@ -26,6 +27,7 @@ impl EntityService {
     /// recomputed against a fresh read if a concurrent writer got in first.
     pub async fn replace_attr(
         &self,
+        target: &ContextTarget,
         id: &Uri,
         attr_name: &AttributeName,
         dataset_id: Option<&Uri>,
@@ -51,7 +53,7 @@ impl EntityService {
         validate_geo_property_geometries(&expanded)?;
 
         let MutatedEntity { events } = self
-            .commit_computed_write(&entity_uri, |previous| {
+            .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the replacement mutates its own copy of the stored payload
                 replace_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
@@ -59,14 +61,14 @@ impl EntityService {
                 let types = extract_types(&merged);
 
                 let groups = attribute_change_groups(previous, &merged);
-                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches); // clone: Arc ref-count bump
                 Ok((write, MutatedEntity { events: plan.events }))
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(event));
+        events.into_iter().for_each(|event| self.emit_change(target, event));
 
         Ok(())
     }

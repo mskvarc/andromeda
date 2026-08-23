@@ -6,7 +6,7 @@ use andromeda_ngsi_ld_problem_details::{
     problem_detail::{ProblemClassification, ProblemDetail},
 };
 use axum::http::Uri;
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 /// A classified, client-safe failure without request-boundary state.
 ///
@@ -17,6 +17,8 @@ pub struct ClassifiedReport {
     classification: ProblemClassification,
     /// Client-safe detail.
     detail: String,
+    /// Optional retry delay selected by a recoverable binding policy.
+    retry_after: Option<Duration>,
 }
 
 impl ClassifiedReport {
@@ -25,6 +27,7 @@ impl ClassifiedReport {
         ClassifiedReport {
             classification: ProblemClassification::Category(error_type),
             detail: detail.into(),
+            retry_after: None,
         }
     }
 
@@ -33,6 +36,7 @@ impl ClassifiedReport {
         ClassifiedReport {
             classification,
             detail: detail.into(),
+            retry_after: None,
         }
     }
 
@@ -42,6 +46,7 @@ impl ClassifiedReport {
         ClassifiedReport {
             classification: ProblemClassification::Category(NgsiLdErrorType::InternalError),
             detail: "Internal error".to_string(),
+            retry_after: None,
         }
     }
 
@@ -60,9 +65,19 @@ impl ClassifiedReport {
         &self.detail
     }
 
+    /// Attach a bounded retry delay to a recoverable response.
+    pub const fn with_retry_after(mut self, retry_after: Duration) -> ClassifiedReport {
+        self.retry_after = Some(retry_after);
+        self
+    }
+
     /// Attach the inbound request URI and create the local Axum response error.
     pub fn with_instance(self, instance: Uri) -> ProblemResponse {
-        ProblemResponse::new(ProblemDetail::from_classification(self.classification, self.detail).with_instance(instance))
+        let response = ProblemResponse::new(ProblemDetail::from_classification(self.classification, self.detail).with_instance(instance));
+        match self.retry_after {
+            Some(retry_after) => response.with_retry_after(retry_after),
+            None => response,
+        }
     }
 }
 

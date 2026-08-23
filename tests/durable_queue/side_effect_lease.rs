@@ -7,7 +7,10 @@
 //! reaches a coherent dead state, and a dead row is reaped once its retention
 //! has passed while a live row is not.
 
-use crate::{queue_database::queue_database, queue_workers::side_effect_worker};
+use crate::{
+    queue_database::{live_target, queue_database},
+    queue_workers::side_effect_worker,
+};
 use andromeda_context_commit::{
     lease_acknowledgement::LeaseAcknowledgement,
     side_effect_job_id::SideEffectJobId,
@@ -39,7 +42,7 @@ async fn enqueue(pool: &PgPool) -> WriteId {
         change_events: Vec::new(),
     };
     let mut transaction = pool.begin().await.expect("enqueue transaction");
-    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
+    PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(pool).await, &record, WriteOrdinal::at(0), &payload)
         .await
         .expect("enqueue the job");
     transaction.commit().await.expect("commit the enqueue");
@@ -110,7 +113,7 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
     };
     for _ in 0..2 {
         let mut transaction = pool.begin().await.expect("enqueue transaction");
-        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &record, WriteOrdinal::at(0), &payload)
+        PendingSideEffectsRepository::enqueue_in_tx(&mut transaction, &live_target(&pool).await, &record, WriteOrdinal::at(0), &payload)
             .await
             .expect("enqueue under the same write identity");
         transaction.commit().await.expect("commit the enqueue");
@@ -129,7 +132,9 @@ async fn durable_queue_a_replayed_commit_enqueues_no_second_side_effect_job() {
 #[serial(durable_queue)]
 async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_coherent_dead_state() {
     let pool = queue_database().await;
-    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5)")
+    let target = live_target(&pool).await;
+    sqlx::query("INSERT INTO pending_side_effects (context_space_key, id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5, $6)")
+        .bind(target.key().as_i64())
         .bind(SideEffectJobId::mint().as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(Utc::now())
@@ -171,7 +176,9 @@ async fn durable_queue_a_side_effect_payload_that_cannot_be_decoded_reaches_a_co
 #[serial(durable_queue)]
 async fn durable_queue_the_dead_letter_reap_removes_only_dead_jobs_older_than_the_cutoff() {
     let pool = queue_database().await;
-    sqlx::query("INSERT INTO pending_side_effects (id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5)")
+    let target = live_target(&pool).await;
+    sqlx::query("INSERT INTO pending_side_effects (context_space_key, id, write_id, recorded_at, consequence_base, payload) VALUES ($1, $2, $3, $4, $5, $6)")
+        .bind(target.key().as_i64())
         .bind(SideEffectJobId::mint().as_uuid())
         .bind(WriteId::mint().as_uuid())
         .bind(Utc::now())

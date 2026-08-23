@@ -14,6 +14,7 @@ use crate::{
     alias::{Ah, An, S, Te},
     axis::axis_column,
 };
+use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_ngsi_ld_lexicon::{temporal_format::TemporalFormat, time_prop::TimeProp, uri::Uri};
 use andromeda_ngsi_ld_query::{
     dataset::DatasetFilter,
@@ -34,8 +35,8 @@ use sea_query::{Alias, Asterisk, Condition, Expr, ExprTrait, JoinType, Order, Qu
 /// The entity id is bound here rather than by the caller, so the statement owns
 /// its whole placeholder sequence and no two functions have to agree on where
 /// it starts.
-pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
-    let condition = stage2_conditions(entity_id, compiled);
+pub fn build_temporal_history_query(context_space_key: ContextSpaceKey, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> SelectStatement {
+    let condition = stage2_conditions(context_space_key, entity_id, compiled);
     match compiled.representation.format {
         TemporalFormat::AggregatedValues => build_aggregation_query(compiled, condition),
         TemporalFormat::Normalized | TemporalFormat::TemporalValues => build_history_query(compiled, condition),
@@ -49,8 +50,12 @@ pub fn build_temporal_history_query(entity_id: &Uri, compiled: &CompiledTemporal
 /// holds it. `deletedAt` exists only on a row that records a deletion, so asking
 /// for that axis asks for those rows and no others; the deletion is recognised
 /// by the axis itself rather than by a sentinel value.
-fn stage2_conditions(entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
-    let mut condition = Condition::all().add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()));
+fn stage2_conditions(context_space_key: ContextSpaceKey, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Condition {
+    let mut condition = Condition::all()
+        .add(Expr::col((Te, TemporalEntities::ContextSpaceKey)).eq(context_space_key.as_i64()))
+        .add(Expr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(context_space_key.as_i64()))
+        .add(Expr::col((Ah, AttributeHistory::ContextSpaceKey)).eq(context_space_key.as_i64()))
+        .add(Expr::col((Te, TemporalEntities::Id)).eq(entity_id.to_string()));
 
     if compiled.window.timeproperty == TimeProp::Deleted {
         condition = condition.add(Expr::col((Ah, AttributeHistory::DeletedAt)).is_not_null());
@@ -243,7 +248,8 @@ mod tests {
     /// The stage-2 statement rendered as SQL with its values inlined, which is
     /// what the shape assertions read.
     fn sql_of(compiled: &CompiledTemporalQuery) -> String {
-        build_temporal_history_query(&vehicle_id(), compiled).to_string(PostgresQueryBuilder)
+        let context_space_key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        build_temporal_history_query(context_space_key, &vehicle_id(), compiled).to_string(PostgresQueryBuilder)
     }
 
     #[test]

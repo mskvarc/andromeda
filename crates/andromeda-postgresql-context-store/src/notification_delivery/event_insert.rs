@@ -5,6 +5,7 @@ use crate::{
     notification_delivery::{rows::NewNotificationEvent, trigger_code::stored_trigger},
 };
 use andromeda_context_commit::write_record::WriteRecord;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::{
     notification::{NotificationDeliveries, NotificationEvents},
@@ -51,6 +52,7 @@ use uuid::Uuid;
 /// statement fails.
 pub async fn insert_events_in_tx(
     tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
     record: &WriteRecord,
     events: &[NewNotificationEvent<'_>],
 ) -> Result<(), ContextStoreError> {
@@ -58,7 +60,7 @@ pub async fn insert_events_in_tx(
         return Ok(());
     }
 
-    let statement = insert_events_statement(record.recorded_at(), record.write_id().as_uuid(), events)?;
+    let statement = insert_events_statement(target, record.recorded_at(), record.write_id().as_uuid(), events)?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     // The conflict clause suppresses a replayed event, so a replay reads back
     // only the events this transaction actually inserted; every one of them is
@@ -69,7 +71,7 @@ pub async fn insert_events_in_tx(
     if event_ids.is_empty() {
         return Ok(());
     }
-    let statement = insert_deliveries_statement(event_ids, subscription_keys, record.recorded_at())?;
+    let statement = insert_deliveries_statement(target, event_ids, subscription_keys, record.recorded_at())?;
     let (sql, values) = statement.build_sqlx(PostgresQueryBuilder);
     let (alias, columns) = pair_source();
     let sql = apply_column_alias(sql, &alias, &columns);
@@ -106,9 +108,15 @@ fn matches_ordinal(event: &NewNotificationEvent<'_>, ordinal: i32) -> bool {
 /// no delivery for it either. The conflict target is the columns
 /// `uq_notification_events_write_identity` is declared on, which is the unique
 /// index PostgreSQL matches the conflict against.
-fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &[NewNotificationEvent<'_>]) -> Result<InsertStatement, ContextStoreError> {
+fn insert_events_statement(
+    target: &ContextTarget,
+    recorded_at: DateTime<Utc>,
+    write_id: Uuid,
+    events: &[NewNotificationEvent<'_>],
+) -> Result<InsertStatement, ContextStoreError> {
     let mut statement = Query::insert();
     statement.into_table(NotificationEvents::Table).columns([
+        NotificationEvents::ContextSpaceKey,
         NotificationEvents::CreatedAt,
         NotificationEvents::WriteId,
         NotificationEvents::EventOrdinal,
@@ -127,6 +135,7 @@ fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &
         let changed_attribute_name_ids: Vec<i32> = event.changed_attribute_name_ids.iter().map(|id| id.get()).collect();
         statement
             .values([
+                target.key().as_i64().into(),
                 recorded_at.into(),
                 Expr::val(write_id),
                 event_ordinal.into(),
@@ -144,9 +153,13 @@ fn insert_events_statement(recorded_at: DateTime<Utc>, write_id: Uuid, events: &
     }
     statement
         .on_conflict(
-            OnConflict::columns([NotificationEvents::WriteId, NotificationEvents::EventOrdinal])
-                .do_nothing()
-                .to_owned(),
+            OnConflict::columns([
+                NotificationEvents::ContextSpaceKey,
+                NotificationEvents::WriteId,
+                NotificationEvents::EventOrdinal,
+            ])
+            .do_nothing()
+            .to_owned(),
         )
         .returning(Query::returning().columns([NotificationEvents::Id, NotificationEvents::EventOrdinal]));
     Ok(statement.to_owned())
@@ -181,10 +194,16 @@ fn pair_source() -> (Alias, [UnnestColumn; 2]) {
 /// event it leaves behind is later reaped as an orphan. Every delivery starts
 /// due at the write's own ingestion instant so the queue's ordering reflects
 /// the order changes were accepted in.
-fn insert_deliveries_statement(event_ids: Vec<i64>, subscription_keys: Vec<i64>, next_attempt_at: DateTime<Utc>) -> Result<InsertStatement, ContextStoreError> {
+fn insert_deliveries_statement(
+    target: &ContextTarget,
+    event_ids: Vec<i64>,
+    subscription_keys: Vec<i64>,
+    next_attempt_at: DateTime<Utc>,
+) -> Result<InsertStatement, ContextStoreError> {
     let (pairs, columns) = pair_source();
     let subscription = Alias::new("s");
     let source = Query::select()
+        .expr(Expr::val(target.key().as_i64()))
         .column((pairs.clone(), NotificationDeliveries::EventId))
         .column((subscription.clone(), Subscriptions::SubscriptionKey))
         .expr(Expr::val(next_attempt_at))
@@ -196,13 +215,16 @@ fn insert_deliveries_statement(event_ids: Vec<i64>, subscription_keys: Vec<i64>,
             JoinType::InnerJoin,
             Subscriptions::Table,
             subscription.clone(),
-            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((pairs, NotificationDeliveries::SubscriptionKey)),
+            Expr::col((subscription.clone(), Subscriptions::SubscriptionKey))
+                .equals((pairs, NotificationDeliveries::SubscriptionKey))
+                .and(Expr::col((subscription, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64())),
         )
         .to_owned();
     let mut statement = Query::insert();
     statement
         .into_table(NotificationDeliveries::Table)
         .columns([
+            NotificationDeliveries::ContextSpaceKey,
             NotificationDeliveries::EventId,
             NotificationDeliveries::SubscriptionKey,
             NotificationDeliveries::NextAttemptAt,
@@ -219,6 +241,11 @@ mod tests {
         rows::NewNotificationEvent,
     };
     use andromeda_context_commit::{subscription_key::SubscriptionKey, write_ordinal::WriteOrdinal};
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_model::notification::NotificationTrigger;
     use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
@@ -227,6 +254,11 @@ mod tests {
     use sea_query::PostgresQueryBuilder;
     use serde_json::json;
     use uuid::Uuid;
+
+    fn target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
 
     fn entity() -> Uri {
         "urn:ngsi-ld:Vehicle:1".parse().expect("a valid entity URI")
@@ -254,7 +286,7 @@ mod tests {
         let entity = entity();
         let snapshot = json!({ "id": "urn:ngsi-ld:Vehicle:1" });
         let events = [event(&entity, 3, &[1], &snapshot)];
-        let sql = insert_events_statement(Utc::now(), Uuid::nil(), &events)
+        let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
         assert!(sql.contains(r#"ON CONFLICT ("write_id", "event_ordinal") DO NOTHING"#), "{sql}");
@@ -266,7 +298,7 @@ mod tests {
         let entity = entity();
         let snapshot = json!({ "id": "urn:ngsi-ld:Vehicle:1" });
         let events = [event(&entity, 3, &[1], &snapshot)];
-        let sql = insert_events_statement(Utc::now(), Uuid::nil(), &events)
+        let sql = insert_events_statement(&target(), Utc::now(), Uuid::nil(), &events)
             .expect("a representable event")
             .to_string(PostgresQueryBuilder);
         // AttributeUpdated is trigger number 5; the changed keys 7 and 9 are the
@@ -280,12 +312,12 @@ mod tests {
         let entity = entity();
         let snapshot = json!({});
         let event = event(&entity, u32::MAX, &[1], &snapshot);
-        assert!(insert_events_statement(Utc::now(), Uuid::nil(), &[event]).is_err());
+        assert!(insert_events_statement(&target(), Utc::now(), Uuid::nil(), &[event]).is_err());
     }
 
     #[test]
     fn every_delivery_of_every_written_event_is_inserted_from_one_pair_of_arrays() {
-        let sql = insert_deliveries_statement(vec![42, 42, 43], vec![1, 2, 1], Utc::now())
+        let sql = insert_deliveries_statement(&target(), vec![42, 42, 43], vec![1, 2, 1], Utc::now())
             .expect("a valid insert")
             .to_string(PostgresQueryBuilder);
         let (alias, columns) = pair_source();

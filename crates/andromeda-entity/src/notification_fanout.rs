@@ -7,6 +7,7 @@
 
 use crate::{EntityService, NotificationWriteConfig};
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::notification::{ChangeOrigin, NotificationTrigger};
 use andromeda_subscription::{matching::matches_entity_filters, spatial_narrowing::narrow_by_spatial_index};
@@ -20,6 +21,7 @@ impl EntityService {
     /// Returns an empty vector when notification recording is not configured.
     pub(crate) fn build_subscription_matches(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         entity_types: &[EntityTypeName],
         trigger: NotificationTrigger,
@@ -27,12 +29,22 @@ impl EntityService {
         entity_snapshot: Option<&Value>,
         previous_snapshot: Option<&Value>,
     ) -> Vec<SubscriptionMatch> {
-        self.build_subscription_matches_for_instance(entity_id, entity_types, trigger, changed_attrs, None, entity_snapshot, previous_snapshot)
+        self.build_subscription_matches_for_instance(
+            target,
+            entity_id,
+            entity_types,
+            trigger,
+            changed_attrs,
+            None,
+            entity_snapshot,
+            previous_snapshot,
+        )
     }
 
     /// Build durable matches for one precise attribute-instance change.
     pub(crate) fn build_subscription_matches_for_instance(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         entity_types: &[EntityTypeName],
         trigger: NotificationTrigger,
@@ -55,7 +67,7 @@ impl EntityService {
             .changed_dataset_id(changed_dataset_id.cloned())
             .build();
 
-        let outcome = subscription_cache.find_matching(&event);
+        let outcome = subscription_cache.find_matching(target, &event);
         debug!(
             entity = %entity_id,
             trigger = %trigger,
@@ -74,7 +86,7 @@ impl EntityService {
             entity_snapshot
         };
         let matching: Vec<_> = if let Some(data) = filter_snapshot {
-            narrow_by_spatial_index(subscription_cache, outcome.matched, data, entity_types)
+            narrow_by_spatial_index(subscription_cache, target, outcome.matched, data, entity_types)
                 .into_iter()
                 .filter(|sub| matches_entity_filters(sub, data))
                 .collect()

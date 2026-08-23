@@ -16,6 +16,7 @@ use crate::{
         ENTITY_ID,
         attribute_name,
         entity_uri,
+        live_target,
         recording_service,
         single_recorded_write,
         subscription_key,
@@ -63,7 +64,12 @@ fn assert_match(write: &AtomicWrite, trigger: NotificationTrigger, changed: &str
 async fn batch_create_records_an_entity_created_match_inline() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_create(&[building_entity("office")], &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_create(
+            &live_target(),
+            &[building_entity("office")],
+            &ContextSpec::core_only(),
+            BatchSideEffectMode::Inline,
+        )
         .await
         .expect("the batch create lands");
 
@@ -85,7 +91,12 @@ async fn batch_create_records_an_entity_created_match_inline() {
 async fn batch_create_records_the_match_and_defers_the_event_when_enqueued() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_create(&[building_entity("office")], &ContextSpec::core_only(), BatchSideEffectMode::Enqueue)
+        .batch_create(
+            &live_target(),
+            &[building_entity("office")],
+            &ContextSpec::core_only(),
+            BatchSideEffectMode::Enqueue,
+        )
         .await
         .expect("the batch create lands");
 
@@ -111,6 +122,7 @@ async fn batch_update_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
         .batch_update(
+            &live_target(),
             &[building_entity("retail")],
             &ContextSpec::core_only(),
             OverwritePolicy::Overwrite,
@@ -129,7 +141,12 @@ async fn batch_update_records_an_attribute_updated_match() {
 async fn batch_merge_records_an_attribute_updated_match() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_merge(&[building_entity("retail")], &ContextSpec::core_only(), BatchSideEffectMode::Inline)
+        .batch_merge(
+            &live_target(),
+            &[building_entity("retail")],
+            &ContextSpec::core_only(),
+            BatchSideEffectMode::Inline,
+        )
         .await
         .expect("the batch merge lands");
 
@@ -142,6 +159,7 @@ async fn batch_upsert_replace_of_an_existing_entity_records_an_attribute_updated
     let (service, recorded) = recording_service().await;
     service
         .batch_upsert(
+            &live_target(),
             &[building_entity("retail")],
             &ContextSpec::core_only(),
             UpsertPolicy::Replace,
@@ -159,6 +177,7 @@ async fn batch_upsert_update_of_an_existing_entity_records_an_attribute_updated_
     let (service, recorded) = recording_service().await;
     service
         .batch_upsert(
+            &live_target(),
             &[building_entity("retail")],
             &ContextSpec::core_only(),
             UpsertPolicy::Update,
@@ -179,6 +198,7 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
     let (service, recorded) = recording_service().await;
     service
         .batch_upsert(
+            &live_target(),
             &[building_entity("retail")],
             &ContextSpec::core_only(),
             UpsertPolicy::Update,
@@ -201,7 +221,7 @@ async fn batch_upsert_update_replaces_the_whole_instance_dropping_a_subattribute
 async fn batch_delete_records_attribute_deleted_and_entity_deleted_matches() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_delete(&[entity_uri()], BatchSideEffectMode::Inline)
+        .batch_delete(&live_target(), &[entity_uri()], BatchSideEffectMode::Inline)
         .await
         .expect("the batch delete completes");
 
@@ -220,7 +240,7 @@ async fn batch_delete_records_attribute_deleted_and_entity_deleted_matches() {
 async fn batch_delete_records_matches_and_defers_events_when_enqueued() {
     let (service, recorded) = recording_service().await;
     service
-        .batch_delete(&[entity_uri()], BatchSideEffectMode::Enqueue)
+        .batch_delete(&live_target(), &[entity_uri()], BatchSideEffectMode::Enqueue)
         .await
         .expect("the batch delete completes");
 

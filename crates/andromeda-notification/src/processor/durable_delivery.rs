@@ -43,7 +43,7 @@ impl NotificationDeliveryTransport for NotificationProcessor {
                 .origin(ChangeOrigin::Local)
                 .current_payload((!is_deletion).then(|| snapshot.map(Arc::new)).flatten())
                 .build();
-            let outcome = self.apply_entity_change_for(event, Some(&entry.subscription_id)).await;
+            let outcome = self.apply_entity_change_for(entry.target.clone(), event, Some(&entry.subscription_id)).await;
             if outcome.delivered > 0 {
                 Ok(DeliveryDisposition::Delivered)
             } else if outcome.retryable_failures > 0 {

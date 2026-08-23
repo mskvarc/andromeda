@@ -1,6 +1,7 @@
 //! Synchronization boundary between deferred appends and immediate mutations.
 
 use crate::error::TemporalError;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use async_trait::async_trait;
 
@@ -9,5 +10,5 @@ use async_trait::async_trait;
 pub trait TemporalMutationBarrier: Send + Sync {
     /// Deliver pending append intents for the entity before an immediate update or delete.
     #[must_use = "temporal mutation synchronization must be awaited"]
-    async fn synchronize(&self, entity_id: &Uri) -> Result<(), TemporalError>;
+    async fn synchronize(&self, target: &ContextTarget, entity_id: &Uri) -> Result<(), TemporalError>;
 }

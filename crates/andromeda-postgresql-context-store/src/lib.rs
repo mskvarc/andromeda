@@ -12,6 +12,8 @@
 pub mod component_report;
 /// PostgreSQL connection and pool configuration.
 pub mod config;
+/// Resolution of persisted live and Snapshot context branches.
+pub mod context_space;
 /// Persistence layer for context source registrations.
 pub mod csource_registration;
 /// Repository for NGSI-LD context source subscriptions.
@@ -61,6 +63,7 @@ andromeda_architecture_checks::dependency_boundary! {
     allow_workspace_dependencies: [
         "andromeda-component-report",
         "andromeda-context-commit",
+        "andromeda-context-space",
         "andromeda-context-registry",
         "andromeda-entity",
         "andromeda-entity-map",

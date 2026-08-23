@@ -21,6 +21,7 @@ use andromeda_context_commit::{
     write_outcome::WriteOutcome,
     write_record::WriteRecord,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_context_store::entity::{copy::create_batch_via_copy_in_tx, repo::EntityRepository, written_entity::WrittenEntity};
@@ -84,7 +85,7 @@ impl PostgresAtomicCommitter {
 
     /// Apply every current-state mutation and preserve submission-order
     /// outcomes.
-    async fn apply_entities(&self, tx: &mut Transaction<'_, Postgres>, writes: &[AtomicWrite]) -> Result<EntityMutations, CommitError> {
+    async fn apply_entities(&self, tx: &mut Transaction<'_, Postgres>, target: &ContextTarget, writes: &[AtomicWrite]) -> Result<EntityMutations, CommitError> {
         let EntityGroups {
             inserts,
             updates,
@@ -98,10 +99,10 @@ impl PostgresAtomicCommitter {
         }
         // Minted before the fused statements run: both bind the key arrays.
         let names = resolve_write_names(tx, writes, self.entity_type_names.as_ref(), self.attribute_names.as_ref()).await?;
-        self.apply_inserts(tx, &inserts, &names, &mut outcomes, &mut keys).await?;
-        self.apply_updates(tx, &updates, &names, &mut outcomes, &mut keys).await?;
-        self.apply_deletes(tx, &deletes, &mut outcomes).await?;
-        resolve_untouched_keys(tx, writes, &untouched, &mut keys).await?;
+        self.apply_inserts(tx, target, &inserts, &names, &mut outcomes, &mut keys).await?;
+        self.apply_updates(tx, target, &updates, &names, &mut outcomes, &mut keys).await?;
+        self.apply_deletes(tx, target, &deletes, &mut outcomes).await?;
+        resolve_untouched_keys(tx, target, writes, &untouched, &mut keys).await?;
         let outcomes = outcomes
             .into_iter()
             .enumerate()
@@ -118,6 +119,7 @@ impl PostgresAtomicCommitter {
     async fn apply_inserts(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         inserts: &[IndexedWrite<'_>],
         names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
@@ -128,8 +130,8 @@ impl PostgresAtomicCommitter {
         }
         let columns = columns_for(inserts, names)?;
         let inserted = match self.entity_insert_mode {
-            EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, &columns).await,
-            EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, &columns).await,
+            EntityInsertMode::Unnest => EntityRepository::create_batch_in_tx(tx, target, &columns).await,
+            EntityInsertMode::CopyStaging => create_batch_via_copy_in_tx(tx, target, &columns).await,
         }
         .map_err(context_store)?;
         record_keys(keys, inserted);
@@ -143,6 +145,7 @@ impl PostgresAtomicCommitter {
     async fn apply_updates(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         updates: &[IndexedWrite<'_>],
         names: &ResolvedWriteNames,
         outcomes: &mut [Option<WriteOutcome>],
@@ -153,7 +156,9 @@ impl PostgresAtomicCommitter {
         }
         let columns = columns_for(updates, names)?;
         let expected = expectations(updates);
-        let saved = EntityRepository::save_batch_in_tx(tx, &columns, &expected).await.map_err(context_store)?;
+        let saved = EntityRepository::save_batch_in_tx(tx, target, &columns, &expected)
+            .await
+            .map_err(context_store)?;
         record_keys(keys, saved);
         for (index, write) in updates {
             outcomes[*index] = Some(update_outcome(write.precondition, returned_flag(keys, write.entity_id.as_ref())));
@@ -165,6 +170,7 @@ impl PostgresAtomicCommitter {
     async fn apply_deletes(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         deletes: &[IndexedWrite<'_>],
         outcomes: &mut [Option<WriteOutcome>],
     ) -> Result<(), CommitError> {
@@ -176,7 +182,7 @@ impl PostgresAtomicCommitter {
             .map(|(_, write)| write.entity_id.as_ref().clone()) // clone: the SQL bind list owns identifiers borrowed from writes.
             .collect();
         let expected = expectations(deletes);
-        let mut deleted: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, &ids, &expected)
+        let mut deleted: HashMap<Uri, DeletedEntity> = EntityRepository::delete_batch_in_tx(tx, target, &ids, &expected)
             .await
             .map_err(context_store)?
             .into_iter()
@@ -198,6 +204,7 @@ impl PostgresAtomicCommitter {
 /// history are resolved; a bare no-op has nothing to project.
 async fn resolve_untouched_keys(
     tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
     writes: &[AtomicWrite],
     untouched: &[usize],
     keys: &mut HashMap<Uri, EntityKey>,
@@ -211,7 +218,7 @@ async fn resolve_untouched_keys(
     if ids.is_empty() {
         return Ok(());
     }
-    let resolved = EntityRepository::keys_by_ids_in_tx(tx, &ids).await.map_err(context_store)?;
+    let resolved = EntityRepository::keys_by_ids_in_tx(tx, target, &ids).await.map_err(context_store)?;
     record_keys(keys, resolved);
     Ok(())
 }
@@ -271,7 +278,13 @@ impl PostgresAtomicCommitter {
     /// first attempt would have produced, so the replay's rows collide with the
     /// first attempt's on their row-level `ON CONFLICT ... DO NOTHING`
     /// constraints instead of duplicating them.
-    async fn commit_under(&self, record: WriteRecord, base: WriteOrdinal, writes: Vec<AtomicWrite>) -> Result<Vec<WriteOutcome>, CommitError> {
+    async fn commit_under(
+        &self,
+        target: &ContextTarget,
+        record: WriteRecord,
+        base: WriteOrdinal,
+        writes: Vec<AtomicWrite>,
+    ) -> Result<Vec<WriteOutcome>, CommitError> {
         if writes.is_empty() {
             return Ok(Vec::new());
         }
@@ -281,7 +294,7 @@ impl PostgresAtomicCommitter {
         // rolls it back when an early `?` drops it, so no entity mutation
         // can survive a failed history, projection, notification or side-effect
         // write.
-        let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, &writes).await?;
+        let EntityMutations { outcomes, keys } = self.apply_entities(&mut tx, target, &writes).await?;
         let landed: Vec<&AtomicWrite> = writes
             .iter()
             .zip(&outcomes)
@@ -293,15 +306,15 @@ impl PostgresAtomicCommitter {
         // never disagree about what the write said.
         let (intents, next) = interpret(&landed, &record, base)?;
         match &self.history_mode {
-            TemporalHistoryCommitMode::Native { recorder } => history::apply(recorder, &mut tx, &record, &intents).await?,
-            TemporalHistoryCommitMode::Deferred { .. } => deferred_history::apply(&mut tx, &intents).await?,
+            TemporalHistoryCommitMode::Native { recorder } => history::apply(recorder, &mut tx, target, &record, &intents).await?,
+            TemporalHistoryCommitMode::Deferred { .. } => deferred_history::apply(&mut tx, target, &intents).await?,
         }
         // Minted from the interpreted intents so the projection references
         // only keys this transaction holds.
         let attribute_keys = resolve_attribute_names(&mut tx, &intents, self.attribute_names.as_ref()).await?;
-        projection::apply(&mut tx, &intents, &keys, &attribute_keys).await?;
-        let next = notification_events::apply(&mut tx, &landed, &record, next, self.attribute_names.as_ref()).await?;
-        side_effects::apply(&mut tx, &landed, &record, next).await?;
+        projection::apply(&mut tx, target, &intents, &keys, &attribute_keys).await?;
+        let next = notification_events::apply(&mut tx, target, &landed, &record, next, self.attribute_names.as_ref()).await?;
+        side_effects::apply(&mut tx, target, &landed, &record, next).await?;
 
         tx.commit().await.map_err(persistence)?;
         tracing::debug!(write_id = %record.write_id(), writes = writes.len(), "atomic context write committed");
@@ -315,12 +328,14 @@ impl PostgresAtomicCommitter {
 }
 
 impl ContextCommitter for PostgresAtomicCommitter {
-    fn commit(&self, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async move { self.commit_under(WriteRecord::mint(Utc::now()), WriteOrdinal::at(0), writes).await })
+    fn commit(&self, target: &ContextTarget, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        let target = target.clone();
+        Box::pin(async move { self.commit_under(&target, WriteRecord::mint(Utc::now()), WriteOrdinal::at(0), writes).await })
     }
 
-    fn commit_replayed(&self, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
-        Box::pin(async move { self.commit_under(replay.record, replay.consequence_base, writes).await })
+    fn commit_replayed(&self, target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        let target = target.clone();
+        Box::pin(async move { self.commit_under(&target, replay.record, replay.consequence_base, writes).await })
     }
 }
 

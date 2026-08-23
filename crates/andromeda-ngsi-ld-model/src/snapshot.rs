@@ -239,51 +239,6 @@ impl Snapshot {
     }
 }
 
-/// Input for `POST /snapshots`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SnapshotInput {
-    /// Required fixed resource discriminator.
-    #[serde(rename = "type")]
-    pub type_: SnapshotType,
-    /// Client-supplied identifier; the broker generates one when absent.
-    #[serde(default)]
-    pub id: Option<Uri>,
-    /// Entity queries to materialise.
-    #[serde(default)]
-    pub snapshot_queries: Option<Vec<Query>>,
-    /// Temporal queries to materialise.
-    #[serde(default)]
-    pub snapshot_temporal_queries: Option<Vec<Query>>,
-    /// How long the snapshot should stay usable.
-    #[serde(default)]
-    pub snapshot_lifetime: Option<Iso8601Duration>,
-    /// Requested execution priority. Deserialising rejects a value outside the
-    /// `1..=10` range clause 5.2.41 allows, so an out-of-range `snapshotPriority`
-    /// in the request body is a `BadRequestData` at parse.
-    #[serde(default)]
-    pub snapshot_priority: Option<SnapshotPriority>,
-    /// Endpoint to notify on status changes.
-    #[serde(default)]
-    pub endpoint: Option<Url>,
-    /// Headers to send with the status notification.
-    #[serde(default)]
-    pub receiver_info: Option<Vec<KeyValuePair>>,
-}
-
-/// Input for `PATCH /snapshots/{id}`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SnapshotPatch {
-    /// New lifetime, when the patch changes it.
-    #[serde(default)]
-    pub snapshot_lifetime: Option<Iso8601Duration>,
-    /// New priority, when the patch changes it. Deserialising rejects a value
-    /// outside the `1..=10` range clause 5.2.41 allows.
-    #[serde(default)]
-    pub snapshot_priority: Option<SnapshotPriority>,
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{

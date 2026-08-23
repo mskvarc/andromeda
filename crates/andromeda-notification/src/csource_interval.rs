@@ -5,6 +5,7 @@
 //! clause 5.12 reading the change-driven path uses.
 
 use crate::{csource_processor::matching::notified_registration, error::NotificationError};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_ngsi_ld_lexicon::uri::{NGSI_LD_URN_NID, Uri};
 use andromeda_ngsi_ld_model::{notification::CsourceNotification, subscription::Subscription};
@@ -24,6 +25,7 @@ use uuid::Uuid;
 
 /// Bounded evaluation of due context-source interval subscriptions.
 pub struct CsourceIntervalNotificationOperation {
+    target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
     csr_repo: Arc<dyn RegistrationStore>,
     transport: Arc<TransportDispatcher>,
@@ -33,12 +35,14 @@ pub struct CsourceIntervalNotificationOperation {
 impl CsourceIntervalNotificationOperation {
     /// Construct interval evaluation over focused subscription, registration, and delivery capabilities.
     pub const fn new(
+        target: ContextTarget,
         sub_repo: Arc<dyn SubscriptionStore>,
         csr_repo: Arc<dyn RegistrationStore>,
         transport: Arc<TransportDispatcher>,
         tenant: TenantRef,
     ) -> Self {
         Self {
+            target,
             sub_repo,
             csr_repo,
             transport,
@@ -48,7 +52,7 @@ impl CsourceIntervalNotificationOperation {
 
     /// Evaluate every context-source interval subscription due at the execution boundary.
     pub async fn execute(&self) -> Result<usize, NotificationError> {
-        let due_subs = self.sub_repo.find_due_interval_subscriptions().await?;
+        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target).await?;
         let due_count = due_subs.len();
 
         for sub in due_subs {
@@ -56,7 +60,7 @@ impl CsourceIntervalNotificationOperation {
                 Ok(c) => c,
                 Err(e) => {
                     error!("CsrIntervalWorker failed to fetch CSRs for {}: {}", sub.id, e);
-                    if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                    if let Err(e) = self.sub_repo.mark_failure(&self.target, &sub.id).await {
                         debug!("Failed to mark failure for {}: {}", sub.id, e);
                     }
                     continue;
@@ -68,7 +72,7 @@ impl CsourceIntervalNotificationOperation {
             }
 
             // Claim slot only when we are about to emit a notification.
-            let claimed = match self.sub_repo.claim_notification_slot(&sub.id, None).await {
+            let claimed = match self.sub_repo.claim_notification_slot(&self.target, &sub.id, None).await {
                 Ok(c) => c,
                 Err(e) => {
                     debug!("CsrIntervalWorker failed to claim slot for {}: {}", sub.id, e);
@@ -128,11 +132,11 @@ impl CsourceIntervalNotificationOperation {
             let success = self.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
             if success {
-                if let Err(e) = self.sub_repo.mark_success(&sub.id).await {
+                if let Err(e) = self.sub_repo.mark_success(&self.target, &sub.id).await {
                     debug!("Failed to mark success for {}: {}", sub.id, e);
                 }
             } else {
-                if let Err(e) = self.sub_repo.mark_failure(&sub.id).await {
+                if let Err(e) = self.sub_repo.mark_failure(&self.target, &sub.id).await {
                     debug!("Failed to mark failure for {}: {}", sub.id, e);
                 }
             }

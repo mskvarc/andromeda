@@ -1,5 +1,6 @@
 //! Focused tenant-state resolution for Entity Map routes.
 
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_entity_map::service::EntityMapService;
 use andromeda_federation::FederationService;
@@ -26,6 +27,8 @@ pub struct EntityMapRouteServices {
     /// Forwarding to the context sources that contribute their own maps
     /// (clause 5.14.4.4).
     pub forwarding: Arc<FederationService>,
+    /// Tenant's live branch; Entity Map management does not accept Snapshot scoping.
+    pub live_target: ContextTarget,
 }
 
 impl EntityMapRouteServices {
@@ -35,12 +38,14 @@ impl EntityMapRouteServices {
         entity_query: Arc<EntityQueryService>,
         temporal: Arc<TemporalService>,
         forwarding: Arc<FederationService>,
+        live_target: ContextTarget,
     ) -> EntityMapRouteServices {
         EntityMapRouteServices {
             entity_maps,
             entity_query,
             temporal,
             forwarding,
+            live_target,
         }
     }
 }

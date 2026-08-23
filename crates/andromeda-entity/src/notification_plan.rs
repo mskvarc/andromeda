@@ -12,6 +12,7 @@
 
 use crate::EntityService;
 use andromeda_context_commit::{change_event::ChangeEvent, subscription_match::SubscriptionMatch};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
     expanded::attribute_change::{AttributeChange, classify_attribute_changes},
@@ -81,6 +82,7 @@ impl EntityService {
     /// for `showChanges`.
     pub(crate) fn plan_notifications(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         entity_types: &[EntityTypeName],
         groups: &[NotificationGroup],
@@ -92,6 +94,7 @@ impl EntityService {
         let mut events = Vec::with_capacity(groups.len());
         for group in groups {
             matches.extend(self.build_subscription_matches_for_instance(
+                target,
                 entity_id,
                 entity_types,
                 group.trigger,

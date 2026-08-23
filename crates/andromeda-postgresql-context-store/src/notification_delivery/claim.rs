@@ -6,8 +6,10 @@ use crate::{
 };
 use andromeda_notification::delivery_lease::LeaseTerm;
 use andromeda_postgresql_schema::{
+    context_space::ContextSpaces,
     name_dictionary::AttributeNames,
     notification::{NotificationDeliveries, NotificationEvents},
+    snapshot::Snapshots,
     subscriptions::Subscriptions,
 };
 use andromeda_postgresql_seaquery::{
@@ -159,6 +161,7 @@ fn delivery_claimable_at() -> SimpleExpr {
 /// when the event touched none.
 fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
     let (delivery, event, subscription) = (Alias::new("c"), Alias::new("e"), Alias::new("s"));
+    let (context_space, snapshot) = (Alias::new("cs"), Alias::new("snap"));
     let (unnest_alias, unnest_columns, position) = ordinality_alias();
     let dictionary = Alias::new("n");
 
@@ -183,6 +186,12 @@ fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
 
     Query::select()
         .column((delivery.clone(), NotificationDeliveries::Id))
+        .column((event.clone(), NotificationEvents::ContextSpaceKey))
+        .expr_as(
+            Expr::col((context_space.clone(), ContextSpaces::Kind)).cast_as(Alias::new("text")),
+            Alias::new("context_space_kind"),
+        )
+        .expr_as(Expr::col((snapshot.clone(), Snapshots::Id)), Alias::new("snapshot_id"))
         .expr_as(Expr::col((subscription.clone(), Subscriptions::Id)), Alias::new("subscription_id"))
         .column((delivery.clone(), NotificationDeliveries::AttemptCount))
         .column((delivery.clone(), NotificationDeliveries::NextAttemptAt))
@@ -201,13 +210,29 @@ fn claimed_projection_statement(claimed_ids: &[i64]) -> SelectStatement {
             JoinType::InnerJoin,
             NotificationEvents::Table,
             event.clone(),
-            Expr::col((event, NotificationEvents::Id)).equals((delivery.clone(), NotificationDeliveries::EventId)),
+            Expr::col((event.clone(), NotificationEvents::Id))
+                .equals((delivery.clone(), NotificationDeliveries::EventId))
+                .and(Expr::col((event.clone(), NotificationEvents::ContextSpaceKey)).equals((delivery.clone(), NotificationDeliveries::ContextSpaceKey))),
+        )
+        .join_as(
+            JoinType::InnerJoin,
+            ContextSpaces::Table,
+            context_space.clone(),
+            Expr::col((context_space, ContextSpaces::ContextSpaceKey)).equals((event.clone(), NotificationEvents::ContextSpaceKey)),
+        )
+        .join_as(
+            JoinType::LeftJoin,
+            Snapshots::Table,
+            snapshot.clone(),
+            Expr::col((snapshot, Snapshots::ContextSpaceKey)).equals((event.clone(), NotificationEvents::ContextSpaceKey)),
         )
         .join_as(
             JoinType::InnerJoin,
             Subscriptions::Table,
             subscription.clone(),
-            Expr::col((subscription, Subscriptions::SubscriptionKey)).equals((delivery.clone(), NotificationDeliveries::SubscriptionKey)),
+            Expr::col((subscription.clone(), Subscriptions::SubscriptionKey))
+                .equals((delivery.clone(), NotificationDeliveries::SubscriptionKey))
+                .and(Expr::col((subscription, Subscriptions::ContextSpaceKey)).equals((delivery.clone(), NotificationDeliveries::ContextSpaceKey))),
         )
         .and_where(Expr::col((delivery, NotificationDeliveries::Id)).eq(any(bigint_array(claimed_ids))))
         .to_owned()

@@ -5,6 +5,7 @@
 //! notified of which registrations; the delivery itself lives beside it.
 
 use crate::{csource_processor::matching::notified_registration, error::NotificationError};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
@@ -48,6 +49,7 @@ fn snapshot_registration(snapshot: &Value, csr_id: &Uri) -> Option<ContextSource
 
 /// Applies context-source subscription and registration events to notification policy.
 pub struct CsourceNotificationProcessor {
+    target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
     csr_repo: Arc<dyn RegistrationStore>,
     cache: CsourceSubscriptionCache,
@@ -57,8 +59,15 @@ pub struct CsourceNotificationProcessor {
 
 impl CsourceNotificationProcessor {
     /// Construct event evaluation over focused policy and delivery capabilities.
-    pub fn new(sub_repo: Arc<dyn SubscriptionStore>, csr_repo: Arc<dyn RegistrationStore>, transport: Arc<TransportDispatcher>, tenant: TenantRef) -> Self {
+    pub fn new(
+        target: ContextTarget,
+        sub_repo: Arc<dyn SubscriptionStore>,
+        csr_repo: Arc<dyn RegistrationStore>,
+        transport: Arc<TransportDispatcher>,
+        tenant: TenantRef,
+    ) -> Self {
         Self {
+            target,
             sub_repo,
             csr_repo,
             cache: CsourceSubscriptionCache::new(),
@@ -69,7 +78,7 @@ impl CsourceNotificationProcessor {
 
     /// Reload compiled context-source subscriptions after startup or an event-stream gap.
     pub async fn reload_cache(&self) -> Result<(), NotificationError> {
-        let subscriptions = self.sub_repo.list_active().await?;
+        let subscriptions = self.sub_repo.list_active(&self.target).await?;
         self.cache.clear();
         // A context-source notification is delivered as the change is applied
         // and never enqueues a delivery, so the surrogate key each stored
@@ -84,8 +93,8 @@ impl CsourceNotificationProcessor {
     /// Apply one committed context-source subscription lifecycle change.
     pub async fn apply_subscription_change(&self, change: CsourceSubscriptionChange) {
         match change {
-            CsourceSubscriptionChange::Upserted(id) => {
-                match self.sub_repo.get(&id).await {
+            CsourceSubscriptionChange::Upserted { target, id } => {
+                match self.sub_repo.get(&target, &id).await {
                     Ok(Some(stored)) => {
                         let compiled = if stored.subscription.lifecycle.status == SubscriptionStatus::Active {
                             Some(Arc::new(compile_csource_subscription(&stored.subscription)))
@@ -113,7 +122,7 @@ impl CsourceNotificationProcessor {
                     }
                 }
             }
-            CsourceSubscriptionChange::Deleted(id) => {
+            CsourceSubscriptionChange::Deleted { id, .. } => {
                 self.cache.remove(&id);
             }
         }

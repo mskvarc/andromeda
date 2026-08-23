@@ -59,6 +59,9 @@ pub enum PostgresType {
     /// `snapshot_status`, the enum a snapshot's lifecycle state carries.
     #[iden = "snapshot_status"]
     SnapshotStatus,
+    /// `context_space_kind`, the enum identifying live and Snapshot branches.
+    #[iden = "context_space_kind"]
+    ContextSpaceKind,
     /// `subscription_status`, the enum a subscription's state carries.
     #[iden = "subscription_status"]
     SubscriptionStatus,

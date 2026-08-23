@@ -43,7 +43,7 @@ use andromeda_federation::{
     request::{EntityMapInUse, ForwardRetrieveRequest, TriggeringRequest},
     temporal_last_n::truncate_to_last_n,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::{collection::NgsiLdCollectionResponse, content_range::build_content_range};
 use andromeda_ngsi_ld_request::join_traversal::RetrievingJoin;
@@ -53,7 +53,11 @@ use serde_json::json;
 use tracing::warn;
 
 pub async fn get(
-    tenant_state::ExistingTenantState(state): TenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -66,41 +70,10 @@ pub async fn get(
     let context: ContextSpec = context.into_inner();
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
     params.validate(false).with_instance(&uri)?;
-    let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
 
-    // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
-    // is present, retrieve temporal entity from the snapshot's frozen data and return early.
-    if let Some(snapshot_id) = snapshot.into_inner() {
-        state.snapshots.validate(&snapshot_id).await.with_instance(&uri)?;
-
-        let entity_data = state
-            .snapshots
-            .entity(&snapshot_id, &id)
-            .await
-            .with_instance(&uri)?
-            .ok_or_else(|| temporal_problem(&TemporalError::not_found(id.to_string()), &uri))?;
-
-        let key_values = params.is_simplified();
-
-        let data = if key_values {
-            TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Single(entity_data))
-                .render()
-                .with_instance(&uri)?
-                .into_single()
-                .with_instance(&uri)?
-        } else {
-            entity_data
-        };
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Single(data))
-            .render()
-            .with_instance(&uri)?;
-        return Ok(NgsiLdResponse::ok(rendered).with_snapshot_uri(snapshot_id).into_response());
-    }
-
-    let is_local = params.is_local();
+    let is_local = !target.permits_federation() || params.is_local();
 
     // Clause 5.7.3.4: a referenced live EntityMap fixes the registrations the
     // retrieval contacts; an expired or unknown one yields no inference, so a
@@ -124,7 +97,7 @@ pub async fn get(
     let map_created = map_use.mints();
     let mut entity_map_uri = None;
 
-    let local_result = service.get(&id, &params, &context).await;
+    let local_result = service.get(&target, &id, &params, &context).await;
 
     let (entity_value, range, warnings, linked_candidates) = if is_local {
         let result = local_result.with_instance(&uri)?;
@@ -132,19 +105,22 @@ pub async fn get(
     } else {
         let forwarded = state
             .forwarding
-            .forward_temporal_retrieve(ForwardRetrieveRequest {
-                entity_id: &id,
-                exclude_registration: None,
-                client_query: ClientQuery::Temporal(&params),
-                context: &context,
-                operation: ForwardingOperation::RetrieveTemporalEntity,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
+            .forward_temporal_retrieve(
+                &target,
+                ForwardRetrieveRequest {
+                    entity_id: &id,
+                    exclude_registration: None,
+                    client_query: ClientQuery::Temporal(&params),
+                    context: &context,
+                    operation: ForwardingOperation::RetrieveTemporalEntity,
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::from(&map_use),
                 },
-                mode_filter: CsrModeFilter::All,
-                entity_map: EntityMapInUse::from(&map_use),
-            })
+            )
             .await
             .unwrap_or_else(|error| {
                 warn!(%error, "context source forwarding failed during the temporal retrieval");
@@ -226,7 +202,7 @@ pub async fn get(
     let (payload, warnings) = match RetrievingJoin::from_mode(params.join) {
         Some(join) => {
             let mut roots = vec![entity_value];
-            let warnings = apply_temporal_join(service, join, &mut roots, &linked_candidates, &params, &context, warnings)
+            let warnings = apply_temporal_join(service, &target, join, &mut roots, &linked_candidates, &params, &context, warnings)
                 .await
                 .with_instance(&uri)?
                 .warnings;

@@ -15,6 +15,7 @@ use crate::entity::{
     expand_q_expr,
     single_source_declined,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_federation::{
     FederationService,
     config::SplitEntities,
@@ -55,6 +56,8 @@ impl ForwardedQueryResults {
 pub(crate) struct QueryForwarding<'a> {
     /// The forwarding policy.
     pub(crate) forwarding: &'a FederationService,
+    /// Live or Snapshot branch selected for the request.
+    pub(crate) target: &'a ContextTarget,
     /// The JSON-LD engine the context source filter is expanded with.
     pub(crate) engine: &'a JsonLdEngine,
     /// The request URI problem responses name.
@@ -112,16 +115,19 @@ impl QueryForwarding<'_> {
     /// One forwarding phase over the registrations `mode_filter` admits.
     async fn phase(&self, mode_filter: CsrModeFilter, csf_expr: Option<&Expr>) -> ForwardReadOutcome<ForwardedEntities> {
         self.forwarding
-            .forward_query(ForwardQueryRequest {
-                client_query: ClientQuery::EntityQuery(self.query),
-                split: self.split,
-                context: self.context,
-                operation: ForwardingOperation::QueryEntity,
-                triggering: self.triggering,
-                csf_expr,
-                mode_filter,
-                entity_map: self.entity_map,
-            })
+            .forward_query(
+                self.target,
+                ForwardQueryRequest {
+                    client_query: ClientQuery::EntityQuery(self.query),
+                    split: self.split,
+                    context: self.context,
+                    operation: ForwardingOperation::QueryEntity,
+                    triggering: self.triggering,
+                    csf_expr,
+                    mode_filter,
+                    entity_map: self.entity_map,
+                },
+            )
             .await
             .unwrap_or_else(|error| {
                 warn!(%error, "context source forwarding failed during the entity query");

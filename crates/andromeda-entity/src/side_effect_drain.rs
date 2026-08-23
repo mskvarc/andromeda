@@ -25,6 +25,7 @@ use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     commit_replay::CommitReplay,
     committer::ContextCommitter,
+    context_change_event::ContextChangeEvent,
     entity_mutation::EntityMutation,
     history_record::HistoryRecord,
     lease_acknowledgement::LeaseAcknowledgement,
@@ -151,6 +152,7 @@ impl EntitySideEffectDrain {
 
     async fn deliver(&self, job: BatchSideEffectJob, record: WriteRecord, consequence_base: WriteOrdinal) -> Result<(), EntityError> {
         let BatchSideEffectJob {
+            target,
             temporal_entities,
             change_events,
         } = job;
@@ -164,10 +166,15 @@ impl EntitySideEffectDrain {
                     .build()
             })
             .collect();
-        self.writes.commit_replayed(CommitReplay::new(record, consequence_base), writes).await?;
+        self.writes
+            .commit_replayed(&target, CommitReplay::new(record, consequence_base), writes)
+            .await?;
         if let Some(ref sink) = self.changes {
             for event in change_events {
-                sink.publish(event);
+                sink.publish(ContextChangeEvent {
+                    target: target.clone(), // clone: every queued consumer owns the immutable branch selection.
+                    event,
+                });
             }
         }
         Ok(())
@@ -190,6 +197,7 @@ mod tests {
         write_id::WriteId,
         write_outcome::WriteOutcome,
     };
+    use andromeda_context_space::context_target::ContextTarget;
     use chrono::TimeZone;
     use futures::future::BoxFuture;
     use std::{mem::take, sync::Mutex};
@@ -219,7 +227,7 @@ mod tests {
     }
 
     impl ContextCommitter for FixedCommitter {
-        fn commit(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async move {
                 Err(CommitError::Invariant {
                     detail: "the side-effect drain must replay, never mint a fresh commit".to_owned(),
@@ -227,7 +235,7 @@ mod tests {
             })
         }
 
-        fn commit_replayed(&self, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+        fn commit_replayed(&self, _target: &ContextTarget, replay: CommitReplay, writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
             Box::pin(async move {
                 self.replays
                     .lock()
@@ -384,12 +392,22 @@ mod tests {
             id: SideEffectJobId::mint(),
             attempts,
             job: BatchSideEffectJob {
+                target: live_target(),
                 temporal_entities: Vec::new(),
                 change_events: Vec::new(),
             },
             record: fixed_record(),
             consequence_base: WriteOrdinal::at(3),
         }
+    }
+
+    fn live_target() -> ContextTarget {
+        use andromeda_context_space::{
+            context_space::{ContextSpace, ContextSpaceKind},
+            context_space_key::ContextSpaceKey,
+        };
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
     }
 
     fn lease_owner() -> Result<SideEffectLeaseOwner, EntityError> {

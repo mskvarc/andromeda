@@ -1,6 +1,9 @@
 //! Direct PostgreSQL implementation of the entity side-effect queue port.
 
-use crate::pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository};
+use crate::{
+    context_space::resolve_context_target,
+    pending_side_effects::{payload::PersistedBatchSideEffectJob, repo::PendingSideEffectsRepository},
+};
 use andromeda_context_commit::{
     batch_side_effect_job::BatchSideEffectJob,
     change_event::ChangeEvent,
@@ -10,6 +13,7 @@ use andromeda_context_commit::{
     write_ordinal::WriteOrdinal,
     write_record::WriteRecord,
 };
+use andromeda_context_space::context_space_key::ContextSpaceKey;
 use andromeda_entity::{
     error::EntityError,
     side_effect_queue::{LeasedSideEffect, SideEffectLeaseOwner, SideEffectQueue},
@@ -47,7 +51,23 @@ impl SideEffectQueue for PendingSideEffectsRepository {
         let mut leased = Vec::with_capacity(rows.len());
         for row in rows {
             let id = SideEffectJobId::from_uuid(row.get("id"));
-            match leased_effect(id, &row) {
+            let raw_context_key: i64 = row.get("context_space_key");
+            let decoded = match ContextSpaceKey::try_from(raw_context_key) {
+                Ok(key) => resolve_context_target(self.pool(), key)
+                    .await
+                    .map_err(|error| EntityError::persistence(error.to_string())),
+                Err(error) => Err(EntityError::persistence(error.to_string())),
+            };
+            let target = match decoded {
+                Ok(target) => target,
+                Err(error) => {
+                    let detail = error.to_string();
+                    error!(error = %detail, job_id = %id, event = "pending_side_effect_target_unreadable");
+                    self.retire_unreadable(id, worker_id, &detail).await;
+                    continue;
+                }
+            };
+            match leased_effect(id, target, &row) {
                 Ok(effect) => leased.push(effect),
                 Err(err) => {
                     let detail = err.to_string();
@@ -138,8 +158,8 @@ const fn lease_acknowledgement(rows_affected: u64) -> LeaseAcknowledgement {
 }
 
 /// Decode one claimed row into the leased job the entity policy consumes.
-fn leased_effect(id: SideEffectJobId, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
-    let job = decode_job(row.get("payload"))?;
+fn leased_effect(id: SideEffectJobId, target: andromeda_context_space::context_target::ContextTarget, row: &PgRow) -> Result<LeasedSideEffect, EntityError> {
+    let job = decode_job(target, row.get("payload"))?;
     let write_id = WriteId::from_uuid(row.get("write_id"));
     let recorded_at: DateTime<Utc> = row.get("recorded_at");
     let record = WriteRecord::restored(write_id, recorded_at);
@@ -193,6 +213,7 @@ fn lease_batch_statement(owner: &str, batch_size: i32, lease_seconds: f64) -> Up
         .and_where(Expr::col(PendingSideEffects::Id).in_subquery(candidates))
         .returning(Query::returning().columns([
             PendingSideEffects::Id,
+            PendingSideEffects::ContextSpaceKey,
             PendingSideEffects::Attempts,
             PendingSideEffects::Payload,
             PendingSideEffects::WriteId,
@@ -266,13 +287,13 @@ fn purge_dead_statement(cutoff: DateTime<Utc>) -> DeleteStatement {
 }
 
 /// Decode one persisted queue payload into the semantic side-effect job.
-fn decode_job(payload: Value) -> Result<BatchSideEffectJob, EntityError> {
+fn decode_job(target: andromeda_context_space::context_target::ContextTarget, payload: Value) -> Result<BatchSideEffectJob, EntityError> {
     let persisted = PersistedBatchSideEffectJob::decode(payload).map_err(|error| EntityError::persistence(error.to_string()))?;
-    Ok(persisted_to_domain(persisted))
+    Ok(persisted_to_domain(target, persisted))
 }
 
 /// Move a validated persisted payload into the policy-owned job representation.
-fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffectJob {
+fn persisted_to_domain(target: andromeda_context_space::context_target::ContextTarget, persisted: PersistedBatchSideEffectJob) -> BatchSideEffectJob {
     let temporal_entities = persisted
         .temporal_entities
         .into_iter()
@@ -304,6 +325,7 @@ fn persisted_to_domain(persisted: PersistedBatchSideEffectJob) -> BatchSideEffec
         .collect();
 
     BatchSideEffectJob {
+        target,
         temporal_entities,
         change_events,
     }

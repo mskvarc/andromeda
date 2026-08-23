@@ -52,7 +52,7 @@ use andromeda_federation::{
     temporal_last_n::truncate_to_last_n,
     temporal_result::merge_temporal_query_results,
 };
-use andromeda_http_extraction::tenant_state;
+use andromeda_http_extraction::context_target;
 use andromeda_http_headers::ngsild_entity_map::NgsiLdEntityMap;
 use andromeda_http_response::content_range::build_content_range;
 use andromeda_ngsi_ld_request::{join_traversal::RetrievingJoin, query::SharedQueryParams};
@@ -61,7 +61,11 @@ use axum::http::HeaderMap;
 use tracing::warn;
 
 pub async fn query(
-    tenant_state::ExistingTenantState(state): TenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
@@ -72,62 +76,30 @@ pub async fn query(
     let service = &state.temporal;
     let context: ContextSpec = context.into_inner();
     protocol.extensions().apply_to_temporal_query(&mut params).with_instance(&uri)?;
-    let snapshot = protocol.snapshot;
     let incoming_via = protocol.incoming_via;
     let entity_map_header = protocol.entity_map;
     let key_values = params.is_simplified();
-
-    // Snapshot scoping (ETSI GS CIM 009 clause 5.5.15, 6.3.22): if NGSILD-Snapshot header
-    // is present, query temporal entities from the snapshot's frozen data and return early.
-    if let Some(snapshot_id) = snapshot.into_inner() {
-        state.snapshots.validate(&snapshot_id).await.with_instance(&uri)?;
-
-        let entity_type = params.entity_type.as_ref();
-        let entity_ids = params.id.clone();
-        let limit = params.limit.unwrap_or(100) as i64;
-        let offset = params.offset.unwrap_or(0) as i64;
-
-        let (entities, total) = state
-            .snapshots
-            .entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
-            .await
-            .with_instance(&uri)?;
-
-        let values = if key_values {
-            TemporalSimplifyRenderer::new(TemporalSimplifyPayload::Collection(entities))
-                .render()
-                .with_instance(&uri)?
-                .into_collection()
-                .with_instance(&uri)?
-        } else {
-            entities
-        };
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Collection(values))
-            .render()
-            .with_instance(&uri)?;
-        let response = NgsiLdCollectionResponse::ok(rendered)
-            .with_snapshot_uri(snapshot_id)
-            .with_total_count(total as usize);
-        return Ok(response.into_response());
-    }
 
     // Clause 5.5.14: a referenced live EntityMap fixes the entities the query
     // considers and the sources it contacts, and holds the query to the
     // creating request's filters (the temporal window excepted); an expired
     // or unknown one yields no inference, so a fresh map is created instead.
     // The fingerprint is taken before the query is narrowed below.
-    let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal(&params)).with_instance(&uri)?;
-    let map_use = state
-        .entity_maps
-        .resolve_use(
-            entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner),
-            EntityMapFlag::from_parameter(params.entity_map),
-            &fingerprint,
-            params.entity_map_lifetime.as_ref(),
-        )
-        .await
-        .with_instance(&uri)?;
+    let map_use = if target.permits_federation() {
+        let fingerprint = fingerprint_of(FingerprintedRequest::QueryTemporal(&params)).with_instance(&uri)?;
+        state
+            .entity_maps
+            .resolve_use(
+                entity_map_header.as_ref().map(NgsiLdEntityMap::as_inner),
+                EntityMapFlag::from_parameter(params.entity_map),
+                &fingerprint,
+                params.entity_map_lifetime.as_ref(),
+            )
+            .await
+            .with_instance(&uri)?
+    } else {
+        EntityMapUse::None
+    };
     if let Some(map) = map_use.reused() {
         params.id = Some(EntityMapService::scope_query_ids(map, params.id.as_deref()));
 
@@ -144,9 +116,12 @@ pub async fn query(
         }
     }
 
+    if !target.permits_federation() {
+        params.local = Some(true);
+    }
     params.validate(true).with_instance(&uri)?;
 
-    let is_local = params.is_local();
+    let is_local = !target.permits_federation() || params.is_local();
     let split = state.forwarding.split_entities(params.split_entities);
     let split_entities = !is_local && split == SplitEntities::Split;
 
@@ -170,19 +145,22 @@ pub async fn query(
         };
         let outcome = state
             .forwarding
-            .forward_temporal_query(ForwardTemporalQueryRequest {
-                client_query: &params,
-                split,
-                context: &context,
-                operation: ForwardingOperation::QueryTemporalEntity,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
+            .forward_temporal_query(
+                &target,
+                ForwardTemporalQueryRequest {
+                    client_query: &params,
+                    split,
+                    context: &context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
+                    csf_expr: csf_expr.as_ref(),
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::from(&map_use),
                 },
-                csf_expr: csf_expr.as_ref(),
-                mode_filter: CsrModeFilter::All,
-                entity_map: EntityMapInUse::from(&map_use),
-            })
+            )
             .await
             .unwrap_or_else(|error| {
                 warn!(%error, "context source forwarding failed during the temporal query");
@@ -218,7 +196,7 @@ pub async fn query(
         params.offset = Some(0);
     }
 
-    let result = service.query(&params, &context).await.with_instance(&uri)?;
+    let result = service.query(&target, &params, &context).await.with_instance(&uri)?;
     for warning in &result.warnings {
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal query warning");
     }
@@ -325,9 +303,18 @@ pub async fn query(
     // (spec 5.5.14, 5.7.4.4).
     let (forwarding_warnings, linked_ids) = match RetrievingJoin::from_mode(params.join) {
         Some(join) => {
-            let applied = apply_temporal_join(service, join, &mut entities, &linked_candidates, &params, &context, forwarding_warnings)
-                .await
-                .with_instance(&uri)?;
+            let applied = apply_temporal_join(
+                service,
+                &target,
+                join,
+                &mut entities,
+                &linked_candidates,
+                &params,
+                &context,
+                forwarding_warnings,
+            )
+            .await
+            .with_instance(&uri)?;
             (applied.warnings, applied.linked_ids)
         }
         None => (forwarding_warnings, Vec::new()),
@@ -346,7 +333,7 @@ pub async fn query(
             Some(map.id)
         }
         EntityMapUse::Mint(mut map) => {
-            let mut local_ids = service.query_ids(&params, &context).await.with_instance(&uri)?;
+            let mut local_ids = service.query_ids(&target, &params, &context).await.with_instance(&uri)?;
             // Linked entities the join resolved belong to the unitary request too (clause 5.5.14).
             local_ids.extend(linked_ids);
             local_ids.sort_unstable_by(|left, right| left.as_str().cmp(right.as_str()));

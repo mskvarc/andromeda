@@ -4,7 +4,8 @@ use crate::tenant_factory::{
     error::TenantAssemblyError,
     tasks::{EntityNotificationDelivery, retention::retention_duration},
 };
-use andromeda_context_commit::change_event::ChangeEvent;
+use andromeda_context_commit::context_change_event::ContextChangeEvent;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::dispatch::TransportDispatcher;
 use andromeda_ngsi_ld_model::notification::CsrChangeEvent;
 use andromeda_notification::{
@@ -45,7 +46,7 @@ use tokio::sync::{
 
 pub(super) fn register_notification_processor(
     supervisor: &TaskSupervisor,
-    entity_changes: broadcast::Sender<ChangeEvent>,
+    entity_changes: broadcast::Sender<ContextChangeEvent>,
     subscription_changes: broadcast::Sender<SubscriptionChange>,
     processor: Arc<NotificationProcessor>,
     delivery: EntityNotificationDelivery,
@@ -105,6 +106,7 @@ pub(super) fn register_notification_processor(
 
 pub(super) fn register_csource_notification_processor(
     supervisor: &TaskSupervisor,
+    target: ContextTarget,
     registration_changes: broadcast::Sender<CsrChangeEvent>,
     subscription_changes: broadcast::Sender<CsourceSubscriptionChange>,
     subscription_store: Arc<dyn SubscriptionStore>,
@@ -124,6 +126,7 @@ pub(super) fn register_csource_notification_processor(
         let mut registration_receiver = registration_changes.subscribe();
         let mut subscription_receiver = subscription_changes.subscribe();
         let processor = CsourceNotificationProcessor::new(
+            target.clone(), // clone: each resident restart owns the same immutable live branch target.
             Arc::clone(&subscription_store),
             Arc::clone(&registration_store),
             Arc::clone(&transport),

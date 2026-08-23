@@ -10,7 +10,7 @@ use serde_json::Value;
 /// Serialises every nullable JSON column up-front; any failure is surfaced as
 /// an [`SnapshotError::internal`] so the repository call is infallible w.r.t.
 /// encoding.
-pub fn to_insert_params(snapshot: &Snapshot) -> Result<InsertSnapshotParams<'_>, SnapshotError> {
+pub fn to_insert_params(snapshot: &Snapshot, query_context_json: Value) -> Result<InsertSnapshotParams<'_>, SnapshotError> {
     let receiver_info_json = match snapshot.receiver_info.as_ref() {
         Some(v) => Some(to_value(v, "receiver_info")?),
         None => None,
@@ -28,11 +28,13 @@ pub fn to_insert_params(snapshot: &Snapshot) -> Result<InsertSnapshotParams<'_>,
         id: &snapshot.id,
         snapshot_queries: snapshot.snapshot_queries.as_deref(),
         snapshot_temporal_queries: snapshot.snapshot_temporal_queries.as_deref(),
+        query_context_json,
         snapshot_lifetime: snapshot.snapshot_lifetime.as_ref(),
         snapshot_priority: i16::from(snapshot.snapshot_priority.as_u8()),
         endpoint: snapshot.endpoint.as_ref(),
         receiver_info_json,
         status: snapshot.status,
+        clone_source_id: None,
         queries_details_json,
         temporal_queries_details_json,
         created_at: snapshot.created_at,

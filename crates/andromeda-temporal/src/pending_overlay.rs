@@ -17,6 +17,7 @@ use crate::{
         pending_intent_reader::PendingTemporalIntentReader,
     },
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::{query_residual::ResidualFilter, residual_filter};
 use andromeda_ngsi_ld_lexicon::{
     attribute_name::AttributeName,
@@ -57,15 +58,20 @@ impl PendingTemporalHistoryOverlay {
     }
 
     /// Read all matching rows before the overlay applies lastN to the union.
-    async fn complete_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
+    async fn complete_entity_history(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalHistoryObservation>, TemporalError> {
         let mut unwindowed = compiled.clone();
         unwindowed.instances.last_n = None;
         // Snapshot anchor intents first. If delivery transitions after this read,
         // the subsequent sink read either sees the accepted rows or the retained
         // intent still supplies them. Reading in the opposite order creates a
         // gap when acceptance and acknowledgement both occur between reads.
-        let pending = self.pending.pending_for_entity(entity_id).await?;
-        let mut stored = self.stored.query_entity_history(entity_id, &unwindowed).await?.observations;
+        let pending = self.pending.pending_for_entity(target, entity_id).await?;
+        let mut stored = self.stored.query_entity_history(target, entity_id, &unwindowed).await?.observations;
         let mut seen: HashSet<TemporalObservationIdentity> = stored.iter().filter_map(|observation| observation.identity).collect();
         for sequenced in pending {
             for observation in pending_observations(&sequenced, compiled) {
@@ -105,23 +111,27 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         }
     }
 
-    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
-        if !self.pending.pending_for_entity(entity_id).await?.is_empty() {
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
+        if !self.pending.pending_for_entity(target, entity_id).await?.is_empty() {
             return Ok(true);
         }
-        self.stored.entity_exists(entity_id).await
+        self.stored.entity_exists(target, entity_id).await
     }
 
-    async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    async fn recorded_value_kinds(
+        &self,
+        target: &ContextTarget,
+        attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
         // The pending queue is indexed by entity, not by attribute, so the
         // shapes an attribute has been recorded with are read from the durable
         // history alone; an intent that has not been drained yet contributes
         // once it lands.
-        self.stored.recorded_value_kinds(attributes).await
+        self.stored.recorded_value_kinds(target, attributes).await
     }
 
-    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
-        let mut types_by_entity = self.stored.entity_types(entity_ids).await?;
+    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+        let mut types_by_entity = self.stored.entity_types(target, entity_ids).await?;
         // An entity whose first write has not been drained yet has no catalogue
         // row to read its types from, so the pending intent that will create it
         // supplies them from the payload it was prepared from.
@@ -131,7 +141,7 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
             }
             let pending_types = self
                 .pending
-                .pending_for_entity(entity_id)
+                .pending_for_entity(target, entity_id)
                 .await?
                 .iter()
                 .filter_map(|sequenced| sequenced.intent.selection_value.as_ref())
@@ -144,15 +154,15 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         Ok(types_by_entity)
     }
 
-    async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
-        let pending = self.pending.pending_intents().await?;
+    async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+        let pending = self.pending.pending_intents(target).await?;
         let mut unpaged = compiled.clone();
         unpaged.pagination = Pagination {
             limit: u32::MAX,
             offset: 0,
             count: CountPolicy::Omit,
         };
-        let stored = self.stored.query_entity_ids(&unpaged).await?;
+        let stored = self.stored.query_entity_ids(target, &unpaged).await?;
         let (stored_ids, _) = stored
             .complete(unpaged.pagination)
             .map_err(|error| TemporalError::internal(error.to_string()))?;
@@ -180,13 +190,23 @@ impl TemporalHistoryReader for PendingTemporalHistoryOverlay {
         })
     }
 
-    async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
+    async fn query_entity_history(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<TemporalHistoryOutcome, TemporalError> {
         Ok(TemporalHistoryOutcome {
-            observations: self.complete_entity_history(entity_id, compiled).await?,
+            observations: self.complete_entity_history(target, entity_id, compiled).await?,
         })
     }
 
-    async fn query_entity_aggregation(&self, _entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+    async fn query_entity_aggregation(
+        &self,
+        _target: &ContextTarget,
+        _entity_id: &Uri,
+        _compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(TemporalError::operation_not_supported(
             "aggregation requires sink-side pending-intent union support",
         ))

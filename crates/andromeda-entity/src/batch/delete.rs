@@ -19,6 +19,7 @@ use andromeda_context_commit::{
     subscription_match::SubscriptionMatch,
     write_outcome::WriteOutcome,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{
     expanded::{
@@ -44,7 +45,7 @@ impl EntityService {
     /// attributes embedded when they are known, because the deleted row is gone
     /// by delivery time and the durable path cannot re-read `createdAt`/
     /// `modifiedAt` the way a non-deletion notification does.
-    fn delete_subscription_matches(&self, id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<SubscriptionMatch> {
+    fn delete_subscription_matches(&self, target: &ContextTarget, id: &Uri, payload: &Value, sys_attrs: Option<&SysAttrsSnapshot>) -> Vec<SubscriptionMatch> {
         let entity_types = extract_types(payload);
         let attr_keys = extract_attribute_names(payload);
         let attribute_changes = classify_attribute_changes(payload, &Value::Null);
@@ -52,6 +53,7 @@ impl EntityService {
         let mut matches = Vec::new();
         for change in attribute_changes {
             matches.extend(self.build_subscription_matches_for_instance(
+                target,
                 id,
                 &entity_types,
                 NotificationTrigger::AttributeDeleted,
@@ -62,6 +64,7 @@ impl EntityService {
             ));
         }
         matches.extend(self.build_subscription_matches(
+            target,
             id,
             &entity_types,
             NotificationTrigger::EntityDeleted,
@@ -72,16 +75,16 @@ impl EntityService {
         matches
     }
 
-    pub(super) async fn batch_delete_chunk(&self, chunk: &[Uri], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, EntityError> {
-        let _id_guards = self.acquire_id_locks(chunk).await;
+    pub(super) async fn batch_delete_chunk(&self, target: &ContextTarget, chunk: &[Uri], mode: BatchSideEffectMode) -> Result<DeleteChunkOutcome, EntityError> {
+        let _id_guards = self.acquire_id_locks(target, chunk).await;
 
         // Both paths need the payloads and the system attributes up front:
         // clause 5.6.6 records one tombstone per instance the entity still held,
         // and both the durable matches (on every path) and the asynchronous
         // path's persisted notifications carry the system attributes — all
         // unreadable once the row is gone.
-        let payloads = self.reader.get_batch(chunk).await?;
-        let sys_attrs = self.reader.get_sys_attrs_batch(chunk).await?;
+        let payloads = self.reader.get_batch(target, chunk).await?;
+        let sys_attrs = self.reader.get_sys_attrs_batch(target, chunk).await?;
 
         let mut writes = Vec::with_capacity(chunk.len());
         for id in chunk {
@@ -90,11 +93,12 @@ impl EntityService {
             // only notification channel a `Prefer: respond-async` batch delete
             // has, since its deferred job carries the in-process events only.
             let matches = payload
-                .map(|payload| self.delete_subscription_matches(id, payload, sys_attrs.get(id)))
+                .map(|payload| self.delete_subscription_matches(target, id, payload, sys_attrs.get(id)))
                 .unwrap_or_default();
             let side_effects = match mode {
                 BatchSideEffectMode::Inline => None,
                 BatchSideEffectMode::Enqueue => payload.map(|payload| BatchSideEffectJob {
+                    target: target.clone(), // clone: durable replay owns the immutable branch selection.
                     temporal_entities: Vec::new(),
                     change_events: deletion_events(id, payload, sys_attrs.get(id)),
                 }),
@@ -111,7 +115,7 @@ impl EntityService {
             );
         }
 
-        let outcomes = self.writes.commit(writes).await?;
+        let outcomes = self.writes.commit(target, writes).await?;
         if outcomes.len() != chunk.len() {
             return Err(EntityError::internal(format!(
                 "delete chunk of {} entities produced {} outcomes",
@@ -144,6 +148,7 @@ impl EntityService {
         }
 
         self.apply_inline_side_effects(BatchSideEffectJob {
+            target: target.clone(), // clone: inline publication owns the target until all events are emitted.
             temporal_entities: Vec::new(),
             change_events: events,
         });

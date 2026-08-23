@@ -1,28 +1,37 @@
 //! Execution and persistence of individual snapshot queries.
 
-use crate::{
-    executor::{
-        SnapshotExecutor,
-        status::{failure_detail, success_detail},
-        translation::{entity_parameters, temporal_parameters},
-    },
-    store::SnapshotEntityInput,
+use crate::executor::{
+    SnapshotExecutor,
+    status::{failure_detail, success_detail},
+    translation::{entity_parameters, temporal_parameters},
 };
+use andromeda_context_commit::{atomic_write::AtomicWrite, entity_mutation::EntityMutation, entity_record::EntityRecord};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_entity::query::EntityQueryService;
 use andromeda_federation::{
+    entity_result::collect_warnings,
     forwarded_query::ClientQuery,
     operation::ForwardingOperation,
-    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, TriggeringRequest},
+    request::{CsrModeFilter, EntityMapInUse, ForwardQueryRequest, ForwardTemporalQueryRequest, TriggeringRequest},
+    temporal_result::merge_temporal_query_results,
 };
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_ngsi_ld_model::{query::body::Query, snapshot::ExecutionResultDetails};
 use serde_json::Value;
+use std::{collections::HashSet, sync::Arc};
 use tracing::{error, warn};
 
 impl SnapshotExecutor {
-    pub(crate) async fn run_entity_query(&self, snapshot_id: &Uri, query: Query, index: usize) -> ExecutionResultDetails {
-        let params = match entity_parameters(query) {
+    pub(crate) async fn run_entity_query(
+        &self,
+        target: &ContextTarget,
+        snapshot_id: &Uri,
+        query: Query,
+        index: usize,
+        context: &ContextSpec,
+    ) -> ExecutionResultDetails {
+        let mut params = match entity_parameters(query) {
             Ok(params) => params,
             Err(error) => return failure_detail(error.to_string()),
         };
@@ -30,101 +39,197 @@ impl SnapshotExecutor {
             return failure_detail(format!("Snapshot query translation failed validation: {error}"));
         }
 
-        let context = ContextSpec::core_only();
-        let (mut entities, _) = match self.entity_query.query(&params, &context).await {
-            Ok(result) => result,
-            Err(error) => {
-                warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
-                return failure_detail(error.to_string());
-            }
-        };
-        let forwarded_result = self
-            .forwarding
-            .forward_query(ForwardQueryRequest {
-                client_query: ClientQuery::EntityQuery(&params),
-                split: self.forwarding.split_entities(params.split_entities),
-                context: &context,
-                operation: ForwardingOperation::QueryBatch,
-                triggering: TriggeringRequest::default(),
-                csf_expr: None,
-                mode_filter: CsrModeFilter::All,
-                entity_map: EntityMapInUse::None,
-            })
-            .await;
-        let forwarded = match forwarded_result {
-            Ok(forwarded) => forwarded.results,
-            Err(error) => {
-                warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
-                Vec::new()
-            }
-        };
-        if !forwarded.is_empty() {
-            entities = EntityQueryService::merge_with_forwarded(entities, forwarded, None);
-        }
-
-        let pairs: Vec<(Uri, Value)> = entities
-            .into_iter()
-            .filter_map(|entity| match serde_json::to_value(&entity) {
-                Ok(value) => Some((entity.id, value)),
+        let mut offset = 0_u32;
+        let mut captured = HashSet::new();
+        loop {
+            params.limit = Some(self.capture_page_size);
+            params.offset = Some(offset);
+            params.count = Some(true);
+            let (mut entities, _) = match self.entity_query.query(&self.live_target, &params, context).await {
+                Ok(result) => result,
                 Err(error) => {
-                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, entity_id = %entity.id, "Failed to serialize snapshot entity");
-                    None
+                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot entity query failed");
+                    return failure_detail(error.to_string());
                 }
-            })
-            .collect();
-        self.persist_results(snapshot_id, index, &pairs, SnapshotResultKind::Entity).await
+            };
+            let local_page_len = entities.len();
+            let forwarded_result = self
+                .forwarding
+                .forward_query(
+                    &self.live_target,
+                    ForwardQueryRequest {
+                        client_query: ClientQuery::EntityQuery(&params),
+                        split: self.forwarding.split_entities(params.split_entities),
+                        context,
+                        operation: ForwardingOperation::QueryEntity,
+                        triggering: TriggeringRequest::default(),
+                        csf_expr: None,
+                        mode_filter: CsrModeFilter::All,
+                        entity_map: EntityMapInUse::None,
+                    },
+                )
+                .await;
+            let forwarded = match forwarded_result {
+                Ok(forwarded) => forwarded.results,
+                Err(error) => {
+                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot CSR forwarding failed");
+                    if local_page_len == 0 && captured.is_empty() {
+                        return failure_detail(format!("No valid entity result was available because distributed execution failed: {error}"));
+                    }
+                    Vec::new()
+                }
+            };
+            let forwarding_warnings = collect_warnings(&forwarded);
+            for warning in &forwarding_warnings {
+                warn!(snapshot_id = %snapshot_id, query_index = index, warning = %warning, "Snapshot entity query retained a distributed warning");
+            }
+            let remote_page_full = forwarded.iter().any(|result| result.entities.len() >= self.capture_page_size as usize);
+            let remote_page_len = forwarded.iter().map(|result| result.entities.len()).sum::<usize>();
+            if local_page_len == 0 && remote_page_len == 0 && captured.is_empty() && !forwarding_warnings.is_empty() {
+                return failure_detail("No valid entity result was available because every matching distributed source failed");
+            }
+            if !forwarded.is_empty() {
+                entities = EntityQueryService::merge_with_forwarded(entities, forwarded, None);
+            }
+            let mut pairs = Vec::with_capacity(entities.len());
+            for entity in entities {
+                let identifier = entity.id.clone(); // clone: the atomic write and result accounting independently own the identifier.
+                let compact = match serde_json::to_value(entity) {
+                    Ok(compact) => compact,
+                    Err(error) => return failure_detail(format!("Failed to serialize captured entity: {error}")),
+                };
+                let expanded = match self.entity_query.engine().expand(compact, context).await {
+                    Ok(expanded) => expanded,
+                    Err(error) => return failure_detail(format!("Failed to expand captured entity: {error}")),
+                };
+                pairs.push((identifier, expanded));
+            }
+            let detail = self.persist_current_results(target, snapshot_id, index, &pairs).await;
+            if detail.problem_details.is_some() {
+                return detail;
+            }
+            captured.extend(pairs.into_iter().map(|(id, _)| id));
+            if local_page_len < self.capture_page_size as usize && !remote_page_full {
+                break;
+            }
+            offset = match offset.checked_add(self.capture_page_size) {
+                Some(offset) => offset,
+                None => return failure_detail("Snapshot entity pagination offset overflowed"),
+            };
+        }
+        success_detail(captured.len())
     }
 
-    pub(crate) async fn run_temporal_query(&self, snapshot_id: &Uri, query: Query, index: usize) -> ExecutionResultDetails {
-        let params = match temporal_parameters(query) {
+    pub(crate) async fn run_temporal_query(
+        &self,
+        target: &ContextTarget,
+        snapshot_id: &Uri,
+        query: Query,
+        index: usize,
+        context: &ContextSpec,
+    ) -> ExecutionResultDetails {
+        let mut params = match temporal_parameters(query) {
             Ok(params) => params,
             Err(error) => return failure_detail(error.to_string()),
         };
-        let context = ContextSpec::core_only();
-        let result = match self.temporal.query(&params, &context).await {
-            Ok(result) => result,
-            Err(error) => {
-                warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
-                return failure_detail(error.to_string());
-            }
-        };
-        let pairs = result
-            .entities
-            .into_iter()
-            .filter_map(|value| {
-                let raw = value.get("id").and_then(Value::as_str)?;
-                match raw.parse::<Uri>() {
-                    Ok(id) => Some((id, value)),
-                    Err(error) => {
-                        warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = raw, error = %error, "Temporal snapshot result carries an invalid entity URI");
-                        None
-                    }
+        let mut offset = 0_u32;
+        let mut captured = HashSet::new();
+        loop {
+            params.limit = Some(self.capture_page_size);
+            params.offset = Some(offset);
+            params.count = Some(true);
+            let result = match self.temporal.query(&self.live_target, &params, context).await {
+                Ok(result) => result,
+                Err(error) => {
+                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal query failed");
+                    return failure_detail(error.to_string());
                 }
-            })
-            .collect::<Vec<_>>();
-        self.persist_results(snapshot_id, index, &pairs, SnapshotResultKind::Temporal).await
+            };
+            for warning in &result.warnings {
+                warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = %warning.entity_id, warning = %warning.message, "Snapshot temporal query retained usable results with a warning");
+            }
+            let local_page_len = result.entities.len();
+            let forwarded = match self
+                .forwarding
+                .forward_temporal_query(
+                    &self.live_target,
+                    ForwardTemporalQueryRequest {
+                        client_query: &params,
+                        split: self.forwarding.split_entities(params.split_entities),
+                        context,
+                        operation: ForwardingOperation::QueryTemporalEntity,
+                        triggering: TriggeringRequest::default(),
+                        csf_expr: None,
+                        mode_filter: CsrModeFilter::All,
+                        entity_map: EntityMapInUse::None,
+                    },
+                )
+                .await
+            {
+                Ok(forwarded) => forwarded.results,
+                Err(error) => {
+                    warn!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Snapshot temporal CSR forwarding failed");
+                    Vec::new()
+                }
+            };
+            let remote_page_full = forwarded.iter().any(|source| source.entities.len() >= self.capture_page_size as usize);
+            let entities = merge_temporal_query_results(result.entities, forwarded);
+            let pairs = entities
+                .into_iter()
+                .filter_map(|value| {
+                    let raw = value.get("id").and_then(Value::as_str)?;
+                    match raw.parse::<Uri>() {
+                        Ok(id) => Some((id, value)),
+                        Err(error) => {
+                            warn!(snapshot_id = %snapshot_id, query_index = index, entity_id = raw, error = %error, "Temporal snapshot result carries an invalid entity URI");
+                            None
+                        }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let detail = self.persist_temporal_results(target, snapshot_id, index, &pairs).await;
+            if detail.problem_details.is_some() {
+                return detail;
+            }
+            captured.extend(pairs.into_iter().map(|(id, _)| id));
+            if local_page_len < self.capture_page_size as usize && !remote_page_full {
+                break;
+            }
+            offset = match offset.checked_add(self.capture_page_size) {
+                Some(offset) => offset,
+                None => return failure_detail("Snapshot temporal pagination offset overflowed"),
+            };
+        }
+        success_detail(captured.len())
     }
 
-    async fn persist_results(&self, snapshot_id: &Uri, index: usize, pairs: &[(Uri, Value)], kind: SnapshotResultKind) -> ExecutionResultDetails {
-        let inputs = pairs
+    async fn persist_current_results(&self, target: &ContextTarget, snapshot_id: &Uri, index: usize, pairs: &[(Uri, Value)]) -> ExecutionResultDetails {
+        if pairs.is_empty() {
+            return success_detail(0);
+        }
+        let writes = pairs
             .iter()
-            .map(|(entity_id, data)| SnapshotEntityInput { entity_id, data })
-            .collect::<Vec<_>>();
-        let result = match kind {
-            SnapshotResultKind::Entity => self.snapshot_repo.insert_entities(snapshot_id, &inputs).await,
-            SnapshotResultKind::Temporal => self.snapshot_repo.insert_temporal_entities(snapshot_id, &inputs).await,
-        };
-        if !inputs.is_empty()
-            && let Err(error) = result
-        {
-            error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to store snapshot query results");
+            .map(|(entity_id, data)| {
+                AtomicWrite::builder()
+                    .entity_id(Arc::new(entity_id.clone())) // clone: the write owns its validated entity identity.
+                    .entity(EntityMutation::Insert(EntityRecord::from_expanded(Arc::new(data.clone())))) // clone: captured state is owned by the branch write.
+                    .build()
+            })
+            .collect();
+        if let Err(error) = self.writes.commit(target, writes).await {
+            error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize current Snapshot results");
             return failure_detail(format!("Failed to store results: {error}"));
         }
-        success_detail(inputs.len())
+        success_detail(pairs.len())
     }
-}
 
-enum SnapshotResultKind {
-    Entity,
-    Temporal,
+    async fn persist_temporal_results(&self, target: &ContextTarget, snapshot_id: &Uri, index: usize, pairs: &[(Uri, Value)]) -> ExecutionResultDetails {
+        for (_, data) in pairs {
+            if let Err(error) = self.temporal.create_or_update(target, data.clone(), &ContextSpec::core_only()).await {
+                error!(snapshot_id = %snapshot_id, query_index = index, error = %error, "Failed to materialize temporal Snapshot results");
+                return failure_detail(format!("Failed to store temporal results: {error}"));
+            }
+        }
+        success_detail(pairs.len())
+    }
 }

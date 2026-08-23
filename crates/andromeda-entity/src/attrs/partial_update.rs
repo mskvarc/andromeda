@@ -10,6 +10,7 @@ use crate::{
     notification_plan::attribute_change_groups,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
@@ -29,6 +30,7 @@ impl EntityService {
     /// recomputed against a fresh read if a concurrent writer got in first.
     pub async fn partial_update_attr(
         &self,
+        target: &ContextTarget,
         id: &Uri,
         attr_name: &AttributeName,
         dataset_id: Option<&Uri>,
@@ -51,14 +53,14 @@ impl EntityService {
         validate_geo_property_geometries(&expanded)?;
 
         let MutatedEntity { events } = self
-            .commit_computed_write(&entity_uri, |previous| {
+            .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the update mutates its own copy of the stored payload
                 partial_update_attr(&mut existing, &attr_iri, dataset_id, unwrap_expanded_ref(&expanded))?;
 
                 let merged = Arc::new(existing);
                 let types = extract_types(&merged);
                 let groups = attribute_change_groups(previous, &merged);
-                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
                 let removed = removed_attribute_instances(previous, &merged);
                 let history = if removed.is_empty() {
                     vec![HistoryRecord::Observations(Arc::clone(&expanded))]
@@ -71,7 +73,7 @@ impl EntityService {
             })
             .await?;
 
-        events.into_iter().for_each(|event| self.emit_change(event));
+        events.into_iter().for_each(|event| self.emit_change(target, event));
 
         Ok(())
     }
@@ -81,7 +83,7 @@ impl EntityService {
 mod tests {
     use crate::{
         error::EntityError,
-        notification_recording_harness::{entity_uri, recording_service},
+        notification_recording_harness::{entity_uri, live_target, recording_service},
     };
     use andromeda_jsonld::context_spec::ContextSpec;
     use andromeda_ngsi_ld_lexicon::attribute_name::AttributeName;
@@ -95,6 +97,7 @@ mod tests {
         let scope: AttributeName = "scope".parse().expect("scope is a valid attribute name");
         let error = service
             .partial_update_attr(
+                &live_target(),
                 &entity_uri(),
                 &scope,
                 None,

@@ -2,6 +2,7 @@
 
 use crate::commit_refusal::persistence;
 use andromeda_context_commit::{atomic_write::AtomicWrite, error::CommitError, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_context_store::pending_side_effects::{
     payload::{PersistedBatchSideEffectJob, PersistedChangeEvent, PersistedSysAttrs, PersistedTemporalEntity},
     repo::PendingSideEffectsRepository,
@@ -19,6 +20,7 @@ use sqlx::{Postgres, Transaction};
 /// exactly where this commit left it, rather than restarting it at zero.
 pub(crate) async fn apply(
     tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
     landed: &[&AtomicWrite],
     record: &WriteRecord,
     consequence_base: WriteOrdinal,
@@ -57,7 +59,7 @@ pub(crate) async fn apply(
     if merged.temporal_entities.is_empty() && merged.change_events.is_empty() {
         return Ok(());
     }
-    PendingSideEffectsRepository::enqueue_in_tx(tx, record, consequence_base, &merged)
+    PendingSideEffectsRepository::enqueue_in_tx(tx, target, record, consequence_base, &merged)
         .await
         .map_err(persistence)?;
     Ok(())

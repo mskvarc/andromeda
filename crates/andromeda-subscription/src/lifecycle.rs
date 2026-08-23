@@ -13,6 +13,7 @@ use crate::{
     store::{StatusUpdateFields, SubscriptionStore},
     validation,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     context_validation::{validate_context_spec, validate_jsonld_context_value},
@@ -120,10 +121,10 @@ pub trait SubscriptionVariant: Send + Sync {
     fn dataset_id_policy(&self) -> DatasetIdPolicy;
 
     /// Build an "upserted" change event.
-    fn make_upserted(&self, id: Uri) -> Self::Change;
+    fn make_upserted(&self, target: ContextTarget, id: Uri) -> Self::Change;
 
     /// Build a "deleted" change event.
-    fn make_deleted(&self, id: Uri) -> Self::Change;
+    fn make_deleted(&self, target: ContextTarget, id: Uri) -> Self::Change;
 }
 
 fn generate_id() -> Result<Uri, SubscriptionError> {
@@ -207,6 +208,7 @@ where
     /// empty slice.
     pub async fn create(
         &self,
+        target: &ContextTarget,
         mut payload: Value,
         context: &ContextSpec,
         base_url: Option<&Url>,
@@ -221,7 +223,7 @@ where
                 let provided_id = provided_id
                     .parse::<Uri>()
                     .map_err(|error| SubscriptionError::validation(format!("Subscription id must be a valid URI: {error}")))?;
-                if self.repo.exists(&provided_id).await? {
+                if self.repo.exists(target, &provided_id).await? {
                     return Err(SubscriptionError::already_exists(&provided_id));
                 }
                 provided_id
@@ -247,10 +249,10 @@ where
             },
         );
 
-        self.repo.create_subscription(&id, &fields, status).await?;
-        self.emit_change(self.variant.make_upserted(id.clone())); // clone: the caller and change event each own the identifier.
-        if self.forwarding_hook.is_some() {
-            let created = self.get(&id).await?;
+        self.repo.create_subscription(target, &id, &fields, status).await?;
+        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())); // clone: the caller and change event each own the branch and identifier.
+        if self.forwarding_hook.is_some() && target.permits_federation() {
+            let created = self.get(target, &id).await?;
             self.run_hook(&id, |hook| hook.created(&created, context, encountered_sources)).await;
         }
         Ok(id)
@@ -260,23 +262,29 @@ where
     ///
     /// The store-assigned key is dropped here: every caller of this method
     /// renders or edits the resource, and the resource is addressed by its URI.
-    pub async fn get(&self, id: &Uri) -> Result<Subscription, SubscriptionError> {
+    pub async fn get(&self, target: &ContextTarget, id: &Uri) -> Result<Subscription, SubscriptionError> {
         self.repo
-            .get(id)
+            .get(target, id)
             .await?
             .map(|stored| stored.subscription)
             .ok_or_else(|| SubscriptionError::not_found(id))
     }
 
     /// Retrieve a subscription and serialize it for an HTTP response.
-    pub async fn get_for_response(&self, id: &Uri, context: &ContextSpec) -> Result<Value, SubscriptionError> {
-        let subscription = self.get(id).await?;
+    pub async fn get_for_response(&self, target: &ContextTarget, id: &Uri, context: &ContextSpec) -> Result<Value, SubscriptionError> {
+        let subscription = self.get(target, id).await?;
         self.variant.serialize_for_response(&subscription, context).await
     }
 
     /// List subscriptions with pagination and serialize them for an HTTP response.
-    pub async fn list_for_response(&self, limit: Option<i64>, offset: Option<i64>, context: &ContextSpec) -> Result<(Vec<Value>, i64), SubscriptionError> {
-        let (subscriptions, total) = self.repo.list(limit, offset).await?;
+    pub async fn list_for_response(
+        &self,
+        target: &ContextTarget,
+        limit: Option<i64>,
+        offset: Option<i64>,
+        context: &ContextSpec,
+    ) -> Result<(Vec<Value>, i64), SubscriptionError> {
+        let (subscriptions, total) = self.repo.list(target, limit, offset).await?;
         let mut compacted = Vec::with_capacity(subscriptions.len());
         for subscription in subscriptions {
             compacted.push(self.variant.serialize_for_response(&subscription, context).await?);
@@ -285,7 +293,14 @@ where
     }
 
     /// Update an existing subscription with the given fragment payload.
-    pub async fn update(&self, id: &Uri, mut payload: Value, context: &ContextSpec, base_url: Option<&Url>) -> Result<(), SubscriptionError> {
+    pub async fn update(
+        &self,
+        target: &ContextTarget,
+        id: &Uri,
+        mut payload: Value,
+        context: &ContextSpec,
+        base_url: Option<&Url>,
+    ) -> Result<(), SubscriptionError> {
         validate_endpoint(&payload, self.endpoint_validator.as_ref())?;
 
         validation::validate_common_fields(&payload)?;
@@ -299,7 +314,7 @@ where
 
         self.variant.expand_terms(&mut payload, context, base_url).await?;
 
-        let existing = self.get(id).await?;
+        let existing = self.get(target, id).await?;
         let existing_status = existing.lifecycle.status;
         let merged = fields::merge_update_fields(&payload, existing, self.variant.dataset_id_policy())?;
         let fields = merged.to_fields();
@@ -312,36 +327,38 @@ where
             },
         );
 
-        let updated = self.repo.update_subscription(id, &fields, status).await?;
+        let updated = self.repo.update_subscription(target, id, &fields, status).await?;
         if updated == 0 {
             return Err(SubscriptionError::not_found(id));
         }
 
-        self.emit_change(self.variant.make_upserted(id.clone())); // clone: the change event owns the identifier.
-        if self.forwarding_hook.is_some() {
-            let merged = self.get(id).await?;
+        self.emit_change(self.variant.make_upserted(target.clone(), id.clone())); // clone: the change event owns the branch and identifier.
+        if self.forwarding_hook.is_some() && target.permits_federation() {
+            let merged = self.get(target, id).await?;
             self.run_hook(id, |hook| hook.updated(&merged, context)).await;
         }
         Ok(())
     }
 
     /// Delete a subscription by its identifier.
-    pub async fn delete(&self, id: &Uri) -> Result<(), SubscriptionError> {
-        let deleted = self.repo.delete(id).await?;
+    pub async fn delete(&self, target: &ContextTarget, id: &Uri) -> Result<(), SubscriptionError> {
+        let deleted = self.repo.delete(target, id).await?;
         if deleted == 0 {
             return Err(SubscriptionError::not_found(id));
         }
 
-        self.emit_change(self.variant.make_deleted(id.clone())); // clone: the change event owns the identifier.
-        self.run_hook(id, |hook| hook.deleted(id)).await;
+        self.emit_change(self.variant.make_deleted(target.clone(), id.clone())); // clone: the change event owns the branch and identifier.
+        if target.permits_federation() {
+            self.run_hook(id, |hook| hook.deleted(id)).await;
+        }
         Ok(())
     }
 
     /// Transition subscriptions due at `cutoff` and publish one variant-owned deletion change for each.
-    pub(crate) async fn expire_due(&self, cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
-        let identifiers = self.repo.expire_due(cutoff).await?;
+    pub(crate) async fn expire_due(&self, target: &ContextTarget, cutoff: DateTime<Utc>) -> Result<Vec<Uri>, SubscriptionError> {
+        let identifiers = self.repo.expire_due(target, cutoff).await?;
         for identifier in &identifiers {
-            self.emit_change(self.variant.make_deleted(identifier.clone())); // clone: the policy outcome and change sink each own the identifier.
+            self.emit_change(self.variant.make_deleted(target.clone(), identifier.clone())); // clone: the policy outcome and change sink each own the branch and identifier.
         }
         Ok(identifiers)
     }

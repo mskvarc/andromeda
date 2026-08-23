@@ -13,6 +13,7 @@ use crate::{
     repo::TemporalRepository,
     temporal_query_execution::TemporalStatement,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::temporal::TemporalAggregationRow;
 use andromeda_ngsi_ld_query::{pagination::CountPolicy, temporal::compiled::CompiledTemporalQuery};
@@ -71,23 +72,27 @@ impl TemporalHistoryReader for TemporalRepository {
         }
     }
 
-    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
-        self.temporal_entity_exists(entity_id).await.map_err(TemporalError::from)
+    async fn entity_exists(&self, target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
+        self.temporal_entity_exists(target, entity_id).await.map_err(TemporalError::from)
     }
 
-    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
-        self.temporal_entity_types(entity_ids).await.map_err(TemporalError::from)
+    async fn entity_types(&self, target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+        self.temporal_entity_types(target, entity_ids).await.map_err(TemporalError::from)
     }
 
-    async fn recorded_value_kinds(&self, attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
-        let recorded = self.recorded_value_kinds(attributes).await.map_err(TemporalError::from)?;
+    async fn recorded_value_kinds(
+        &self,
+        target: &ContextTarget,
+        attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+        let recorded = self.recorded_value_kinds(target, attributes).await.map_err(TemporalError::from)?;
         Ok(recorded
             .into_iter()
             .map(|(name, kinds)| (name, kinds.into_iter().filter_map(recorded_value_kind).collect()))
             .collect())
     }
 
-    async fn query_entity_ids(&self, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(&self, target: &ContextTarget, compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         // A temporal query orders by time rather than by distance, so it
         // contributes no ordering terms.
         let attribute_names = projected_attribute_names(&[], compiled.entities.q_expr.as_ref(), compiled.entities.geo.as_ref(), &[]);
@@ -115,7 +120,7 @@ impl TemporalHistoryReader for TemporalRepository {
         };
         let names = QueryNames { attributes, types };
 
-        let stage1 = build_stage1_entity_ids(compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
+        let stage1 = build_stage1_entity_ids(target.key(), compiled, &names).map_err(|e| TemporalStoreError::Query(e.to_string()))?;
 
         let entity_id_rows = self
             .execute_temporal_query(TemporalStatement::Stage1, stage1.select)
@@ -155,8 +160,13 @@ impl TemporalHistoryReader for TemporalRepository {
         })
     }
 
-    async fn query_entity_history(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
-        let stage2 = build_temporal_history_query(entity_id, compiled);
+    async fn query_entity_history(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<TemporalHistoryOutcome, TemporalError> {
+        let stage2 = build_temporal_history_query(target.key(), entity_id, compiled);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::History, stage2)
             .await
@@ -170,8 +180,13 @@ impl TemporalHistoryReader for TemporalRepository {
         Ok(TemporalHistoryOutcome { observations: rows })
     }
 
-    async fn query_entity_aggregation(&self, entity_id: &Uri, compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
-        let stage2 = build_temporal_history_query(entity_id, compiled);
+    async fn query_entity_aggregation(
+        &self,
+        target: &ContextTarget,
+        entity_id: &Uri,
+        compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+        let stage2 = build_temporal_history_query(target.key(), entity_id, compiled);
         let pg_rows = self
             .execute_temporal_query(TemporalStatement::Aggregation, stage2)
             .await

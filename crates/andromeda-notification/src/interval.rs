@@ -8,6 +8,7 @@ use crate::{
         representation::{compact_for_notification, render_format},
     },
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_delivery::{dispatch::TransportDispatcher, endpoint::transport::parse_endpoint_transport, request::NotificationDelivery};
 use andromeda_entity::{
     port::{discovery::EntityDiscoveryStore, reader::EntityReader},
@@ -49,6 +50,7 @@ const INTERVAL_ENTITY_PAGE: u16 = 500;
 
 /// Bounded evaluation of due entity interval subscriptions.
 pub struct IntervalNotificationOperation {
+    target: ContextTarget,
     sub_repo: Arc<dyn SubscriptionStore>,
     entity_reader: Arc<dyn EntityReader>,
     entity_discovery: Arc<dyn EntityDiscoveryStore>,
@@ -60,6 +62,7 @@ pub struct IntervalNotificationOperation {
 impl IntervalNotificationOperation {
     /// Construct interval evaluation over focused entity, subscription, and delivery capabilities.
     pub const fn new(
+        target: ContextTarget,
         sub_repo: Arc<dyn SubscriptionStore>,
         entity_reader: Arc<dyn EntityReader>,
         entity_discovery: Arc<dyn EntityDiscoveryStore>,
@@ -68,6 +71,7 @@ impl IntervalNotificationOperation {
         tenant: TenantRef,
     ) -> Self {
         Self {
+            target,
             sub_repo,
             entity_reader,
             entity_discovery,
@@ -79,7 +83,7 @@ impl IntervalNotificationOperation {
 
     /// Evaluate every interval subscription due at the execution boundary.
     pub async fn execute(&self) -> Result<usize, NotificationError> {
-        let due_subs = self.sub_repo.find_due_interval_subscriptions().await?;
+        let due_subs = self.sub_repo.find_due_interval_subscriptions(&self.target).await?;
         let due_count = due_subs.len();
 
         let this = &self;
@@ -90,7 +94,7 @@ impl IntervalNotificationOperation {
                     Ok(e) => e,
                     Err(e) => {
                         error!("IntervalWorker failed to fetch entities for {}: {}", sub.id, e);
-                        if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
+                        if let Err(e) = this.sub_repo.mark_failure(&this.target, &sub.id).await {
                             debug!("Failed to mark failure for {}: {}", sub.id, e);
                         }
                         return;
@@ -118,7 +122,7 @@ impl IntervalNotificationOperation {
                 }
 
                 // Claim slot only once we know we are actually going to send a notification.
-                let claimed = match this.sub_repo.claim_notification_slot(&sub.id, None).await {
+                let claimed = match this.sub_repo.claim_notification_slot(&this.target, &sub.id, None).await {
                     Ok(c) => c,
                     Err(e) => {
                         debug!("IntervalWorker failed to claim slot for {}: {}", sub.id, e);
@@ -178,10 +182,10 @@ impl IntervalNotificationOperation {
                 let success = this.transport.deliver(&endpoint_transport, &request).await.is_delivered();
 
                 if success {
-                    if let Err(e) = this.sub_repo.mark_success(&sub.id).await {
+                    if let Err(e) = this.sub_repo.mark_success(&this.target, &sub.id).await {
                         debug!("Failed to mark success for {}: {}", sub.id, e);
                     }
-                } else if let Err(e) = this.sub_repo.mark_failure(&sub.id).await {
+                } else if let Err(e) = this.sub_repo.mark_failure(&this.target, &sub.id).await {
                     debug!("Failed to mark failure for {}: {}", sub.id, e);
                 }
             })
@@ -240,12 +244,12 @@ impl IntervalNotificationOperation {
             let page = match entity_type {
                 Some(type_name) => self
                     .entity_discovery
-                    .get_entities_by_type(type_name, Some(limit), Some(offset))
+                    .get_entities_by_type(&self.target, type_name, Some(limit), Some(offset))
                     .await
                     .map_err(NotificationError::from)?,
                 None => self
                     .entity_discovery
-                    .get_all_entities(Some(limit), Some(offset))
+                    .get_all_entities(&self.target, Some(limit), Some(offset))
                     .await
                     .map_err(NotificationError::from)?,
             };
@@ -270,7 +274,7 @@ impl IntervalNotificationOperation {
         for mut entity in entities {
             if sub.notification.sys_attrs.is_some_and(|include| include)
                 && let Some(id) = entity_id_of(&entity)
-                && let Ok(Some(sa)) = self.entity_reader.get_sys_attrs(&id).await
+                && let Ok(Some(sa)) = self.entity_reader.get_sys_attrs(&self.target, &id).await
             {
                 inject_sys_attrs(&mut entity, sa.created_at, sa.modified_at, sa.expires_at);
             }

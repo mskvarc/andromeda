@@ -1,6 +1,7 @@
 //! Removing projection rows an entity mutation no longer stands behind.
 
 use crate::{current_attribute_values::row::ProjectedAttributeKey, error::ContextStoreError};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_codes::entity_key::EntityKey;
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
@@ -45,7 +46,11 @@ struct Staging;
 /// # Errors
 ///
 /// Returns [`ContextStoreError::Database`] when the statement fails.
-pub async fn delete_instances_in_tx(tx: &mut Transaction<'_, Postgres>, keys: &[ProjectedAttributeKey]) -> Result<(), ContextStoreError> {
+pub async fn delete_instances_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    keys: &[ProjectedAttributeKey],
+) -> Result<(), ContextStoreError> {
     if keys.is_empty() {
         return Ok(());
     }
@@ -65,6 +70,7 @@ pub async fn delete_instances_in_tx(tx: &mut Transaction<'_, Postgres>, keys: &[
         .bind(&entity_keys)
         .bind(&attribute_name_ids)
         .bind(&dataset_ids)
+        .bind(target.key().as_i64())
         .execute(&mut **tx)
         .await?;
 
@@ -133,6 +139,7 @@ fn delete_instances_sql() -> String {
         .column((Staging, CurrentAttributeValues::EntityKey))
         .from_function(call, Staging)
         .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::EntityKey)).equals((Staging, CurrentAttributeValues::EntityKey)))
+        .and_where(Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::ContextSpaceKey)).eq(Expr::cust("$4")))
         .and_where(
             Expr::col((CurrentAttributeValues::Table, CurrentAttributeValues::AttributeNameId)).equals((Staging, CurrentAttributeValues::AttributeNameId)),
         )

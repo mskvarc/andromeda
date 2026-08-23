@@ -16,6 +16,7 @@ use crate::{
     linked::candidates::{TemporalLinkedCandidate, collect_candidates},
     service::{TemporalService, has_explicit_context, normalize_temporal_payload_without_context},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{context_spec::ContextSpec, engine::options::CompactOptions};
 use andromeda_ngsi_ld_lexicon::{entity_type_name::EntityTypeName, temporal_format::TemporalFormat, uri::Uri};
 use andromeda_ngsi_ld_query::temporal::compiled::CompiledTemporalQuery;
@@ -102,13 +103,14 @@ impl TemporalService {
     /// drops one entity from it.
     pub(crate) async fn render_one_temporal_entity(
         &self,
+        target: &ContextTarget,
         entity_id: &Uri,
         entity_types: &[EntityTypeName],
         compiled: &CompiledTemporalQuery,
         context: &ContextSpec,
     ) -> Result<RenderedTemporalEntity, TemporalError> {
         if compiled.representation.format == TemporalFormat::AggregatedValues {
-            let rows = self.reader.query_entity_aggregation(entity_id, compiled).await?;
+            let rows = self.reader.query_entity_aggregation(target, entity_id, compiled).await?;
             let presence = presence_of(rows.is_empty());
             let value = self.build_aggregated_compacted(entity_id, entity_types, &rows, compiled, context).await?;
             return Ok(RenderedTemporalEntity {
@@ -125,7 +127,7 @@ impl TemporalService {
             });
         }
 
-        let rows = self.reader.query_entity_history(entity_id, compiled).await?.into_rows();
+        let rows = self.reader.query_entity_history(target, entity_id, compiled).await?.into_rows();
         let presence = presence_of(rows.is_empty());
 
         let built = TemporalEntityRenderer::new(entity_id, entity_types, &rows, compiled).render();

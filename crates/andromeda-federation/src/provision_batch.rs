@@ -20,6 +20,7 @@ use crate::{
     registration_selection::{covered_attribute_members, csr_has_matching_information, is_entity_control_member, retain_covered_attributes},
     request::TriggeringRequest,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName, uri::Uri};
 use andromeda_ngsi_ld_model::{
@@ -355,7 +356,10 @@ const fn follow_up_write(follow_up: UpsertFollowUp) -> Option<SingleWrite> {
 
 impl FederationService {
     /// Forward a batch provision operation to every matching context source.
-    pub async fn forward_batch(&self, request: ForwardBatchRequest<'_>) -> Result<Vec<BatchForwardedResult>, FederationError> {
+    pub async fn forward_batch(&self, target: &ContextTarget, request: ForwardBatchRequest<'_>) -> Result<Vec<BatchForwardedResult>, FederationError> {
+        if !target.permits_federation() {
+            return Ok(Vec::new());
+        }
         if self.is_loop_detected(request.triggering.via) {
             debug!("Loop detected in Via header chain, skipping batch provision forwarding");
             return Ok(Vec::new());

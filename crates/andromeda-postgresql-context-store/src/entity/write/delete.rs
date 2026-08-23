@@ -10,6 +10,7 @@ use crate::{
     error::ContextStoreError,
 };
 use andromeda_context_commit::deleted_entity::DeletedEntity;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::current::{E, Entities, EntityDocuments};
 use andromeda_postgresql_seaquery::unnest::apply_column_alias;
@@ -82,6 +83,8 @@ pub(super) fn entity_delete_sql() -> String {
             Doc,
             Expr::col((Doc, EntityDocuments::EntityKey)).equals((E, Entities::EntityKey)),
         )
+        .and_where(Expr::col((E, Entities::ContextSpaceKey)).eq(Expr::cust("$3")))
+        .and_where(Expr::col((Doc, EntityDocuments::ContextSpaceKey)).eq(Expr::cust("$3")))
         .cond_where(expectation(staged(StagedColumn::ExpectedModifiedAt), Doc))
         .lock_with_tables(LockType::Update, [E.into_iden(), Doc.into_iden()]);
 
@@ -125,6 +128,7 @@ impl EntityRepository {
     /// deletes unconditionally.
     pub async fn delete_batch_in_tx(
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         ids: &[Uri],
         expected_modified_at: &[Option<DateTime<Utc>>],
     ) -> Result<Vec<DeletedEntity>, ContextStoreError> {
@@ -144,6 +148,7 @@ impl EntityRepository {
         let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(ids)
             .bind(expected_modified_at)
+            .bind(target.key().as_i64())
             .fetch_all(&mut **tx);
         let rows = observe_statement(ENTITY_DELETE, rows).await?;
 

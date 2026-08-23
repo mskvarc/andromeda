@@ -8,15 +8,7 @@ use andromeda_federation::{
     request::{CsrModeFilter, EntityMapInUse, ForwardTemporalQueryRequest, TriggeringRequest},
     temporal_result::merge_temporal_query_results,
 };
-use andromeda_http_extraction::{
-    accept::AcceptFormatNoGeo,
-    context::ContextUrl,
-    jsonld::JsonLd,
-    prefer::PreferHeader,
-    snapshot::SnapshotHeader,
-    tenant_state,
-    via::IncomingVia,
-};
+use andromeda_http_extraction::{accept::AcceptFormatNoGeo, context::ContextUrl, context_target, jsonld::JsonLd, prefer::PreferHeader, via::IncomingVia};
 use andromeda_http_response::{
     collection::NgsiLdCollectionResponse,
     content_range::build_content_range,
@@ -35,13 +27,16 @@ use axum::{
 
 /// POST /ngsi-ld/v1/temporal/entityOperations/query -- Query temporal entities via POST body.
 pub async fn query(
-    tenant_state::ExistingTenantState(state): TemporalTenantState,
+    context_target::ExistingTargetedTenantState {
+        services: state,
+        target,
+        snapshot: _,
+    }: TemporalTenantState,
     OriginalUri(uri): OriginalUri,
     accept: AcceptFormatNoGeo,
     context: ContextUrl,
     IncomingVia(incoming_via): IncomingVia,
     headers: HeaderMap,
-    SnapshotHeader(snapshot_id): SnapshotHeader,
     JsonLd {
         value: request,
         context: body_context,
@@ -50,31 +45,15 @@ pub async fn query(
     let service = &state.temporal;
     let context = context.merge(body_context);
 
-    let params = TemporalQueryParameters::try_from(request).with_instance(&uri)?;
+    let mut params = TemporalQueryParameters::try_from(request).with_instance(&uri)?;
+    if !target.permits_federation() {
+        params.local = Some(true);
+    }
     params.validate(true).with_instance(&uri)?;
 
-    // ETSI GS CIM 009 clause 5.5.15.
-    if let Some(snapshot_id) = snapshot_id {
-        state.snapshots.validate(&snapshot_id).await.with_instance(&uri)?;
-        let entity_type = params.entity_type.as_ref();
-        let entity_ids = params.id.clone();
-        let limit = i64::from(params.limit.unwrap_or(1000));
-        let offset = i64::from(params.offset.unwrap_or(0));
-        let (entities, _total) = state
-            .snapshots
-            .entities(&snapshot_id, entity_type, entity_ids.as_deref(), limit, offset)
-            .await
-            .with_instance(&uri)?;
-        let rendered = start_rendering(accept.media_type(), &context, PreferHeader::default().rendering_preferences())
-            .with_payload(ResponsePayload::Collection(entities))
-            .render()
-            .with_instance(&uri)?;
-        return Ok(NgsiLdCollectionResponse::ok(rendered).into_response());
-    }
+    let is_local = !target.permits_federation() || params.is_local();
 
-    let is_local = params.is_local();
-
-    let result = service.query(&params, &context).await.with_instance(&uri)?;
+    let result = service.query(&target, &params, &context).await.with_instance(&uri)?;
     for warning in &result.warnings {
         tracing::debug!(entity_id = %warning.entity_id, message = %warning.message, "Temporal batch query warning");
     }
@@ -92,19 +71,22 @@ pub async fn query(
     } else {
         let forwarded = state
             .forwarding
-            .forward_temporal_query(ForwardTemporalQueryRequest {
-                client_query: &params,
-                split: state.forwarding.split_entities(params.split_entities),
-                context: &context,
-                operation: ForwardingOperation::QueryTemporalEntity,
-                triggering: TriggeringRequest {
-                    via: incoming_via.as_ref(),
-                    headers: Some(&headers),
+            .forward_temporal_query(
+                &target,
+                ForwardTemporalQueryRequest {
+                    client_query: &params,
+                    split: state.forwarding.split_entities(params.split_entities),
+                    context: &context,
+                    operation: ForwardingOperation::QueryTemporalEntity,
+                    triggering: TriggeringRequest {
+                        via: incoming_via.as_ref(),
+                        headers: Some(&headers),
+                    },
+                    csf_expr: None,
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::None,
                 },
-                csf_expr: None,
-                mode_filter: CsrModeFilter::All,
-                entity_map: EntityMapInUse::None,
-            })
+            )
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "Context source forwarding failed during the temporal batch query");
@@ -122,10 +104,19 @@ pub async fn query(
     // at all, so neither reaches the traversal.
     let forwarding_warnings = match RetrievingJoin::from_mode(params.join) {
         Some(join) => {
-            apply_temporal_join(service, join, &mut entities, &linked_candidates, &params, &context, forwarding_warnings)
-                .await
-                .with_instance(&uri)?
-                .warnings
+            apply_temporal_join(
+                service,
+                &target,
+                join,
+                &mut entities,
+                &linked_candidates,
+                &params,
+                &context,
+                forwarding_warnings,
+            )
+            .await
+            .with_instance(&uri)?
+            .warnings
         }
         None => forwarding_warnings,
     };

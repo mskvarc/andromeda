@@ -8,6 +8,7 @@
 pub mod accept;
 pub mod classification;
 pub mod context;
+pub mod context_target;
 pub mod entity_batch;
 pub mod entity_query;
 pub mod json_body;
@@ -18,6 +19,7 @@ pub mod prefer;
 pub mod profile;
 pub mod protocol;
 pub mod query;
+pub mod scoped_response;
 pub mod snapshot;
 pub mod snapshot_purge;
 pub mod snapshot_write_guard;

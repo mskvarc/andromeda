@@ -6,6 +6,7 @@
 
 use crate::{error::ContextStoreError, pending_side_effects::payload::PersistedBatchSideEffectJob};
 use andromeda_context_commit::{side_effect_job_id::SideEffectJobId, write_ordinal::WriteOrdinal, write_record::WriteRecord};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_schema::queue::PendingSideEffects;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, InsertStatement, OnConflict, PostgresQueryBuilder, Query, error::Error as SeaQueryError};
@@ -27,12 +28,20 @@ use uuid::Uuid;
 /// ordinal base the enqueueing commit used, and resume its temporal and
 /// notification consequences under them rather than under a freshly minted
 /// identity.
-fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, consequence_base: i32, payload: Value) -> Result<InsertStatement, SeaQueryError> {
+fn enqueue_statement(
+    target: &ContextTarget,
+    id: Uuid,
+    write_id: Uuid,
+    recorded_at: DateTime<Utc>,
+    consequence_base: i32,
+    payload: Value,
+) -> Result<InsertStatement, SeaQueryError> {
     let mut statement = Query::insert();
     statement
         .into_table(PendingSideEffects::Table)
         .columns([
             PendingSideEffects::Id,
+            PendingSideEffects::ContextSpaceKey,
             PendingSideEffects::WriteId,
             PendingSideEffects::RecordedAt,
             PendingSideEffects::ConsequenceBase,
@@ -40,12 +49,17 @@ fn enqueue_statement(id: Uuid, write_id: Uuid, recorded_at: DateTime<Utc>, conse
         ])
         .values([
             Expr::val(id),
+            Expr::val(target.key().as_i64()),
             Expr::val(write_id),
             recorded_at.into(),
             consequence_base.into(),
             Expr::val(payload),
         ])?
-        .on_conflict(OnConflict::column(PendingSideEffects::WriteId).do_nothing().to_owned());
+        .on_conflict(
+            OnConflict::columns([PendingSideEffects::ContextSpaceKey, PendingSideEffects::WriteId])
+                .do_nothing()
+                .to_owned(),
+        );
     Ok(statement.to_owned())
 }
 
@@ -78,6 +92,7 @@ impl PendingSideEffectsRepository {
     /// enqueueing commit's identity and ordinal counter exactly.
     pub async fn enqueue_in_tx(
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         record: &WriteRecord,
         consequence_base: WriteOrdinal,
         payload: &PersistedBatchSideEffectJob,
@@ -88,6 +103,7 @@ impl PendingSideEffectsRepository {
             .as_i32()
             .map_err(|error| ContextStoreError::Internal(format!("pending side-effect consequence base is out of range: {error}")))?;
         let statement = enqueue_statement(
+            target,
             SideEffectJobId::mint().as_uuid(),
             record.write_id().as_uuid(),
             record.recorded_at(),
@@ -104,13 +120,23 @@ impl PendingSideEffectsRepository {
 #[cfg(test)]
 mod tests {
     use crate::pending_side_effects::repo::enqueue_statement;
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use chrono::Utc;
     use sea_query::PostgresQueryBuilder;
     use serde_json::json;
     use uuid::Uuid;
 
+    fn target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
+    }
+
     fn rendered() -> String {
-        enqueue_statement(Uuid::nil(), Uuid::nil(), Utc::now(), 0, json!({}))
+        enqueue_statement(&target(), Uuid::nil(), Uuid::nil(), Utc::now(), 0, json!({}))
             .expect("arity")
             .to_string(PostgresQueryBuilder)
     }

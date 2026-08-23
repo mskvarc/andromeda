@@ -15,6 +15,7 @@ use crate::{
     repo::TemporalRepository,
     temporal_stream::{TemporalCatalogUpsert, TemporalStreamKey},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_postgresql_codes::{stream_key::StreamKey, temporal_entity_key::TemporalEntityKey};
 use andromeda_postgresql_query::attribute_name_id::AttributeNameId;
@@ -79,6 +80,7 @@ impl TemporalRepository {
     pub(crate) async fn resolve_stream_catalog_batch(
         &self,
         tx: &mut Transaction<'_, Postgres>,
+        target: &ContextTarget,
         upserts: &[TemporalCatalogUpsert],
         entity_keys: &HashMap<Uri, TemporalEntityKey>,
     ) -> Result<HashMap<(TemporalEntityKey, TemporalStreamKey), StreamKey>, TemporalStoreError> {
@@ -108,6 +110,7 @@ impl TemporalRepository {
             .bind(&binds.temporal_entity_keys)
             .bind(&binds.attribute_name_ids)
             .bind(&binds.dataset_ids)
+            .bind(target.key().as_i64())
             .execute(&mut **tx)
             .await?;
         let read_sql = stream_read_batch_sql();
@@ -115,6 +118,7 @@ impl TemporalRepository {
             .bind(&binds.temporal_entity_keys)
             .bind(&binds.attribute_name_ids)
             .bind(&binds.dataset_ids)
+            .bind(target.key().as_i64())
             .fetch_all(&mut **tx)
             .await?;
         let resolved = rows.iter().map(decode_stream_row).collect::<Result<HashMap<_, _>, _>>()?;
@@ -256,6 +260,7 @@ fn stream_insert_batch_sql() -> Result<String, TemporalStoreError> {
     let call = stream_staging_source(&columns);
     let mut select = Query::select();
     select
+        .expr(external_placeholder(4))
         .expr(Expr::col((D, StreamStaged::TemporalEntityKey)))
         .expr(Expr::col((D, StreamStaged::AttributeNameId)))
         .expr(Expr::col((D, StreamStaged::DatasetId)))
@@ -264,6 +269,7 @@ fn stream_insert_batch_sql() -> Result<String, TemporalStoreError> {
 
     let mut insert = Query::insert();
     insert.into_table(TemporalAttributeStreams::Table).columns([
+        TemporalAttributeStreams::ContextSpaceKey,
         TemporalAttributeStreams::TemporalEntityKey,
         TemporalAttributeStreams::AttributeNameId,
         TemporalAttributeStreams::DatasetId,
@@ -273,6 +279,7 @@ fn stream_insert_batch_sql() -> Result<String, TemporalStoreError> {
         .map_err(|error| TemporalStoreError::Validation(error.to_string()))?
         .on_conflict(
             OnConflict::columns([
+                TemporalAttributeStreams::ContextSpaceKey,
                 TemporalAttributeStreams::TemporalEntityKey,
                 TemporalAttributeStreams::AttributeNameId,
                 TemporalAttributeStreams::DatasetId,
@@ -295,6 +302,7 @@ fn stream_read_batch_sql() -> String {
     let call = stream_staging_source(&columns);
 
     let stream_match = Cond::all()
+        .add(Expr::col((S, TemporalAttributeStreams::ContextSpaceKey)).eq(external_placeholder(4)))
         .add(Expr::col((S, TemporalAttributeStreams::TemporalEntityKey)).equals((D, StreamStaged::TemporalEntityKey)))
         .add(Expr::col((S, TemporalAttributeStreams::AttributeNameId)).equals((D, StreamStaged::AttributeNameId)))
         .add(SimpleExpr::from(Expr::col((S, TemporalAttributeStreams::DatasetId))).not_distinct_from(Expr::col((D, StreamStaged::DatasetId))));

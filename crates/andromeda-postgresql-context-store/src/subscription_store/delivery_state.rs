@@ -10,6 +10,7 @@ use crate::subscription_store::{
     failure::persistence_error,
     stored_kind::{StoredKind, of_kind},
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_postgresql_schema::subscriptions::{SubscriptionDeliveryState, Subscriptions};
 use andromeda_postgresql_seaquery::{clock::now, interval::make_interval_secs, literal::text_literal, placeholder::external_placeholder};
@@ -46,25 +47,26 @@ enum OwnerStatus {
 }
 
 /// The insert of the state row that completes a freshly created subscription;
-/// binds the surrogate key the create returned as `$1`.
+/// binds the context-space key as `$1` and surrogate key as `$2`.
 pub fn state_insert_sql() -> Result<String, SubscriptionError> {
     let mut insert = Query::insert();
     insert
         .into_table(SubscriptionDeliveryState::Table)
-        .columns([SubscriptionDeliveryState::SubscriptionKey])
-        .values([external_placeholder(1)])
+        .columns([SubscriptionDeliveryState::ContextSpaceKey, SubscriptionDeliveryState::SubscriptionKey])
+        .values([external_placeholder(1), external_placeholder(2)])
         .map_err(persistence_error)?;
     Ok(insert.to_string(PostgresQueryBuilder))
 }
 
 /// The scalar subquery resolving the state row's key from the subscription's
 /// external `id`, family and, when asked, active status.
-fn owner_key(id: &Uri, kind: StoredKind, status: OwnerStatus) -> SimpleExpr {
+fn owner_key(target: &ContextTarget, id: &Uri, kind: StoredKind, status: OwnerStatus) -> SimpleExpr {
     let mut owner = Query::select();
     owner
         .column((Subscriptions::Table, Subscriptions::SubscriptionKey))
         .from(Subscriptions::Table)
         .and_where(Expr::col((Subscriptions::Table, Subscriptions::Id)).eq(id.as_str()))
+        .and_where(Expr::col((Subscriptions::Table, Subscriptions::ContextSpaceKey)).eq(target.key().as_i64()))
         .and_where(of_kind(kind));
     match status {
         OwnerStatus::ActiveOnly => {
@@ -79,13 +81,14 @@ fn owner_key(id: &Uri, kind: StoredKind, status: OwnerStatus) -> SimpleExpr {
 /// NOW()` on the state row of an active subscription, gated when a throttling
 /// ceiling is given on `last_notification IS NULL OR last_notification <=
 /// ceiling`. Zero rows affected means the slot was refused.
-pub fn claim_statement(id: &Uri, kind: StoredKind, earliest_allowed_last_notification: Option<DateTime<Utc>>) -> UpdateStatement {
+pub fn claim_statement(target: &ContextTarget, id: &Uri, kind: StoredKind, earliest_allowed_last_notification: Option<DateTime<Utc>>) -> UpdateStatement {
     let mut statement = Query::update();
     statement
         .table(SubscriptionDeliveryState::Table)
         .value(SubscriptionDeliveryState::TimesSent, Expr::col(SubscriptionDeliveryState::TimesSent).add(1))
         .value(SubscriptionDeliveryState::LastNotification, now())
-        .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(id, kind, OwnerStatus::ActiveOnly)));
+        .and_where(Expr::col(SubscriptionDeliveryState::ContextSpaceKey).eq(target.key().as_i64()))
+        .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::ActiveOnly)));
     if let Some(ceiling) = earliest_allowed_last_notification {
         statement.cond_where(
             Cond::any()
@@ -98,11 +101,12 @@ pub fn claim_statement(id: &Uri, kind: StoredKind, earliest_allowed_last_notific
 
 /// The `last_success` / `last_failure` stamp of one delivery outcome on the
 /// state row, whatever the subscription's status is by then.
-pub fn mark_statement(outcome: DeliveryOutcome, id: &Uri, kind: StoredKind) -> UpdateStatement {
+pub fn mark_statement(outcome: DeliveryOutcome, target: &ContextTarget, id: &Uri, kind: StoredKind) -> UpdateStatement {
     Query::update()
         .table(SubscriptionDeliveryState::Table)
         .value(outcome.column(), now())
-        .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(id, kind, OwnerStatus::Any)))
+        .and_where(Expr::col(SubscriptionDeliveryState::ContextSpaceKey).eq(target.key().as_i64()))
+        .and_where(Expr::col(SubscriptionDeliveryState::SubscriptionKey).eq(owner_key(target, id, kind, OwnerStatus::Any)))
         .to_owned()
 }
 
@@ -118,7 +122,11 @@ pub fn join_delivery_state(select: &mut SelectStatement) {
             JoinType::LeftJoin,
             SubscriptionDeliveryState::Table,
             Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::SubscriptionKey))
-                .equals((Subscriptions::Table, Subscriptions::SubscriptionKey)),
+                .equals((Subscriptions::Table, Subscriptions::SubscriptionKey))
+                .and(
+                    Expr::col((SubscriptionDeliveryState::Table, SubscriptionDeliveryState::ContextSpaceKey))
+                        .equals((Subscriptions::Table, Subscriptions::ContextSpaceKey)),
+                ),
         )
         .expr_as(
             Func::coalesce([
@@ -162,6 +170,11 @@ mod tests {
         delivery_state::{DeliveryOutcome, claim_statement, interval_elapsed, join_delivery_state, mark_statement, state_insert_sql},
         stored_kind::StoredKind,
     };
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+        context_target::ContextTarget,
+    };
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_postgresql_schema::subscriptions::Subscriptions;
     use chrono::{TimeZone, Utc};
@@ -169,6 +182,11 @@ mod tests {
 
     fn subscription() -> Uri {
         "urn:ngsi-ld:Subscription:one".parse().expect("valid")
+    }
+
+    fn target() -> ContextTarget {
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
     }
 
     #[test]
@@ -181,7 +199,7 @@ mod tests {
 
     #[test]
     fn the_claim_moves_only_the_state_row_of_an_active_subscription() {
-        let sql = claim_statement(&subscription(), StoredKind::Entity, None).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&target(), &subscription(), StoredKind::Entity, None).to_string(PostgresQueryBuilder);
         assert!(
             sql.starts_with(r#"UPDATE "subscription_delivery_state" SET "times_sent" = "times_sent" + 1, "last_notification" = NOW()"#),
             "{sql}"
@@ -202,7 +220,7 @@ mod tests {
     #[test]
     fn a_throttled_claim_is_gated_on_the_last_notification_instant() {
         let ceiling = Utc.with_ymd_and_hms(2026, 8, 17, 12, 0, 0).single().expect("valid instant");
-        let sql = claim_statement(&subscription(), StoredKind::Csource, Some(ceiling)).to_string(PostgresQueryBuilder);
+        let sql = claim_statement(&target(), &subscription(), StoredKind::Csource, Some(ceiling)).to_string(PostgresQueryBuilder);
         assert!(
             sql.contains(r#"("last_notification" IS NULL OR "last_notification" <= '2026-08-17 12:00:00.000000 +00:00')"#),
             "{sql}"
@@ -212,13 +230,13 @@ mod tests {
 
     #[test]
     fn a_mark_stamps_one_outcome_column_whatever_the_subscription_status_is() {
-        let success = mark_statement(DeliveryOutcome::Success, &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder);
+        let success = mark_statement(DeliveryOutcome::Success, &target(), &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder);
         assert!(
             success.starts_with(r#"UPDATE "subscription_delivery_state" SET "last_success" = NOW() WHERE"#),
             "{success}"
         );
         assert!(!success.contains("status"), "{success}");
-        let failure = mark_statement(DeliveryOutcome::Failure, &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder);
+        let failure = mark_statement(DeliveryOutcome::Failure, &target(), &subscription(), StoredKind::Entity).to_string(PostgresQueryBuilder);
         assert!(failure.contains(r#""last_failure" = NOW()"#) && !failure.contains("last_success"), "{failure}");
     }
 

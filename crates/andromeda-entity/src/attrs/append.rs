@@ -11,6 +11,7 @@ use crate::{
     null_content::reject_null_content,
 };
 use andromeda_context_commit::history_record::HistoryRecord;
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::expanded::{
@@ -34,6 +35,7 @@ impl EntityService {
     /// recomputed against a fresh read if a concurrent writer got in first.
     pub async fn append_attrs(
         &self,
+        target: &ContextTarget,
         id: &Uri,
         mut fragment: Value,
         overwrite: OverwritePolicy,
@@ -48,7 +50,7 @@ impl EntityService {
         validate_geo_property_geometries(&expanded)?;
 
         let (merged, not_appended, events) = self
-            .commit_computed_write(&entity_uri, |previous| {
+            .commit_computed_write(target, &entity_uri, |previous| {
                 let mut existing = previous.clone(); // clone: the append mutates its own copy of the stored payload
                 let not_appended = append_entity_attrs(&mut existing, unwrap_expanded_ref(&expanded), overwrite)?;
                 let merged = Arc::new(existing);
@@ -60,7 +62,7 @@ impl EntityService {
                 // attributes did not change.
                 let types = extract_types(&merged);
                 let groups = attribute_change_groups(previous, &merged);
-                let plan = self.plan_notifications(&entity_uri, &types, &groups, Some(&merged), Some(previous));
+                let plan = self.plan_notifications(target, &entity_uri, &types, &groups, Some(&merged), Some(previous));
 
                 let write = payload_write(&entity_uri, &merged, vec![HistoryRecord::Observations(Arc::clone(&expanded))], plan.matches); // clone: Arc ref-count bump
                 Ok((write, (merged, not_appended, plan.events)))
@@ -68,7 +70,7 @@ impl EntityService {
             .await?;
 
         let attr_keys = extract_attribute_names(&merged);
-        events.into_iter().for_each(|event| self.emit_change(event));
+        events.into_iter().for_each(|event| self.emit_change(target, event));
 
         Ok((attr_keys, not_appended))
     }

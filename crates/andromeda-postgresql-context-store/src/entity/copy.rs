@@ -22,6 +22,7 @@ use crate::{
     },
     error::ContextStoreError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_postgresql_encoding::copy::{
     write_bytea_opt,
     write_field_count,
@@ -79,18 +80,18 @@ WITH proj AS (
     FROM stage_entities s
 ),
 ins AS (
-    INSERT INTO entities (id, expires_at, min_attribute_expires_at)
-    SELECT proj.id, proj.expires_at, proj.min_attribute_expires_at FROM proj
-    ON CONFLICT (id) DO NOTHING
+    INSERT INTO entities (context_space_key, id, expires_at, min_attribute_expires_at)
+    SELECT $1, proj.id, proj.expires_at, proj.min_attribute_expires_at FROM proj
+    ON CONFLICT (context_space_key, id) DO NOTHING
     RETURNING entity_key, id
 ),
 docs AS (
-    INSERT INTO entity_documents (entity_key, payload)
-    SELECT ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id
+    INSERT INTO entity_documents (context_space_key, entity_key, payload)
+    SELECT $1, ins.entity_key, proj.payload FROM ins JOIN proj ON proj.id = ins.id
 ),
 srch AS (
-    INSERT INTO entity_search (entity_key, location_expires_at, type_ids, attribute_name_ids, scope_paths, location, observation_space, operation_space)
-    SELECT ins.entity_key, proj.location_expires_at, proj.type_ids, proj.attribute_name_ids, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
+    INSERT INTO entity_search (context_space_key, entity_key, location_expires_at, type_ids, attribute_name_ids, scope_paths, location, observation_space, operation_space)
+    SELECT $1, ins.entity_key, proj.location_expires_at, proj.type_ids, proj.attribute_name_ids, proj.scope_paths, proj.location, proj.observation_space, proj.operation_space
     FROM ins JOIN proj ON proj.id = ins.id
 )
 SELECT entity_key, id FROM ins
@@ -104,7 +105,11 @@ SELECT entity_key, id FROM ins
 ///
 /// The inserts name their target columns explicitly, so the physical column
 /// order of the relations is free to change without this statement moving.
-pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, columns: &PreparedEntityColumns) -> Result<Vec<WrittenEntity>, ContextStoreError> {
+pub async fn create_batch_via_copy_in_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    target: &ContextTarget,
+    columns: &PreparedEntityColumns,
+) -> Result<Vec<WrittenEntity>, ContextStoreError> {
     if columns.ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -120,6 +125,7 @@ pub async fn create_batch_via_copy_in_tx(tx: &mut Transaction<'_, Postgres>, col
     }
 
     let rows: Vec<(i64, String)> = sqlx::query_as(INSERT_FROM_STAGE_CREATE_SQL)
+        .bind(target.key().as_i64())
         .fetch_all(&mut **tx)
         .await
         .map_err(entity_write_failure)?;

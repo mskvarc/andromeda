@@ -330,7 +330,16 @@ mod tests {
             postgresql_write: AtomicWriteConfig {
                 bulk_mode: BulkWriteMode::Unnest,
             },
-            snapshot: SnapshotConfig { preparation_concurrency: 4 },
+            snapshot: SnapshotConfig {
+                default_lifetime_secs: 3_600,
+                maximum_lifetime_secs: 2_592_000,
+                capture_page_size: 250,
+                preparation_concurrency: 4,
+                scoped_operation_wait_secs: 30,
+                preparation_lease_secs: 30,
+                tenant_count_quota: None,
+                tenant_byte_quota: None,
+            },
             notification_delivery: DeliveryConfig {
                 enabled: false,
                 max_attempts: 5,

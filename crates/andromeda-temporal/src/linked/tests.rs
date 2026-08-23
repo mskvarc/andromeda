@@ -26,6 +26,11 @@ use andromeda_context_commit::{
     committer::{CommitFuture, ContextCommitter},
     error::CommitError,
 };
+use andromeda_context_space::{
+    context_space::{ContextSpace, ContextSpaceKind},
+    context_space_key::ContextSpaceKey,
+    context_target::ContextTarget,
+};
 use andromeda_entity::{entity_snapshot::EntitySnapshot, error::EntityError, port::reader::EntityReader};
 use andromeda_jsonld::{context_spec::ContextSpec, engine::processor::JsonLdEngine};
 use andromeda_ngsi_ld_lexicon::{
@@ -58,6 +63,11 @@ use std::{
 
 fn uri(value: &str) -> Uri {
     value.parse().expect("valid URI")
+}
+
+fn live_target() -> ContextTarget {
+    let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+    ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target")
 }
 
 fn attribute_name(value: &str) -> AttributeName {
@@ -318,11 +328,11 @@ impl TemporalHistoryReader for StubBroker {
         }
     }
 
-    async fn entity_exists(&self, entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, entity_id: &Uri) -> Result<bool, TemporalError> {
         Ok(self.links.contains_key(entity_id))
     }
 
-    async fn entity_types(&self, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
+    async fn entity_types(&self, _target: &ContextTarget, entity_ids: &[Uri]) -> Result<HashMap<Uri, Vec<EntityTypeName>>, TemporalError> {
         Ok(entity_ids
             .iter()
             .filter(|entity_id| self.links.contains_key(*entity_id))
@@ -330,7 +340,7 @@ impl TemporalHistoryReader for StubBroker {
             .collect())
     }
 
-    async fn query_entity_ids(&self, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
+    async fn query_entity_ids(&self, _target: &ContextTarget, _compiled: &CompiledTemporalQuery) -> Result<TemporalEntityIdOutcome, TemporalError> {
         Ok(TemporalEntityIdOutcome {
             candidates: Vec::new(),
             residual: TemporalResidual::default(),
@@ -338,7 +348,12 @@ impl TemporalHistoryReader for StubBroker {
         })
     }
 
-    async fn query_entity_history(&self, entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<TemporalHistoryOutcome, TemporalError> {
+    async fn query_entity_history(
+        &self,
+        _target: &ContextTarget,
+        entity_id: &Uri,
+        _compiled: &CompiledTemporalQuery,
+    ) -> Result<TemporalHistoryOutcome, TemporalError> {
         Ok(TemporalHistoryOutcome {
             observations: self
                 .rows(entity_id)
@@ -348,21 +363,30 @@ impl TemporalHistoryReader for StubBroker {
         })
     }
 
-    async fn query_entity_aggregation(&self, _entity_id: &Uri, _compiled: &CompiledTemporalQuery) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
+    async fn query_entity_aggregation(
+        &self,
+        _target: &ContextTarget,
+        _entity_id: &Uri,
+        _compiled: &CompiledTemporalQuery,
+    ) -> Result<Vec<TemporalAggregationRow>, TemporalError> {
         Err(unsupported("query_entity_aggregation"))
     }
-    async fn recorded_value_kinds(&self, _attributes: &[AttributeName]) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
+    async fn recorded_value_kinds(
+        &self,
+        _target: &ContextTarget,
+        _attributes: &[AttributeName],
+    ) -> Result<HashMap<AttributeName, HashSet<RecordedValueKind>>, TemporalError> {
         Ok(HashMap::new())
     }
 }
 
 #[async_trait]
 impl EntityReader for StubBroker {
-    async fn get(&self, id: &Uri) -> Result<Option<Value>, EntityError> {
+    async fn get(&self, _target: &ContextTarget, id: &Uri) -> Result<Option<Value>, EntityError> {
         Ok(self.links.contains_key(id).then(|| json!({"@id": id, "@type": ["https://example.com/Thing"]})))
     }
 
-    async fn get_batch(&self, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
+    async fn get_batch(&self, _target: &ContextTarget, ids: &[Uri]) -> Result<HashMap<Uri, Value>, EntityError> {
         let mut found = HashMap::new();
         for id in ids {
             if self.links.contains_key(id) {
@@ -372,50 +396,51 @@ impl EntityReader for StubBroker {
         Ok(found)
     }
 
-    async fn get_snapshot(&self, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
+    async fn get_snapshot(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<EntitySnapshot>, EntityError> {
         Err(EntityError::internal("get_snapshot is not exercised by the traversal harness"))
     }
 
-    async fn get_snapshot_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
+    async fn get_snapshot_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, EntitySnapshot>, EntityError> {
         Err(EntityError::internal("get_snapshot_batch is not exercised by the traversal harness"))
     }
 
-    async fn get_sys_attrs(&self, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs(&self, _target: &ContextTarget, _id: &Uri) -> Result<Option<SysAttrsSnapshot>, EntityError> {
         Err(EntityError::internal("get_sys_attrs is not exercised by the traversal harness"))
     }
 
-    async fn get_sys_attrs_batch(&self, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
+    async fn get_sys_attrs_batch(&self, _target: &ContextTarget, _ids: &[Uri]) -> Result<HashMap<Uri, SysAttrsSnapshot>, EntityError> {
         Err(EntityError::internal("get_sys_attrs_batch is not exercised by the traversal harness"))
     }
 }
 
 #[async_trait]
 impl TemporalMutationBarrier for StubBroker {
-    async fn synchronize(&self, _entity_id: &Uri) -> Result<(), TemporalError> {
+    async fn synchronize(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<(), TemporalError> {
         Err(unsupported("synchronize"))
     }
 }
 
 #[async_trait]
 impl TemporalMutator for StubBroker {
-    async fn entity_exists(&self, _entity_id: &Uri) -> Result<bool, TemporalError> {
+    async fn entity_exists(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<bool, TemporalError> {
         Err(unsupported("entity_exists"))
     }
 
-    async fn attribute_exists(&self, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
+    async fn attribute_exists(&self, _target: &ContextTarget, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
         Err(unsupported("attribute_exists"))
     }
 
-    async fn attribute_names_for_entity(&self, _entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError> {
+    async fn attribute_names_for_entity(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<Vec<AttributeName>, TemporalError> {
         Err(unsupported("attribute_names_for_entity"))
     }
 
-    async fn delete_all_for_entity(&self, _entity_id: &Uri) -> Result<u64, TemporalError> {
+    async fn delete_all_for_entity(&self, _target: &ContextTarget, _entity_id: &Uri) -> Result<u64, TemporalError> {
         Err(unsupported("delete_all_for_entity"))
     }
 
     async fn delete_attribute(
         &self,
+        _target: &ContextTarget,
         _entity_id: &Uri,
         _attribute_name: &AttributeName,
         _dataset_id: Option<&Uri>,
@@ -424,12 +449,19 @@ impl TemporalMutator for StubBroker {
         Err(unsupported("delete_attribute"))
     }
 
-    async fn instance_exists(&self, _instance: &InstanceIdentity, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<bool, TemporalError> {
+    async fn instance_exists(
+        &self,
+        _target: &ContextTarget,
+        _instance: &InstanceIdentity,
+        _entity_id: &Uri,
+        _attribute_name: &AttributeName,
+    ) -> Result<bool, TemporalError> {
         Err(unsupported("instance_exists"))
     }
 
     async fn update_instance(
         &self,
+        _target: &ContextTarget,
         _instance: &InstanceIdentity,
         _entity_id: &Uri,
         _attribute_name: &AttributeName,
@@ -438,13 +470,19 @@ impl TemporalMutator for StubBroker {
         Err(unsupported("update_instance"))
     }
 
-    async fn delete_instance(&self, _instance: &InstanceIdentity, _entity_id: &Uri, _attribute_name: &AttributeName) -> Result<(), TemporalError> {
+    async fn delete_instance(
+        &self,
+        _target: &ContextTarget,
+        _instance: &InstanceIdentity,
+        _entity_id: &Uri,
+        _attribute_name: &AttributeName,
+    ) -> Result<(), TemporalError> {
         Err(unsupported("delete_instance"))
     }
 }
 
 impl ContextCommitter for StubBroker {
-    fn commit(&self, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit(&self, _target: &ContextTarget, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         Box::pin(async {
             Err(CommitError::Invariant {
                 detail: "commit is not exercised by the traversal harness".to_owned(),
@@ -452,7 +490,7 @@ impl ContextCommitter for StubBroker {
         })
     }
 
-    fn commit_replayed(&self, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
+    fn commit_replayed(&self, _target: &ContextTarget, _replay: CommitReplay, _writes: Vec<AtomicWrite>) -> CommitFuture<'_> {
         Box::pin(async {
             Err(CommitError::Invariant {
                 detail: "commit_replayed is not exercised by the traversal harness".to_owned(),
@@ -511,7 +549,7 @@ fn root(id: &str, targets: &[&str]) -> Value {
 
 async fn resolve(broker: StubBroker, roots: &[Value], join_level: NonZeroU32, contained_by: &HashSet<Uri>) -> Vec<String> {
     let resolved = service(broker)
-        .resolve_linked_temporal(roots, &[], &window(), join_level, contained_by, &context())
+        .resolve_linked_temporal(&live_target(), roots, &[], &window(), join_level, contained_by, &context())
         .await
         .expect("resolves");
     resolved.entities.keys().map(ToString::to_string).collect()
@@ -696,7 +734,7 @@ async fn an_absent_annotated_candidate_is_fetched_with_the_remaining_depth_and_t
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(&roots, &[], &window(), level(2), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(2), &HashSet::new(), &context())
         .await
         .expect("resolves");
 
@@ -720,7 +758,7 @@ async fn an_absent_unannotated_candidate_is_never_fetched_remotely() {
     let roots = [root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(&roots, &[], &window(), level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(1), &HashSet::new(), &context())
         .await
         .expect("resolves");
 
@@ -739,7 +777,7 @@ async fn a_failing_remote_source_reports_an_unreachable_failure() {
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(StubBroker::new([]), &source)
-        .resolve_linked_temporal(&roots, &[], &window(), level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(1), &HashSet::new(), &context())
         .await
         .expect("resolves despite the unreachable remainder");
 
@@ -767,7 +805,7 @@ async fn a_remote_brokers_extra_entities_are_neither_re_fetched_nor_expanded() {
     let roots = [annotated_root("urn:ngsi-ld:T:A", &["urn:ngsi-ld:T:B"])];
 
     let resolved = service_with_remote(broker, &source)
-        .resolve_linked_temporal(&roots, &[], &window(), level(2), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &roots, &[], &window(), level(2), &HashSet::new(), &context())
         .await
         .expect("resolves");
 
@@ -799,7 +837,7 @@ async fn a_seed_resolves_links_the_projected_roots_no_longer_carry() {
     }];
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&[projected], &seed, &window(), level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &[projected], &seed, &window(), level(1), &HashSet::new(), &context())
         .await
         .expect("resolves");
 
@@ -835,7 +873,7 @@ async fn a_nested_pick_narrows_the_linked_entity_under_temporal_values() {
     params.pick = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&[projected], &seed, &params, level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &[projected], &seed, &params, level(1), &HashSet::new(), &context())
         .await
         .expect("resolves");
 
@@ -859,7 +897,7 @@ async fn a_nested_omit_narrows_the_resolved_target() {
     params.omit = Some(parse_projection_list("linksTo{reading}").expect("valid projection list"));
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&roots, &[], &params, level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &roots, &[], &params, level(1), &HashSet::new(), &context())
         .await
         .expect("resolves");
 
@@ -881,7 +919,7 @@ async fn a_linked_entity_lacking_the_requested_attrs_still_appears_with_its_own(
     narrowed.attrs = Some(vec!["https://example.com/absent".parse().expect("valid attribute name")]);
 
     let resolved = service(broker)
-        .resolve_linked_temporal(&roots, &[], &narrowed, level(1), &HashSet::new(), &context())
+        .resolve_linked_temporal(&live_target(), &roots, &[], &narrowed, level(1), &HashSet::new(), &context())
         .await
         .expect("resolves");
 

@@ -90,7 +90,13 @@ use crate::{
     port::{attribute_history::AttributeDatasetHistory, blocking_executor::BlockingExecutor, reader::EntityReader, retry_delay::RetryDelay},
     side_effect::{AsyncPreference, BatchSideEffectMode, resolve_side_effect_mode},
 };
-use andromeda_context_commit::{batch_side_effect_job::BatchSideEffectJob, change_event::ChangeEvent, committer::ContextCommitter};
+use andromeda_context_commit::{
+    batch_side_effect_job::BatchSideEffectJob,
+    change_event::ChangeEvent,
+    committer::ContextCommitter,
+    context_change_event::ContextChangeEvent,
+};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::engine::processor::JsonLdEngine;
 use andromeda_ngsi_ld_lexicon::uri::Uri;
 use andromeda_subscription::cache::SubscriptionCache;
@@ -161,8 +167,8 @@ impl EntityService {
     }
 
     /// Acquire owned locks for every distinct identifier in sorted order.
-    pub(crate) async fn acquire_id_locks(&self, ids: &[Uri]) -> Vec<MutexGuardArc<()>> {
-        acquire_id_locks_in(&self.id_locks, ids).await
+    pub(crate) async fn acquire_id_locks(&self, target: &ContextTarget, ids: &[Uri]) -> Vec<MutexGuardArc<()>> {
+        acquire_id_locks_in(&self.id_locks, target, ids).await
     }
 
     /// Select inline or durable queued side effects for one batch.
@@ -170,14 +176,17 @@ impl EntityService {
         resolve_side_effect_mode(self.batch_execution.async_side_effect_threshold, preference, batch_size)
     }
 
-    fn emit_change(&self, event: ChangeEvent) {
+    fn emit_change(&self, target: &ContextTarget, event: ChangeEvent) {
         if let Some(ref sink) = self.change_sink {
-            sink.publish(event);
+            sink.publish(ContextChangeEvent {
+                target: target.clone(), // clone: the asynchronous consumer owns the immutable branch selection.
+                event,
+            });
         }
     }
 
     fn apply_inline_side_effects(&self, job: BatchSideEffectJob) {
-        job.change_events.into_iter().for_each(|event| self.emit_change(event));
+        job.change_events.into_iter().for_each(|event| self.emit_change(&job.target, event));
     }
 }
 

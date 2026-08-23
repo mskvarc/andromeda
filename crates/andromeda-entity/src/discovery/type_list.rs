@@ -4,6 +4,7 @@ use crate::{
     discovery::{DiscoveryScope, EntityDiscoveryService, registry_union::extend_without_repetition, stored_names::parse_type_name},
     error::EntityError,
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::{
     context_spec::ContextSpec,
     engine::options::{CompactOptions, ContextStripping},
@@ -16,13 +17,13 @@ use uuid::Uuid;
 impl EntityDiscoveryService {
     /// List the entity types for which instances exist, or possibly exist in
     /// a registered source, as a compacted `EntityTypeList` (clause 5.2.24).
-    pub async fn types(&self, scope: DiscoveryScope, context: &ContextSpec) -> Result<EntityTypeList, EntityError> {
+    pub async fn types(&self, target: &ContextTarget, scope: DiscoveryScope, context: &ContextSpec) -> Result<EntityTypeList, EntityError> {
         const TYPE: &str = "EntityTypeList";
 
         let id = UrnBuilder::new(NGSI_LD_URN_NID, &format!("{}:{}", TYPE, Uuid::new_v4())).build()?;
         let id = EntityTypeListId::try_from(id)?;
 
-        let mut type_iris = self.store.types().await?;
+        let mut type_iris = self.store.types(target).await?;
         extend_without_repetition(
             &mut type_iris,
             self.registered_types(scope).await?.into_iter().map(|registered| registered.name),

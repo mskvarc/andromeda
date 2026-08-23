@@ -1,6 +1,7 @@
 //! SQL generation for entity queries using sea-query.
 
 use crate::{entity_relations::EntityRelations, order_geography::geo_order_distance};
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, entity_type_name::EntityTypeName};
 use andromeda_ngsi_ld_query::{
     entity::compiled::CompiledEntityQuery,
@@ -58,10 +59,10 @@ pub struct EntityQuery {
 /// Generates filter conditions from the compiled query (IDs, types, attrs, q expression,
 /// geo filter, scope query), ordering, and pagination clauses, joining only the
 /// relations those clauses read.
-pub fn build_query(query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
+pub fn build_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<EntityQuery, RenderError> {
     let relations = EntityRelations::for_query(query);
     let rows = relations.rows();
-    let condition = build_entity_conditions(query, names, &rows)?;
+    let condition = build_entity_conditions(target, query, names, &rows)?;
 
     let mut select = Query::select();
     // The payload is projected under the document column's own name whether it
@@ -123,10 +124,10 @@ pub const TOTAL_COUNT_COLUMN: &str = "total_count";
 /// Similar to [`build_query`] but selects `id` instead of `payload`, used for
 /// operations that only need to identify matching entities; the document row
 /// is joined only when a filter or ordering reads the payload.
-pub fn build_ids_query(query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
+pub fn build_ids_query(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames) -> Result<SelectStatement, RenderError> {
     let relations = EntityRelations::for_query(query);
     let rows = relations.rows();
-    let condition = build_entity_conditions(query, names, &rows)?;
+    let condition = build_entity_conditions(target, query, names, &rows)?;
 
     let mut select = Query::select();
     select.column((Entities::Table, Entities::Id));
@@ -148,8 +149,8 @@ pub fn build_ids_query(query: &CompiledEntityQuery, names: &QueryNames) -> Resul
 }
 
 /// Builds sea-query `Condition` from compiled entity query filters.
-fn build_entity_conditions(query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
-    let mut condition = Condition::all();
+fn build_entity_conditions(target: &ContextTarget, query: &CompiledEntityQuery, names: &QueryNames, rows: &EntityRowRefs) -> Result<Condition, RenderError> {
+    let mut condition = Condition::all().add(rows.identity_column(Entities::ContextSpaceKey).eq(target.key().as_i64()));
 
     // Entity selectors, unioned (clause 5.2.33): `(sel1) OR (sel2) OR ...`,
     // where each selector ANDs its own id / idPattern / type. A union that
@@ -294,6 +295,10 @@ fn add_order_clause(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use andromeda_context_space::{
+        context_space::{ContextSpace, ContextSpaceKind},
+        context_space_key::ContextSpaceKey,
+    };
     use andromeda_ngsi_ld_geometry::{geo_rel::GeoRel, geometry::Geometry};
     use andromeda_ngsi_ld_lexicon::uri::Uri;
     use andromeda_ngsi_ld_query::{
@@ -327,7 +332,9 @@ mod tests {
     /// statement and, when requested, its separate count, each with its own
     /// placeholder sequence.
     fn build(query: &CompiledEntityQuery, names: &QueryNames) -> Built {
-        let entity_query = build_query(query, names).unwrap();
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        let target = ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target");
+        let entity_query = build_query(&target, query, names).expect("valid entity query");
         let (sql, values) = entity_query.select.build(PostgresQueryBuilder);
         let count_sql = entity_query.count.map(|count| count.build(PostgresQueryBuilder).0);
         Built {
@@ -765,7 +772,9 @@ mod tests {
             direction: OrderDirection::DistAsc,
             collation: None,
         }];
-        let result = build_query(&q, &known_types());
+        let key = ContextSpaceKey::try_from(1).expect("positive context-space key");
+        let target = ContextTarget::live(ContextSpace::new(key, ContextSpaceKind::Live)).expect("live context target");
+        let result = build_query(&target, &q, &known_types());
         assert!(result.is_err());
     }
 

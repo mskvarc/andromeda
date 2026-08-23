@@ -58,7 +58,7 @@ impl SubscriptionForwardingService {
             dataset_ids: &[],
             projection: None,
         };
-        let local = match self.entity_query.get_inner(&received.id, &narrowing, context).await {
+        let local = match self.entity_query.get_inner(&self.live_target, &received.id, &narrowing, context).await {
             Ok(entity) => Some(entity),
             Err(EntityError::NotFound { .. }) => None,
             Err(error) => return Err(error.into()),
@@ -68,16 +68,19 @@ impl SubscriptionForwardingService {
         let whole_entity = GetEntityParams::default();
         let remote = self
             .federation
-            .forward_retrieve(ForwardRetrieveRequest {
-                entity_id: &received.id,
-                exclude_registration: Some(sender),
-                client_query: ClientQuery::EntityRetrieve(&whole_entity),
-                context,
-                operation: ForwardingOperation::RetrieveEntity,
-                triggering: TriggeringRequest::default(),
-                mode_filter: CsrModeFilter::All,
-                entity_map: EntityMapInUse::None,
-            })
+            .forward_retrieve(
+                &self.live_target,
+                ForwardRetrieveRequest {
+                    entity_id: &received.id,
+                    exclude_registration: Some(sender),
+                    client_query: ClientQuery::EntityRetrieve(&whole_entity),
+                    context,
+                    operation: ForwardingOperation::RetrieveEntity,
+                    triggering: TriggeringRequest::default(),
+                    mode_filter: CsrModeFilter::All,
+                    entity_map: EntityMapInUse::None,
+                },
+            )
             .await?;
         // The received part is the base; the local copy and the other holders
         // are folded in the way a distributed retrieval merges its sources.
@@ -136,7 +139,7 @@ impl SubscriptionForwardingService {
                 subscription: notification.subscription_id.clone(), // clone: the error owns the identifier
             });
         };
-        let Some(stored) = self.subscriptions.get(&local).await? else {
+        let Some(stored) = self.subscriptions.get(&self.live_target, &local).await? else {
             debug!(subscription = %local, "notification for a forwarded copy whose local subscription no longer exists");
             return Ok(());
         };
@@ -205,9 +208,9 @@ impl SubscriptionForwardingService {
         .assemble();
         let result = self.transport.deliver(&transport, &request).await;
         if result.is_delivered() {
-            self.subscriptions.mark_success(&local).await?;
+            self.subscriptions.mark_success(&self.live_target, &local).await?;
         } else {
-            self.subscriptions.mark_failure(&local).await?;
+            self.subscriptions.mark_failure(&self.live_target, &local).await?;
         }
         Ok(())
     }

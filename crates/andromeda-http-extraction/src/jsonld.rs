@@ -11,7 +11,10 @@ use andromeda_ngsi_ld_number::json_value::{canonicalize_numbers, deserialize_exa
 use axum::{
     body::Bytes,
     extract::{FromRequest, Request},
-    http::{StatusCode, header::LINK},
+    http::{
+        StatusCode,
+        header::{CONTENT_LENGTH, LINK},
+    },
 };
 use headers::HeaderMapExt;
 use mediatype::{MediaTypeBuf, names};
@@ -176,6 +179,15 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let uri = req.uri().clone();
+        let content_length = req.headers().get(CONTENT_LENGTH).ok_or(ExtractorRejection::Empty(StatusCode::LENGTH_REQUIRED))?;
+        let content_length = content_length
+            .to_str()
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(|| ExtractorRejection::invalid_request("Content-Length shall be a non-negative decimal integer", uri.clone()))?;
+        if content_length == 0 {
+            return Err(ExtractorRejection::invalid_request("Request body shall not be empty", uri));
+        }
         let content_type_raw = req
             .headers()
             .typed_get::<headers::ContentType>()
@@ -195,10 +207,10 @@ where
 
         // Collect raw Link header strings before the request body is consumed.
         let link_header_strings: Vec<String> = req.headers().get_all(LINK).iter().filter_map(|v| v.to_str().ok().map(String::from)).collect();
+        let mut link_contexts = Vec::new();
         for raw in &link_header_strings {
-            if Link::from_str(raw).is_err() {
-                return Err(ExtractorRejection::bad_request_data("Invalid Link header", uri.clone()));
-            }
+            let parsed = Link::from_str(raw).map_err(|_| ExtractorRejection::bad_request_data("Invalid Link header", uri.clone()))?;
+            link_contexts.extend(parsed.context_urls().cloned());
         }
 
         // Per NGSI-LD 6.3.5: application/ld+json MUST NOT be combined with a Link header
@@ -254,7 +266,7 @@ where
             ));
         }
 
-        let mut context = ContextSpec::none();
+        let mut context = ContextSpec::from_links(link_contexts);
         if is_ld_json && let Some(ctx) = merge_context_values_from_document(&value) {
             context = context.with_body_context(Some(ctx));
         }

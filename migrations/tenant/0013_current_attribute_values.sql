@@ -116,7 +116,8 @@
 -- ============================================================================
 
 CREATE TABLE current_attribute_values (
-    entity_key BIGINT NOT NULL REFERENCES entities(entity_key) ON DELETE CASCADE,
+    context_space_key BIGINT NOT NULL,
+    entity_key BIGINT NOT NULL,
     attribute_name_id INTEGER NOT NULL REFERENCES attribute_names(id),
     attribute_kind SMALLINT NOT NULL,
     value_kind SMALLINT NOT NULL,
@@ -129,8 +130,11 @@ CREATE TABLE current_attribute_values (
     value_geo geometry COMPRESSION lz4,
     value_object JSONB COMPRESSION lz4,
     value_uri TEXT COMPRESSION lz4 COLLATE "C",
+    CONSTRAINT fk_current_attribute_values_entity
+        FOREIGN KEY (context_space_key, entity_key)
+        REFERENCES entities(context_space_key, entity_key) ON DELETE CASCADE,
     CONSTRAINT uq_current_attribute_values_grain
-        UNIQUE NULLS NOT DISTINCT (entity_key, attribute_name_id, dataset_id),
+        UNIQUE NULLS NOT DISTINCT (context_space_key, entity_key, attribute_name_id, dataset_id),
     CONSTRAINT chk_current_attribute_values_attribute_kind
         CHECK (attribute_kind BETWEEN 1 AND 8),
     CONSTRAINT chk_current_attribute_values_single_value CHECK (
@@ -160,42 +164,42 @@ CREATE TABLE current_attribute_values (
 );
 
 CREATE INDEX idx_cav_attr_number
-    ON current_attribute_values (attribute_name_id, value_number)
+    ON current_attribute_values (context_space_key, attribute_name_id, value_number)
     WHERE value_number IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_string
-    ON current_attribute_values (attribute_name_id, value_string)
+    ON current_attribute_values (context_space_key, attribute_name_id, value_string)
     WHERE value_string IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_string_trgm
-    ON current_attribute_values USING GIN (attribute_name_id int4_ops, value_string gin_trgm_ops)
+    ON current_attribute_values USING GIN (context_space_key int8_ops, attribute_name_id int4_ops, value_string gin_trgm_ops)
     WITH (fastupdate = off)
     WHERE value_string IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_bool
-    ON current_attribute_values (attribute_name_id, value_bool)
+    ON current_attribute_values (context_space_key, attribute_name_id, value_bool)
     WHERE value_bool IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_datetime
-    ON current_attribute_values (attribute_name_id, value_datetime)
+    ON current_attribute_values (context_space_key, attribute_name_id, value_datetime)
     WHERE value_datetime IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_uri
-    ON current_attribute_values (attribute_name_id, value_uri)
+    ON current_attribute_values (context_space_key, attribute_name_id, value_uri)
     WHERE value_uri IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_geo
-    ON current_attribute_values USING GIST (attribute_name_id, value_geo)
+    ON current_attribute_values USING GIST (context_space_key, attribute_name_id, value_geo)
     WHERE value_geo IS NOT NULL;
 
 CREATE INDEX idx_cav_attr_entity_geo
-    ON current_attribute_values (attribute_name_id, entity_key)
+    ON current_attribute_values (context_space_key, attribute_name_id, entity_key)
     WHERE value_geo IS NOT NULL;
 
 CREATE STATISTICS stx_cav_attribute_value_kind (dependencies, ndistinct)
-    ON attribute_name_id, value_kind
+    ON context_space_key, attribute_name_id, value_kind
     FROM current_attribute_values;
 
 CREATE STATISTICS stx_cav_entity_attribute (dependencies, ndistinct)
-    ON entity_key, attribute_name_id
+    ON context_space_key, entity_key, attribute_name_id
     FROM current_attribute_values;

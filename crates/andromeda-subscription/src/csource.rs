@@ -73,11 +73,11 @@ impl SubscriptionVariant for CsrSubscriptionVariant {
         DatasetIdPolicy::Discard
     }
 
-    fn make_upserted(&self, id: Uri) -> CsourceSubscriptionChange {
-        CsourceSubscriptionChange::Upserted(id)
+    fn make_upserted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> CsourceSubscriptionChange {
+        CsourceSubscriptionChange::Upserted { target, id }
     }
 
-    fn make_deleted(&self, id: Uri) -> CsourceSubscriptionChange {
-        CsourceSubscriptionChange::Deleted(id)
+    fn make_deleted(&self, target: andromeda_context_space::context_target::ContextTarget, id: Uri) -> CsourceSubscriptionChange {
+        CsourceSubscriptionChange::Deleted { target, id }
     }
 }

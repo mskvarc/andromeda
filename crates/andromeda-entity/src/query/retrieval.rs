@@ -12,6 +12,7 @@ use crate::{
         spatial_prefilter::SpatialNarrowing,
     },
 };
+use andromeda_context_space::context_target::ContextTarget;
 use andromeda_jsonld::context_spec::ContextSpec;
 use andromeda_ngsi_ld_lexicon::{attribute_name::AttributeName, uri::Uri};
 use andromeda_ngsi_ld_model::entity::Entity;
@@ -49,15 +50,15 @@ impl EntityQueryService {
     /// Returns [`EntityError::not_found`] when no entity with that identifier
     /// exists, or when `attrs` selected none of the attributes it has, and
     /// otherwise whatever the store or the context expansion failed with.
-    pub async fn get_inner(&self, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<Entity, EntityError> {
-        let Some(expanded_entity) = self.reader.get(id).await? else {
+    pub async fn get_inner(&self, target: &ContextTarget, id: &Uri, narrowing: &RetrievalNarrowing<'_>, context: &ContextSpec) -> Result<Entity, EntityError> {
+        let Some(expanded_entity) = self.reader.get(target, id).await? else {
             return Err(EntityError::not_found(id));
         };
 
         let mut entity = self.compact_to_entity(expanded_entity, context, Some(id.as_str())).await?;
 
         if narrowing.sys_attrs == SysAttrsInclusion::Include
-            && let Some(snapshot) = self.reader.get_sys_attrs(id).await?
+            && let Some(snapshot) = self.reader.get_sys_attrs(target, id).await?
         {
             entity = entity.with_sys_attrs(&snapshot);
         }
@@ -90,13 +91,13 @@ impl EntityQueryService {
 
     /// Execute a parameterized entity query (clause 5.7.2), returning matching
     /// entities and the optional clause 6.3.13 count.
-    pub async fn query(&self, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
+    pub async fn query(&self, target: &ContextTarget, query: &EntityQueryParameters, context: &ContextSpec) -> Result<(Vec<Entity>, Option<i64>), EntityError> {
         let compiled = self.compile_query_cached(query, context, LimitCap::Capped).await?;
         // Gated on the narrowed selection, not the one the client wrote: the
         // spatial index *applies* a geo relation rather than declining it, so a
         // store that cannot narrow `georel` is never asked to when the index
         // already answered it.
-        let narrowed = match self.spatial_prefilter(&compiled) {
+        let narrowed = match self.spatial_prefilter(target, &compiled) {
             SpatialNarrowing::Query(query) => query,
             SpatialNarrowing::EmptyResult => {
                 // A warm index that matched nothing is an empty page: returning
@@ -110,7 +111,7 @@ impl EntityQueryService {
             }
         };
         refuse_unnarrowable(self.query_store.profile(), &narrowed.selection)?;
-        let outcome = self.query_store.query_compiled(&narrowed).await?;
+        let outcome = self.query_store.query_compiled(target, &narrowed).await?;
         let page = finish_page(outcome, compiled.pagination)?;
         let sys_attrs = query.parse_options().sys_attrs;
 
@@ -127,7 +128,7 @@ impl EntityQueryService {
                         .and_then(|id| id.parse::<Uri>().ok())
                 })
                 .collect();
-            self.reader.get_sys_attrs_batch(&ids).await?
+            self.reader.get_sys_attrs_batch(target, &ids).await?
         } else {
             HashMap::new()
         };
@@ -165,9 +166,9 @@ impl EntityQueryService {
 
     /// Execute a compiled query returning only entity identifiers
     /// (clause 5.2.39 entity maps).
-    pub async fn query_ids(&self, compiled: &CompiledEntityQuery) -> Result<Vec<Uri>, EntityError> {
+    pub async fn query_ids(&self, target: &ContextTarget, compiled: &CompiledEntityQuery) -> Result<Vec<Uri>, EntityError> {
         refuse_unnarrowable(self.query_store.profile(), &compiled.selection)?;
-        let outcome = self.query_store.query_ids(compiled).await?;
-        self.finish_ids(outcome, compiled.pagination).await
+        let outcome = self.query_store.query_ids(target, compiled).await?;
+        self.finish_ids(target, outcome, compiled.pagination).await
     }
 }
