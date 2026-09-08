@@ -4,7 +4,10 @@ use andromeda_ngsi_ld_problem_details::error_type::NgsiLdErrorType;
 use axum::{
     body::{Body, to_bytes},
     extract::FromRequest,
-    http::{Request, header::CONTENT_TYPE},
+    http::{
+        Request,
+        header::{CONTENT_LENGTH, CONTENT_TYPE},
+    },
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -16,6 +19,17 @@ struct RequiredIdentifier {
     id: String,
 }
 
+/// Build a JSON request carrying the `Content-Length` the extractor requires
+/// before it will look at a body at all: without it the extraction ends in
+/// `411 Length Required` and never reaches the case under test.
+fn json_request(body: &'static str) -> Result<Request<Body>, Box<dyn Error>> {
+    Ok(Request::builder()
+        .uri("/ngsi-ld/v1/entities")
+        .header(CONTENT_TYPE, "application/json")
+        .header(CONTENT_LENGTH, body.len())
+        .body(Body::from(body))?)
+}
+
 async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn Error>> {
     let response = rejection.into_response();
     let bytes = to_bytes(response.into_body(), usize::MAX).await?;
@@ -24,10 +38,7 @@ async fn rejection_body(rejection: ExtractorRejection) -> Result<Value, Box<dyn 
 
 #[tokio::test]
 async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(), Box<dyn Error>> {
-    let request = Request::builder()
-        .uri("/ngsi-ld/v1/entities")
-        .header(CONTENT_TYPE, "application/json")
-        .body(Body::from("{"))?;
+    let request = json_request("{")?;
     let rejection = match JsonLd::<Value>::from_request(request, &()).await {
         Err(rejection) => rejection,
         Ok(_) => return Err("malformed JSON was accepted".into()),
@@ -41,10 +52,7 @@ async fn malformed_json_is_invalid_request_with_the_exact_instance() -> Result<(
 
 #[tokio::test]
 async fn structurally_invalid_json_is_bad_request_data_before_policy_execution() -> Result<(), Box<dyn Error>> {
-    let request = Request::builder()
-        .uri("/ngsi-ld/v1/entities")
-        .header(CONTENT_TYPE, "application/json")
-        .body(Body::from("{}"))?;
+    let request = json_request("{}")?;
     let rejection = match JsonLd::<RequiredIdentifier>::from_request(request, &()).await {
         Err(rejection) => rejection,
         Ok(value) => return Err(format!("body without id was accepted as {}", value.value.id).into()),
